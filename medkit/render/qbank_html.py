@@ -9,7 +9,7 @@ import html as html_mod
 from typing import Any
 
 TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "X": "X 型 · 多选", "B1": "B1 型 · 共用选项"}
-LETTERS = "ABCDEF"
+LETTERS = "ABCDEFGHIJ"  # 渲染上限 10 个选项，超出部分由渲染前终检剔除（D2）
 
 
 def _esc(s: Any) -> str:
@@ -17,6 +17,11 @@ def _esc(s: Any) -> str:
     return (str(s or "")
             .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+def _esc_anki(s: Any) -> str:
+    """Anki 字段转义：在 _esc 基础上把换行/制表符转成 Anki 可读形式（防 LLM 解析含换行损坏文件）。"""
+    return _esc(s).replace("\n", "<br>").replace("\t", " ")
 
 
 def export_md(questions: list[dict[str, Any]], title: str = "题库") -> str:
@@ -39,13 +44,13 @@ def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
     """Anki 文本导入：正面=题干+选项，反面=答案+解析；字段间 Tab 分隔，行内换行用 <br>。"""
     lines = ["#separator:tab", "#html:true", ""]
     for q in sorted(questions, key=lambda x: str(x.get("id", ""))):
-        front = [f"<b>Q{q.get('id', '')}</b> · {_esc(q.get('type', ''))}型 · {_esc(q.get('bloom', ''))} · "
-                 f"{_esc(q.get('subtopic', ''))}",
-                 _esc(q.get("question", ""))]
+        front = [f"<b>Q{q.get('id', '')}</b> · {_esc_anki(q.get('type', ''))}型 · {_esc_anki(q.get('bloom', ''))} · "
+                 f"{_esc_anki(q.get('subtopic', ''))}",
+                 _esc_anki(q.get("question", ""))]
         for i, o in enumerate(q.get("options", [])):
-            front.append(f"{LETTERS[i]}. {_esc(o)}")
-        back = [f"✅ 答案：<b>{_esc(q.get('answer', ''))}</b>",
-                f"💡 {_esc(q.get('analysis', ''))}"]
+            front.append(f"{LETTERS[i]}. {_esc_anki(o)}")
+        back = [f"✅ 答案：<b>{_esc_anki(q.get('answer', ''))}</b>",
+                f"💡 {_esc_anki(q.get('analysis', ''))}"]
         lines.append("\t".join(["<br>".join(front), "<br>".join(back)]))
     return "\n".join(lines) + "\n"
 
@@ -57,7 +62,8 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
             f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
             for i, o in enumerate(q.get("options", [])))
         items.append(
-            f'<details class="q"><summary class="qs">'
+            f'<details class="q" data-type="{html_mod.escape(q.get("type", ""))}">'
+            f'<summary class="qs">'
             f'<span class="tag">{html_mod.escape(q.get("type", ""))}</span> '
             f'<span class="tag b">{html_mod.escape(q.get("bloom", ""))}</span> '
             f'{html_mod.escape(q.get("question", "")[:60])}…</summary>'
@@ -76,7 +82,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
 </div>
 {''.join(items)}
 <script>
-function ft(t){{document.querySelectorAll('.q').forEach(d=>{{d.style.display=(!t||d.classList.contains('t-'+t))?'':'none'}});
+function ft(t){{document.querySelectorAll('.q').forEach(d=>{{d.style.display=(!t||(d.dataset.type||'')===t)?'':'none'}});
 document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on'));event.target.classList.add('on');}}
 </script>""", extras="qbank")
 
@@ -243,8 +249,8 @@ function retryWrong(){{
 function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); render();}}
 function resetAll(){{clearState(); document.getElementById('res').innerHTML=''; render();}}
 
-const t0=Date.now();
-function tick(){{secs=Math.floor((Date.now()-t0)/1000);
+const T0=(loadState()||{{}}).t0||Date.now();
+function tick(){{secs=Math.floor((Date.now()-T0)/1000);
   const m=Math.floor(secs/60), s=secs%60;
   const el=document.getElementById('timer');
   if(el) el.textContent='⏱ '+m+':'+(s<10?'0':'')+s;}}

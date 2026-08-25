@@ -19,6 +19,35 @@ def _question_payload(q: dict[str, Any], source_text: str) -> dict[str, Any]:
     }
 
 
+def _coerce_score(value: Any) -> tuple[int, str]:
+    """score 容错：float/数字字符串 → int；None/非法 → 50 + 说明（warn）。"""
+    if value is None:
+        return 50, "score 缺失（None），回退 50 分"
+    try:
+        num = float(value)
+        if num != num or num in (float("inf"), float("-inf")):  # NaN / Inf
+            raise ValueError
+        return int(num), ""
+    except (TypeError, ValueError):
+        return 50, f"score 非法（{value!r}），回退 50 分"
+
+
+def _normalize_issues(raw: Any) -> list[dict[str, Any]]:
+    """severity 统一小写；过滤非 dict 项。"""
+    issues: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return issues
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        it = dict(it)
+        sev = it.get("severity")
+        if sev is not None:
+            it["severity"] = str(sev).lower()
+        issues.append(it)
+    return issues
+
+
 def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
                    slice_by_sid: dict[str, str]) -> dict[str, Any]:
     payload = [{"q": _question_payload(q, slice_by_sid.get(q.get("sid", ""), ""))}
@@ -30,9 +59,15 @@ def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
             {"role": "user", "content": json.dumps(
                 {"questions": payload}, ensure_ascii=False)},
         ], temperature=0.2)
+        out = out if isinstance(out, dict) else {}
+        issues = _normalize_issues(out.get("issues"))
+        score, score_warn = _coerce_score(out.get("score"))
+        if score_warn:
+            issues.append({"q_id": "QC_SCORE", "code": "QC_SCORE", "severity": "warn",
+                           "reason": score_warn})
         return {
-            "issues": out.get("issues", []),
-            "score": int(out.get("score", 70)),
+            "issues": issues,
+            "score": score,
             "decision": out.get("gate_decision", "PASS_WITH_FIXES"),
             "summary": out.get("summary", ""),
         }
@@ -48,6 +83,12 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
              slice_by_sid: dict[str, str],
              concurrency: int = MAX_WORKERS) -> dict[str, Any]:
     """分批质检（并发），聚合报告（按批次顺序）。"""
+    if not questions:
+        # 空题库：跳过该批 + warn（原逻辑会把空列表判成 PASS 0 分）
+        return {"score": 0, "gate_decision": "PASS_WITH_FIXES",
+                "issues": [{"q_id": "ALL", "code": "EMPTY_BANK", "severity": "warn",
+                            "reason": "空题库，跳过质检（0 分不视为 PASS）"}],
+                "summary": "空题库"}
     batches = [questions[i:i + BATCH_SIZE] for i in range(0, len(questions), BATCH_SIZE)]
     results: list[dict[str, Any]] = [None] * len(batches)  # type: ignore[list-item]
 

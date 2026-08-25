@@ -31,6 +31,9 @@ def check_question(q: dict[str, Any], idx: str) -> list[dict[str, Any]]:
     def add(code: str, severity: str, reason: str) -> None:
         issues.append({"q_id": cid, "code": code, "severity": severity, "reason": reason})
 
+    # R14 选项数超渲染上限（>6 → 触发 MedFix 改写；渲染前终检兜底剔除）
+    if len(opts) > 6:
+        add("R14", "fail", f"选项数 {len(opts)} > 6（渲染上限）")
     # R1 选项数
     expect = EXPECT_OPTION_COUNT.get(q.get("type", "A1"), 5)
     if len(opts) != expect:

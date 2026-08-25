@@ -308,6 +308,38 @@ def test_websearch_pipeline(isolated_cfg, monkeypatch):
     assert (tmp / "人工复核清单.md").exists(), "conflict 应生成复核清单"
 
 
+def test_render_precheck_drop_e2e(isolated_cfg):
+    """D2 全链路：门禁修复轮用尽后仍超限的题（选项数 >6）→ 剔除出产物 + 人工复核清单。"""
+    import re
+
+    class GenWithOverLimit(FakeLLM):
+        def __init__(self):
+            super().__init__("gen")
+
+        def chat_json(self, messages, **kwargs):
+            s = super().chat_json(messages, **kwargs)
+            # 把本批最后一道题改成 7 个选项（超渲染上限；id 由 orchestrator 生成后分配）
+            if len(s["questions"]) >= 6:
+                q = s["questions"][-1]
+                q["options"] = ["超额A", "超额B", "超额C", "超额D", "超额E", "超额F", "超额G"]
+            return s
+
+    pid = build_project("_drop_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+    res = run_project(pid, overrides={
+        "gen": GenWithOverLimit(), "qc": FakeLLM("qc"),
+        "fix": FakeLLM("fix"), "review": FakeLLM("review")})
+    assert res["stage"] == "done", res
+    final = json.loads((tmp / "最终产物" / "questions_final.json").read_text(encoding="utf-8"))
+    assert all(len(q.get("options", [])) <= 6 for q in final), "产物中不应保留超限题"
+    review = (tmp / "人工复核清单.md").read_text(encoding="utf-8")
+    assert "渲染前剔除" in review and "选项数 7 > 6" in review, "超限原因应写入复核清单"
+    assert re.search(r"\*\*Q\d{3}\*\*", review), "复核清单应记录被剔除题目的 id"
+    # 其余产物正常生成
+    for name in ("qbank.md", "qbank.html", "押题卷.html", "复习手册.md", "anki_export.txt"):
+        assert (tmp / "最终产物" / name).exists(), f"缺产物 {name}"
+
+
 if __name__ == "__main__":
     import pytest
 

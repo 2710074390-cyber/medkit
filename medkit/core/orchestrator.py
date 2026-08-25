@@ -34,6 +34,51 @@ FIX_ROUNDS_GATE = 2
 PAPER_DEFAULT = 50
 PIPELINE_CONCURRENCY = 3  # 切片出题并发（DeepSeek 等限额友好）
 TEACHER_CHAR_LIMIT = 4000
+RENDER_MAX_OPTIONS = 6  # 渲染前终检上限（qbank_html LETTERS=10 保底防 IndexError，超限题剔除）
+
+
+def _render_precheck(questions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """渲染前终检（D2）：仍超限/缺字段的题剔除出产物 + 记入人工复核清单。
+
+    返回 (kept, dropped)：dropped 的元素带 _drop_reasons 字段（仅供清单使用）。
+    """
+    from ..gates.options_check import ALLOWED_BLOOM, ALLOWED_TYPES
+
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for q in questions:
+        reasons: list[str] = []
+        if str(q.get("type", "")) not in ALLOWED_TYPES:
+            reasons.append(f"题型非法：「{q.get('type')}」")
+        if str(q.get("bloom", "")) not in ALLOWED_BLOOM:
+            reasons.append(f"bloom 非法：「{q.get('bloom')}」")
+        if not str(q.get("question", "")).strip():
+            reasons.append("题干为空")
+        opts = [o for o in (q.get("options") or []) if isinstance(o, str) and o.strip()]
+        if not opts:
+            reasons.append("选项缺失")
+        elif len(opts) > RENDER_MAX_OPTIONS:
+            reasons.append(f"选项数 {len(opts)} > {RENDER_MAX_OPTIONS}（渲染上限）")
+        if not str(q.get("answer", "")).strip():
+            reasons.append("答案缺失")
+        if reasons:
+            dropped.append({**q, "_drop_reasons": reasons})
+        else:
+            kept.append(q)
+    return kept, dropped
+
+
+def _append_review_list(base: Path, dropped: list[dict[str, Any]]) -> None:
+    """把渲染前剔除的题追加进人工复核清单.md（与网络冲突清单并存，不覆盖）。"""
+    section = ["", "## 渲染前剔除（不产出，待人工复核）", "",
+               "> 下列题目在门禁修复轮用尽后仍不满足渲染契约，已从产物中剔除，人工修正后可加回：", ""]
+    for q in dropped:
+        section.append(f"- **{q.get('id', '?')}** · {q.get('type', '')}型 · "
+                       f"{q.get('subtopic', '')}：{'；'.join(q.get('_drop_reasons', []))}")
+        section.append(f"  题面：{str(q.get('question', ''))[:120]}")
+    target = base / "人工复核清单.md"
+    pre = target.read_text(encoding="utf-8") + "\n" if target.exists() else ""
+    target.write_text(pre + "\n".join(section) + "\n", encoding="utf-8")
 
 
 class PipelineError(Exception):
@@ -430,6 +475,11 @@ def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[s
     _set_stage(base, meta_path, "finalizing", "④ 汇总题库…")
     for i, q in enumerate(questions):
         q.setdefault("id", f"Q{i + 1:03d}")
+    # 渲染前终检（D2）：修复轮用尽仍超限/缺字段的题剔除出产物 + 人工复核清单
+    questions, dropped_list = _render_precheck(questions)
+    if dropped_list:
+        _log(base, f"  ⚠️ 渲染前终检剔除 {len(dropped_list)} 题 → 人工复核清单.md")
+        _append_review_list(base, dropped_list)
     (base / "最终产物").mkdir(exist_ok=True)
     (base / "最终产物" / "questions_final.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")

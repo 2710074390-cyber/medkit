@@ -32,13 +32,13 @@ v0.4.0 已完成上两轮审查的全部修复与可玩性升级（断点续跑 
 
 ---
 
-## S0 安全网（0.5 天）
+## S0 安全网（0.5 天）✅ 已完成（commit 2a298cc · tag v0.4.0-baseline）
 
-- [ ] `git init`；核对 `.gitignore` 覆盖 `build/ dist/ dist-installer/ projects/ __pycache__/ .ruff_cache/`；首次 commit
-- [ ] `tests/test_pipeline_offline.py`：`main()` 内嵌套用例提升为模块级 `test_` 函数（当前 pytest 收集数 = 0，只能手动跑）
-- [ ] `tests/test_pipeline_offline.py`：配置目录改临时目录隔离（参照 `test_api.py:24-37` 的 TMP_DIR 模式；当前写真实 `~/.medkit`，有污染风险）
-- [ ] 新增 `verify.cmd`：`ruff check . && python -m pytest -q` 一键验证
-- [ ] 全量跑绿 → `git tag v0.4.0-baseline`
+- [x] `git init`；核对 `.gitignore` 覆盖 `build/ dist/ dist-installer/ projects/ __pycache__/ .ruff_cache/`；首次 commit
+- [x] `tests/test_pipeline_offline.py`：`main()` 内嵌套用例提升为模块级 `test_` 函数（当前 pytest 收集数 = 0，只能手动跑）
+- [x] `tests/test_pipeline_offline.py`：配置目录改临时目录隔离（参照 `test_api.py:24-37` 的 TMP_DIR 模式；当前写真实 `~/.medkit`，有污染风险）
+- [x] 新增 `verify.cmd`：`ruff check . && python -m pytest -q` 一键验证
+- [x] 全量跑绿 → `git tag v0.4.0-baseline`
 
 ---
 

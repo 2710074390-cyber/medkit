@@ -6,7 +6,9 @@ A4（2026-08 审计）：markdown 库默认放行原始 HTML（<img onerror> 等
 """
 
 import html as html_mod
+import re
 from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 try:
     import markdown as md_lib
@@ -22,6 +24,23 @@ ALLOWED_TAGS = {
 ALLOWED_ATTRS = {"a": {"href", "title"}, "code": {"class"}, "pre": {"class"},
                  "span": {"class"}, "th": {"align"}, "td": {"align"}}
 
+# A4（2026-08 补）：href scheme 白名单 — 仅 http/https；其余（javascript: 等）剥成纯文本。
+# 先剥控制字符：HTML5 URL 解析会去除内嵌空白，'java\nscript:' 也可能被浏览器当作 javascript: 执行。
+_HREF_SCHEMES = ("http", "https")
+_HREF_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _safe_href(value: str | None) -> str | None:
+    """返回白名单内的 href；否则返回 None（调用方剥成纯文本）。"""
+    if not value:
+        return None
+    href = _HREF_CTRL_RE.sub("", value).strip()
+    if not href:
+        return None
+    if urlsplit(href).scheme.lower() in _HREF_SCHEMES:
+        return href
+    return None
+
 
 class _Sanitizer(HTMLParser):
     """极小化白名单消毒：剥除脚本/事件属性/未知标签；文本转义。"""
@@ -30,6 +49,7 @@ class _Sanitizer(HTMLParser):
         super().__init__(convert_charrefs=True)
         self._out: list[str] = []
         self._block_until = ""  # 遇到 script/style 时置位，跳过全部内容
+        self._no_link_depth = 0  # href 不合法 → 剥成纯文本（保留文本，不出 <a> 标签）
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -37,6 +57,24 @@ class _Sanitizer(HTMLParser):
             self._block_until = tag
             return
         if self._block_until:
+            return
+        if tag == "a":
+            good: list[tuple[str, str]] = []
+            for k, v in attrs:
+                k = k.lower()
+                if v is None:
+                    continue
+                if k == "href":
+                    safe = _safe_href(v)
+                    if safe is not None:
+                        good.append(("href", safe))
+                elif k in ("title",):
+                    good.append((k, v))
+            if good and any(k == "href" for k, _ in good):
+                attr = "".join(f' {k}="{html_mod.escape(v, quote=True)}"' for k, v in good)
+                self._out.append(f"<a{attr}>")
+            else:  # 非白名单 scheme → 剥成纯文本
+                self._no_link_depth += 1
             return
         if tag in ALLOWED_TAGS:
             good = [(k, v) for k, v in attrs
@@ -50,6 +88,9 @@ class _Sanitizer(HTMLParser):
         if self._block_until:
             if tag == self._block_until:
                 self._block_until = ""
+            return
+        if tag == "a" and self._no_link_depth:
+            self._no_link_depth -= 1
             return
         if tag in ALLOWED_TAGS:
             self._out.append(f"</{tag}>")
