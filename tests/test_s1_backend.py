@@ -118,3 +118,52 @@ def test_fsutil_atomic_write(tmp_path):
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": [3]}
     leftovers = [p.name for p in tmp_path.rglob("*.tmp*")]
     assert not leftovers, f"临时文件未清理：{leftovers}"
+
+
+def test_ocr_cancel_race_keeps_cancelled(monkeypatch, tmp_path):
+    """F1：识别完成时 cancel 已置位 → 不得覆写 cancelled 终态（worker 竞态）。"""
+
+    class FakeMinerU:
+        def __init__(self, key):
+            pass
+
+        def extract(self, path, progress=None, cancel=None):
+            cancel.set()  # 模拟识别中途取消
+            return "# 识别结果"
+
+        def mode(self):
+            return "agent"
+
+    monkeypatch.setattr(m, "MinerUClient", lambda key: FakeMinerU(key))
+    job = {"id": "ocr_race", "name": "x.pdf", "role": "textbook", "state": "queued",
+           "msg": "", "result": None, "cancel": threading.Event()}
+    m.OCR_JOBS[job["id"]] = job
+    try:
+        m._run_ocr_job(job, str(tmp_path / "x.pdf"), "x.pdf", ".pdf")
+        st = m.OCR_JOBS[job["id"]]
+        assert st["state"] == "cancelled", f"取消后终态被覆写：{st}"
+        assert st["result"] is None, "取消结果不应被采用"
+    finally:
+        m.OCR_JOBS.pop(job["id"], None)
+
+
+def test_create_project_same_second_not_merged(monkeypatch, tmp_path):
+    """F3：同秒同名项目不得静默合并（pid 唯一化 + mkdir 不覆盖）。"""
+    saved = _isolate_cfg(monkeypatch, tmp_path)
+    body = {
+        "subject": "儿科防合并", "exam": "期末", "target": 20,
+        "ratios": {"A1": 40, "A2": 30, "B1": 20, "X": 10},
+        "toggles": {"qbank": True, "paper": True, "review": True},
+        "teacher_text": "生长发育 3.25kg",
+        "textbook_slices": [
+            {"sid": "S001", "title": "第一章", "text": "生长发育有三个高峰，出生体重3.25kg。" * 20}],
+        "teacher_slices": [{"sid": "T001", "title": "重点", "text": "生长发育 3.25kg"}],
+        "exam_slices": [],
+    }
+    c = _client()
+    r1 = c.post("/api/projects", json=body)
+    r2 = c.post("/api/projects", json=body)
+    assert r1.status_code == 200 and r2.status_code == 200
+    p1, p2 = r1.json()["pid"], r2.json()["pid"]
+    assert p1 != p2, "同秒同名项目 pid 应唯一（不得静默合并）"
+    assert (Path(saved["projects_dir"]) / p1).is_dir() and (Path(saved["projects_dir"]) / p2).is_dir()

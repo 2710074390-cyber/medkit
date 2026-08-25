@@ -85,6 +85,33 @@ def test_paper_timer_restores_from_state():
     assert "t0||Date.now()" in html, "计时器应从保存的 st.t0 恢复（重载不归零）"
 
 
+def test_paper_localstorage_survives_private_mode():
+    """E：产物页所有 localStorage 读写包 try/catch（隐私模式不中断脚本）。"""
+    qs = [{"id": "Q001", "type": "A1", "bloom": "理解", "subtopic": "测试",
+           "question": "题干？", "options": ["a", "b", "c", "d", "e"],
+           "answer": "A", "analysis": "解析"}]
+    html = export_paper_html(qs, "押题卷")
+    for pat in ("try{localStorage.setItem(KEY", "try{localStorage.removeItem(KEY)",
+                "try{localStorage.setItem(RETRY_KEY", "r=JSON.parse(localStorage.getItem(RETRY_KEY"):
+        assert pat in html, f"押题卷脚本应容错 localStorage：缺少 {pat}"
+    # 复习手册页主题脚本同样容错
+    from medkit.render.review_html import review_to_html
+
+    h = review_to_html("# 标题\n正文")
+    assert "try{if(localStorage.getItem" in h and "try{localStorage.setItem" in h
+
+
+def test_index_html_global_error_guards():
+    """E：主界面全局兜底 + 切页停轮询 + spinner 用 innerHTML。"""
+    idx = (ROOT / "medkit" / "web" / "index.html").read_text(encoding="utf-8")
+    assert "window.onerror" in idx, "应有全局脚本异常兜底"
+    assert "unhandledrejection" in idx, "应有异步错误兜底"
+    assert "if (name !== \"proj\")" in idx and "stopPoll()" in idx, "切走项目详情应停止轮询"
+    assert "ocrRunToken++" in idx, "离开页面应终止 OCR 轮询"
+    assert "stageEl.innerHTML = esc(s.stage_label)" in idx, "spinner 应写入 innerHTML（旧 textContent 显示字面文本）"
+    assert "try { localStorage.setItem(\"medkit-theme\"" in idx, "主题写入应容错"
+
+
 def test_medfix_merge_keeps_provenance():
     class FakeClient:
         def chat_json(self, messages, **kwargs):

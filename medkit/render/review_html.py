@@ -160,8 +160,8 @@ blockquote{{border-left:3px solid var(--acc);padding:6px 14px;margin:10px 0;colo
 </style></head><body><main>{body}</main>
 <button class="mini" style="position:fixed;top:12px;right:12px;z-index:9;font-size:14px;padding:4px 12px;background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;cursor:pointer" onclick="toggleTheme()" title="切换亮/暗主题">🌓</button>
 <script>
-if(localStorage.getItem("medkit-theme")==="light")document.documentElement.dataset.theme="light";
+try{{if(localStorage.getItem("medkit-theme")==="light")document.documentElement.dataset.theme="light";}}catch(e){{}}
 function toggleTheme(){{const cur=document.documentElement.dataset.theme==="light"?"dark":"light";
-document.documentElement.dataset.theme=cur;localStorage.setItem("medkit-theme",cur);}}
+document.documentElement.dataset.theme=cur;try{{localStorage.setItem("medkit-theme",cur);}}catch(e){{}}}}
 </script>
 </body></html>"""

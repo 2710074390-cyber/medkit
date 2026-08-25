@@ -119,8 +119,8 @@ let secs = 0;
 
 function esc(s){{return String(s??"").replace(/[&<>"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));}}
 function loadState(){{try{{return JSON.parse(localStorage.getItem(KEY)||"null")}}catch(e){{return null}}}}
-function saveState(s){{localStorage.setItem(KEY,JSON.stringify(s));}}
-function clearState(){{localStorage.removeItem(KEY);}}
+function saveState(s){{try{{localStorage.setItem(KEY,JSON.stringify(s));}}catch(e){{}}}}
+function clearState(){{try{{localStorage.removeItem(KEY);}}catch(e){{}}}}
 
 function readAnswer(i){{
   if(QUESTIONS[i].type==="X"){{
@@ -206,8 +206,8 @@ function grade(){{
     else wrong.push(i+1);
   }});
   const total=QUESTIONS.length;
-  localStorage.setItem(RETRY_KEY,JSON.stringify(
-    {{title:"错题重练",questions:wrong.map(i=>QUESTIONS[i-1]).filter(Boolean)}}));
+  try{{localStorage.setItem(RETRY_KEY,JSON.stringify(
+    {{title:"错题重练",questions:wrong.map(i=>QUESTIONS[i-1]).filter(Boolean)}}));}}catch(e){{}}
   document.getElementById('res').innerHTML=
     '<div class="score">得分 '+score+'/'+total+'（'+(total?Math.round(score*100/total):0)+' 分）</div>'+
     (wrong.length?'<div class="hint bad">错题回顾：'+wrong.join('、')+'（答案见下方解析区）</div>'
@@ -237,7 +237,7 @@ function grade(){{
   }});
 }}
 function retryWrong(){{
-  const r=JSON.parse(localStorage.getItem(RETRY_KEY)||"null");
+  let r=null; try{{r=JSON.parse(localStorage.getItem(RETRY_KEY)||"null");}}catch(e){{r=null;}}
   if(!r||!r.questions||!r.questions.length){{alert("暂无错题数据：先提交判分后再练错题");return;}}
   QUESTIONS=r.questions.slice();
   clearState(); document.getElementById('res').innerHTML='';
@@ -317,9 +317,9 @@ details.q .qs:hover{{color:var(--acc)}}
 </style></head><body><main>{body}</main>
 <button class="mini" style="position:fixed;top:12px;right:12px;z-index:9;font-size:14px;padding:4px 12px" onclick="toggleTheme()" title="切换亮/暗主题">🌓</button>
 <script>
-if(localStorage.getItem("medkit-theme")==="light")document.documentElement.dataset.theme="light";
+try{{if(localStorage.getItem("medkit-theme")==="light")document.documentElement.dataset.theme="light";}}catch(e){{}}
 function toggleTheme(){{const cur=document.documentElement.dataset.theme==="light"?"dark":"light";
-document.documentElement.dataset.theme=cur;localStorage.setItem("medkit-theme",cur);}}
+document.documentElement.dataset.theme=cur;try{{localStorage.setItem("medkit-theme",cur);}}catch(e){{}}}}
 </script>
 </body></html>"""
 

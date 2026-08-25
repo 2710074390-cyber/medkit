@@ -233,13 +233,16 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     web_materials: list[dict[str, Any]] = []
     if web_enabled:
         ckpt_file = base / "网络参考素材.json"
-        if ckpt_file.exists():  # 同项目缓存：重复批跑不再扣费
+        inc_flag = base / "网络参考素材.incomplete"  # F2（v0.5）：取消留下的不完整标记
+        if ckpt_file.exists() and not inc_flag.exists():  # 同项目缓存：重复批跑不再扣费
             try:
                 web_materials = json.loads(ckpt_file.read_text(encoding="utf-8"))
                 web_materials_text = ws.digest_for_prompt(web_materials)
                 _log(base, f"  网络检索：使用项目缓存（{len(web_materials)} 条）")
             except Exception:  # noqa: BLE001
                 web_materials = []
+        elif inc_flag.exists():
+            _log(base, "  网络检索：上一轮被取消（结果不完整）→ 续跑重新检索")
         if not web_materials:
             _set_stage(base, meta_path, "websearch", "⓪ 多轮网络检索（考纲/真题/指南）…")
             _set_progress(base, "websearch", 0, 1, "检索中…（首次约 1~3 分钟）")
@@ -276,6 +279,13 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             web_materials_text = ws.digest_for_prompt(materials)
             (base / "网络参考素材.json").write_text(
                 json.dumps(materials, ensure_ascii=False, indent=2), encoding="utf-8")
+            if cancel.is_set():
+                # F2：检索中途取消 → 落盘结果标记 incomplete，续跑将重新检索而非复用残缺结果
+                inc_flag.write_text("incomplete", encoding="utf-8")
+                _set_stage(base, meta_path, "cancelled",
+                           "⏹ 已取消（网络检索未完成；续跑将重新检索）")
+                return {"stage": "cancelled", "questions": 0, "partial": True}
+            inc_flag.unlink(missing_ok=True)
             conflicts = [m for m in materials if m.get("conflict")]
             if conflicts:
                 lines = ["# 人工复核清单（网络检索冲突项）", "",

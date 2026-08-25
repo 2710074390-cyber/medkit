@@ -230,6 +230,9 @@ def _run_ocr_job(job: dict[str, Any], tmp_path: str, name: str, suffix: str) -> 
                 tmp_path,
                 progress=lambda label: _ocr_job_set(jid, "running", label),
                 cancel=job["cancel"])
+            if job["cancel"].is_set():  # F1（v0.5）：取消竞态 — 完成后不得覆写 cancelled 终态
+                _ocr_job_set(jid, "cancelled", "已取消（识别中止，未采用结果）")
+                return
             via = "mineru-v4" if client.mode() == "v4" else "mineru-agent"
             job["result"] = _mineru_to_result(name, markdown, via)
             _ocr_job_set(jid, "done", "识别完成，已自动加入输入")
@@ -493,9 +496,15 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
 
     # 项目 ID 防呆：仅保留中英数字与 -_，避免特殊字符进路径
     safe_subject = re.sub(r"[^\w\u4e00-\u9fff-]", "_", body.subject.strip())
-    pid = f"{safe_subject}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    pid = f"{safe_subject}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     proj_dir = Path(cfg.load()["projects_dir"]) / pid
-    proj_dir.mkdir(parents=True, exist_ok=True)
+    # F3（v0.5）：同秒同名项目不再静默合并（旧实现 mkdir(exist_ok=True) 直接覆盖同一目录）
+    for _try in range(10):
+        if not proj_dir.exists():
+            break
+        pid = f"{safe_subject}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{_try + 1}"
+        proj_dir = Path(cfg.load()["projects_dir"]) / pid
+    proj_dir.mkdir(parents=True, exist_ok=False)
 
     all_slices = ([{**s, "role": "textbook"} for s in body.textbook_slices]
                   + [{**s, "role": "teacher"} for s in body.teacher_slices]

@@ -502,6 +502,25 @@ let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exa
 const esc = s => String(s ?? "").replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+/* v0.5：轮询/项目状态声明提前（showTab 在初始化时即调用 stopPoll，需先于任何 IIFE 就绪） */
+let currentPid = null;
+let pollTimer = null;
+let pollFails = 0;
+let ocrRunToken = 0;   // OCR 轮询取消令牌：离开页面自增 → while 循环终止
+
+/* v0.5：全局错误兜底（fetch 失败/脚本异常不再静默） */
+window.onerror = function (msg, src, ln, col, err) {
+  try { toast("脚本异常：" + ((err && err.message) || msg), false); } catch (e) { /* ignore */ }
+  return false;
+};
+window.addEventListener("unhandledrejection", ev => {
+  try {
+    const m = (ev.reason && ev.reason.message) ? ev.reason.message : String(ev.reason || "未处理的异步错误");
+    toast("异步错误：" + m, false);
+  } catch (e) { /* ignore */ }
+  ev.preventDefault();
+});
+
 function toast(msg, ok = true) {
   const box = $("toasts");
   const t = document.createElement("div");
@@ -538,12 +557,14 @@ function applyTheme() {
 }
 function toggleTheme() {
   state.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  localStorage.setItem("medkit-theme", state.theme);
+  try { localStorage.setItem("medkit-theme", state.theme); } catch (e) { /* 隐私模式等：仅本次生效 */ }
   applyTheme();
 }
 (function initTheme() {
-  const saved = localStorage.getItem("medkit-theme");
-  if (saved === "dark" || saved === "light") state.theme = saved;
+  try {
+    const saved = localStorage.getItem("medkit-theme");
+    if (saved === "dark" || saved === "light") state.theme = saved;
+  } catch (e) { /* 隐私模式：跳过偏好读取，不中断脚本 */ }
   applyTheme();
 })();
 
@@ -552,6 +573,10 @@ function showTab(name) {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
   $("tab-" + name).classList.add("show");
+  if (name !== "proj") {           // v0.5：切走项目详情 → 停止进度轮询与 OCR 轮询
+    stopPoll();
+    ocrRunToken++;
+  }
   if (name === "mine") loadProjects();
   if (name === "prompts") loadPrompts();
 }
@@ -944,6 +969,7 @@ async function parseGroup(role) {
 }
 
 async function runOcrJobs(group, role) {
+  const myToken = ++ocrRunToken;   // v0.5：离开页面（自增 token）→ 轮询循环终止
   const files = state.files[role].map(f => f.file);
   const jobs = [];
   group.results.forEach((r, i) => {
@@ -974,7 +1000,7 @@ async function runOcrJobs(group, role) {
   await Promise.all(jobs.map(j => j.promise));
 
   const started = jobs.filter(j => j.jobId);
-  while (started.some(j => !["done", "failed", "cancelled"].includes(j.state))) {
+  while (myToken === ocrRunToken && started.some(j => !["done", "failed", "cancelled"].includes(j.state))) {
     await new Promise(r => setTimeout(r, 2000));
     await Promise.all(started.map(async j => {
       if (["done", "failed", "cancelled"].includes(j.state)) return;
@@ -1184,9 +1210,7 @@ $("btn_create").onclick = async () => {
 };
 
 /* ---- ③ 项目 */
-let currentPid = null;
-let pollTimer = null;
-let pollFails = 0;
+/* v0.5：currentPid/pollTimer/pollFails 已提前声明于脚本顶部（showTab 需在初始化时安全调用 stopPoll） */
 
 async function loadProjects() {
   const r = await api("/api/projects");
@@ -1291,7 +1315,7 @@ function startPoll(pid) {
       const s = await api("/api/projects/" + pid + "/status");
       pollFails = 0;
       const stageEl = $("pd_stage");
-      if (stageEl) stageEl.textContent = s.stage_label + (s.running ? " <span class='spin'></span>" : "");
+      if (stageEl) stageEl.innerHTML = esc(s.stage_label) + (s.running ? " <span class='spin'></span>" : "");
       const st = $("pd_stepper");
       if (st) st.innerHTML = renderStepper(s.stage, s.progress);
       const logEl = $("pd_log");

@@ -9,6 +9,7 @@ S0（2026-08-25）：原本 main() 内嵌套用例改为模块级 test_ 函数�
 
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -338,6 +339,44 @@ def test_render_precheck_drop_e2e(isolated_cfg):
     # 其余产物正常生成
     for name in ("qbank.md", "qbank.html", "押题卷.html", "复习手册.md", "anki_export.txt"):
         assert (tmp / "最终产物" / name).exists(), f"缺产物 {name}"
+
+
+def test_websearch_cancel_marks_incomplete(isolated_cfg, monkeypatch):
+    """F2：检索中途取消 → 落盘标记 incomplete；续跑重新检索不复用残缺结果。"""
+    import medkit.core.orchestrator as orch
+
+    pid = build_project("_web_cancel_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+    meta = json.loads((tmp / "meta.json").read_text(encoding="utf-8"))
+    meta["web_search"] = True
+    meta["web_backend"] = "bocha"
+    (tmp / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
+                                   encoding="utf-8")
+
+    ev = threading.Event()
+
+    def partial_search(*a, **k):
+        ev.set()  # 检索进行中被取消
+        return {"materials": [{"title": "部分结果", "url": "https://x.example.com/a",
+                               "snippet": "s"}], "logs": [], "errors": []}
+
+    monkeypatch.setattr(orch.ws, "run_search_rounds", partial_search)
+    res = run_project(pid, cancel=ev, overrides=_overrides())
+    assert res["stage"] == "cancelled", res
+    assert (tmp / "网络参考素材.incomplete").exists(), "取消后应留下 incomplete 标记"
+    assert (tmp / "网络参考素材.json").exists(), "残缺结果已落盘（但标记不完整）"
+
+    calls = []
+
+    def fresh_search(*a, **k):
+        calls.append(1)
+        return {"materials": [], "logs": ["重新检索"], "errors": []}
+
+    monkeypatch.setattr(orch.ws, "run_search_rounds", fresh_search)
+    res2 = run_project(pid, overrides=_overrides())  # 续跑（新 cancel Event）
+    assert res2["stage"] == "done", res2
+    assert calls, "续跑应重新检索（不得复用残缺缓存）"
+    assert not (tmp / "网络参考素材.incomplete").exists(), "完整检索后应清除标记"
 
 
 if __name__ == "__main__":
