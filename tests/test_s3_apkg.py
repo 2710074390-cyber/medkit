@@ -79,7 +79,8 @@ def test_apkg_deck_model_id_stable():
     assert json.decoder.JSONDecoder().raw_decode(decks1)[0] == json.decoder.JSONDecoder().raw_decode(decks2)[0], \
         "同名项目牌组 id 应稳定（重复导入不重复卡）"
     assert str(stable_id("稳定项目")) in decks1, "deck_id 应为项目名稳定哈希"
-    con1.close(); con2.close()
+    con1.close()
+    con2.close()
 
 
 def test_apkg_special_chars_and_case_prefix():
@@ -97,7 +98,6 @@ def test_apkg_special_chars_and_case_prefix():
     assert "【案例】患儿男，3岁，发热3天" in joined, "案例题子题卡应带案例题干前缀"
     # X 型题库：note 的 model_id 应为自评模型（由模板名区分）
     mids = {r[0] for r in con.execute("select distinct mid from notes")}
-    col = con.execute("select models from col").fetchone()[0]
     assert len(mids) >= 1
     con.close()
 
@@ -111,7 +111,8 @@ def test_apkg_reimport_same_project_no_dup_note_guids():
     g1 = {r[0] for r in c1.execute("select guid from notes")}
     g2 = {r[0] for r in c2.execute("select guid from notes")}
     assert g1 == g2, f"guid 应稳定避免重复导入（{g1} vs {g2}）"
-    c1.close(); c2.close()
+    c1.close()
+    c2.close()
 
 
 def test_apkg_cleanup():
