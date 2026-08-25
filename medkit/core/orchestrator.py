@@ -14,8 +14,6 @@ U6：查重门禁（n-gram Jaccard >0.8 → warn → MedFix 改写）。
 import json
 import random
 import threading
-import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -95,21 +93,10 @@ def _log(proj_dir: Path, msg: str) -> None:
 
 
 def _write_json_atomic(path: Path, data: Any) -> None:
-    """原子写：唯一临时名 + Windows 共享冲突重试（并发切片写进度文件）。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".tmp{uuid.uuid4().hex[:6]}")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    try:
-        for attempt in range(6):
-            try:
-                tmp.replace(path)
-                return
-            except OSError:
-                if attempt >= 5:
-                    raise
-                time.sleep(0.05 + attempt * 0.03)
-    finally:
-        tmp.unlink(missing_ok=True)
+    """原子写 JSON（唯一临时名 + 共享冲突重试；实现收敛于 fsutil，v0.5）。"""
+    from .fsutil import write_json_atomic
+
+    write_json_atomic(path, data)
 
 
 _PROG_LOCK = threading.Lock()
@@ -187,9 +174,19 @@ def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[s
     """同步执行整条管线；overrides 用于测试注入 Fake client；cancel 用于取消。
 
     returns {"stage", "questions", "qc_decision", ...}
+    U5（v0.5）：按次上下文记账 — 本次 run 独立账本（trial/regen 不再串账），结束即还原。
     """
+    token = usage.activate()
+    try:
+        return _run_project_impl(pid, seed, overrides, cancel)
+    finally:
+        usage.deactivate(token)
+
+
+def _run_project_impl(pid: str, seed: Optional[int] = None,
+                      overrides: Optional[dict[str, Any]] = None,
+                      cancel: Optional[threading.Event] = None) -> dict[str, Any]:
     cancel = cancel or threading.Event()
-    usage.reset()  # U5：本次运行的 token 记账从零开始（单用户单管线场景）
     base = Path(cfg.load()["projects_dir"]) / pid
     meta_path = base / "meta.json"
     if not meta_path.exists():

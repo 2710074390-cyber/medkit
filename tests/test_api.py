@@ -12,6 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -23,9 +25,17 @@ from medkit.core.config import resolve_key  # noqa: E402
 
 TMP_DIR = Path(tempfile.mkdtemp(prefix="medkit_api_"))
 
+# S1 补：本文件把 cfgmod.load/save 与 PROMPTS_DIR_USER/PRESETS_DIR 换成了隔离实现，
+# 模块级泄漏会串扰其他测试文件（尤其 load 浅拷贝共享嵌套 dict 污染 DEFAULTS）——
+# 模块测试结束后统一还原。
+_ORIG_CFG: tuple = ()
+
 
 def _install_isolated_cfg() -> dict:
     """让 main 的 cfg.load/save 指向隔离的临时配置（不污染用户 ~/.medkit）。"""
+    global _ORIG_CFG
+    if not _ORIG_CFG:
+        _ORIG_CFG = (cfgmod.load, cfgmod.save, cfgmod.PROMPTS_DIR_USER, cfgmod.PRESETS_DIR)
     saved = dict(cfgmod.DEFAULTS)
     saved["projects_dir"] = str(TMP_DIR / "projects")
     saved["api_key"] = "sk-test-key"
@@ -35,6 +45,14 @@ def _install_isolated_cfg() -> dict:
     m.cfg.load = lambda: dict(saved)
     m.cfg.save = lambda c: saved.update(c)
     return saved
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_cfg_after_module():
+    yield
+    if _ORIG_CFG:
+        cfgmod.load, cfgmod.save, cfgmod.PROMPTS_DIR_USER, cfgmod.PRESETS_DIR = _ORIG_CFG
+    shutil.rmtree(TMP_DIR, ignore_errors=True)
 
 
 def make_client() -> TestClient:

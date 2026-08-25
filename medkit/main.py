@@ -61,15 +61,21 @@ def _local_port() -> int:
 def _allowed_origins() -> set[str]:
     p = _local_port()
     return {f"http://127.0.0.1:{p}", f"http://localhost:{p}",
-            f"http://127.0.0.1:{p}/", f"http://localhost:{p}/"}
+            f"http://[::1]:{p}",  # v0.5：IPv6 回环 origin 白名单
+            f"http://127.0.0.1:{p}/", f"http://localhost:{p}/",
+            f"http://[::1]:{p}/"}
 
 
 @app.middleware("http")
 async def _guard_local(request: Request, call_next):
     """仅接受本机 Host/Origin：封死 DNS rebinding 与跨站简单请求（CSRF 烧钱）。"""
-    host = (request.headers.get("host") or "").lower()
-    hostname = host.split(":")[0]
-    if hostname not in ("127.0.0.1", "localhost", "[::1]"):
+    host = (request.headers.get("host") or "").lower().strip()
+    # v0.5：兼容 IPv6 回环 [::1]:4880（旧实现 split(':')[0] 得 '['，永远 403）
+    if host.startswith("["):
+        hostname = host[1:host.find("]")] if "]" in host else ""
+    else:
+        hostname = host.split(":")[0]
+    if hostname not in ("127.0.0.1", "localhost", "::1"):
         return JSONResponse({"detail": "forbidden host"}, status_code=403)
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         org = (request.headers.get("origin") or "").rstrip("/")
@@ -100,9 +106,10 @@ def _read_meta_checked(base: Path) -> dict[str, Any]:
 
 
 def _write_meta_atomic(base: Path, meta: dict[str, Any]) -> None:
-    tmp = base / "meta.json.tmp"
-    tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, base / "meta.json")
+    """v0.5：原子写统一走 fsutil（唯一 tmp 名 + 重试；旧实现固定 meta.json.tmp 无重试）。"""
+    from .core.fsutil import write_json_atomic
+
+    write_json_atomic(base / "meta.json", meta)
 
 
 # ---------------------------------------------------------------- 基础
@@ -251,7 +258,7 @@ async def ocr_start(file: UploadFile = File(...),
     OCR_JOB_DIR.mkdir(parents=True, exist_ok=True)
     jid = uuid.uuid4().hex[:12]
     tmp_path = str(OCR_JOB_DIR / f"{jid}{suffix}")
-    Path(tmp_path).write_bytes(data)
+    await asyncio.to_thread(Path(tmp_path).write_bytes, data)  # v0.5：≥200MB 写盘移出事件循环
 
     job = {"id": jid, "name": file.filename, "role": role, "state": "queued",
            "msg": "排队中…", "result": None, "created": time.time(),
@@ -765,22 +772,25 @@ def trial(body: TrialBody) -> dict[str, Any]:
     if not body.slice_text.strip():
         raise HTTPException(400, "切片内容为空")
     from .agents import medgen
+    from .core import usage as usage_mod
     client = LLMClient(c.get("base_url", ""), resolve_key(c.get("api_key", "")),
                        c.get("model_gen", ""), timeout=90)
     slice_ = {"sid": body.slice_sid, "title": body.slice_title, "text": body.slice_text[:6000]}
-    try:
-        qs, _ = medgen.generate_slice(
-            client, body.subject, body.exam, slice_, 1, body.ratios,
-            body.teacher_text[:2000], requirements=body.requirements[:500],
-            knobs=body.knobs)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"试出题失败：{e}") from e
+    with usage_mod.context() as uctx:  # v0.5：试出独立记账（与并行管线互不串账）
+        try:
+            qs, _ = medgen.generate_slice(
+                client, body.subject, body.exam, slice_, 1, body.ratios,
+                body.teacher_text[:2000], requirements=body.requirements[:500],
+                knobs=body.knobs)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"试出题失败：{e}") from e
     if not qs:
         raise HTTPException(502, "模型未返回有效题目，请重试或检查模型配置")
     issues = options_check.check_all(qs)["issues"]
     issues += trace_check.check_trace(qs, {body.slice_sid})["issues"]
     return {"question": qs[0], "issues": issues,
-            "from_slice": f"{body.slice_sid} · {body.slice_title}"}
+            "from_slice": f"{body.slice_sid} · {body.slice_title}",
+            "usage": uctx.snapshot()}
 
 
 # ---------------------------------------------------------------- 提示词（迭代1 只读 / 迭代3 编辑）
@@ -886,6 +896,7 @@ def create_preset(body: PresetBody) -> dict[str, Any]:
 
 @app.delete("/api/presets/{pid}")
 def delete_preset(pid: str) -> dict[str, Any]:
+    pid = _safe_pid(pid)  # v0.5：路径穿越消毒（旧实现可删任意 ~/.medkit 下 .json）
     ok = prs.delete_preset(pid)
     if not ok:
         raise HTTPException(400, "内置预设不可删除（或预设不存在）")
@@ -987,6 +998,8 @@ class ReviewBody(BaseModel):
 def review_questions(pid: str, body: ReviewBody) -> dict[str, Any]:
     """keep/drop/edits → 覆盖题库并重渲染。"""
     pid = _safe_pid(pid)
+    if RUNNING.get(pid):  # v0.5：运行中审核 → 409（旧实现与出题线程并发写盘）
+        raise HTTPException(409, "项目正在生成中，暂不可审核（请等待完成或先停止）")
     base = Path(cfg.load()["projects_dir"]) / pid
     meta = _read_meta_checked(base)
     f = base / "最终产物" / "questions_final.json"
@@ -1011,7 +1024,9 @@ def review_questions(pid: str, body: ReviewBody) -> dict[str, Any]:
         out.append(q)
     if not out:
         raise HTTPException(400, "保留题数为 0，请至少保留一题")
-    (f).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    from .core.fsutil import write_json_atomic
+
+    write_json_atomic(f, out)  # v0.5：原子写（旧实现裸 write_text）
     rendered = _rerender_project(base, out, meta)
     return {"ok": True, "questions": len(out), "rendered": rendered}
 
@@ -1024,6 +1039,8 @@ class RegenBody(BaseModel):
 def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
     """按 q.sid 找回原切片，单题重掷（generate_slice count=1），替换入库并重渲染。"""
     pid = _safe_pid(pid)
+    if RUNNING.get(pid):  # v0.5：运行中重掷 → 409（避免与出题线程并发写盘）
+        raise HTTPException(409, "项目正在生成中，暂不可重掷（请等待完成或先停止）")
     base = Path(cfg.load()["projects_dir"]) / pid
     meta = _read_meta_checked(base)
     f = base / "最终产物" / "questions_final.json"
@@ -1042,25 +1059,30 @@ def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
     if not resolve_key(c.get("api_key", "")):
         raise HTTPException(400, "请先配置 API Key")
     from .agents import medgen
+    from .core import usage as usage_mod
     teacher_text = "\n".join(s.get("text", "") for s in slices if s.get("role") == "teacher")
     client = medgen.make_client()
-    try:
-        new_qs, _ = medgen.generate_slice(
-            client, meta.get("subject", ""), meta.get("exam", "期末"), slice_, 1,
-            meta.get("ratios", {}), teacher_text,
-            requirements=meta.get("requirements", ""), knobs=meta.get("knobs", {}),
-            bloom=meta.get("bloom", None))
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"重掷失败：{e}") from e
+    with usage_mod.context() as uctx:  # v0.5：重掷独立记账（不再污染下一轮 run）
+        try:
+            new_qs, _ = medgen.generate_slice(
+                client, meta.get("subject", ""), meta.get("exam", "期末"), slice_, 1,
+                meta.get("ratios", {}), teacher_text,
+                requirements=meta.get("requirements", ""), knobs=meta.get("knobs", {}),
+                bloom=meta.get("bloom", None))
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"重掷失败：{e}") from e
     if not new_qs:
         raise HTTPException(502, "模型未返回有效题目，请重试")
     new_q = new_qs[0]
     new_q["id"] = q["id"]
     idx = questions.index(q)
     questions[idx] = new_q
-    (f).write_text(json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
+    from .core.fsutil import write_json_atomic
+
+    write_json_atomic(f, questions)  # v0.5：原子写（旧实现裸 write_text）
     rendered = _rerender_project(base, questions, meta)
     return {"ok": True, "question": new_q, "rendered": rendered,
+            "usage": uctx.snapshot(),  # v0.5：重掷独立记账随响应返回
             "issues": options_check.check_all([new_q])["issues"]}
 
 

@@ -7,6 +7,7 @@ S2（2026-08 审计）：Windows 下 API Key 用 DPAPI（CryptProtectData，ctyp
 """
 
 import base64
+import copy
 import ctypes
 import json
 import os
@@ -102,7 +103,7 @@ def encrypt_for_save(value: str) -> str:
 
 # ---------------------------------------------------------------- 读写
 def load() -> dict[str, Any]:
-    cfg = dict(DEFAULTS)
+    cfg = copy.deepcopy(DEFAULTS)  # v0.5：深拷贝（旧实现 dict() 浅拷贝，嵌套 dict 被 update 污染模块级默认值）
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
