@@ -19,6 +19,7 @@ from . import load_prompt
 logger = logging.getLogger(__name__)
 
 DEFAULT_BLOOM = {"记忆": 30, "理解": 40, "应用": 25, "创造": 5}
+TEACHER_CHAR_LIMIT = 4000  # 教师重点注入上限（S2：单源常量，管线/orchestrator/trial 共用）
 
 # v0.5：一次性替换占位符（旧实现链式 replace，教材文本含 {teacher_text} 等字面量会被二次替换）
 _PLACEHOLDER = re.compile(r"\{(subject|exam|slice_count|ratios|bloom_ratios|slice_text|teacher_text)\}")
@@ -147,7 +148,7 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
         "ratios": ", ".join(f"{k} {v}%" for k, v in ratios.items() if v > 0),
         "bloom_ratios": _bloom_ratio_str(bloom),
         "slice_text": slice_.get("text", "")[:8000],
-        "teacher_text": teacher_text[:4000],
+        "teacher_text": teacher_text[:TEACHER_CHAR_LIMIT],
     }
     system = _PLACEHOLDER.sub(lambda m: parts[m.group(1)], load_prompt("medgen.md"))
     system += build_extra_block(requirements, knobs)      # 迭代1/2 注入点

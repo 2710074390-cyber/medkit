@@ -35,7 +35,14 @@ echo 绿色版目录：dist\MedKit\
 echo 使用：双击 dist\MedKit\MedKit.exe（或复制整个 MedKit 文件夹到别处使用）
 echo 验证：启动后浏览器打开 http://127.0.0.1:4880
 
-echo.
+echo === 生成版本文件（单源：medkit/__init__.py __version__）===
+python -c "import re, pathlib; t = pathlib.Path(r'medkit/__init__.py').read_text(encoding='utf-8'); v = re.search(r'__version__\s*=\s*[\"']([^\"']+)[\"']', t).group(1); pathlib.Path(r'pack/version.iss').write_text('#define MyAppVersion \"' + v + '\"\n', encoding='utf-8'); print('pack/version.iss =', v)"
+if errorlevel 1 (
+  echo [错误] 版本文件生成失败。
+  pause
+  exit /b 1
+)
+
 echo === 构建 Inno Setup 安装包（可选）===
 set ISCC=%LOCALAPPDATA%\Programs\Inno\ISCC.exe
 if not exist "%ISCC%" ( set ISCC=%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe )

@@ -31,7 +31,8 @@ B1_WEIGHT_REDIST = {"A1": 0.5, "A2": 0.4, "X": 0.1}  # B1 未支持时配额再�
 FIX_ROUNDS_GATE = 2
 PAPER_DEFAULT = 50
 PIPELINE_CONCURRENCY = 3  # 切片出题并发（DeepSeek 等限额友好）
-TEACHER_CHAR_LIMIT = 4000
+TEACHER_CHAR_LIMIT = medgen.TEACHER_CHAR_LIMIT  # S2：单源常量（medgen.py 定义，管线与 trial 共用）
+
 RENDER_MAX_OPTIONS = 6  # 渲染前终检上限（qbank_html LETTERS=10 保底防 IndexError，超限题剔除）
 
 

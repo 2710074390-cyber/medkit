@@ -134,7 +134,9 @@ def test_ocr_cancel_race_keeps_cancelled(monkeypatch, tmp_path):
         def mode(self):
             return "agent"
 
-    monkeypatch.setattr(m, "MinerUClient", lambda key: FakeMinerU(key))
+    from medkit.core import mineru as mineru_mod
+
+    monkeypatch.setattr(mineru_mod, "MinerUClient", lambda key: FakeMinerU(key))
     job = {"id": "ocr_race", "name": "x.pdf", "role": "textbook", "state": "queued",
            "msg": "", "result": None, "cancel": threading.Event()}
     m.OCR_JOBS[job["id"]] = job

@@ -10,7 +10,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-python -c "import fastapi, uvicorn, openai, multipart" >nul 2>nul
+python -c "import fastapi, uvicorn, openai, multipart, fitz, docx, markdown, httpx" >nul 2>nul
 if errorlevel 1 (
   echo [提示] 首次运行需要安装依赖，请先执行：
   echo        pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
@@ -19,6 +19,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo 正在启动 MedKit ... 启动完成后会自动打开浏览器（http://127.0.0.1:4880）
+echo 正在启动 MedKit ...（端口 4880，被占用时自动回退 4881-4889）
 python run_medkit.py
 pause

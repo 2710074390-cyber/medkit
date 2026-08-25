@@ -1,8 +1,9 @@
 ; MedKit 安装脚本（Inno Setup 7 / 6 兼容）
-; 用法：ISCC.exe medkit.iss  →  dist-installer\MedKit-Setup-0.4.0.exe
+; 用法：ISCC.exe medkit.iss  →  dist-installer\MedKit-Setup-{version}.exe
+; 版本单源：pack/version.iss 由 pack/build.bat 从 medkit/__init__.py __version__ 生成
 
 #define MyAppName "MedKit"
-#define MyAppVersion "0.4.0"
+#include "pack\version.iss"
 #define MyAppPublisher "MedAgentWork"
 #define MyAppExeName "MedKit.exe"
 #define MyAppDesc "医学题库工坊 —— 教材 + 教师重点 → 全新题库/押题卷/复习手册（本地生成）"

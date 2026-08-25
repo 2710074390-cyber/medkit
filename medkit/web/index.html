@@ -1052,22 +1052,28 @@ function renderResults(roleLabel, res) {
   });
   el.appendChild(wrap);
 }
-function estimateCost() {
+/* S2：成本公式统一走后端（core/cost.estimate_run，与 Python 同源），旧内嵌公式删除 */
+async function estimateCost() {
   const chars = resTotalChars(pres.textbook) + resTotalChars(pres.teacher);
   const nSlices = (pres.textbook && pres.textbook.results || []).filter(r => r.ok)
     .reduce((a, r) => a + (r.slice_count || 0), 0);
   const nQ = Math.max(parseInt($("target").value || "100"), 1);
-  const inp = (chars + chars * 0.85 * Math.max(nSlices, 1)) * 0.8 + nQ * 1700 * 0.8 + 21000 * 0.8;
-  const out = nQ * 350 + (nQ / 20 + 1) * 800 + 4000;
-  return { inp: inp, out: out, tot: inp + out };
+  try {
+    const r = await api("/api/cost/estimate", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chars_textbook: resTotalChars(pres.textbook) || 0,
+                             chars_teacher: resTotalChars(pres.teacher) || 0,
+                             n_slices: nSlices, n_questions: nQ }) });
+    return { inp: r.input_tokens, out: r.output_tokens, tot: r.total_tokens };
+  } catch (e) { return { inp: 0, out: 0, tot: 0 }; }
 }
-function updateReady() {
+async function updateReady() {
   const tb = pres.textbook, tc = pres.teacher, ex = pres.exam;
   const warns = [];
   [...(tb && tb.results || []), ...(tc && tc.results || [])].forEach(r => warns.push(...(r.warnings || [])));
   let estLine = "解析后此处显示成本预估";
   if (resTotalChars(tb) || resTotalChars(tc)) {
-    const est = estimateCost();
+    const est = await estimateCost();
     const prov = (state.providers || []).find(p => p.id === state.provider);
     const price = prov && prov.price;
     const cny = price ? (est.inp / 1e6 * (price.input || 0) + est.out / 1e6 * (price.output || 0)) : null;
@@ -1105,7 +1111,7 @@ $("btn_parse").onclick = async () => {
       if (g.render || g.res.results.some(r => r.ok)) renderResults(g.label, g.res);
     }
     pres.sample = false;
-    updateReady();
+    await updateReady();
     toast("解析完成：体检与成本预估已更新");
   } catch (e) { $("parse_results").innerHTML = `<div class="hint bad">${esc(e.message)}</div>`; }
 };
@@ -1122,7 +1128,7 @@ $("btn_sample").onclick = async () => {
     $("ocr_progress").innerHTML = "";
     renderResults("教材（示例）", pres.textbook);
     renderResults("教师重点（示例）", pres.teacher);
-    updateReady();
+    await updateReady();
     toast("示例素材已载入：先点「试出一题」看效果，满意后「创建课题 →」");
   } catch (e) { toast(e.message, false); }
   $("btn_sample").disabled = false; $("btn_sample").textContent = "🎓 手头还没素材？载入示例体验";

@@ -33,7 +33,7 @@ pack\build.bat              # 或：python -m PyInstaller --noconfirm --clean me
 pack\build.bat              # 已在末尾自动检测 ISCC 并构建安装包
 ```
 
-- 产物：`dist-installer\MedKit-Setup-0.4.0.exe`（约 38 MB）
+- 产物：`dist-installer\MedKit-Setup-{version}.exe`（约 38 MB；版本号单源：`medkit/__init__.py` `__version__` → `pack/build.bat` 生成 `pack/version.iss`）
 - 特性：安装向导（中文/英文）· 开始菜单快捷方式 · 可选桌面图标 · 标准卸载（控制面板）· 安装后可选启动
 
 ## 目录

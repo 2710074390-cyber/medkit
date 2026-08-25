@@ -1,0 +1,92 @@
+"""S2 工程化重构回归测试：
+
+版本单源（__init__ ↔ APP_VERSION ↔ pack/version.iss）/ 路由拆分后全量端点仍装配 /
+state 单例（main 与 state 共享同一 RUNNING·OCR_JOBS）/ logging 幂等（临时目录，不污染 ~/.medkit）/
+成本预估端点与 core.cost 公式一致。
+"""
+
+import logging
+import sys
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import medkit  # noqa: E402
+import medkit.main as m  # noqa: E402
+import medkit.state as state  # noqa: E402
+from medkit.core.cost import estimate_run  # noqa: E402
+from medkit.logging_setup import setup_logging  # noqa: E402
+
+
+def test_version_single_source():
+    assert medkit.__version__ == "0.5.0"
+    assert m.APP_VERSION == medkit.__version__, "main.APP_VERSION 应引用单源版本"
+    iss = (ROOT / "pack" / "version.iss").read_text(encoding="utf-8")
+    assert f'"{medkit.__version__}"' in iss, "pack/version.iss 应与 __version__ 一致"
+
+
+def test_all_routes_still_assembled():
+    paths = {r.path for r in m.app.routes if getattr(r, "path", None)}
+    expect = {
+        "/", "/api/health", "/api/providers", "/api/config",
+        "/api/llm/test", "/api/llm/models",
+        "/api/mineru/test", "/api/ocr/start", "/api/ocr/jobs/{job_id}",
+        "/api/parse", "/api/sample",
+        "/api/projects", "/api/projects/{pid}", "/api/projects/{pid}/status",
+        "/api/projects/{pid}/run", "/api/projects/{pid}/files/{name}",
+        "/api/projects/{pid}/export/anki", "/api/projects/{pid}/questions",
+        "/api/projects/{pid}/questions/review", "/api/projects/{pid}/regen",
+        "/api/trial", "/api/cost/estimate", "/api/prompts", "/api/prompts/{name}",
+        "/api/presets", "/api/presets/{pid}",
+        "/api/search/backends", "/api/search/test",
+    }
+    missing = expect - paths
+    assert not missing, f"拆分后缺失路由：{sorted(missing)}"
+
+
+def test_state_singletons_shared():
+    assert m.RUNNING is state.RUNNING, "main.RUNNING 应与 state.RUNNING 同一对象"
+    assert m.OCR_JOBS is state.OCR_JOBS
+    assert m.OCR_LOCK is state.OCR_LOCK
+
+
+def test_logging_setup_idempotent(tmp_path):
+    root = logging.getLogger()
+    added = []
+    try:
+        setup_logging(tmp_path)
+        assert (tmp_path / "medkit.log").exists(), "应创建 medkit.log"
+        med_handlers = [h for h in root.handlers if getattr(h, "_medkit", False)]
+        assert len(med_handlers) == 2, "应添加文件 + 控制台两个 handler"
+        added = med_handlers[:]
+        # 幂等：再次调用不重复添加
+        setup_logging(tmp_path / "other")
+        med_handlers2 = [h for h in root.handlers if getattr(h, "_medkit", False)]
+        assert len(med_handlers2) == 2, "重复 setup 不应叠加 handler"
+    finally:
+        for h in added:
+            root.removeHandler(h)
+
+
+def test_cost_estimate_endpoint_matches_formula(monkeypatch, tmp_path):
+    saved = dict(__import__("medkit.core.config", fromlist=["x"]).DEFAULTS)
+    from medkit.core import config as cfgmod
+
+    saved["projects_dir"] = str(tmp_path / "projects")
+    saved["api_key"] = "sk-test"
+    monkeypatch.setattr(cfgmod, "PROMPTS_DIR_USER", tmp_path / "prompts")
+    monkeypatch.setattr(cfgmod, "PRESETS_DIR", tmp_path / "presets")
+    monkeypatch.setattr(m.cfg, "load", lambda: dict(saved))
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    body = {"chars_textbook": 10000, "chars_teacher": 2000,
+            "n_slices": 3, "n_questions": 100}
+    r = c.post("/api/cost/estimate", json=body)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    exp = estimate_run(10000, 2000, 3, 100)
+    assert got == {"input_tokens": exp["input_tokens"],
+                   "output_tokens": exp["output_tokens"],
+                   "total_tokens": exp["total_tokens"]}, "前端成本公式必须与 core.cost 同源"
