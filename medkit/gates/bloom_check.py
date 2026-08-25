@@ -1,6 +1,8 @@
 """门禁①-B Bloom 分布校验（目标默认 30/40/25/5，偏差 >15% → fail）。
 
 可玩性 2B：target 参数化（用户自定义配比；默认值不变 → 原有行为零回归）。
+v0.5：小题量（n<10）放宽 — 单题即占 1/n 比例，硬校验必然 fail 且 q_id='BLOOM'
+无法被 MedFix 定位（修复轮空转），改为 warn 提示。
 """
 
 from collections import Counter
@@ -8,22 +10,26 @@ from typing import Any, Optional
 
 DEFAULT_TARGET = {"记忆": 0.30, "理解": 0.40, "应用": 0.25, "创造": 0.05}
 DEVIATION_LIMIT = 0.15
+SMALL_BANK_N = 10  # 小题量阈值：n < 10 时 fail 降级为 warn
 
 
 def check_bloom(questions: list[dict[str, Any]],
                 target: Optional[dict[str, float]] = None) -> dict[str, Any]:
     target = target or DEFAULT_TARGET
     n = max(len(questions), 1)
+    small_bank = n < SMALL_BANK_N
     counter = Counter(q.get("bloom") or "未知" for q in questions)
     dist = {k: round(counter.get(k, 0) / n, 3) for k in target}
     issues = []
     for level, tgt in target.items():
         dev = abs(dist.get(level, 0) - tgt)
         if dev > DEVIATION_LIMIT:
+            severity = "warn" if small_bank else "fail"
             issues.append({
-                "q_id": "BLOOM", "code": "D16", "severity": "fail",
+                "q_id": "BLOOM", "code": "D16", "severity": severity,
                 "reason": f"Bloom[{level}] 实际 {dist.get(level, 0):.0%} vs 目标 {tgt:.0%}，"
-                          f"偏差 {dev:.0%} > 15%"})
+                          f"偏差 {dev:.0%} > 15%"
+                          + ("（小题量 n<10，单题占比波动属正常偏差，仅提示）" if small_bank else "")})
         elif dev > 0.08:
             issues.append({
                 "q_id": "BLOOM", "code": "D16", "severity": "warn",

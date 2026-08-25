@@ -9,12 +9,19 @@ A6（2026-08 审计）：user 消息只保留参数摘要，全文仅在 system 
 U4：返回题数 < 配额 → 最多补 2 轮。
 """
 
+import logging
+import re
 from typing import Any, Optional
 
 from . import get_client as _get_client
 from . import load_prompt
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_BLOOM = {"记忆": 30, "理解": 40, "应用": 25, "创造": 5}
+
+# v0.5：一次性替换占位符（旧实现链式 replace，教材文本含 {teacher_text} 等字面量会被二次替换）
+_PLACEHOLDER = re.compile(r"\{(subject|exam|slice_count|ratios|bloom_ratios|slice_text|teacher_text)\}")
 
 # 结构化旋钮 → 预写提示词片段（2A；集中一处便于调优）
 KNOB_FRAGMENTS: dict[str, dict[str, str]] = {
@@ -59,11 +66,26 @@ def build_web_block(web_materials: str = "", web_quota: int = 0) -> str:
             "不得作为正确答案依据）\n%s") % (web_quota, web_materials)
 
 
-def _bloom_ratio_str(bloom: Optional[dict[str, int]]) -> str:
-    b = {k: int(v or 0) for k, v in (bloom or DEFAULT_BLOOM).items()}
-    if sum(b.values()) <= 0:
-        b = dict(DEFAULT_BLOOM)
-    return " / ".join(f"{b.get(k, d)}%" for k, d in DEFAULT_BLOOM.items())
+def _bloom_ratio_str(bloom: Optional[dict[str, Any]]) -> str:
+    """Bloom 配比 → 提示词字符串。
+
+    v0.5：兼容小数/百分比混合输入（int(0.3)=0 的静默回退已修）；合计 ≠100 时归一 + warn
+    （如 0.3/0.4/0.25/0.05 的比例式输入会归一为 30/40/25/5）。
+    """
+    raw = bloom or DEFAULT_BLOOM
+    b: dict[str, float] = {}
+    for k, v in raw.items():
+        try:
+            b[k] = float(v or 0)
+        except (TypeError, ValueError):
+            b[k] = 0.0
+    total = sum(b.values())
+    if total <= 0:
+        b = {k: float(v) for k, v in DEFAULT_BLOOM.items()}
+    elif abs(total - 100.0) > 0.01:
+        logger.warning("Bloom 配比合计 %.2f ≠ 100，已归一化到 100%%", total)
+        b = {k: round(v / total * 100.0, 1) for k, v in b.items()}
+    return " / ".join(f"{b.get(k, float(d)):g}%" for k, d in DEFAULT_BLOOM.items())
 
 
 def build_user_message(subject: str, exam: str, slice_: dict[str, Any],
@@ -80,12 +102,17 @@ def _parse_questions(data: Any, slice_: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     questions = [q for q in raw if isinstance(q, dict) and q.get("question")]
     for q in questions:
-        q.setdefault("type", "A1")
-        q.setdefault("bloom", "理解")
-        q.setdefault("subtopic", slice_.get("title", "")[:12])
-        q.setdefault("options", [])
-        q.setdefault("answer", "")
-        q.setdefault("analysis", "")
+        # v0.5：显式 null / 类型异常统一兜底（setdefault 不覆盖显式 null → 下游 enumerate 崩）
+        q["type"] = str(q.get("type") or "A1")
+        q["bloom"] = str(q.get("bloom") or "理解")
+        q["subtopic"] = str(q.get("subtopic") or slice_.get("title", "")[:12])
+        opts = q.get("options")
+        if isinstance(opts, list):
+            q["options"] = [str(o) for o in opts if isinstance(o, (str, int, float))]
+        else:
+            q["options"] = []
+        q["answer"] = str(q.get("answer") or "")
+        q["analysis"] = str(q.get("analysis") or "")
         q["sid"] = slice_.get("sid", "")
         q["module"] = slice_.get("title", "")
     return questions
@@ -109,17 +136,24 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
                    knobs: Optional[dict[str, str]] = None,
                    bloom: Optional[dict[str, int]] = None,
                    web_materials: str = "", web_quota: int = 0) -> tuple[list[dict[str, Any]], int]:
-    """单切片出题（可能含 ≤2 次补充调用）。返回 (questions, 下一个 id 序号)。"""
-    system = load_prompt("medgen.md").replace(
-        "{subject}", subject).replace("{exam}", exam).replace(
-        "{slice_count}", str(count)).replace("{ratios}", ", ".join(
-            f"{k} {v}%" for k, v in ratios.items() if v > 0)).replace(
-        "{bloom_ratios}", _bloom_ratio_str(bloom)).replace(
-        "{slice_text}", slice_.get("text", "")[:8000]).replace(
-        "{teacher_text}", teacher_text[:4000])
+    """单切片出题（可能含 ≤2 次补充调用）。返回 (questions, 下一个 id 序号)。
+
+    v0.5：占位符一次性替换（防教材文本二次替换注入）；超发题数按配额截断。
+    """
+    parts = {
+        "subject": subject,
+        "exam": exam,
+        "slice_count": str(count),
+        "ratios": ", ".join(f"{k} {v}%" for k, v in ratios.items() if v > 0),
+        "bloom_ratios": _bloom_ratio_str(bloom),
+        "slice_text": slice_.get("text", "")[:8000],
+        "teacher_text": teacher_text[:4000],
+    }
+    system = _PLACEHOLDER.sub(lambda m: parts[m.group(1)], load_prompt("medgen.md"))
     system += build_extra_block(requirements, knobs)      # 迭代1/2 注入点
     system += build_web_block(web_materials, web_quota)   # §5.4 参考素材注入点
     questions = _call_once(client, system, subject, exam, slice_, count, ratios)
+    questions = questions[:count]  # v0.5：LLM 超发 → 按配额截断
     # U4：不足配额 → 补 2 轮
     for _ in range(2):
         if len(questions) >= count:
@@ -129,6 +163,7 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
         if not extra:
             break
         questions.extend(extra)
+        questions = questions[:count]  # 补充轮同样截断
     return questions, ids_start + len(questions)
 
 

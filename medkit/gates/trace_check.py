@@ -1,9 +1,13 @@
-"""门禁①-C 溯源回查：每题 analysis 必须含 [源:...]，且引用的切片 ID 必须存在。"""
+"""门禁①-C 溯源回查：每题 analysis 必须含 [源:...]，且引用的切片 ID 必须存在。
+
+v0.5：兼容全角括号【源：…】与全角冒号（LLM 实际输出常为【源:切片S001】，
+旧实现只认半角括号/冒号 → 溯源全量误报 F2）。
+"""
 
 import re
 from typing import Any
 
-SRC_PATTERN = re.compile(r"\[源:([^\]]{1,60})\]")
+SRC_PATTERN = re.compile(r"[【\[]源[：:]([^】\]]{1,60})[】\]]")
 SID_PATTERN = re.compile(r"切片?(S\d{3})")
 
 

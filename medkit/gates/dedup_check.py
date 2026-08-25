@@ -6,8 +6,9 @@
 import re
 from typing import Any
 
-# 只保留汉字/字母等「词字符」，剥除标点/数字/空格（\W+\d 覆盖全角半角标点与数字）
-_NON_WORD = re.compile(r"[\W\d]+")
+# v0.5：保留数字/字母/汉字（剥除标点与空白），使「血钾 5.5」与「血钾 7.0」保持可判别；
+# 旧实现 [\W\d]+ 连数字一起剥 → 两道仅数值不同的临床题被误报近似重复。
+_NON_WORD = re.compile(r"[\W_]+")
 NGRAM_SIZES = (2, 3, 4)
 THRESHOLD = 0.8
 
