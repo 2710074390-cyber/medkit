@@ -9,7 +9,9 @@ from . import load_prompt
 logger = logging.getLogger(__name__)
 
 # 合并策略下取原题的字段（溯源/结构），其余内容字段取新题
-PROVENANCE_KEYS = ("sid", "module", "subtopic", "type", "case_id")
+# S3：案例/组题结构字段一并保留（修复子题不丢组上下文）
+PROVENANCE_KEYS = ("sid", "module", "subtopic", "type", "case_id", "case_order",
+                   "case_stem", "group_kind", "group")
 
 
 def fix_questions(client: Any, questions: list[dict[str, Any]],

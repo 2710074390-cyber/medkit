@@ -116,6 +116,23 @@ def _parse_questions(data: Any, slice_: dict[str, Any]) -> list[dict[str, Any]]:
         q["analysis"] = str(q.get("analysis") or "")
         q["sid"] = slice_.get("sid", "")
         q["module"] = slice_.get("title", "")
+        # S3：案例/选项组字段（扁平 + 冗余 case_stem；不引入嵌套）
+        q["case_stem"] = str(q.get("case_stem") or "")[:1500]
+        q["case_id"] = str(q.get("case_id") or "")
+        try:
+            q["case_order"] = int(q.get("case_order") or 0)
+        except (TypeError, ValueError):
+            q["case_order"] = 0
+        q["group_kind"] = str(q.get("group_kind") or "")
+        grp = q.get("group")
+        if q["group_kind"] == "option_group" and isinstance(grp, dict):
+            gopts = grp.get("options")
+            grp = dict(grp)
+            grp["options"] = ([str(o) for o in gopts if isinstance(o, (str, int, float))]
+                              if isinstance(gopts, list) else [])
+            q["group"] = grp
+        elif grp is not None:
+            q["group"] = grp if isinstance(grp, dict) else None
     return questions
 
 

@@ -381,6 +381,59 @@ def test_websearch_cancel_marks_incomplete(isolated_cfg, monkeypatch):
     assert not (tmp / "网络参考素材.incomplete").exists(), "完整检索后应清除标记"
 
 
+def test_case_group_full_chain(isolated_cfg):
+    """S3：FakeLLM 产出案例组（A3）+ B1 选项组 → 门禁 → QC → 渲染全链路（D1 扁平结构）。"""
+    class GenWithCases(FakeLLM):
+        def __init__(self):
+            super().__init__("gen")
+
+        def chat_json(self, messages, **kwargs):
+            s = super().chat_json(messages, **kwargs)
+            qs = s["questions"]
+            if len(qs) >= 12:  # 首个切片（12 题）：前 3 道为案例组，第 10 道为 B1 组
+                stem = "患儿男，3岁，发热3天，皮疹1天，口唇干裂，结膜充血，精神差…"
+                subs = ["该患儿最可能的诊断是？", "该患儿首选检查是？", "该患儿的致病病原最可能是？"]
+                for j in range(3):
+                    qs[j].update({
+                        "type": "A3", "case_id": "C001", "case_order": j + 1,
+                        "case_stem": stem, "group_kind": "case",
+                        "question": subs[j], "bloom": "理解",
+                        "analysis": f"案例解析{j}。【源:切片S001】"})
+                qs[9].update({
+                    "type": "B1", "options": [], "group_kind": "option_group",
+                    "group": {"options": ["支原体", "肺炎链球菌", "腺病毒",
+                                          "呼吸道合胞病毒", "金黄色葡萄球菌"]},
+                    "question": "上呼吸道感染最常见的病原？", "bloom": "记忆",
+                    "analysis": "B1 解析。【源:切片S001】"})
+            return s
+
+    pid = build_project("_case_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+    res = run_project(pid, overrides={
+        "gen": GenWithCases(), "qc": FakeLLM("qc"),
+        "fix": FakeLLM("fix"), "review": FakeLLM("review")})
+    assert res["stage"] == "done", res
+    final = json.loads((tmp / "最终产物" / "questions_final.json").read_text(encoding="utf-8"))
+    cases = [q for q in final if q.get("case_id") == "C001"]
+    assert len(cases) == 3, f"案例组应保留 3 道子题：{len(cases)}"
+    assert all(q["group_kind"] == "case" and q["case_stem"] for q in cases), "D1：扁平+冗余 case_stem"
+    assert sorted(q["case_order"] for q in cases) == [1, 2, 3]
+    assert all(q["type"] == "A3" for q in cases), "MedFix 合并策略应保留原题型"
+    b1 = [q for q in final if q.get("group_kind") == "option_group"]
+    assert b1 and b1[0]["group"]["options"] and b1[0]["options"] == [], "B1：共享选项在 group"
+    # 渲染：MD 案例题干只出现一次 + 选项组；HTML 组折叠；押题卷分组呈现+分组判分
+    md = (tmp / "最终产物" / "qbank.md").read_text(encoding="utf-8")
+    assert md.count("患儿男，3岁") == 1, "MD 案例题干应只出现一次（组标题）"
+    assert "🧩 选项组" in md and "支原体" in md
+    html = (tmp / "最终产物" / "qbank.html").read_text(encoding="utf-8")
+    assert "案例 C001" in html and html.count("患儿男，3岁") == 1
+    paper = (tmp / "最终产物" / "押题卷.html").read_text(encoding="utf-8")
+    assert "casebar" in paper and "分组判分" in paper, "押题卷应分组呈现 + 分组判分"
+    # .apkg 产物与案例前缀
+    apkg = next((p for p in (tmp / "最终产物").iterdir() if p.suffix == ".apkg"), None)
+    assert apkg is not None, "案例题也应产出 .apkg"
+
+
 if __name__ == "__main__":
     import pytest
 

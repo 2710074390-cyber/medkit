@@ -40,8 +40,10 @@ def _render_precheck(questions: list[dict[str, Any]]) -> tuple[list[dict[str, An
     """渲染前终检（D2）：仍超限/缺字段的题剔除出产物 + 记入人工复核清单。
 
     返回 (kept, dropped)：dropped 的元素带 _drop_reasons 字段（仅供清单使用）。
+    S3：B1 选项组用 group.options 判定选项完整性。
     """
     from ..gates.options_check import ALLOWED_BLOOM, ALLOWED_TYPES
+    from ..render.qbank_html import _effective_options
 
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
@@ -53,7 +55,7 @@ def _render_precheck(questions: list[dict[str, Any]]) -> tuple[list[dict[str, An
             reasons.append(f"bloom 非法：「{q.get('bloom')}」")
         if not str(q.get("question", "")).strip():
             reasons.append("题干为空")
-        opts = [o for o in (q.get("options") or []) if isinstance(o, str) and o.strip()]
+        opts = [o for o in _effective_options(q) if o.strip()]
         if not opts:
             reasons.append("选项缺失")
         elif len(opts) > RENDER_MAX_OPTIONS:

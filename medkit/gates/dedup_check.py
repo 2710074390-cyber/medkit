@@ -30,19 +30,33 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
+def _group_key(q: dict[str, Any]) -> tuple:
+    """S3：案例/选项组内子题互不查重（共用题干/共享选项天然相似，非重复题）。"""
+    gk = q.get("group_kind")
+    if gk == "case" and q.get("case_id"):
+        return ("case", q.get("case_id"))
+    if gk == "option_group" and isinstance(q.get("group"), dict):
+        return ("og", tuple(str(o) for o in (q["group"].get("options") or [])))
+    return ("single", q.get("id") or str(id(q)))
+
+
 def check_dup(questions: list[dict[str, Any]], threshold: float = THRESHOLD) -> dict[str, Any]:
     """返回 {issues:[{q_id, code:'DUP', severity:'warn', reason}], pairs:n}。"""
     issues: list[dict[str, Any]] = []
     pairs = 0
     grams: dict[str, set[str]] = {}
+    keys: dict[str, tuple] = {}
     for q in questions:
         cid = str(q.get("id") or "")
         if q.get("question"):
             grams[cid] = _grams(q["question"])
+            keys[cid] = _group_key(q)
     ids = list(grams)
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             a, b = ids[i], ids[j]
+            if keys.get(a) == keys.get(b):
+                continue  # 同案例/同选项组 → 跳过组内查重
             sim = _jaccard(grams[a], grams[b])
             if sim < threshold:
                 continue

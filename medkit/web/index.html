@@ -1401,7 +1401,32 @@ function renderReview() {
     <div id="rev_list"></div>
   </div>`;
   const list = $("rev_list");
+  /* S3：审核台组维度折叠（案例/选项组），子题仍可单独剔除/编辑/重掷 */
+  const groups = [];
+  const gix = new Map();
   qs.forEach(q => {
+    const cid = q.case_id || "";
+    if (cid && gix.has(cid)) { groups[gix.get(cid)].items.push(q); return; }
+    if (cid) { gix.set(cid, groups.length); groups.push({ cid, stem: q.case_stem || "", items: [] }); }
+    if (cid) { groups[gix.get(cid)].items.push(q); }
+    else groups.push({ cid: null, items: [q] });
+  });
+  groups.forEach(g => {
+    if (g.cid) {
+      const hd = document.createElement("div");
+      hd.className = "casehead";
+      hd.innerHTML = `📋 案例 <b>${esc(g.cid)}</b> · ${g.items.length} 题 · <span class="hint">${esc((g.stem || "").slice(0, 50))}</span>`;
+      hd.style.cursor = "pointer";
+      hd.onclick = () => {
+        let sib = hd.nextElementSibling;
+        while (sib && !sib.classList.contains("casehead")) {
+          sib.style.display = sib.style.display === "none" ? "" : "none";
+          sib = sib.nextElementSibling;
+        }
+      };
+      list.appendChild(hd);
+    }
+    g.items.forEach(q => {
     const dropped = reviewState.drop.has(q.id);
     const ed = reviewState.edits[q.id] || {};
     const d = document.createElement("div");
@@ -1459,6 +1484,7 @@ function renderReview() {
       };
     });
     list.appendChild(d);
+    });
   });
   $("rev_save").onclick = async () => {
     const keep = qs.map(x => x.id).filter(id => !reviewState.drop.has(id));

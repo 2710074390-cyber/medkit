@@ -8,8 +8,45 @@
 import html as html_mod
 from typing import Any
 
-TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "X": "X 型 · 多选", "B1": "B1 型 · 共用选项"}
+TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "X": "X 型 · 多选",
+               "B1": "B1 型 · 共用选项", "A3": "A3 型 · 案例单选", "A4": "A4 型 · 案例单选"}
 LETTERS = "ABCDEFGHIJ"  # 渲染上限 10 个选项，超出部分由渲染前终检剔除（D2）
+
+
+def _effective_options(q: dict[str, Any]) -> list[str]:
+    """实际渲染选项：B1 组题共享选项在 group 字段（S3：自身 options 可为空）。"""
+    opts = q.get("options") or []
+    if not opts and q.get("group_kind") == "option_group":
+        grp = q.get("group") or {}
+        if isinstance(grp, dict):
+            opts = grp.get("options") or []
+    return [o for o in opts if isinstance(o, str)]
+
+
+def _case_blocks(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按（案例组 / 选项组 / 单题）有序分组（S3）。返回 [{key, kind, stem, options, items}]。"""
+    ordered = sorted(questions, key=lambda q: (q.get("type", "") or "", str(q.get("id", ""))))
+    blocks: list[dict[str, Any]] = []
+    index: dict[tuple, int] = {}
+    for q in ordered:
+        gk = q.get("group_kind")
+        key = None
+        if gk == "case" and q.get("case_id"):
+            key = ("case", q.get("case_id"))
+        elif gk == "option_group" and isinstance(q.get("group"), dict):
+            key = ("og", tuple(str(o) for o in (q["group"].get("options") or [])))
+        if key is None:
+            blocks.append({"key": None, "kind": "single", "stem": "",
+                           "options": [], "items": [q]})
+            continue
+        if key not in index:
+            grp = q.get("group") if gk == "option_group" and isinstance(q.get("group"), dict) else {}
+            blocks.append({"key": key, "kind": gk or "single", "stem": q.get("case_stem") or "",
+                           "options": (grp or {}).get("options") or [],
+                           "items": []})
+            index[key] = len(blocks) - 1
+        blocks[index[key]]["items"].append(q)
+    return blocks
 
 
 def _esc(s: Any) -> str:
@@ -24,30 +61,56 @@ def _esc_anki(s: Any) -> str:
     return _esc(s).replace("\n", "<br>").replace("\t", " ")
 
 
+def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = True) -> list[str]:
+    out = [f"{prefix} {q.get('id')} · {TYPE_LABELS.get(q.get('type'), q.get('type', ''))} · {q.get('bloom', '')}"]
+    out.append(f"**{q.get('subtopic', '')}**")
+    out.append(q.get("question", ""))
+    if show_options:
+        for i, opt in enumerate(_effective_options(q)):
+            out.append(f"- {LETTERS[i]}. {opt}")
+    out.append(f"**✅ 答案：{q.get('answer', '')}**")
+    out.append(f"💡 {q.get('analysis', '')}")
+    out.append("")
+    return out
+
+
 def export_md(questions: list[dict[str, Any]], title: str = "题库") -> str:
+    """Markdown：案例/选项组按组折叠（案例题干只出现一次）；单题平铺。"""
     lines = [f"# {title}", ""]
-    ordered = sorted(questions, key=lambda q: (q.get("type", "A1"),
-                                               str(q.get("id", ""))))
-    for q in ordered:
-        lines.append(f"### {q.get('id')} · {TYPE_LABELS.get(q.get('type'), q.get('type', ''))} · {q.get('bloom', '')}")
-        lines.append(f"**{q.get('subtopic', '')}**")
-        lines.append(q.get("question", ""))
-        for i, opt in enumerate(q.get("options", [])):
-            lines.append(f"- {LETTERS[i]}. {opt}")
-        lines.append(f"**✅ 答案：{q.get('answer', '')}**")
-        lines.append(f"💡 {q.get('analysis', '')}")
-        lines.append("")
+    for b in _case_blocks(questions):
+        if b["kind"] == "case":
+            lines.append(f"## 📋 案例 {b['key'][1]}")
+            lines.append(f"**案例题干**：{b['stem']}")
+            lines.append(f"> 本案例 {len(b['items'])} 道子题")
+            lines.append("")
+            for q in b["items"]:
+                lines += _md_question(q, prefix="###")
+        elif b["kind"] == "option_group":
+            lines.append("## 🧩 选项组（B1 共享选项）")
+            for i, o in enumerate(b["options"]):
+                lines.append(f"- {LETTERS[i]}. {o}")
+            lines.append("")
+            for q in b["items"]:
+                lines += _md_question(q, prefix="###", show_options=False)
+        else:
+            lines += _md_question(b["items"][0], prefix="###")
     return "\n".join(lines)
 
 
 def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
-    """Anki 文本导入：正面=题干+选项，反面=答案+解析；字段间 Tab 分隔，行内换行用 <br>。"""
+    """Anki 文本导入：正面=题干+选项，反面=答案+解析；字段间 Tab 分隔，行内换行用 <br>。
+
+    S3：案例子题题干带「【案例】题干」前缀（扁平卡不丢组上下文）；B1 用共享选项。
+    """
     lines = ["#separator:tab", "#html:true", ""]
     for q in sorted(questions, key=lambda x: str(x.get("id", ""))):
+        stem = str(q.get("case_stem") or "")
+        question = str(q.get("question") or "")
+        front_question = (f"【案例】{stem}<br>" + question) if stem else question
         front = [f"<b>Q{q.get('id', '')}</b> · {_esc_anki(q.get('type', ''))}型 · {_esc_anki(q.get('bloom', ''))} · "
                  f"{_esc_anki(q.get('subtopic', ''))}",
-                 _esc_anki(q.get("question", ""))]
-        for i, o in enumerate(q.get("options", [])):
+                 _esc_anki(front_question)]
+        for i, o in enumerate(_effective_options(q)):
             front.append(f"{LETTERS[i]}. {_esc_anki(o)}")
         back = [f"✅ 答案：<b>{_esc_anki(q.get('answer', ''))}</b>",
                 f"💡 {_esc_anki(q.get('analysis', ''))}"]
@@ -55,22 +118,59 @@ def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
     return "\n".join(lines) + "\n"
 
 
-def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
-    items = []
-    for q in sorted(questions, key=lambda x: (x.get("type", ""), str(x.get("id", "")))):
-        opts = "".join(
+def _html_sub(q: dict[str, Any], show_options: bool = True) -> str:
+    """案例/选项组内的子题（不折叠，逐题展示）。"""
+    opts = ""
+    if show_options:
+        opts = "<ul>" + "".join(
             f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
-            for i, o in enumerate(q.get("options", [])))
-        items.append(
-            f'<details class="q" data-type="{html_mod.escape(q.get("type", ""))}">'
-            f'<summary class="qs">'
-            f'<span class="tag">{html_mod.escape(q.get("type", ""))}</span> '
-            f'<span class="tag b">{html_mod.escape(q.get("bloom", ""))}</span> '
-            f'{html_mod.escape(q.get("question", "")[:60])}…</summary>'
-            f'<div class="qb"><p><b>{html_mod.escape(q.get("subtopic", ""))}</b> · '
-            f'{html_mod.escape(q.get("question", ""))}</p><ul>{opts}</ul>'
-            f'<p class="ans">✅ 答案：<b>{html_mod.escape(q.get("answer", ""))}</b></p>'
-            f'<p class="ana">💡 {html_mod.escape(q.get("analysis", ""))}</p></div></details>')
+            for i, o in enumerate(_effective_options(q))) + "</ul>"
+    return (f'<div class="qsub"><p><b>{html_mod.escape(q.get("id", ""))}</b> · '
+            f'{html_mod.escape(str(q.get("type", "")))} · '
+            f'{html_mod.escape(str(q.get("question", "")))}</p>{opts}'
+            f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
+            f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div>')
+
+
+def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
+    """题库 HTML：案例/选项组按组折叠（S3），单题保持原 <details class=q data-type> 结构。"""
+    items = []
+    for b in _case_blocks(questions):
+        if b["kind"] == "case":
+            first = b["items"][0]
+            items.append(
+                f'<details class="q case" data-type="{html_mod.escape(str(first.get("type", "")))}">'
+                f'<summary class="qs"><span class="tag">📋 案例 '
+                f'{html_mod.escape(str(b["key"][1]))}</span> '
+                f'{html_mod.escape(TYPE_LABELS.get(str(first.get("type", "")), ""))} · '
+                f'{len(b["items"])} 道子题 · 点击展开案例题干</summary>'
+                f'<div class="qb"><p><b>案例题干</b>：{html_mod.escape(str(b["stem"]))}</p>'
+                + "".join(_html_sub(q) for q in b["items"]) + '</div></details>')
+        elif b["kind"] == "option_group":
+            shared = "<ul>" + "".join(
+                f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
+                for i, o in enumerate(b["options"])) + "</ul>"
+            items.append(
+                f'<details class="q case" data-type="B1">'
+                f'<summary class="qs"><span class="tag">🧩 选项组（B1）</span>'
+                f'（{len(b["items"])} 题共享下列选项）</summary>'
+                f'<div class="qb">{shared}'
+                + "".join(_html_sub(q, show_options=False) for q in b["items"]) + '</div></details>')
+        else:
+            q = b["items"][0]
+            opts = "".join(
+                f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
+                for i, o in enumerate(_effective_options(q)))
+            items.append(
+                f'<details class="q" data-type="{html_mod.escape(str(q.get("type", "")))}">'
+                f'<summary class="qs">'
+                f'<span class="tag">{html_mod.escape(str(q.get("type", "")))}</span> '
+                f'<span class="tag b">{html_mod.escape(str(q.get("bloom", "")))}</span> '
+                f'{html_mod.escape(str(q.get("question", ""))[:60])}…</summary>'
+                f'<div class="qb"><p><b>{html_mod.escape(str(q.get("subtopic", "")))}</b> · '
+                f'{html_mod.escape(str(q.get("question", "")))}</p><ul>{opts}</ul>'
+                f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
+                f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div></details>')
     return _page(title, f"""
 <h1>{html_mod.escape(title)}</h1>
 <p class="meta">共 {len(questions)} 题 · 答案默认隐藏，点击题目展开查看</p>
@@ -89,10 +189,21 @@ document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on')
 
 def _questions_json_for_page(questions: list[dict[str, Any]]) -> str:
     import json
-    compact = [{"type": q.get("type"), "bloom": q.get("bloom"),
-                "subtopic": q.get("subtopic", ""), "question": q.get("question", ""),
-                "options": q.get("options", []), "answer": q.get("answer", ""),
-                "analysis": q.get("analysis", "")} for q in questions]
+    compact = []
+    for q in questions:
+        gk = q.get("group_kind")
+        label = ""
+        if gk == "case" and q.get("case_id"):
+            label = f"📋 案例 {q.get('case_id')}　{q.get('case_stem', '')[:80]}"
+        elif gk == "option_group":
+            label = "🧩 选项组（B1 共享选项）"
+        compact.append({"type": q.get("type"), "bloom": q.get("bloom"),
+                        "subtopic": q.get("subtopic", ""), "question": q.get("question", ""),
+                        "options": _effective_options(q), "answer": q.get("answer", ""),
+                        "analysis": q.get("analysis", ""), "case_label": label,
+                        "case_id": q.get("case_id", ""),
+                        "case_stem": q.get("case_stem", ""),
+                        "case_order": q.get("case_order", 0)})
     return json.dumps(compact, ensure_ascii=False).replace("</", "<\\/")
 
 
@@ -145,8 +256,13 @@ function render(){{
   let h='';
   h+='<div class="sheet"><div class="grid" id="grids"></div>'
      +'<div class="sheetactions"></div></div>';
+  let lastCase='';
   QUESTIONS.forEach((q,i)=>{{
     if(!q.options||!q.options.length) return;
+    if(q.case_label && q.case_label!==lastCase){{
+      h+='<div class="casebar" data-case="'+esc(q.case_id)+'">'+esc(q.case_label)+'</div>';
+      lastCase=q.case_label;
+    }}
     h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(q.type)+'</span>'
       +'<span class="tag b">'+esc(q.bloom)+'</span> <b>'+(i+1)+'.</b> '+esc(q.question)+'</p>';
     q.options.forEach((o,j)=>{{
@@ -200,16 +316,25 @@ function grade(){{
   collectAnswers();
   let score=0, wrong=[];
   const st=loadState()||{{answers:{{}}}};
+  const caseScore={{}};
   QUESTIONS.forEach((q,i)=>{{
     const a=(st.answers&&st.answers[i])||"";
-    if(answersEqual(a,q.answer)) score++;
+    const right=answersEqual(a,q.answer);
+    if(right) score++;
     else wrong.push(i+1);
+    const ck=q.case_id||"";
+    if(ck){{ const cs=caseScore[ck]||={{n:0,t:0}}; cs.n++; if(right) cs.t++; caseScore[ck]=cs; }}
   }});
   const total=QUESTIONS.length;
   try{{localStorage.setItem(RETRY_KEY,JSON.stringify(
     {{title:"错题重练",questions:wrong.map(i=>QUESTIONS[i-1]).filter(Boolean)}}));}}catch(e){{}}
+  const caseLines=Object.keys(caseScore)
+    .filter(k=>k && caseScore[k].n>1)
+    .map(k=>'案例 '+k+'：'+caseScore[k].t+'/'+caseScore[k].n)
+    .join(' · ');
   document.getElementById('res').innerHTML=
     '<div class="score">得分 '+score+'/'+total+'（'+(total?Math.round(score*100/total):0)+' 分）</div>'+
+    (caseLines?'<div class="hint">分组判分：'+esc(caseLines)+'</div>':'')+
     (wrong.length?'<div class="hint bad">错题回顾：'+wrong.join('、')+'（答案见下方解析区）</div>'
                  :'<div class="hint good">全对！</div>')+
     (wrong.length?'<button class="gray" onclick="retryWrong()">只练错题 →</button>':'')+
@@ -282,6 +407,9 @@ button.mini,.mini{{background:var(--card);border:1px solid var(--line);color:var
 .filters button{{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:9px;padding:6px 14px;margin:0 6px 10px 0;cursor:pointer;font-family:inherit}}
 .filters button.on{{border-color:var(--acc);color:var(--acc)}}
 .q{{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin-bottom:12px}}
+.q.case{{border-left:4px solid var(--miss)}}
+.qsub{{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}}
+.casebar{{background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.35);border-radius:10px;padding:8px 12px;margin:12px 0 6px;font-size:13px;color:var(--txt)}}
 .q.wrongq{{border-color:var(--bad)}}
 .q.flagged{{border-left:4px solid var(--miss)}}
 .qs{{cursor:pointer;line-height:1.7}}

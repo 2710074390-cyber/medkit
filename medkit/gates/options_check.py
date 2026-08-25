@@ -13,20 +13,30 @@ NUMBER_NO_UNIT = re.compile(
     r"[0-9]+(?:\.[0-9]+)?(?![%℃a-zA-Z年岁天小时分钟秒kg毫克毫升/])")
 OPTION_PREFIX = re.compile(r"^[A-E][\.、\s]")
 
-EXPECT_OPTION_COUNT = {"A1": 5, "A2": 5, "X": 5, "B1": 5}
+EXPECT_OPTION_COUNT = {"A1": 5, "A2": 5, "X": 5, "B1": 5, "A3": 5, "A4": 5}
 ALLOWED_BLOOM = {"记忆", "理解", "应用", "创造"}
-ALLOWED_TYPES = {"A1", "A2", "X", "B1"}
+ALLOWED_TYPES = {"A1", "A2", "X", "B1", "A3", "A4"}  # S3：案例题 A3/A4 纳入门禁
 
 
 def _strip_prefix(opt: str) -> str:
     return OPTION_PREFIX.sub("", opt.strip()).strip()
 
 
+def _effective_options(q: dict[str, Any]) -> list[str]:
+    """实际渲染/校验的选项：B1 组题共享选项在 group 字段（S3：自身 options 可为空）。"""
+    opts = q.get("options") or []
+    if not opts and q.get("group_kind") == "option_group":
+        grp = q.get("group") or {}
+        if isinstance(grp, dict):
+            opts = grp.get("options") or []
+    return [o for o in opts if isinstance(o, str)]
+
+
 def check_question(q: dict[str, Any], idx: str) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     cid = str(q.get("id") or idx)
-    opts_raw = q.get("options") or []
-    opts = [_strip_prefix(o) for o in opts_raw if isinstance(o, str)]
+    opts_raw = _effective_options(q)
+    opts = [_strip_prefix(o) for o in opts_raw]
 
     def add(code: str, severity: str, reason: str) -> None:
         issues.append({"q_id": cid, "code": code, "severity": severity, "reason": reason})
