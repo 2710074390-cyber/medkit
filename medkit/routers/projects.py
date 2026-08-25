@@ -174,7 +174,7 @@ def _project_artifacts(base: Path) -> list[str]:
         if not d.exists():
             continue
         for p in sorted(d.iterdir()):
-            if p.is_file() and p.suffix in (".md", ".html", ".json", ".txt") \
+            if p.is_file() and p.suffix in (".md", ".html", ".json", ".txt", ".apkg") \
                     and p.name not in ("slices.json", "meta.json", "stage.json",
                                        "questions_raw.json", "questions_gate1.json",
                                        "checkpoint.json"):
@@ -254,3 +254,33 @@ def export_anki(pid: str) -> FileResponse:
         raise HTTPException(404, "anki_export.txt 不存在，请重新生成")
     return FileResponse(f, media_type="text/plain; charset=utf-8",
                         filename="anki_export.txt")
+
+
+@router.get("/api/projects/{pid}/export/apkg")
+def export_apkg_file(pid: str) -> FileResponse:
+    """S3：Anki .apkg 真包导出（genanki；由管线渲染阶段生成，此处直接下发）。"""
+    pid = _safe_pid(pid)
+    base = proj_dir(pid)
+    meta = _read_meta_checked(base)
+    if meta.get("stage") != "done":
+        raise HTTPException(409, "项目尚未生成完成，无题库可导出")
+    out_dir = base / "最终产物"
+    apkg = None
+    if out_dir.exists():
+        apkg = next((out_dir / f.name for f in out_dir.iterdir()
+                     if f.suffix == ".apkg" and f.is_file()), None)
+    if apkg is None:
+        # 兜底：老项目无 apkg 产物 → 现场生成并落盘（后续重渲染会更新）
+        qs_path = out_dir / "questions_final.json"
+        if not qs_path.exists():
+            raise HTTPException(404, "题库未生成，无法导出 .apkg")
+        import json
+
+        from ..render.apkg import export_apkg
+
+        questions = json.loads(qs_path.read_text(encoding="utf-8"))
+        tmp = out_dir / f"{meta.get('subject', '题库')} 题库.apkg"
+        export_apkg(questions, meta.get("subject", ""), pid, tmp)
+        apkg = tmp
+    return FileResponse(apkg, media_type="application/octet-stream",
+                        filename=apkg.name)

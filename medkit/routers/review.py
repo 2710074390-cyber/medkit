@@ -59,6 +59,14 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
     (out_dir / "anki_export.txt").write_text(
         qbank_html.export_anki(questions, f"{subject} 题库"), encoding="utf-8")
     rendered.append("anki_export.txt")
+    try:  # S3：审核后同步重生成 .apkg（失败不阻断其余产物）
+        from ..render.apkg import export_apkg
+
+        apkg_path = out_dir / f"{subject} 题库.apkg"
+        export_apkg(questions, subject, base.name, apkg_path)
+        rendered.append(apkg_path.name)
+    except Exception as e:  # noqa: BLE001
+        _log_project(base, f"⚠️ .apkg 重生成失败：{e}")
     meta["final_count"] = len(questions)
     _write_meta_atomic(base, meta)
     _log_project(base, f"✏️ 审核后重渲染：{len(questions)} 题（{', '.join(rendered)}）")

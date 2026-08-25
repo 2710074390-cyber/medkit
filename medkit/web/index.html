@@ -1242,7 +1242,9 @@ async function loadProjects() {
 }
 function artifactLinks(pid, names) {
   return (names || []).map(n =>
-    `<a class="art" href="/api/projects/${encodeURIComponent(pid)}/files/${encodeURIComponent(n)}" target="_blank" rel="noopener">${esc(n)}</a>`).join("");
+    n.endsWith(".apkg")
+      ? `<a class="art" href="/api/projects/${encodeURIComponent(pid)}/export/apkg" download>${esc(n)}</a>`
+      : `<a class="art" href="/api/projects/${encodeURIComponent(pid)}/files/${encodeURIComponent(n)}" target="_blank" rel="noopener">${esc(n)}</a>`).join("");
 }
 const STEPS = [["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"], ["reviewing", "复习"], ["rendering", "产物"]];
 function stepIdx(stage) {
@@ -1278,7 +1280,8 @@ async function showProject(pid) {
   $("pd_body").innerHTML = `
     <div class="meta hint">${esc(meta.exam)} · 目标 ${meta.target} 题 · 阶段：<span id="pd_stage">${esc(meta.stage_label || meta.stage || "……")}</span><br>
     产物：${meta.toggles.qbank ? "题库✓" : "题库✗"} ${meta.toggles.paper ? "押题卷✓" : "押题卷✗"} ${meta.toggles.review ? "复习手册✓" : "复习手册✗"}
-    ${ankiOk ? `<a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/anki">导出 Anki（.txt）</a>` : ""}</div>
+    ${ankiOk ? `<a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/anki">导出 Anki（.txt）</a>
+      <a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/apkg" download>S3 导出 Anki（.apkg）</a>` : ""}</div>
     ${extra.length ? `<div class="hint" style="margin-top:6px">${extra.join(" · ")}</div>` : ""}
     <div id="pd_stepper" class="stepper">${renderStepper(meta.stage, meta.progress)}</div>
     <div class="hint" style="margin-top:6px">各章节配额（教师重点词频加权）· B1 组题暂由 A1/A2/X 分摊：</div>

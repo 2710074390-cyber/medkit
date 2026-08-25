@@ -527,6 +527,16 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     anki_txt = qbank_html.export_anki(questions, f"{subject} 题库")
     (base / "最终产物" / "anki_export.txt").write_text(anki_txt, encoding="utf-8")
     rendered.append("anki_export.txt")
+    # S3：.apkg 真包导出（genanki；model/deck id 按项目名稳定哈希）
+    try:
+        from ..render.apkg import export_apkg
+
+        apkg_path = base / "最终产物" / f"{subject} 题库.apkg"
+        export_apkg(questions, subject, pid, apkg_path)
+        rendered.append(apkg_path.name)
+        _log(base, f"  ✅ .apkg 导出：{apkg_path.name}")
+    except Exception as e:  # noqa: BLE001  apkg 失败不阻断其余产物
+        _log(base, f"  ⚠️ .apkg 导出失败（不影响其余产物）：{e}")
 
     # ---------------- ⑦ 收尾：usage 记账 + 状态
     snap = usage.snapshot()

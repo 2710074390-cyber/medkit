@@ -15,7 +15,7 @@ hiddenimports = [
     "uvicorn.protocols.http.h11_impl",
     "uvicorn.protocols.websockets", "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan", "uvicorn.lifespan.on",
-    "multipart", "markdown", "docx", "fitz", "openai",
+    "multipart", "markdown", "docx", "fitz", "openai", "genanki",
 ]
 hiddenimports += collect_submodules("pydantic")
 

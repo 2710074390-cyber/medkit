@@ -142,6 +142,8 @@ def test_orchestrator_end_to_end(isolated_cfg):
     for name in ("qbank.md", "qbank.html", "押题卷.html", "复习手册.md", "复习手册.html",
                  "追溯日志.md", "anki_export.txt"):
         assert (tmp / "最终产物" / name).exists(), f"缺产物 {name}"
+    # S3：.apkg 真包随管线生成
+    assert any(p.suffix == ".apkg" for p in (tmp / "最终产物").iterdir()), "缺 .apkg 产物"
     # 质检报告
     qc = json.loads((tmp / "质检报告" / "质检报告.json").read_text(encoding="utf-8"))
     assert qc["gate_decision"] == "PASS_WITH_FIXES"
