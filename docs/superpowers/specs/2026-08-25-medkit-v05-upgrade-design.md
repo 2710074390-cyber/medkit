@@ -42,62 +42,62 @@ v0.4.0 已完成上两轮审查的全部修复与可玩性升级（断点续跑 
 
 ---
 
-## S1 正确性修复 + 过时数据刷新（3~4 天）
+## S1 正确性修复 + 过时数据刷新（3~4 天）✅ 已完成（commits c807964→cf1a7e1 · tag v0.5.0-s1 · pytest 66 全绿）
 
 ### A. 渲染层防崩溃（P0/P1）
 
-- [ ] `qbank_html.py:12` `LETTERS` 扩容至 10；`options_check.py` 增规则：选项数 >6 → issue（触发 MedFix 改写）；渲染前终检：仍超限/缺字段的题**剔除出产物 + 记入人工复核清单**（D2）
-- [ ] 押题卷过滤按钮失效修复：`<details class="q">` 增加 `data-type` 属性，`ft()` 改按 `data-type` 过滤（当前查 `t-A1` 类从未写入，点任一按钮隐藏全部题）
-- [ ] `medfix.py:16` issue 校验：`q_id` 必须命中现有题，否则跳过 + 日志（当前缺 q_id 直接 KeyError）
-- [ ] `medfix.py:21-27` 修复输出改**合并策略**：`sid/module/subtopic/type/case_id` 取原题，内容字段取新题（当前整体替换导致溯源字段丢失，后续 QC 的 source_slice 为空）
-- [ ] `qbank_html.py:15-19` Anki `_esc`：`\n` → `<br>`、`\t` → 空格（当前 LLM 解析含换行即损坏文件）；补单测（换行/制表符/引号字段）
-- [ ] `review_html.py:42` `href` scheme 白名单（仅 http/https，其余剥成纯文本），堵 `javascript:` 穿透
-- [ ] `medqc.py` 容错：`int(score)` 兼容浮点/None（None→50 + warn）；`severity` 统一 `lower()`；空题库 → 跳过该批 + warn（当前判 PASS 0 分）；删除 `decisions` 聚合死代码或启用（取删除）
+- [x] `qbank_html.py:12` `LETTERS` 扩容至 10；`options_check.py` 增规则：选项数 >6 → issue（触发 MedFix 改写）；渲染前终检：仍超限/缺字段的题**剔除出产物 + 记入人工复核清单**（D2）
+- [x] 押题卷过滤按钮失效修复：`<details class="q">` 增加 `data-type` 属性，`ft()` 改按 `data-type` 过滤（当前查 `t-A1` 类从未写入，点任一按钮隐藏全部题）
+- [x] `medfix.py:16` issue 校验：`q_id` 必须命中现有题，否则跳过 + 日志（当前缺 q_id 直接 KeyError）
+- [x] `medfix.py:21-27` 修复输出改**合并策略**：`sid/module/subtopic/type/case_id` 取原题，内容字段取新题（当前整体替换导致溯源字段丢失，后续 QC 的 source_slice 为空）
+- [x] `qbank_html.py:15-19` Anki `_esc`：`\n` → `<br>`、`\t` → 空格（当前 LLM 解析含换行即损坏文件）；补单测（换行/制表符/引号字段）
+- [x] `review_html.py:42` `href` scheme 白名单（仅 http/https，其余剥成纯文本），堵 `javascript:` 穿透
+- [x] `medqc.py` 容错：`int(score)` 兼容浮点/None（None→50 + warn）；`severity` 统一 `lower()`；空题库 → 跳过该批 + warn（当前判 PASS 0 分）；删除 `decisions` 聚合死代码或启用（取删除）
 
 ### B. 后端安全 / 并发（P1）
 
-- [ ] `main.py:887` `delete_preset` 过 `_safe_pid` 消毒（当前可路径穿越删任意 `.json`）
-- [ ] `config.py:105` 浅拷贝 → `copy.deepcopy`（当前嵌套 dict 污染模块级 DEFAULTS，删配置键后旧值进程内残留）
-- [ ] usage 记账改**按次上下文**：run / trial / regen 各自独立记账并随响应返回，`orchestrator.py:147` 不再全局 `reset()`（当前互相串账）
-- [ ] `main.py:986/1023` review / regen 接口检查 `RUNNING` 锁，运行中返回 409；写盘统一走原子写 helper（当前裸 `write_text`，与 A5 加固目标相悖）
-- [ ] `main.py:71` host 解析兼容 `[::1]`（当前 `split(":")[0]` 得 `"["`，IPv6 回环永远 403）；origins 白名单补 IPv6
-- [ ] `main.py:254` `ocr_start` 中 `write_bytes`（最大 200MB）移出事件循环（线程 / `run_in_executor`）
+- [x] `main.py:887` `delete_preset` 过 `_safe_pid` 消毒（当前可路径穿越删任意 `.json`）
+- [x] `config.py:105` 浅拷贝 → `copy.deepcopy`（当前嵌套 dict 污染模块级 DEFAULTS，删配置键后旧值进程内残留）
+- [x] usage 记账改**按次上下文**：run / trial / regen 各自独立记账并随响应返回，`orchestrator.py:147` 不再全局 `reset()`（当前互相串账）
+- [x] `main.py:986/1023` review / regen 接口检查 `RUNNING` 锁，运行中返回 409；写盘统一走原子写 helper（当前裸 `write_text`，与 A5 加固目标相悖）
+- [x] `main.py:71` host 解析兼容 `[::1]`（当前 `split(":")[0]` 得 `"["`，IPv6 回环永远 403）；origins 白名单补 IPv6
+- [x] `main.py:254` `ocr_start` 中 `write_bytes`（最大 200MB）移出事件循环（线程 / `run_in_executor`）
 
 ### C. 过时数据刷新（已对照官方源核实，2026-08）
 
-- [ ] `providers.py` 智谱：`default_model` `glm-4.6` → `glm-5.3`；`price` → 8 / 28（缓存命中 2）；note 更新至 GLM-5.3 / 5-Turbo / 4.7 代际
-- [ ] `websearch.py:57,219` + `BACKENDS` 注册表：**删除「qwen-max 不支持联网搜索」**（百炼官方 2026-08-19：qwen3-max 系列已支持，现行代际至 Qwen3.8）
-- [ ] `websearch.py:125,301` `search_zhipu` 默认模型同步 `glm-5.3`
-- [ ] `mineru.py:24` `V4_PAGE_LIMIT` 200 → **600**（官方现行单文件 ≤200MB/≤600 页，每日 2000 页高优先级额度）；README 同步
-- [ ] `config.py:28` 默认模型 `deepseek-chat` → `deepseek-v4-flash`；`config.load` 对旧值自动迁移 + 日志提示；`main.py:150` 报错文案同步
-- [ ] `websearch.py:298` 防御：deepseek 检索后端收到的模型非 `deepseek-v4*` 时回退 `deepseek-v4-flash`（**修掉「默认配置下联网检索必 400」**）
-- [ ] `README.md`：服务商表全量更新；`Setup-0.3.0` → 0.4.0；「五角色提示词」→「四个提示词」（五阶段中门禁是规则引擎非 LLM 角色）
+- [x] `providers.py` 智谱：`default_model` `glm-4.6` → `glm-5.3`；`price` → 8 / 28（缓存命中 2）；note 更新至 GLM-5.3 / 5-Turbo / 4.7 代际
+- [x] `websearch.py:57,219` + `BACKENDS` 注册表：**删除「qwen-max 不支持联网搜索」**（百炼官方 2026-08-19：qwen3-max 系列已支持，现行代际至 Qwen3.8）
+- [x] `websearch.py:125,301` `search_zhipu` 默认模型同步 `glm-5.3`
+- [x] `mineru.py:24` `V4_PAGE_LIMIT` 200 → **600**（官方现行单文件 ≤200MB/≤600 页，每日 2000 页高优先级额度）；README 同步
+- [x] `config.py:28` 默认模型 `deepseek-chat` → `deepseek-v4-flash`；`config.load` 对旧值自动迁移 + 日志提示；`main.py:150` 报错文案同步
+- [x] `websearch.py:298` 防御：deepseek 检索后端收到的模型非 `deepseek-v4*` 时回退 `deepseek-v4-flash`（**修掉「默认配置下联网检索必 400」**）
+- [x] `README.md`：服务商表全量更新；`Setup-0.3.0` → 0.4.0；「五角色提示词」→「四个提示词」（五阶段中门禁是规则引擎非 LLM 角色）
 
 ### D. 门禁与出题健壮性（审查补充项）
 
-- [ ] `medgen.py:62-66` Bloom 配比兼容小数（`float` 解析后归一，当前 `int(0.3)=0` 静默回退默认）；合计 ≠100 时归一 + warn
-- [ ] `medgen.py:86,124-131` `options=None` 防御（`setdefault` 不覆盖显式 null，下游 enumerate 崩）；LLM 超发题数截断
-- [ ] `medgen.py:118-119` 链式 `replace` 注入面：教材文本含 `{teacher_text}` 字面量会被二次替换 → 改一次性安全替换（先占位唯一令牌或逐键一次性 format）
-- [ ] `trace_check.py:6-7` 兼容全角冒号「源：」与 `[源:S999]`（当前只认半角，全角误报 F2）
-- [ ] `dedup_check.py:10` 保留数字判别（当前剥数字后「血钾 5.5 vs 7.0」两道不同临床题误报近似重复）
-- [ ] `bloom_check.py:18` 小题量（n<10）放宽分布硬校验（当前 1/n>15% 必 fail 且 q_id="BLOOM" 无法被 MedFix 定位，修复轮空转）
+- [x] `medgen.py:62-66` Bloom 配比兼容小数（`float` 解析后归一，当前 `int(0.3)=0` 静默回退默认）；合计 ≠100 时归一 + warn
+- [x] `medgen.py:86,124-131` `options=None` 防御（`setdefault` 不覆盖显式 null，下游 enumerate 崩）；LLM 超发题数截断
+- [x] `medgen.py:118-119` 链式 `replace` 注入面：教材文本含 `{teacher_text}` 字面量会被二次替换 → 改一次性安全替换（先占位唯一令牌或逐键一次性 format）
+- [x] `trace_check.py:6-7` 兼容全角冒号「源：」与 `[源:S999]`（当前只认半角，全角误报 F2）→ 另修：兼容全角括号【源:…】（LLM 实际输出即全角括号，旧代码溯源全量误报）
+- [x] `dedup_check.py:10` 保留数字判别（当前剥数字后「血钾 5.5 vs 7.0」两道不同临床题误报近似重复）
+- [x] `bloom_check.py:18` 小题量（n<10）放宽分布硬校验（当前 1/n>15% 必 fail 且 q_id="BLOOM" 无法被 MedFix 定位，修复轮空转）
 
 ### E. 前端健壮性
 
-- [ ] `index.html` `initTheme` 及全部 localStorage 读写包 try/catch（当前隐私模式抛异常中断整个脚本，UI 全挂）
-- [ ] `showTab` 切走项目详情时 `stopPoll()`；OCR 轮询循环离开页面终止（当前后台持续轮询）
-- [ ] `window.onerror` + `unhandledrejection` → toast 兜底（当前 fetch 失败静默）
-- [ ] `index.html:1294` spinner 修复（当前 `textContent` 写 HTML，显示为字面文本）
-- [ ] `qbank_html.py:178,246` 押题卷计时器：重载后从保存的 `st.t0` 恢复（当前 `Date.now()` 重置，保存值从未使用）
+- [x] `index.html` `initTheme` 及全部 localStorage 读写包 try/catch（当前隐私模式抛异常中断整个脚本，UI 全挂）
+- [x] `showTab` 切走项目详情时 `stopPoll()`；OCR 轮询循环离开页面终止（当前后台持续轮询）
+- [x] `window.onerror` + `unhandledrejection` → toast 兜底（当前 fetch 失败静默）
+- [x] `index.html:1294` spinner 修复（当前 `textContent` 写 HTML，显示为字面文本）
+- [x] `qbank_html.py:178,246` 押题卷计时器：重载后从保存的 `st.t0` 恢复（当前 `Date.now()` 重置，保存值从未使用）
 
-### F. P2 顺带修（时间允许）
+### F. P2 顺带修（全部完成）
 
-- [ ] OCR 取消竞态：worker 完成后覆写 cancelled 状态 → 终态不可逆
-- [ ] 取消后部分检索结果落盘标记 `incomplete`，续跑重新检索（当前当作完整结果）
-- [ ] 同秒同名项目 `mkdir(exist_ok=True)` 静默合并 → 加时间戳/序号后缀
-- [ ] 原子写统一为 orchestrator 的「唯一 tmp 名 + 重试」实现（main.py 固定 tmp 名无重试）
+- [x] OCR 取消竞态：worker 完成后覆写 cancelled 状态 → 终态不可逆
+- [x] 取消后部分检索结果落盘标记 `incomplete`，续跑重新检索（当前当作完整结果）
+- [x] 同秒同名项目 `mkdir(exist_ok=True)` 静默合并 → 加时间戳/序号后缀
+- [x] 原子写统一为 orchestrator 的「唯一 tmp 名 + 重试」实现（main.py 固定 tmp 名无重试）→ 收敛于 `core/fsutil.py`
 
-**S1 验收**：每项修复配回归测试；`python -m pytest -q` 全绿；FakeLLM 全链路通过 → `git tag v0.5.0-s1`
+**S1 验收**：每项修复配回归测试（新增 tests/test_s1_render.py · test_s1_backend.py · test_s1_data.py · test_s1_gates.py）；`python -m pytest -q` 全绿（66 passed）；FakeLLM 全链路通过 → `git tag v0.5.0-s1` ✅
 
 ---
 
