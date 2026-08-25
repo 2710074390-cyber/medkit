@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.medkit/
+config.json
+build/
+dist/
+dist-installer/
+projects/
+*.spec.bak
+.ruff_cache/

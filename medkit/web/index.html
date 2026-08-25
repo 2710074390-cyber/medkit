@@ -1,0 +1,1569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>MedKit · 医学题库工坊</title>
+<style>
+  :root{
+    --bg1:#040a18; --bg2:#0a1a33; --card:rgba(16,34,64,.72); --card2:rgba(10,24,48,.85);
+    --line:rgba(120,180,255,.16); --accent:#38bdf8; --accent2:#7dd3fc; --good:#34d399;
+    --warn:#fbbf24; --bad:#f87171; --text:#dbeafe; --dim:#7d9ec9;
+    --bgstar1:#0d2a52; --bgstar2:#0a2440;
+  }
+  :root[data-theme=light]{
+    --bg1:#eef4fb; --bg2:#f6f9fd; --card:rgba(255,255,255,.92); --card2:#ffffff;
+    --line:rgba(30,80,140,.20); --accent:#0e6fb8; --accent2:#12578f; --good:#0d7a4f;
+    --warn:#8a5a00; --bad:#b3261e; --text:#12233d; --dim:#5a6b85;
+    --bgstar1:#dbe9f8; --bgstar2:#eef4fb;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;color:var(--text);
+    background:radial-gradient(1200px 700px at 20% -10%,var(--bgstar1) 0%,transparent 55%),
+               radial-gradient(1000px 600px at 100% 0%,var(--bgstar2) 0%,transparent 50%),
+               linear-gradient(160deg,var(--bg1),var(--bg2));
+    min-height:100vh;
+  }
+  header{display:flex;align-items:flex-start;justify-content:space-between;padding:22px 28px 6px}
+  header h1{font-size:22px;letter-spacing:1px}
+  header h1 b{color:var(--accent)}
+  header p{color:var(--dim);font-size:12.5px;margin-top:4px}
+  .themeBtn{background:var(--card);border:1px solid var(--line);color:var(--text);
+    border-radius:10px;padding:8px 12px;cursor:pointer;font-size:15px;font-family:inherit;line-height:1}
+  .themeBtn:hover{border-color:var(--accent)}
+  nav{display:flex;gap:10px;padding:14px 28px;flex-wrap:wrap}
+  nav button{
+    background:var(--card);border:1px solid var(--line);color:var(--text);
+    padding:9px 20px;border-radius:10px;cursor:pointer;font-size:14px;font-family:inherit;
+    display:inline-flex;align-items:center;gap:7px;
+  }
+  nav button.active{background:linear-gradient(180deg,rgba(56,189,248,.28),rgba(56,189,248,.10));border-color:var(--accent)}
+  .ic{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+  main{max-width:1000px;margin:0 auto;padding:0 28px 60px}
+  .panel{display:none}
+  .panel.show{display:block}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:20px;margin-top:18px;backdrop-filter:blur(10px);
+    box-shadow:0 8px 30px rgba(0,10,30,.35);
+  }
+  .card h2{font-size:16px;font-weight:600;margin-bottom:14px;color:var(--accent2);
+    border-left:3px solid var(--accent);padding-left:9px}
+  label{display:block;font-size:13px;color:var(--dim);margin:12px 0 5px}
+  input[type=text],input[type=password],input[type=number],select,textarea{
+    width:100%;background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:9px 12px;font-size:14px;font-family:inherit;outline:none;
+    font-variant-numeric:tabular-nums;
+  }
+  input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+  input[type=range]{padding:0;accent-color:var(--accent)}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .row>div{flex:1;min-width:220px}
+  .btns{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center}
+  button.act{
+    background:linear-gradient(180deg,rgba(56,189,248,.9),rgba(29,129,186,.9));
+    color:#04101f;border:none;border-radius:10px;padding:10px 22px;font-size:14px;
+    font-weight:600;cursor:pointer;font-family:inherit;
+  }
+  button.act.gray{background:rgba(80,110,150,.25);color:var(--text);border:1px solid var(--line)}
+  button.act.danger{background:linear-gradient(180deg,rgba(248,113,113,.9),rgba(185,28,28,.9));color:#fff}
+  button.act:disabled{opacity:.45;cursor:not-allowed}
+  .provs{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+  button.prov{
+    border:1px solid var(--line);border-radius:11px;padding:11px 13px;cursor:pointer;
+    background:var(--card2);transition:.15s;position:relative;text-align:left;
+    color:var(--text);font-family:inherit;font-size:13.5px;display:block;width:100%;
+  }
+  button.prov:hover{border-color:var(--accent)}
+  button.prov.on{border-color:var(--accent);background:linear-gradient(180deg,rgba(56,189,248,.18),rgba(56,189,248,.05))}
+  .prov b{display:block;font-size:14px;color:var(--text)}
+  .prov span{display:block;font-size:11px;color:var(--dim);margin-top:4px;line-height:1.5}
+  .provlink{display:inline-block;margin-top:6px;font-size:11.5px;color:var(--accent2);text-decoration:none}
+  .provlink:hover{text-decoration:underline}
+  .stag{display:inline-block;margin-top:5px;font-size:10.5px;padding:0 7px;border-radius:20px;
+    border:1px solid var(--line);color:var(--dim)}
+  .stag.builtin{color:var(--good);border-color:var(--good)}
+  .stag.external{color:var(--warn);border-color:var(--warn)}
+  .mselect{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:9px 12px;font-size:14px;font-family:inherit;outline:none}
+  .mselect:focus{border-color:var(--accent)}
+  .hint{font-size:12px;color:var(--dim);line-height:1.7;margin-top:6px}
+  .hint.warn{color:var(--warn)}
+  .hint.good{color:var(--good)}
+  .hint.bad{color:var(--bad)}
+  .switch{display:flex;align-items:center;gap:8px;margin:8px 0}
+  .switch input{width:16px;height:16px;accent-color:var(--accent)}
+  .switch label{margin:0;cursor:pointer}
+  .filegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+  .fbox{border:1px dashed var(--line);border-radius:11px;padding:14px;background:var(--card2);transition:.15s}
+  .fbox.over{border-color:var(--accent);background:rgba(56,189,248,.10)}
+  .fbox .dzlist{margin-top:8px}
+  .dzfile{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;
+    padding:5px 10px;margin-top:6px;font-size:12.5px;background:var(--card2)}
+  .dzfile .nm{flex:1;color:var(--accent2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dzfile .sz{color:var(--dim);font-size:11.5px}
+  .dzfile button{cursor:pointer;background:none;border:1px solid var(--line);color:var(--dim);
+    border-radius:6px;padding:2px 8px;font-size:11.5px;font-family:inherit}
+  .dzfile button:hover{border-color:var(--bad);color:var(--bad)}
+  .res{border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin-top:8px;font-size:13px;background:var(--card2)}
+  .res .name{color:var(--accent2)}
+  .res .warnline{color:var(--warn);font-size:12px;margin-top:4px}
+  details{margin-top:8px;border:1px solid var(--line);border-radius:9px;padding:8px 12px;background:var(--card2);font-size:12.5px}
+  details.reqs{background:rgba(30,58,100,.35)}
+  summary{cursor:pointer;color:var(--dim)}
+  .ready{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:12px;font-size:13px;background:var(--card2);display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+  .ready .ok{color:var(--good);font-weight:600}
+  .ready .no{color:var(--bad);font-weight:600}
+  .ready .opt{color:var(--dim)}
+  .ready .est{width:100%;color:var(--dim);font-size:12px;margin-top:4px}
+  .ratioSum{display:inline-block;margin-left:8px;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .ratioSum.bad{color:var(--bad);font-weight:600}
+  .ocrrow{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:9px;
+    padding:8px 12px;margin-top:8px;font-size:13px;background:var(--card2)}
+  .ocrrow .fname{color:var(--accent2)}
+  .ocrrow .st{color:var(--dim)}
+  .ocrrow button{cursor:pointer;background:none;border:1px solid var(--line);color:var(--dim);
+    border-radius:7px;padding:3px 10px;font-size:12px;font-family:inherit}
+  .ocrrow button:hover{border-color:var(--bad);color:var(--bad)}
+  button:focus-visible,summary:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .proj a.art{color:var(--accent2);margin-right:10px}
+  .proj a.btnart{display:inline-block;border:1px solid var(--line);border-radius:7px;padding:3px 10px;
+    font-size:12px;margin:2px 6px 2px 0;color:var(--accent2);text-decoration:none}
+  .proj a.btnart:hover{border-color:var(--accent)}
+  .inlineBtn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--dim);
+    border-radius:7px;padding:4px 12px;font-size:12.5px;font-family:inherit;margin-right:8px}
+  .inlineBtn:hover{border-color:var(--bad);color:var(--bad)}
+  .inlineBtn.blue:hover{border-color:var(--accent);color:var(--accent2)}
+  #pd_log{white-space:pre-wrap;font-size:12px;line-height:1.7;color:var(--dim);
+    background:rgba(4,10,24,.6);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px;margin-top:10px;max-height:220px;overflow:auto}
+  #pd_stage{font-size:13px;color:var(--accent2);margin:8px 0 0}
+  .proj{border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin-top:10px;background:var(--card2);cursor:pointer;transition:.15s}
+  .proj:hover{border-color:var(--accent)}
+  .proj b{font-size:15px}
+  .proj .meta{color:var(--dim);font-size:12.5px;margin-top:5px}
+  .proj .stage{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:20px;font-size:11.5px;
+    border:1px solid var(--line);color:var(--accent2)}
+  .proj .stage.running{background:rgba(251,191,36,.12);border-color:var(--warn);color:var(--warn)}
+  .stage{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:20px;font-size:11.5px;
+    border:1px solid var(--line);color:var(--accent2)}
+  .tag{display:inline-block;margin-right:6px;padding:1px 8px;border-radius:20px;font-size:11.5px;
+    background:rgba(56,189,248,.12);color:var(--accent2)}
+  .quota{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .quota span{font-size:11.5px;background:rgba(52,211,153,.1);color:var(--good);border-radius:8px;padding:3px 8px}
+  .stepper{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;align-items:center}
+  .stp{font-size:12px;padding:4px 12px;border-radius:20px;border:1px solid var(--line);color:var(--dim);background:var(--card2)}
+  .stp.cur{background:rgba(56,189,248,.16);border-color:var(--accent);color:var(--accent2);font-weight:600}
+  .stp.done{background:rgba(52,211,153,.12);border-color:var(--good);color:var(--good)}
+  .pvbar{height:8px;border-radius:6px;background:var(--card2);border:1px solid var(--line);margin-top:10px;overflow:hidden}
+  .pvbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--good));transition:width .4s}
+  #pvtext{font-size:12.5px;color:var(--dim);margin-top:6px}
+  #toasts{position:fixed;right:24px;bottom:24px;display:flex;flex-direction:column;gap:10px;z-index:99;max-width:400px}
+  .toast{background:var(--card2);border:1px solid var(--line);border-radius:11px;padding:12px 16px;
+    font-size:13px;box-shadow:0 8px 26px rgba(0,10,30,.4);animation:tin .25s}
+  .toast.good{border-color:var(--good)}
+  .toast.bad{border-color:var(--bad)}
+  @keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(56,189,248,.3);
+    border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .modalMask{position:fixed;inset:0;background:rgba(2,8,20,.6);display:flex;align-items:center;justify-content:center;z-index:120}
+  .modal{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:22px 24px;max-width:460px;width:92%}
+  .modal h3{font-size:16px;margin-bottom:8px;color:var(--accent2)}
+  .modal p{font-size:13.5px;color:var(--dim);line-height:1.8}
+  .modal .btns{margin-top:16px}
+  .empty{padding:34px 20px;text-align:center;color:var(--dim)}
+  .empty svg{width:64px;height:64px;margin-bottom:12px;opacity:.7}
+  .empty .sub{font-size:13px;margin-bottom:14px}
+  /* 预设芯片 */
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:20px;
+    padding:4px 12px;font-size:12.5px;cursor:pointer;background:var(--card2);color:var(--text);font-family:inherit}
+  .chip:hover{border-color:var(--accent)}
+  .chip.builtin{background:rgba(56,189,248,.12);border-color:var(--accent);color:var(--accent2)}
+  .chip .x{cursor:pointer;color:var(--dim);font-size:13px;padding:0 2px}
+  .chip .x:hover{color:var(--bad)}
+  /* 试出题卡片 */
+  .trialq{border:1px solid var(--line);border-radius:12px;background:var(--card2);padding:16px 18px;margin-top:12px}
+  .trialq .src{font-size:11.5px;color:var(--dim);margin-bottom:6px}
+  .trialq .qtext{font-size:14px;line-height:1.8}
+  .trialq .opts{margin:10px 0 0 6px;font-size:13.5px;line-height:2}
+  .trialq .ans{font-size:13px;color:var(--good);margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
+  .trialq .warnline{color:var(--warn);font-size:12px;margin-top:4px}
+  .trialq .failline{color:var(--bad);font-size:12px;margin-top:4px}
+  /* 提示词查看器/编辑器 */
+  .ppm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
+  .ppm .b{font-size:14px;color:var(--accent2);font-weight:600}
+  .pstatus{font-size:11.5px;padding:1px 9px;border-radius:20px;border:1px solid var(--line);color:var(--dim)}
+  .pstatus.custom{background:rgba(251,191,36,.12);border-color:var(--warn);color:var(--warn)}
+  .pstatus.drift{background:rgba(248,113,113,.12);border-color:var(--bad);color:var(--bad)}
+  pre.pview{white-space:pre-wrap;font-size:12px;line-height:1.7;color:var(--dim);
+    background:rgba(4,10,24,.6);border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-height:340px;overflow:auto}
+  pre.pview mark{background:rgba(56,189,248,.25);color:var(--accent2);border-radius:4px;padding:0 3px}
+  textarea.pedit{min-height:300px;font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.6}
+  .phchips .chip{font-size:11.5px;padding:2px 9px}
+  .phchips .chip.missing{background:rgba(248,113,113,.15);border-color:var(--bad);color:var(--bad)}
+  .diffwrap{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .diffwrap pre{white-space:pre-wrap;font-size:11.5px;line-height:1.6;background:rgba(4,10,24,.6);
+    border:1px solid var(--line);border-radius:9px;padding:10px 12px;max-height:320px;overflow:auto;color:var(--dim)}
+  .diffwrap pre b{color:var(--bad)}
+  /* 审核台 */
+  .revq{border:1px solid var(--line);border-radius:11px;background:var(--card2);padding:12px 14px;margin-top:10px}
+  .revq.dropped{opacity:.5}
+  .revq .qhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .revq .qhead b{font-size:13.5px}
+  .revq .qbody{font-size:13px;line-height:1.8;margin-top:6px}
+  .revq .qbody ul{margin:4px 0 4px 20px}
+  .revq .optsrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .revq input.eb{flex:1;min-width:180px;border:1px solid var(--line);background:var(--card);
+    color:var(--text);border-radius:7px;padding:5px 9px;font-size:12.5px;font-family:inherit}
+</style>
+</head>
+<body>
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-conn" viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M4 17h16M6 7h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/></symbol>
+  <symbol id="i-proj" viewBox="0 0 24 24"><path d="M4 5h5l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M12 11v6M9 14h6"/></symbol>
+  <symbol id="i-mine" viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h6l2 2h8a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+</svg>
+<header>
+  <div>
+    <h1>Med<b>Kit</b> · 医学题库工坊</h1>
+    <p>MedAgentWork 桌面版 · 教材 + 教师重点 → 全新题库/押题卷/复习手册 · 本地生成 · 仅使用你自己的 API Key</p>
+  </div>
+  <button class="themeBtn" id="btn_theme" title="切换亮/暗主题" onclick="toggleTheme()">
+    <svg class="ic"><use id="u_theme" href="#i-moon"></use></svg>
+  </button>
+</header>
+<nav>
+  <button data-tab="conn" class="active"><svg class="ic"><use href="#i-conn"></use></svg>① 连接服务商</button>
+  <button data-tab="proj"><svg class="ic"><use href="#i-proj"></use></svg>② 新建课题</button>
+  <button data-tab="mine"><svg class="ic"><use href="#i-mine"></use></svg>③ 我的项目</button>
+  <button data-tab="prompts"><svg class="ic"><use href="#i-doc"></use></svg>④ 提示词与规则</button>
+</nav>
+<main>
+  <!-- ① 连接服务商 -->
+  <section id="tab-conn" class="panel show">
+    <div class="card">
+      <h2>选择服务商（API 由你自己提供）</h2>
+      <div class="provs" id="provs"></div>
+      <div class="row" style="margin-top:18px">
+        <div><label>接口地址 base_url</label><input type="text" id="base_url" placeholder="https://api.deepseek.com"></div>
+        <div><label>API Key <span class="hint" id="keymask"></span></label>
+          <input type="password" id="api_key" placeholder="sk-... （留空 = 保留已保存的 Key；输入新值 = 替换）"></div>
+      </div>
+      <div class="row">
+        <div><label>生成模型（强）<span class="hint" id="gen_hint"></span></label>
+          <select class="mselect" id="model_gen"></select>
+          <input type="text" id="model_gen_manual" style="display:none;margin-top:6px" placeholder="手动输入模型名"></div>
+        <div><label>质检模型（性价比，可同款）</label>
+          <select class="mselect" id="model_qc"></select>
+          <input type="text" id="model_qc_manual" style="display:none;margin-top:6px" placeholder="手动输入模型名"></div>
+      </div>
+      <div class="btns">
+        <button class="act gray" id="btn_models">获取模型列表</button>
+        <button class="act gray" id="btn_test">测试连接</button>
+        <button class="act" id="btn_save">保存配置</button>
+      </div>
+      <div class="hint" id="test_result"></div>
+    </div>
+
+    <div class="card">
+      <h2>文字识别 OCR（扫描件 / 图片教材 → 文本）</h2>
+      <div class="row">
+        <div><label>MinerU API Token <span class="hint" id="minerumask"></span></label>
+          <input type="password" id="mineru_key" placeholder="留空 = 保留已保存的 Token；输入新值 = 替换（不填 Token 走免 Token 轻量 API ≤10MB）">
+        </div>
+        <div><label>说明</label>
+          <div class="hint">在 <a href="https://mineru.net" target="_blank" rel="noopener" style="color:var(--accent2)">mineru.net</a>「API 管理」页创建 Token。
+          扫描件/图片上传后将自动识别并<b>直接加入教材或重点输入</b>，无需手动粘贴。<br>
+          <b style="color:var(--warn)">隐私提示</b>：启用 OCR 后文件将<b>上传至 MinerU 云端识别</b>，仅返回文本结果；
+          请勿上传涉密材料；介意请使用带文本层的 PDF（全程本机解析）。</div>
+        </div>
+      </div>
+      <div class="switch"><input type="checkbox" id="t_autoocr" checked><label for="t_autoocr">扫描件自动 OCR（无文本层 / 图片文件时自动识别并加入输入）</label></div>
+      <div class="btns">
+        <button class="act gray" id="btn_mineru_test">测试 OCR 服务</button>
+      </div>
+      <div class="hint" id="mineru_test_result"></div>
+    </div>
+
+    <div class="card">
+      <h2>网络检索（可选 · 默认关）</h2>
+      <div class="hint" style="margin-bottom:6px">生成前自动多轮搜索补充<b>考纲 / 真题 / 指南</b>，作为参考素材进入出题（标注 <code>[源:网 URL]</code>）；
+      与教材冲突的内容自动标记且<b>不自动改写</b>。<b style="color:var(--warn)">隐私提示</b>：检索词（含章节名）会发送到所选搜索后端。</div>
+  <div class="row" style="margin-top:10px">
+    <div><label>检索后端（各选项「自带 / 需外部搜索」能力见标注）</label>
+      <select id="ws_backend"><option value="auto">自动匹配</option></select>
+      <div class="hint" id="ws_note"></div></div>
+    <div><label>博查 API Key（后端为「博查」或「DeepSeek(需外部)」时）</label>
+      <input type="password" id="ws_key" placeholder="留空 = 保留已保存的 Key"></div>
+  </div>
+  <div class="switch"><input type="checkbox" id="t_web" checked><label for="t_web">开启网络检索（默认关；本卡开关随「保存检索设置」生效）</label></div>
+      <div id="ws_manual_wrap" style="display:none">
+        <label>手动粘贴素材（每行一条：标题 URL 或任意文本；≤20000 字）</label>
+        <textarea id="ws_manual" rows="3" placeholder="例：儿科学第X章 真题  https://example.com/..."></textarea>
+      </div>
+      <div class="btns">
+        <button class="act gray" id="btn_ws_test">测试检索后端</button>
+        <button class="act" id="btn_ws_save">保存检索设置</button>
+      </div>
+      <div class="hint" id="ws_test_result"></div>
+    </div>
+  </section>
+
+  <!-- ② 新建课题 -->
+  <section id="tab-proj" class="panel">
+    <div class="card">
+      <h2>课题参数</h2>
+      <div class="row">
+        <div><label>科目</label><input type="text" id="subject" placeholder="例：儿科学"></div>
+        <div><label>目标考试</label>
+          <select id="exam">
+            <option value="期末">期末</option><option value="考研西综">考研西综</option>
+            <option value="执业医师">执业医师</option><option value="其他">其他</option>
+          </select></div>
+        <div><label>目标题数（默认 100）</label><input type="number" id="target" value="100" min="10" max="500"></div>
+      </div>
+      <div class="hint warn">💡 建议一次只生成<b>一个章节或一篇</b>的内容：切题更准，质检更稳，成本更低。</div>
+      <div class="row">
+        <div><label>题型配比 %（A1/A2/B1/X）
+          <span class="ratioSum" id="ratio_sum">合计 100%</span></label>
+          <div class="row" style="gap:8px">
+            <div style="min-width:70px"><label>A1</label><input type="number" id="r_a1" value="40"></div>
+            <div style="min-width:70px"><label>A2</label><input type="number" id="r_a2" value="30"></div>
+            <div style="min-width:70px"><label>B1</label><input type="number" id="r_b1" value="20"></div>
+            <div style="min-width:70px"><label>X</label><input type="number" id="r_x" value="10"></div>
+          </div></div>
+        <div><label>Bloom 认知层级 % <span class="ratioSum" id="bloom_sum">合计 100%</span></label>
+          <div class="row" style="gap:8px">
+            <div style="min-width:62px"><label>记忆</label><input type="number" id="b_mem" value="30"></div>
+            <div style="min-width:62px"><label>理解</label><input type="number" id="b_und" value="40"></div>
+            <div style="min-width:62px"><label>应用</label><input type="number" id="b_app" value="25"></div>
+            <div style="min-width:62px"><label>创造</label><input type="number" id="b_cre" value="5"></div>
+          </div>
+          <div class="hint">考研/执医可提高「应用」占比（门禁按你设定的配比校验）</div></div>
+      </div>
+      <div class="row">
+        <div><label>难度定位</label>
+          <select id="k_difficulty"><option value="">默认</option><option value="basic">基础题</option>
+            <option value="clinical">临床综合题</option><option value="challenge">挑战题</option></select></div>
+        <div><label>解析风格</label>
+          <select id="k_analysis"><option value="">默认</option><option value="detailed">详尽机制型（≥80 字）</option>
+            <option value="snappy">速记型（≤40 字）</option></select></div>
+        <div><label>题干风格</label>
+          <select id="k_stem"><option value="">默认</option><option value="direct">直问直答（A1）</option>
+            <option value="narrative">病例叙事（A2 化）</option></select></div>
+      </div>
+      <label>附加生成要求（可选，≤500 字）<span class="hint" style="display:inline;margin-left:6px" id="req_count"></span></label>
+      <textarea id="requirements" maxlength="500" rows="3"
+        placeholder="例：多出计算题；解析末尾给「易错点」一行；侧重治疗而非诊断；数值题给单位换算过程"></textarea>
+      <div class="hint">在「试出一题」与正式生成中同时生效；与命题硬约束冲突时以硬约束为准</div>
+      <div style="margin-top:10px">
+        <label>配置预设（一键回填下列参数）</label>
+        <div class="chips" id="preset_chips"></div>
+        <div class="btns" style="margin-top:8px">
+          <button class="act gray" id="btn_preset_save">💾 保存当前为预设</button>
+          <button class="act gray" id="btn_preset_export">⇩ 导出预设文件</button>
+          <button class="act gray" id="btn_preset_import">⇧ 导入预设文件</button>
+          <input type="file" id="f_preset_import" accept=".json" style="display:none">
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>产物开关（默认全开）</label>
+          <div class="switch"><input type="checkbox" id="t_qbank" checked><label for="t_qbank">题库 MD+HTML</label></div>
+          <div class="switch"><input type="checkbox" id="t_paper" checked><label for="t_paper">押题卷 HTML（交互答题判分）</label></div>
+          <div class="switch"><input type="checkbox" id="t_review" checked><label for="t_review">复习手册 MD+HTML</label></div>
+        </div>
+        <div><label>网络检索引用配额 %（0~30，默认 0 = 不引用网络素材）</label>
+          <input type="range" id="web_quota" min="0" max="30" value="0" step="5">
+          <div class="hint">当前：<b id="web_quota_val">0%</b> — 开启网络检索并 >0 时，取题标注 <code>[源:网 URL]</code></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>上传素材（教材 / 教师重点为必填）</h2>
+      <details class="reqs" open>
+        <summary><svg class="ic" style="vertical-align:-2px"><use href="#i-proj"></use></svg> 素材要求与建议（先看这里）</summary>
+        <div class="hint" style="margin-top:8px">
+          <b>格式</b>：PDF（须带文本层）/ DOCX / MD / TXT / 图片（png·jpg，需开启 OCR）；单文件 ≤ 200 MB；扫描件 PDF 会自动走 MinerU OCR 识别并加入输入<br>
+          <b>为什么必填</b>：教材 = 题目的事实依据（每题必须可溯源）；教师重点 = 考点锚定（决定哪些内容多出题）<br>
+          <b>最佳实践</b>：一次只传 <b>一个章节或一篇</b>——100 题 ≈ 单章 30~80 页；教材建议带章节标题（第X章 / 一、 / 1.1 / ##），可自动按章分配题数<br>
+          <b>教师重点</b>：提纲式、含术语/数值/考点即可，2~10 页最理想；超过约 4000 字仅前 4000 字参与锚定<br>
+          <b style="color:var(--warn)">隐私提示</b>：启用 OCR 时扫描件会上传至 MinerU 云端识别；启用网络检索时检索词发送到所选搜索后端；普通文本 PDF 全程本机解析。
+        </div>
+      </details>
+      <div class="btns" style="margin-top:12px">
+        <button class="act gray" id="btn_sample">🎓 手头还没素材？载入示例体验</button>
+      </div>
+      <div class="filegrid" style="margin-top:6px">
+        <div class="fbox dz" id="dz_textbook">
+          <b>📕 教材（必填）</b><span class="hint">PDF(文本层)/DOCX/MD/TXT，可多个文件；支持拖拽</span>
+          <div class="dzlist" id="dzl_textbook"></div>
+          <div class="btns">
+            <button class="inlineBtn blue" onclick="pickFiles('textbook')">选择文件</button>
+            <button class="inlineBtn" id="dzc_textbook" style="display:none">清空</button>
+          </div>
+          <input type="file" id="f_textbook" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+        </div>
+        <div class="fbox dz" id="dz_teacher">
+          <b>📌 教师重点（必填）</b><span class="hint">课堂重点/复习提纲，作为考点锚定；支持拖拽</span>
+          <div class="dzlist" id="dzl_teacher"></div>
+          <div class="btns">
+            <button class="inlineBtn blue" onclick="pickFiles('teacher')">选择文件</button>
+            <button class="inlineBtn" id="dzc_teacher" style="display:none">清空</button>
+          </div>
+          <input type="file" id="f_teacher" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="switch"><input type="checkbox" id="t_ocr" checked><label for="t_ocr">🔍 扫描件 / 图片自动识别（MinerU OCR；Token 在「① 连接服务商」页配置）</label></div>
+        <b style="font-size:13.5px">🔹 自备真题 / 其他考题（可选 · 默认不引用）</b>
+        <span class="hint">作为出题素材时标注 <code>[源:用户真题]</code>；引用配额在后续版本提供滑块；当前仅解析入库；支持拖拽</span>
+        <div class="fbox dz" id="dz_exam" style="margin-top:8px">
+          <div class="dzlist" id="dzl_exam"></div>
+          <div class="btns">
+            <button class="inlineBtn blue" onclick="pickFiles('exam')">选择文件</button>
+            <button class="inlineBtn" id="dzc_exam" style="display:none">清空</button>
+          </div>
+          <input type="file" id="f_exam" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+        </div>
+      </div>
+      <div class="btns">
+        <button class="act gray" id="btn_parse">解析并预览</button>
+        <button class="act" id="btn_trial">🎯 试出一题（先看效果）</button>
+        <button class="act" id="btn_create">创建课题 →</button>
+      </div>
+      <div id="trial_box"></div>
+      <div id="ocr_progress"></div>
+      <div id="ready_list"></div>
+      <div id="parse_results"></div>
+    </div>
+  </section>
+
+  <!-- ③ 我的项目 -->
+  <section id="tab-mine" class="panel">
+    <div class="card">
+      <h2>项目列表（产物存于本机 ~/.medkit/projects/）</h2>
+      <div id="proj_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
+    </div>
+    <div class="card" id="proj_detail" style="display:none">
+      <h2 id="pd_title">项目详情</h2>
+      <div id="pd_body"></div>
+      <div class="btns">
+        <button class="act" id="btn_run">开始生成</button>
+        <button class="act gray" id="btn_review" style="display:none">逐题审核</button>
+        <button class="inlineBtn" id="btn_delete">删除项目</button>
+      </div>
+      <div id="review_panel" style="display:none"></div>
+    </div>
+  </section>
+
+  <!-- ④ 提示词与规则 -->
+  <section id="tab-prompts" class="panel">
+    <div class="card">
+      <h2>提示词查看 / 编辑（影子副本机制）</h2>
+      <div class="hint">内置提示词打包在安装目录（只读）；编辑将保存为 <b>~/.medkit/prompts/</b> 影子副本并优先生效（不改内置，升级不覆盖）；
+      保存会校验占位符完整性；「恢复默认」随时回滚。<b>改完建议先「试出一题」验证效果。</b></div>
+      <div id="prompt_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
+      <h2 style="margin-top:22px">门禁规则速览（题目为什么会被改）</h2>
+      <div class="hint" style="line-height:2">
+        <b>R1</b> 选项数必须 5 个 · <b>R7/R8</b> 截断残留 / 以连接词结尾 · <b>R12</b> 无意义括号后缀 ·
+        <b>R13</b> 选项长度上限（>20 字）与失衡（>1.5×） · <b>R9</b> 临床数值必须带单位 ·
+        <b>R0</b> 答案键完整 · <b>D16</b> Bloom 层级合法 + 分布达标（默认 30/40/25/5，可自定义） ·
+        <b>F2</b> 每题必须含 <code>[源:切片SXXX]</code> 溯源 · <b>DUP</b> 题干 n-gram 相似度 &gt;0.8 会被改写<br>
+        <b>MedQC</b>（LLM-as-judge）：D11 干扰项合理性 / D16 层级 / D17 同质性 / D18 词重复线索 / D19 收敛 / F1 事实 / F2 溯源 —— 任一 fail 触发定向修复。
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toasts" role="status" aria-live="polite"></div>
+<div id="modal_mask" class="modalMask" style="display:none">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3 id="md_title">确认</h3>
+    <div id="md_body"></div>
+    <div class="btns">
+      <button class="act gray" id="md_cancel">取消</button>
+      <button class="act danger" id="md_ok">确认</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [] },
+              pres: { textbook: null, teacher: null, exam: null, sample: false },
+              current: null, cfg: null, providers: [], presets: null };
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function toast(msg, ok = true) {
+  const box = $("toasts");
+  const t = document.createElement("div");
+  t.className = "toast " + (ok ? "good" : "bad");
+  t.textContent = msg;
+  box.appendChild(t);
+  while (box.children.length > 4) box.removeChild(box.firstChild);
+  setTimeout(() => { t.remove(); }, 3800);
+}
+async function api(path, opts = {}) {
+  let r;
+  try { r = await fetch(path, opts); }
+  catch (e) { throw new Error("无法连接本地服务，请确认 MedKit 程序仍在运行"); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || j.msg || r.statusText);
+  return j;
+}
+function confirmModal(title, body, okLabel, onOk, danger = true) {
+  $("md_title").textContent = title;
+  $("md_body").innerHTML = body;
+  $("md_ok").textContent = okLabel || "确认";
+  $("md_ok").className = "act " + (danger ? "danger" : "");
+  $("modal_mask").style.display = "flex";
+  $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; onOk(); };
+  $("md_cancel").onclick = () => { $("modal_mask").style.display = "none"; };
+}
+$("md_cancel").onclick = () => { $("modal_mask").style.display = "none"; };
+
+/* ---- 主题 */
+function applyTheme() {
+  const t = state.theme || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  document.documentElement.dataset.theme = t;
+  $("u_theme").setAttribute("href", t === "light" ? "#i-sun" : "#i-moon");
+}
+function toggleTheme() {
+  state.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  localStorage.setItem("medkit-theme", state.theme);
+  applyTheme();
+}
+(function initTheme() {
+  const saved = localStorage.getItem("medkit-theme");
+  if (saved === "dark" || saved === "light") state.theme = saved;
+  applyTheme();
+})();
+
+/* ---- 导航 + hash 路由 */
+function showTab(name) {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
+  $("tab-" + name).classList.add("show");
+  if (name === "mine") loadProjects();
+  if (name === "prompts") loadPrompts();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  location.hash = b.dataset.tab;
+  showTab(b.dataset.tab);
+});
+(function initTab() {
+  const h = (location.hash || "").replace("#", "");
+  if (["conn", "proj", "mine", "prompts"].includes(h)) showTab(h);
+})();
+window.addEventListener("hashchange", () => {
+  const h = (location.hash || "").replace("#", "");
+  if (["conn", "proj", "mine", "prompts"].includes(h)) showTab(h);
+});
+
+/* ---- ① 服务商 */
+function modelValue(id) {
+  const manual = $(id + "_manual");
+  if (manual.style.display !== "none" && manual.value.trim()) return manual.value.trim();
+  const v = $(id).value;
+  return (v && v !== "__manual__") ? v : (manual.value.trim() || "");
+}
+function fillModelSelect(selId, models, saved, hintId) {
+  const sel = $(selId), manual = $(selId + "_manual");
+  manual.style.display = "none"; manual.value = "";
+  sel.innerHTML = "";
+  const list = (models || []).slice();
+  let value = saved || "";
+  if (list.length) {
+    list.forEach(m => sel.append(new Option(m, m)));
+    value = (saved && list.includes(saved)) ? saved : list[0];
+  } else if (value) {
+    sel.append(new Option(`${value}（已保存，待获取列表）`, value));
+  } else {
+    sel.append(new Option("（点击「获取模型列表」自动填充最新）", ""));
+  }
+  sel.append(new Option("✎ 手动输入…", "__manual__"));
+  sel.value = value || "";
+  if (hintId) $(hintId).textContent = list.length ? `已加载 ${list.length} 个模型，默认选最新` : "";
+}
+["model_gen", "model_qc"].forEach(id => {
+  $(id).addEventListener("change", () => {
+    const manual = $(id + "_manual");
+    if ($(id).value === "__manual__") { manual.style.display = "block"; manual.focus(); manual.placeholder = "手动输入模型名（如 deepseek-chat）"; }
+    else manual.style.display = "none";
+  });
+});
+async function loadConfig() {
+  const [c, p] = await Promise.all([api("/api/config"), api("/api/providers")]);
+  state.cfg = c; state.providers = p.providers || [];
+  state.provider = c.provider || "";
+  const box = $("provs"); box.innerHTML = "";
+  p.providers.forEach(pr => {
+    const d = document.createElement("button");
+    d.type = "button";
+    d.className = "prov" + (c.provider === pr.id ? " on" : "");
+    d.dataset.id = pr.id;
+    d.setAttribute("role", "radio");
+    d.setAttribute("aria-checked", c.provider === pr.id ? "true" : "false");
+    d.innerHTML = `<b>${esc(pr.name)}</b><span>${esc(pr.note || "")}</span>
+      <span class="stag ${pr.search_support ? "builtin" : "external"}">${pr.search_support ? "自带网络搜索 ✓" : (pr.id === "custom" ? "自定义端点 · 需外部搜索" : "需外部搜索（不自带联网工具）")}</span>
+      ${pr.register_url ? `<a class="provlink" href="${esc(pr.register_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">官网注册 ↗</a>` : ""}`;
+    d.onclick = () => pickProvider(pr);
+    box.appendChild(d);
+  });
+  $("base_url").value = c.base_url || "";
+  fillModelSelect("model_gen", [], c.model_gen, "gen_hint");
+  fillModelSelect("model_qc", [], c.model_qc || c.model_gen, "");
+  $("keymask").textContent = c.api_key_masked ? "已保存：" + c.api_key_masked : "未保存";
+  const mu = c.mineru || {};
+  $("minerumask").textContent = mu.api_key_masked ? "已保存：" + mu.api_key_masked : "未保存（使用免 Token 轻量 API）";
+  $("t_autoocr").checked = mu.auto_ocr !== false;
+  const t = $("t_ocr"); if (t) t.checked = mu.auto_ocr !== false;
+  const wsc = c.web_search || {};
+  $("ws_key").placeholder = wsc.api_key_masked ? ("已保存：" + wsc.api_key_masked) : "留空 = 保留已保存的 Key";
+  $("t_web").checked = !!wsc.enabled;
+  syncWsManual();
+  loadSearchOptions().then(() => { $("ws_backend").value = wsc.backend || "auto"; updateWsNote(); syncWsManual(); });
+  loadPresets().catch(() => {});
+}
+/* 检索能力标注（本轮新增：DeepSeek 选项 + 自带/需外部 告知） */
+let searchBackends = null;
+async function loadSearchOptions() {
+  try {
+    const r = await api("/api/search/backends");
+    searchBackends = r;
+    const sel = $("ws_backend");
+    sel.innerHTML = '<option value="auto">自动匹配（按所选服务商能力）</option>';
+    (r.backends || []).forEach(b => {
+      const cap = b.builtin === true ? "自带搜索" : b.builtin === false ? "需外部搜索" : "无在线检索";
+      sel.append(new Option(`${b.label}（${cap}）`, b.id));
+    });
+  } catch (e) { toast("检索后端列表加载失败：" + e.message, false); }
+}
+function updateWsNote() {
+  const note = $("ws_note");
+  const base = searchBackends ? searchBackends.note : "";
+  const prov = (state.providers || []).find(p => p.id === state.provider);
+  let provNote = "";
+  if (prov) {
+    const autoMap = (searchBackends && searchBackends.builtin_backend_by_provider) || {};
+    const lbl = autoMap[prov.id];
+    const b = (searchBackends && searchBackends.backends || []).find(x => x.id === lbl);
+    provNote = prov.search_support
+      ? `当前服务商：<b style="color:var(--good)">${esc(prov.name)} 自带网络搜索</b> → 自动匹配「${b ? esc(b.label) : lbl || "自带工具"}」`
+      : `当前服务商：<b style="color:var(--warn)">${esc(prov.name)} 端点能力未知</b> → 建议配「博查 Key」或「手动粘贴」`;
+  }
+  const chosen = $("ws_backend").value;
+  const b = (searchBackends && searchBackends.backends || []).find(x => x.id === chosen);
+  note.innerHTML = `${esc(base)}<br>${provNote}<br>`
+    + (b ? `已选：${esc(b.label)} —— ${esc(b.note)}` : "已选：自动匹配（按所选服务商能力）");
+}
+$("ws_backend").addEventListener("change", () => { syncWsManual(); updateWsNote(); });
+function pickProvider(pr) {
+  document.querySelectorAll(".prov").forEach(x => {
+    x.classList.toggle("on", x.dataset.id === pr.id);
+    x.setAttribute("aria-checked", x.dataset.id === pr.id ? "true" : "false");
+  });
+  state.provider = pr.id;
+  $("base_url").value = pr.base_url || "";
+  if (pr.default_model) {
+    fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
+    const qc = modelValue("model_qc");
+    if (!qc || qc === "deepseek-v4-flash" || qc === "glm-4.6" || qc === "qwen-plus" || qc === "deepseek-chat") {
+      fillModelSelect("model_qc", [], pr.default_model, "");
+    }
+  } else {
+    fillModelSelect("model_gen", [], "", "gen_hint");
+  }
+  updateWsNote();
+}
+$("btn_test").onclick = async () => {
+  $("test_result").innerHTML = '<span class="spin"></span>正在连接…';
+  try {
+    const r = await api("/api/llm/test", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: $("base_url").value.trim(), api_key: $("api_key").value.trim(), model: modelValue("model_gen") }) });
+    $("test_result").innerHTML = `<span class="hint ${r.ok ? "good" : "bad"}">${esc(r.msg)}</span>`;
+  } catch (e) { $("test_result").innerHTML = `<span class="hint bad">${esc(e.message)}</span>`; }
+};
+$("btn_models").onclick = async () => {
+  $("btn_models").innerHTML = '<span class="spin"></span>获取中…';
+  try {
+    const r = await api("/api/llm/models", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: $("base_url").value.trim(), api_key: $("api_key").value.trim() }) });
+    if (r.models && r.models.length) {
+      const savedGen = modelValue("model_gen");
+      const savedQc = modelValue("model_qc");
+      fillModelSelect("model_gen", r.models, savedGen || (await api("/api/config")).model_gen || "", "gen_hint");
+      fillModelSelect("model_qc", r.models, savedQc || "", "");
+      toast("已加载 " + r.models.length + " 个模型，默认选中最新");
+    } else {
+      fillModelSelect("model_gen", [], modelValue("model_gen"), "gen_hint");
+      toast(r.msg || "未能获取模型列表（可「✎ 手动输入」）", false);
+    }
+  } catch (e) { toast(e.message, false); }
+  $("btn_models").textContent = "获取模型列表";
+};
+$("btn_save").onclick = async () => {
+  try {
+    const body = {
+      provider: state.provider || "deepseek",
+      base_url: $("base_url").value.trim(),
+      api_key: $("api_key").value.trim(),
+      model_gen: modelValue("model_gen"),
+      model_qc: modelValue("model_qc"),
+      web_search_enabled: false, web_search_api_key: "",
+      mineru_api_key: $("mineru_key").value.trim(),
+      mineru_auto_ocr: $("t_autoocr").checked,
+    };
+    await api("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast("配置已保存（本机 ~/.medkit/config.json，Key 已加密）");
+    $("api_key").value = ""; $("mineru_key").value = ""; loadConfig();
+  } catch (e) { toast(e.message, false); }
+};
+$("btn_mineru_test").onclick = async () => {
+  $("mineru_test_result").innerHTML = '<span class="spin"></span>测试 OCR 服务…';
+  try {
+    const r = await api("/api/mineru/test", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: $("mineru_key").value.trim() }) });
+    $("mineru_test_result").innerHTML = `<span class="hint ${r.ok ? "good" : "bad"}">${esc(r.msg)}</span>`;
+  } catch (e) { $("mineru_test_result").innerHTML = `<span class="hint bad">${esc(e.message)}</span>`; }
+};
+
+/* ---- ① 网络检索设置 */
+function syncWsManual() {
+  $("ws_manual_wrap").style.display = $("ws_backend").value === "manual" ? "block" : "none";
+}
+$("btn_ws_test").onclick = async () => {
+  $("ws_test_result").innerHTML = '<span class="spin"></span>测试检索后端…';
+  try {
+    const r = await api("/api/search/test", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ backend: $("ws_backend").value, api_key: $("ws_key").value.trim() }) });
+    $("ws_test_result").innerHTML = `<span class="hint ${r.ok ? "good" : "bad"}">${esc(r.msg)}</span>`;
+  } catch (e) { $("ws_test_result").innerHTML = `<span class="hint bad">${esc(e.message)}</span>`; }
+};
+$("btn_ws_save").onclick = async () => {
+  try {
+    const body = {
+      provider: state.provider || "deepseek",
+      base_url: $("base_url").value.trim(),
+      api_key: $("api_key").value.trim(),
+      model_gen: modelValue("model_gen"),
+      model_qc: modelValue("model_qc"),
+      web_search_enabled: $("t_web").checked,
+      web_search_api_key: $("ws_key").value.trim(),
+      web_search_backend: $("ws_backend").value,
+      mineru_api_key: "",
+      mineru_auto_ocr: $("t_autoocr").checked,
+    };
+    const got = await api("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    // 后端单独走 config 的 web_search.backend 字段：PUT 不覆盖 backend，直接透传当前选择
+    state.cfg = got;
+    toast("网络检索设置已保存（默认关；项目内还需开启「网络检索」开关并设定引用配额）");
+    loadConfig();
+  } catch (e) { toast(e.message, false); }
+};
+
+/* ---- ② 配比实时合计 */
+function ratioSum() {
+  const r = { A1: +$("r_a1").value || 0, A2: +$("r_a2").value || 0, B1: +$("r_b1").value || 0, X: +$("r_x").value || 0 };
+  const s = Object.values(r).reduce((a, b) => a + b, 0);
+  const el = $("ratio_sum");
+  el.textContent = "合计 " + s + "%";
+  el.classList.toggle("bad", s !== 100);
+  return r;
+}
+["r_a1", "r_a2", "r_b1", "r_x"].forEach(id => $(id).addEventListener("input", ratioSum));
+function bloomSum() {
+  const b = { 记忆: +$("b_mem").value || 0, 理解: +$("b_und").value || 0, 应用: +$("b_app").value || 0, 创造: +$("b_cre").value || 0 };
+  const s = Object.values(b).reduce((a, x) => a + x, 0);
+  const el = $("bloom_sum");
+  el.textContent = "合计 " + s + "%";
+  el.classList.toggle("bad", s !== 100);
+  return b;
+}
+["b_mem", "b_und", "b_app", "b_cre"].forEach(id => $(id).addEventListener("input", bloomSum));
+$("web_quota").addEventListener("input", () => { $("web_quota_val").textContent = $("web_quota").value + "%"; });
+$("requirements").addEventListener("input", () => { $("req_count").textContent = $("requirements").value.length + "/500"; });
+
+/* ---- ② 预设（2C） */
+function currentFormPayload() {
+  return {
+    exam: $("exam").value, target: parseInt($("target").value || "100"),
+    ratios: ratioSum(),
+    bloom: bloomSum(),
+    knobs: collectKnobs(),
+    requirements: $("requirements").value.trim(),
+  };
+}
+function collectKnobs() {
+  const k = {};
+  if ($("k_difficulty").value) k.difficulty = $("k_difficulty").value;
+  if ($("k_analysis").value) k.analysis_style = $("k_analysis").value;
+  if ($("k_stem").value) k.stem_style = $("k_stem").value;
+  return k;
+}
+function fillPayload(p) {
+  if (!p) return;
+  if (p.exam && [...$("exam").options].some(o => o.value === p.exam)) $("exam").value = p.exam;
+  if (p.target) $("target").value = p.target;
+  const r = p.ratios || {};
+  $("r_a1").value = r.A1 ?? 40; $("r_a2").value = r.A2 ?? 30;
+  $("r_b1").value = r.B1 ?? 20; $("r_x").value = r.X ?? 10;
+  const b = p.bloom || {};
+  $("b_mem").value = b["记忆"] ?? 30; $("b_und").value = b["理解"] ?? 40;
+  $("b_app").value = b["应用"] ?? 25; $("b_cre").value = b["创造"] ?? 5;
+  const k = p.knobs || {};
+  $("k_difficulty").value = k.difficulty || ""; $("k_analysis").value = k.analysis_style || "";
+  $("k_stem").value = k.stem_style || "";
+  $("requirements").value = (p.requirements || "").slice(0, 500);
+  ratioSum(); bloomSum();
+  $("req_count").textContent = $("requirements").value.length + "/500";
+}
+async function loadPresets() {
+  const r = await api("/api/presets");
+  state.presets = r;
+  renderChips(r);
+}
+function renderChips(r) {
+  const box = $("preset_chips");
+  if (!box) return;
+  box.innerHTML = "";
+  const mk = (p) => {
+    const c = document.createElement("button");
+    c.className = "chip" + (p.builtin ? " builtin" : "");
+    c.title = p.desc || "";
+    c.innerHTML = `${p.builtin ? "◆" : "◇"} ${esc(p.name)}`
+      + (p.builtin ? "" : `<span class="x" onclick="event.stopPropagation();delPreset('${p.id}')">✕</span>`);
+    c.onclick = () => confirmModal("应用预设？",
+      `「${esc(p.name)}」将<b>覆盖当前参数</b>（'科目'不覆盖）。<br><span class="hint">${esc(p.desc || "")}</span>`,
+      "应用", () => { fillPayload(p.payload); toast("预设已应用：" + p.name); }, false);
+    box.appendChild(c);
+  };
+  [...(r.builtins || []), ...(r.customs || [])].forEach(mk);
+}
+async function delPreset(id) {
+  try { await api("/api/presets/" + id, { method: "DELETE" }); toast("预设已删除"); loadPresets(); }
+  catch (e) { toast(e.message, false); }
+}
+$("btn_preset_save").onclick = async () => {
+  const name = prompt("预设名称：");
+  if (!name) return;
+  try {
+    const r = await api("/api/presets", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, desc: "", payload: currentFormPayload() }) });
+    toast("预设已保存：" + r.name);
+    loadPresets();
+  } catch (e) { toast(e.message, false); }
+};
+$("btn_preset_export").onclick = () => {
+  const data = JSON.stringify({ kind: "medkit-preset", payload: currentFormPayload() }, null, 2);
+  const a = document.createElement("a");
+  a.download = "medkit-preset-" + ($("subject").value.trim() || "untitled") + ".json";
+  a.href = "data:application/json;charset=utf-8," + encodeURIComponent(data);
+  a.click();
+  toast("预设文件已导出（另一台机器「导入」即可回填）");
+};
+$("btn_preset_import").onclick = () => $("f_preset_import").click();
+$("f_preset_import").onchange = async () => {
+  const f = $("f_preset_import").files[0];
+  $("f_preset_import").value = "";
+  if (!f) return;
+  try {
+    const j = JSON.parse(await f.text());
+    const p = (j.kind === "medkit-preset" && j.payload) ? j.payload : j.payload || j;
+    if (!p || typeof p !== "object") throw new Error("格式不符");
+    fillPayload(p);
+    toast("预设已导入并回填");
+  } catch (e) { toast("预设文件不合法：" + e.message, false); }
+};
+
+/* ---- ② 素材拖拽 */
+["textbook", "teacher", "exam"].forEach(role => {
+  const dz = $("dz_" + role), input = $("f_" + role);
+  input.onchange = () => { addFiles(role, [...input.files]); input.value = ""; };
+  dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("over"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("over"));
+  dz.addEventListener("drop", e => {
+    e.preventDefault(); dz.classList.remove("over");
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+      addFiles(role, [...e.dataTransfer.files]);
+      toast(`已加入 ${role === "textbook" ? "教材" : role === "teacher" ? "教师重点" : "真题"}：${e.dataTransfer.files.length} 个文件`);
+    }
+  });
+  $("dzc_" + role).onclick = () => { state.files[role] = []; renderDz(role); };
+});
+function pickFiles(role) { $("f_" + role).click(); }
+function addFiles(role, files) {
+  const list = state.files[role];
+  for (const f of files) {
+    if (!f || !f.size) { toast("空文件已忽略", false); continue; }
+    list.push({ name: f.name, size: f.size, file: f });
+  }
+  renderDz(role);
+}
+function renderDz(role) {
+  const el = $("dzl_" + role);
+  const list = state.files[role];
+  el.innerHTML = list.map((f, i) =>
+    `<div class="dzfile"><span class="nm">${esc(f.name)}</span><span class="sz">${(f.size / 1048576).toFixed(1)}MB</span>
+     <button onclick="removeFile('${role}',${i})">移除</button></div>`).join("");
+  $("dzc_" + role).style.display = list.length ? "block" : "none";
+}
+function removeFile(role, i) {
+  if (role === "textbook" || role === "teacher") {
+    if (!confirm(`从清单移除「${state.files[role][i].name}」？`)) return;
+  }
+  state.files[role].splice(i, 1);
+  renderDz(role);
+}
+
+/* ---- ② 解析 */
+let pres = state.pres;
+
+async function parseGroup(role) {
+  const files = state.files[role].map(f => f.file);
+  if (!files.length) return null;
+  for (const f of files) {
+    if (f.size > 200 * 1024 * 1024) {
+      toast(`「${f.name}」超过 200 MB：请按章节拆分成多个文件后再上传`, false);
+      return null;
+    }
+  }
+  const fd = new FormData();
+  files.forEach(f => fd.append("files", f));
+  fd.append("role", role);
+  fd.append("ocr", $("t_ocr").checked ? "1" : "0");
+  return await api("/api/parse", { method: "POST", body: fd });
+}
+
+async function runOcrJobs(group, role) {
+  const files = state.files[role].map(f => f.file);
+  const jobs = [];
+  group.results.forEach((r, i) => {
+    if (r.ocr_needed && $("t_ocr").checked && files[i]) {
+      jobs.push({ file: files[i], idx: i, jobId: null, state: "queued", msg: "排队中", row: null });
+    }
+  });
+  if (!jobs.length) return;
+  const box = $("ocr_progress");
+  box.innerHTML = '<div class="hint good">🔍 正在识别扫描件 / 图片（MinerU，文件上传至云端），完成后自动加入输入：</div>';
+  jobs.forEach(j => {
+    const fd = new FormData();
+    fd.append("file", j.file); fd.append("role", "ocr");
+    j.promise = api("/api/ocr/start", { method: "POST", body: fd })
+      .then(x => { j.jobId = x.job_id; });
+    j.promise.catch(() => { j.state = "failed"; j.msg = "任务创建失败"; });
+    const row = document.createElement("div");
+    row.className = "ocrrow";
+    row.innerHTML = `<span class="fname">${esc(j.file.name)}</span><span class="st" data-role="st">排队中…</span>
+      <button data-role="cancel">取消</button>`;
+    row.querySelector("[data-role=cancel]").onclick = async () => {
+      if (j.jobId) { await api("/api/ocr/jobs/" + j.jobId, { method: "DELETE" }).catch(() => {}); }
+      j.state = "cancelled"; j.msg = "已取消";
+    };
+    box.appendChild(row);
+    j.row = row;
+  });
+  await Promise.all(jobs.map(j => j.promise));
+
+  const started = jobs.filter(j => j.jobId);
+  while (started.some(j => !["done", "failed", "cancelled"].includes(j.state))) {
+    await new Promise(r => setTimeout(r, 2000));
+    await Promise.all(started.map(async j => {
+      if (["done", "failed", "cancelled"].includes(j.state)) return;
+      const s = await api("/api/ocr/jobs/" + j.jobId).catch(() => null);
+      if (!s) return;
+      j.state = s.state; j.msg = s.msg || s.state;
+      if (s.state === "done" && s.result) {
+        group.results[j.idx] = s.result;
+      } else if (s.state === "failed") {
+        group.results[j.idx] = { name: j.file.name, error: (s.msg || "识别失败") };
+      }
+    }));
+    started.forEach(j => {
+      if (!j.row) return;
+      const stEl = j.row.querySelector("[data-role=st]");
+      stEl.textContent = j.state === "cancelled" ? "已取消"
+        : j.state === "done" ? "完成 ✓ 已自动加入输入"
+        : j.state === "failed" ? j.msg
+        : (j.msg || "处理中…");
+      stEl.className = "st " + (j.state === "done" ? "hint good" : j.state === "failed" ? "hint bad" : "");
+      j.row.querySelector("[data-role=cancel]").disabled = ["done", "failed", "cancelled"].includes(j.state);
+    });
+  }
+  started.forEach(j => {
+    if (j.state === "cancelled") group.results[j.idx] = { name: j.file.name, error: "已取消识别" };
+  });
+}
+
+function filesCount(res) { return (res && res.results || []).filter(r => r.ok).length; }
+function resTotalChars(res) {
+  return (res && res.results || []).filter(r => r.ok).reduce((a, r) => a + (r.chars || 0), 0);
+}
+function renderResults(roleLabel, res) {
+  const el = $("parse_results");
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<div class="hint good">—— ${roleLabel} ——</div>`;
+  (res.results || []).forEach(r => {
+    if (r.ok) {
+      const ocrBadge = (r.via && r.via.startsWith("mineru"))
+        ? `<span class="tag">🔍 ${r.via === "mineru-v4" ? "MinerU 精准 API" : "MinerU 轻量 API"}</span><span class="hint good">${esc(r.via_note || "已自动加入输入")}</span> `
+        : "";
+      const warns = (r.warnings || []).map(w => `<div class="warnline">⚠️ ${esc(w)}</div>`).join("");
+      wrap.innerHTML += `<div class="res"><span class="name">${esc(r.name)}</span> · ${r.chars} 字 · ${r.slice_count} 切片 · 估算输入 ≈ ${((r.est_tokens || 0) / 10000).toFixed(1)} 万 token
+        ${ocrBadge}${warns}
+        <details><summary>预览切片</summary>${(r.slices || []).slice(0, 12).map(s => `<div><b>[${esc(s.sid)}] ${esc(s.title || "（全文）")}</b><br>${esc(s.preview)}…</div>`).join("<hr>")}</details></div>`;
+    } else {
+      wrap.innerHTML += `<div class="res" style="border-color:var(--bad)"><span class="name">${esc(r.name)}</span> <span class="hint bad">${esc(r.error)}</span></div>`;
+    }
+  });
+  el.appendChild(wrap);
+}
+function estimateCost() {
+  const chars = resTotalChars(pres.textbook) + resTotalChars(pres.teacher);
+  const nSlices = (pres.textbook && pres.textbook.results || []).filter(r => r.ok)
+    .reduce((a, r) => a + (r.slice_count || 0), 0);
+  const nQ = Math.max(parseInt($("target").value || "100"), 1);
+  const inp = (chars + chars * 0.85 * Math.max(nSlices, 1)) * 0.8 + nQ * 1700 * 0.8 + 21000 * 0.8;
+  const out = nQ * 350 + (nQ / 20 + 1) * 800 + 4000;
+  return { inp: inp, out: out, tot: inp + out };
+}
+function updateReady() {
+  const tb = pres.textbook, tc = pres.teacher, ex = pres.exam;
+  const warns = [];
+  [...(tb && tb.results || []), ...(tc && tc.results || [])].forEach(r => warns.push(...(r.warnings || [])));
+  let estLine = "解析后此处显示成本预估";
+  if (resTotalChars(tb) || resTotalChars(tc)) {
+    const est = estimateCost();
+    const prov = (state.providers || []).find(p => p.id === state.provider);
+    const price = prov && prov.price;
+    const cny = price ? (est.inp / 1e6 * (price.input || 0) + est.out / 1e6 * (price.output || 0)) : null;
+    const model = modelValue("model_gen") || (state.cfg && state.cfg.model_gen) || "";
+    estLine = `预计注入/输出合计 ≈ ${(est.tot / 10000).toFixed(1)} 万 token`
+      + (cny != null ? ` · 约 ¥${cny.toFixed(2)}` : "")
+      + `（${prov ? prov.name : "当前服务商"} ${esc(model)} 参考价，以官网为准）`
+      + (warns.length ? " · 有 " + warns.length + " 条体检提示" : "")
+      + ($("t_web").checked ? " · ＋网络检索 ≈ 3 轮 × 3~5 次查询（费用以所选后端官网为准）" : "");
+  }
+  $("ready_list").innerHTML = `
+    <div class="ready">
+      <span>素材就绪检查：</span>
+      ${filesCount(tb) ? `<span class="ok">教材 ✓ ${filesCount(tb)} 文件</span>` : `<span class="no">教材 ✗ 未解析（必填）</span>`}
+      ${filesCount(tc) ? `<span class="ok">教师重点 ✓ ${filesCount(tc)} 文件</span>` : `<span class="no">教师重点 ✗ 未解析（必填）</span>`}
+      ${filesCount(ex) ? `<span class="ok">自备真题 ✓（可选）</span>` : `<span class="opt">自备真题 —（可选）</span>`}
+      ${pres.sample ? `<span class="opt">（示例素材）</span>` : ""}
+      ${$("t_web").checked ? `<span class="opt">网络检索 🔍 已开启</span>` : ""}
+      <span class="est">${estLine}</span>
+    </div>`;
+}
+$("btn_parse").onclick = async () => {
+  $("parse_results").innerHTML = '<div class="hint"><span class="spin"></span>解析中…</div>';
+  $("ocr_progress").innerHTML = "";
+  try {
+    const groups = [
+      { res: await parseGroup("textbook"), role: "textbook", label: "教材（必填）", key: "textbook", render: true },
+      { res: await parseGroup("teacher"), role: "teacher", label: "教师重点（必填）", key: "teacher", render: true },
+      { res: await parseGroup("exam"), role: "exam", label: "自备真题（可选）", key: "exam", render: false },
+    ].filter(g => g.res && g.res.results.length);
+    $("parse_results").innerHTML = "";
+    for (const g of groups) {
+      await runOcrJobs(g.res, g.role);
+      pres[g.key] = g.res;
+      if (g.render || g.res.results.some(r => r.ok)) renderResults(g.label, g.res);
+    }
+    pres.sample = false;
+    updateReady();
+    toast("解析完成：体检与成本预估已更新");
+  } catch (e) { $("parse_results").innerHTML = `<div class="hint bad">${esc(e.message)}</div>`; }
+};
+
+$("btn_sample").onclick = async () => {
+  try {
+    $("btn_sample").disabled = true; $("btn_sample").textContent = "载入中…";
+    const s = await api("/api/sample");
+    if (!s.sample) throw new Error(s.error || "示例加载失败");
+    pres = { textbook: { results: [s.textbook] }, teacher: { results: [s.teacher] }, exam: null, sample: true };
+    state.pres = pres;
+    $("subject").value = s.subject;
+    $("parse_results").innerHTML = "";
+    $("ocr_progress").innerHTML = "";
+    renderResults("教材（示例）", pres.textbook);
+    renderResults("教师重点（示例）", pres.teacher);
+    updateReady();
+    toast("示例素材已载入：先点「试出一题」看效果，满意后「创建课题 →」");
+  } catch (e) { toast(e.message, false); }
+  $("btn_sample").disabled = false; $("btn_sample").textContent = "🎓 手头还没素材？载入示例体验";
+};
+
+function fullSlices(res) {
+  return (res && res.results || []).filter(r => r.ok).flatMap(r => (r.slices || []));
+}
+
+/* ---- 试出一题（迭代1B） */
+$("btn_trial").onclick = async () => {
+  const slices = fullSlices(pres.textbook);
+  if (!slices.length) return toast("请先解析教材（或点「载入示例」）再试出题", false);
+  if (!filesCount(pres.teacher)) return toast("请先解析教师重点（必填）", false);
+  const s = slices[Math.floor(Math.random() * slices.length)];
+  const box = $("trial_box");
+  box.innerHTML = `<div class="hint"><span class="spin"></span>试生成中（首次约 30~60 秒），来自切片 ${esc(s.sid)} · ${esc(s.title || "")}…</div>`;
+  $("btn_trial").disabled = true;
+  try {
+    const teacherText = fullSlices(pres.teacher).map(x => x.text).join("\n");
+    const r = await api("/api/trial", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: $("subject").value.trim() || "未命名科目",
+        exam: $("exam").value,
+        requirements: $("requirements").value.trim(),
+        knobs: collectKnobs(),
+        ratios: ratioSum(),
+        slice_sid: s.sid, slice_title: s.title || "", slice_text: s.text,
+        teacher_text: teacherText,
+      }) });
+    const q = r.question;
+    const LETTERS = "ABCDEF";
+    const issues = (r.issues || []).map(i =>
+      `<div class="${i.severity === "fail" ? "failline" : "warnline"}">⚠️ [${esc(i.code)}] ${esc(i.reason)}</div>`).join("");
+    box.innerHTML = `
+      <div class="trialq">
+        <div class="src">🎯 试出题 · ${esc(r.from_slice || "")} · <span class="tag">${esc(q.type || "")}</span><span class="tag">${esc(q.bloom || "")}</span></div>
+        <div class="qtext">${esc(q.question)}</div>
+        <div class="opts">${(q.options || []).map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("<br>")}</div>
+        <details><summary>显示答案</summary>
+          <div class="ans">✅ 答案：<b>${esc(q.answer)}</b><br>💡 ${esc(q.analysis)}</div>
+        </details>
+        ${issues ? `<div style="margin-top:8px">${issues}</div>` : `<div class="hint good">门禁即检：未发现问题 ✅</div>`}
+        <div class="hint">满意？带着这套要求点「创建课题 →」· 不满意？改要求再试一片（每次随机换切片）</div>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="hint bad">试出题失败：${esc(e.message)}</div>`;
+  }
+  $("btn_trial").disabled = false;
+};
+
+$("btn_create").onclick = async () => {
+  if (!$("subject").value.trim()) return toast("请填写科目", false);
+  if (!filesCount(pres.textbook)) return toast("请先解析教材（必填）——或点「载入示例」体验", false);
+  if (!filesCount(pres.teacher)) return toast("请先解析教师重点（必填）", false);
+  if ($("requirements").value.trim().length > 500) return toast("附加要求超过 500 字", false);
+  const ratios = ratioSum();
+  const bloom = bloomSum();
+  if (Object.values(ratios).reduce((a, b) => a + b, 0) !== 100) return toast("题型配比合计应为 100%", false);
+  if (Object.values(bloom).reduce((a, b) => a + b, 0) !== 100) return toast("Bloom 配比合计应为 100%", false);
+  try {
+    $("btn_create").disabled = true; $("btn_create").textContent = "创建中…";
+    const body = {
+      subject: $("subject").value.trim(),
+      exam: $("exam").value,
+      target: parseInt($("target").value || "100"),
+      ratios, bloom,
+      knobs: collectKnobs(),
+      requirements: $("requirements").value.trim(),
+      toggles: { qbank: $("t_qbank").checked, paper: $("t_paper").checked, review: $("t_review").checked },
+      textbook_slices: fullSlices(pres.textbook), teacher_slices: fullSlices(pres.teacher),
+      exam_slices: fullSlices(pres.exam),
+      teacher_text: fullSlices(pres.teacher).map(s => s.text).join("\n"),
+      web_search: $("t_web").checked,
+      web_backend: $("ws_backend").value,
+      web_ref_quota: parseInt($("web_quota").value || "0"),
+      web_manual_text: $("ws_manual").value,
+    };
+    const r = await api("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast("课题已创建：" + r.pid);
+    location.hash = "mine";
+    showTab("mine");
+  } catch (e) { toast(e.message, false); }
+  $("btn_create").disabled = false; $("btn_create").textContent = "创建课题 →";
+};
+
+/* ---- ③ 项目 */
+let currentPid = null;
+let pollTimer = null;
+let pollFails = 0;
+
+async function loadProjects() {
+  const r = await api("/api/projects");
+  const box = $("proj_list");
+  if (!r.projects.length) {
+    box.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-mine"></use></svg>
+      <div class="sub">还没有项目 —— 传教材 + 教师重点，生成你的第一套题库</div>
+      <button class="act" onclick="location.hash='proj';showTab('proj')">→ 去「② 新建课题」</button>
+    </div>`;
+    return;
+  }
+  box.innerHTML = "";
+  r.projects.forEach(p => {
+    const d = document.createElement("div");
+    d.className = "proj";
+    d.innerHTML = `<b>${esc(p.subject)}</b>
+      <span class="stage${p.running ? " running" : ""}">${p.running ? "● 运行中" : esc(p.stage_label || "……")}</span>
+      <div class="meta">${esc(p.exam)} · 目标 ${p.target} 题 · ${(p.created || "").slice(0, 16).replace("T", " ")}</div>`;
+    d.onclick = () => showProject(p.pid);
+    box.appendChild(d);
+  });
+}
+function artifactLinks(pid, names) {
+  return (names || []).map(n =>
+    `<a class="art" href="/api/projects/${encodeURIComponent(pid)}/files/${encodeURIComponent(n)}" target="_blank" rel="noopener">${esc(n)}</a>`).join("");
+}
+const STEPS = [["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"], ["reviewing", "复习"], ["rendering", "产物"]];
+function stepIdx(stage) {
+  if (stage === "done") return 6;
+  if (stage === "finalizing") return 5;
+  const i = STEPS.findIndex(s => s[0] === stage);
+  return i === -1 ? 0 : i;
+}
+function renderStepper(stage, progress) {
+  const cur = stepIdx(stage);
+  return STEPS.map((s, i) =>
+    `<span class="stp ${i === cur ? "cur" : i < cur ? "done" : ""}">${s[1]}</span>`).join("")
+    + `<span class="stp ${cur >= 6 ? "done" : ""}">完成</span>`
+    + (progress ? `<div style="flex:1;min-width:180px">
+        <div class="pvbar"><i style="width:${progress.pct || 0}%"></i></div>
+        <div id="pvtext">${progress.detail ? esc(progress.detail) : ""} · ${progress.pct || 0}%</div>
+      </div>` : "");
+}
+async function showProject(pid) {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  const meta = await api("/api/projects/" + pid);
+  $("proj_detail").style.display = "block";
+  $("pd_title").textContent = `项目详情 · ${meta.subject}`;
+  const quota = (meta.quota || []).map(q =>
+    `<span>${esc(q.title ? q.title.slice(0, 14) : q.sid)}：${q.count}题</span>`).join("");
+  const usage = meta.usage ? `<div class="hint" style="margin-top:6px">💧 本次消耗：输入 ${meta.usage.prompt_tokens} + 输出 ${meta.usage.completion_tokens} token
+    ${meta.usage.est_cost_cny != null ? `≈ ¥${meta.usage.est_cost_cny}` : ""}（以官网为准）</div>` : "";
+  const ankiOk = meta.stage === "done";
+  const extra = [];
+  if (meta.requirements) extra.push(`附加要求：${esc(meta.requirements).slice(0, 60)}`);
+  if (meta.bloom && Object.keys(meta.bloom).length) extra.push(`Bloom：${["记忆","理解","应用","创造"].map(k => (meta.bloom[k] ?? 0) + "%").join("/")}`);
+  if (meta.web_search) extra.push(`网络检索${meta.web_ref_quota ? "（引用 " + meta.web_ref_quota + "%）" : ""}`);
+  $("pd_body").innerHTML = `
+    <div class="meta hint">${esc(meta.exam)} · 目标 ${meta.target} 题 · 阶段：<span id="pd_stage">${esc(meta.stage_label || meta.stage || "……")}</span><br>
+    产物：${meta.toggles.qbank ? "题库✓" : "题库✗"} ${meta.toggles.paper ? "押题卷✓" : "押题卷✗"} ${meta.toggles.review ? "复习手册✓" : "复习手册✗"}
+    ${ankiOk ? `<a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/anki">导出 Anki（.txt）</a>` : ""}</div>
+    ${extra.length ? `<div class="hint" style="margin-top:6px">${extra.join(" · ")}</div>` : ""}
+    <div id="pd_stepper" class="stepper">${renderStepper(meta.stage, meta.progress)}</div>
+    <div class="hint" style="margin-top:6px">各章节配额（教师重点词频加权）· B1 组题暂由 A1/A2/X 分摊：</div>
+    <div class="quota">${quota}</div>
+    <div id="pd_arts" class="hint" style="margin-top:8px">${artifactLinks(pid, meta.artifacts)}</div>
+    ${usage}
+    <pre id="pd_log"></pre>`;
+  currentPid = pid;
+  stopPoll();
+  updateRunBtn(meta.running);
+  $("btn_review").style.display = meta.stage === "done" ? "inline-block" : "none";
+  $("review_panel").style.display = "none";
+  if (meta.running) startPoll(pid);
+  else if (["done", "error", "cancelled"].includes(meta.stage)) loadLog(pid);
+}
+async function loadLog(pid) {
+  try {
+    const s = await api("/api/projects/" + pid + "/status");
+    const logEl = $("pd_log");
+    if (logEl) { logEl.textContent = (s.log || []).join("\n"); logEl.scrollTop = logEl.scrollHeight; }
+  } catch (e) { /* ignore */ }
+}
+function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } pollFails = 0; }
+function updateRunBtn(running) {
+  const b = $("btn_run");
+  if (running) {
+    b.textContent = "⏹ 停止生成（保留断点）";
+    b.className = "act danger";
+    b.dataset.running = "1";
+  } else {
+    b.textContent = "开始生成";
+    b.className = "act";
+    b.dataset.running = "";
+  }
+}
+function startPoll(pid) {
+  stopPoll();
+  pollTimer = setInterval(async () => {
+    try {
+      const s = await api("/api/projects/" + pid + "/status");
+      pollFails = 0;
+      const stageEl = $("pd_stage");
+      if (stageEl) stageEl.textContent = s.stage_label + (s.running ? " <span class='spin'></span>" : "");
+      const st = $("pd_stepper");
+      if (st) st.innerHTML = renderStepper(s.stage, s.progress);
+      const logEl = $("pd_log");
+      if (logEl) { logEl.textContent = (s.log || []).join("\n"); logEl.scrollTop = logEl.scrollHeight; }
+      const arts = $("pd_arts");
+      if (arts && s.artifacts) arts.innerHTML = "已生成：" + artifactLinks(pid, s.artifacts);
+      updateRunBtn(s.running);
+      if (!s.running && ["done", "error", "cancelled"].includes(s.stage)) {
+        stopPoll();
+        if (s.stage === "done") { toast("全部产物生成完成 🎉"); $("btn_review").style.display = "inline-block"; }
+        if (s.stage === "cancelled") toast("已取消：题目与断点已保留，可再次「开始生成」续跑", false);
+        loadLog(pid);
+      }
+    } catch (e) {
+      pollFails++;
+      if (pollFails >= 3) {
+        stopPoll();
+        toast("进度刷新失败：" + e.message, false);
+      }
+    }
+  }, 2500);
+}
+$("btn_run").onclick = async () => {
+  try {
+    const pid = currentPid;
+    if ($("btn_run").dataset.running === "1") {
+      await api("/api/projects/" + pid + "/run", { method: "DELETE" });
+      toast("正在停止…（已生成部分保留）");
+    } else {
+      await api("/api/projects/" + pid + "/run", { method: "POST" });
+      toast("管线已启动：⓪网络检索(可选) → MedGen → 门禁① → MedQC → MedFix → MedReview");
+      startPoll(pid);
+    }
+  } catch (e) { toast(e.message, false); }
+};
+$("btn_delete").onclick = () => {
+  if (!currentPid) return;
+  const pid = currentPid;
+  confirmModal("确认删除该项目？",
+    `项目 <b>${esc(pid)}</b> 及其<b>全部产物</b>将被删除，此操作不可恢复。`,
+    "确认删除", async () => {
+      try {
+        await api("/api/projects/" + pid, { method: "DELETE" });
+        toast("项目已删除");
+        $("proj_detail").style.display = "none";
+        loadProjects();
+      } catch (e) { toast(e.message, false); }
+    });
+};
+
+/* ---- 迭代4：逐题审核台 */
+$("btn_review").onclick = () => openReview();
+let reviewState = { questions: [], keep: null, drop: new Set(), edits: {}, dirty: false };
+async function openReview() {
+  if (!currentPid) return;
+  $("review_panel").style.display = "block";
+  const r = await api("/api/projects/" + currentPid + "/questions");
+  reviewState = { questions: r.questions, keep: null, drop: new Set(), edits: {}, dirty: false };
+  renderReview();
+}
+function renderReview() {
+  const box = $("review_panel");
+  const qs = reviewState.questions;
+  const LETTERS = "ABCDEF";
+  const kept = qs.filter(q => !reviewState.drop.has(q.id)).length;
+  box.innerHTML = `<div class="card" style="margin-top:14px">
+    <h2>逐题审核（保留 ${kept} / 共 ${qs.length} 题）</h2>
+    <div class="hint">✓ 默认保留 · ✗ 剔除（可反悔）· ✎ 行内编辑 · 🎲 单题重掷（约 30 秒，消耗一次调用）· 完成后点「保存并重渲染」</div>
+    <div class="btns">
+      <button class="act" id="rev_save" ${reviewState.dirty ? "" : "disabled"}>保存并重渲染</button>
+      <button class="act gray" onclick="openReview()">刷新</button>
+      <button class="act gray" onclick="document.querySelectorAll('.revq').forEach(d=>d.classList.remove('dropped'));">展开</button>
+    </div>
+    <div id="rev_list"></div>
+  </div>`;
+  const list = $("rev_list");
+  qs.forEach(q => {
+    const dropped = reviewState.drop.has(q.id);
+    const ed = reviewState.edits[q.id] || {};
+    const d = document.createElement("div");
+    d.className = "revq" + (dropped ? " dropped" : "");
+    d.innerHTML = `
+      <div class="qhead">
+        <b>${esc(q.id)}</b><span class="tag">${esc(q.type)}</span><span class="tag">${esc(q.bloom)}</span>
+        <span class="hint">${esc(q.subtopic || "")}</span>
+        <button class="inlineBtn revact" data-a="drop">${dropped ? "↩ 恢复" : "✗ 剔除"}</button>
+        <button class="inlineBtn blue revact" data-a="edit">✎ 编辑</button>
+        <button class="inlineBtn blue revact" data-a="regen">🎲 重掷</button>
+      </div>
+      <div class="qbody" data-f="body">${esc(ed.question ?? q.question)}
+        <ul>${(ed.options ?? (q.options || [])).map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("</li><li>")}</ul>
+        <div class="hint good">✅ 答案：${esc(ed.answer ?? q.answer)} · 💡 ${esc((ed.analysis ?? q.analysis) || "")}</div>
+      </div>
+      <div class="optsrow" data-f="editrow" style="${ed._editOpen ? "" : "display:none"}">
+        <input class="eb" data-e="question" placeholder="题干" value="${esc(ed.question ?? q.question)}">
+        <input class="eb" data-e="analysis" placeholder="解析" value="${esc((ed.analysis ?? q.analysis) || "")}">
+        <input class="eb" data-e="answer" placeholder="答案键（如 B / BDE）" value="${esc(ed.answer ?? q.answer)}" style="max-width:120px">
+        <input class="eb" data-e="bloom" placeholder="Bloom（记忆/理解/应用/创造）" value="${esc(ed.bloom ?? q.bloom)}" style="max-width:180px">
+      </div>
+      <div class="optsrow" data-f="editopts" style="${ed._editOpen ? "" : "display:none"}">
+        ${(ed.options ?? (q.options || [])).map((o, i) =>
+          `<input class="eb" data-e="opt${i}" placeholder="选项${LETTERS[i]}" value="${esc(o)}">`).join("")}
+      </div>`;
+    d.querySelector("[data-a=drop]").onclick = () => {
+      if (reviewState.drop.has(q.id)) reviewState.drop.delete(q.id);
+      else reviewState.drop.add(q.id);
+      reviewState.dirty = true; renderReview();
+    };
+    d.querySelector("[data-a=edit]").onclick = () => {
+      const e = reviewState.edits[q.id] = reviewState.edits[q.id] || {};
+      e._editOpen = !e._editOpen; e.optionsId = q.id;
+      reviewState.dirty = true; renderReview();
+    };
+    d.querySelector("[data-a=regen]").onclick = async () => {
+      const btn = d.querySelector("[data-a=regen]");
+      btn.disabled = true; btn.textContent = "重掷中…";
+      try {
+        await api("/api/projects/" + currentPid + "/regen", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: q.id }) });
+        toast(`已重掷 ${q.id}`);
+        await openReview();
+      } catch (e) { toast(e.message, false); btn.disabled = false; btn.textContent = "🎲 重掷"; }
+    };
+    d.querySelectorAll("[data-e]").forEach(inp => {
+      inp.oninput = () => {
+        const e = reviewState.edits[q.id] = reviewState.edits[q.id] || {};
+        const k = inp.dataset.e;
+        if (k.startsWith("opt")) { e.options = (e.options || (q.options || []).slice()); e.options[+k.slice(3)] = inp.value; }
+        else e[k] = inp.value;
+        reviewState.dirty = true;
+        $("rev_save").disabled = false;
+      };
+    });
+    list.appendChild(d);
+  });
+  $("rev_save").onclick = async () => {
+    const keep = qs.map(x => x.id).filter(id => !reviewState.drop.has(id));
+    const edits = Object.entries(reviewState.edits).filter(([k, v]) => k !== "drop" && v && Object.keys(v).some(x => !x.startsWith("_")) && !reviewState.drop.has(k))
+      .map(([id, v]) => {
+        const clean = { id };
+        ["question", "options", "answer", "analysis", "bloom", "type", "subtopic"].forEach(f => {
+          if (v[f] !== undefined) clean[f] = v[f];
+        });
+        return clean;
+      });
+    const btn = $("rev_save");
+    btn.disabled = true; btn.textContent = "保存中…";
+    try {
+      await api("/api/projects/" + currentPid + "/questions/review", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keep: keep, drop: [], edits: edits }) });
+      toast("已保存并重渲染全部产物");
+      await openReview();
+      await showProject(currentPid);
+    } catch (e) { toast(e.message, false); btn.disabled = false; btn.textContent = "保存并重渲染"; }
+  };
+}
+
+/* ---- ④ 提示词 */
+let promptCache = null;
+async function loadPrompts() {
+  const box = $("prompt_list");
+  if (!box) return;
+  box.innerHTML = '<div class="hint"><span class="spin"></span>加载中…</div>';
+  try {
+    const r = await api("/api/prompts");
+    promptCache = r.prompts;
+    box.innerHTML = "";
+    r.prompts.forEach(p => renderPrompt(p));
+  } catch (e) {
+    box.innerHTML = `<div class="hint bad">加载失败：${esc(e.message)}</div>`;
+  }
+}
+function promptStatusBadge(p) {
+  if (p.using === "custom" && p.drifted) return `<span class="pstatus drift">官方已更新 · 使用旧自定义</span>`;
+  if (p.using === "custom") return `<span class="pstatus custom">已自定义（影子副本生效中）</span>`;
+  return `<span class="pstatus">使用内置</span>`;
+}
+function renderPrompt(p) {
+  const d = document.createElement("details");
+  d.className = "card";
+  d.style.marginTop = "12px";
+  const ph = (p.placeholders || []).map(x => `<span class="chip" data-ph="${esc(x)}">${esc(x)}</span>`).join("");
+  d.innerHTML = `
+    <summary style="font-size:15px">
+      <span class="ppm" style="display:inline-flex;margin:0">
+        <span class="b">${esc(p.name)}</span><span>${esc(p.role)}</span>${promptStatusBadge(p)}
+      </span>
+    </summary>
+    <div class="hint">占位符（运行时替换，勿删）：<span class="phchips">${ph}</span></div>
+    <div class="btns">
+      <button class="act gray" onclick="openPromptEdit('${esc(p.name)}')">✎ 编辑</button>
+      ${p.using === "custom" ? `<button class="act gray" onclick="restorePrompt('${esc(p.name)}')">恢复默认</button>
+      <button class="act gray" onclick="diffPrompt('${esc(p.name)}')">与官方版对比</button>` : ""}
+    </div>
+    <pre class="pview" id="pv_${esc(p.name).replace(".", "_")}">${esc(p.content)}</pre>
+    <div id="peditor_${esc(p.name).replace(".", "_")}" style="display:none"></div>
+    <div id="pdiff_${esc(p.name).replace(".", "_")}" style="display:none"></div>`;
+  // 占位符高亮
+  const pre = d.querySelector("pre.pview");
+  let html = esc(p.content);
+  (p.placeholders || []).forEach(x => { html = html.split(esc(x)).join(`<mark>${esc(x)}</mark>`); });
+  pre.innerHTML = html;
+  box_append(promptContainer(), d);
+}
+function promptContainer() { return $("prompt_list"); }
+function box_append(el, d) { el.appendChild(d); }
+async function openPromptEdit(name) {
+  const r = promptCache.find(x => x.name === name);
+  if (!r) return;
+  const cur = r.content;
+  const ed = $("peditor_" + name.replace(".", "_"));
+  ed.style.display = "block";
+  ed.innerHTML = `
+    <textarea class="pedit" id="pedit_${esc(name).replace(".", "_")}" style="width:100%">${esc(cur)}</textarea>
+    <div class="hint" id="phcheck_${esc(name).replace(".", "_")}">校验：编辑时请保留全部占位符</div>
+    <div class="btns">
+      <button class="act" onclick="savePrompt('${esc(name)}')">保存（写入影子副本）</button>
+      <button class="act gray" onclick="document.getElementById('peditor_${esc(name).replace(".", "_")}').style.display='none'">取消</button>
+    </div>`;
+  const ta = ed.querySelector("textarea");
+  ta.oninput = () => {
+    const missing = (r.placeholders || []).filter(x => !ta.value.includes(x));
+    const el = $("phcheck_" + name.replace(".", "_"));
+    el.textContent = missing.length ? `⚠️ 缺少：${missing.join("、")}` : "占位符齐全 ✓";
+    el.className = "hint " + (missing.length ? "bad" : "good");
+    ed.querySelectorAll(".phchips .chip").forEach(c => {
+      const t = c.dataset.ph;
+      c.classList.toggle("missing", missing.includes(t));
+    });
+  };
+  ed.querySelector("textarea").focus();
+}
+async function savePrompt(name) {
+  const ta = document.querySelector("#peditor_" + name.replace(".", "_") + " textarea");
+  try {
+    const r = await api("/api/prompts/" + encodeURIComponent(name), { method: "PUT",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: ta.value }) });
+    toast("已保存影子副本（生效中）");
+    loadPrompts();
+    confirmModal("先试出一题验证效果？", "提示词已改——建议在「② 新建课题」点「试出一题」验证效果，防止改坏。",
+      "去试出题", () => { location.hash = "proj"; showTab("proj"); }, false);
+  } catch (e) { toast(e.message, false); }
+}
+async function restorePrompt(name) {
+  confirmModal("恢复默认？", `将删除影子副本，恢复内置提示词（对「${esc(name)}」）。`,
+    "恢复默认", async () => {
+      try { await api("/api/prompts/" + encodeURIComponent(name), { method: "DELETE" }); toast("已恢复内置"); loadPrompts(); }
+      catch (e) { toast(e.message, false); }
+    });
+}
+async function diffPrompt(name) {
+  const r = promptCache.find(x => x.name === name);
+  if (!r || !r.custom) return;
+  const el = $("pdiff_" + name.replace(".", "_"));
+  el.style.display = "block";
+  const a = r.builtin.split("\n"), b = r.custom.split("\n");
+  const n = Math.max(a.length, b.length);
+  let la = "", lb = "";
+  for (let i = 0; i < n; i++) {
+    const sa = a[i] || "", sb = b[i] || "";
+    const mark = sa !== sb;
+    la += (mark ? "<b>" : "") + esc(sa || " ") + (mark ? "</b>" : "") + "\n";
+    lb += (mark ? "<b>" : "") + esc(sb || " ") + (mark ? "</b>" : "") + "\n";
+  }
+  el.innerHTML = `<div class="diffwrap"><pre>【内置】\n${la}</pre><pre>【自定义】\n${lb}</pre></div>`;
+}
+
+/* ---- init */
+ratioSum(); bloomSum();
+$("req_count").textContent = "0/500";
+loadConfig().catch(e => toast(e.message, false));
+</script>
+</body>
+</html>
