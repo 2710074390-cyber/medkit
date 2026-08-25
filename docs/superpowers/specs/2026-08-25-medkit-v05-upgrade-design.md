@@ -101,21 +101,21 @@ v0.4.0 已完成上两轮审查的全部修复与可玩性升级（断点续跑 
 
 ---
 
-## S2 工程化（2~3 天）
+## S2 工程化（2~3 天）✅ 已完成（tag v0.5.0-s2 · 71 测试全绿 + ruff 干净 + PyInstaller exe 冒烟 4880 启动通过）
 
-- [ ] **拆分 main.py（1088 行 / 33 路由）**：`routers/{config,ocr,parse,projects,pipeline,prompts,presets,search,review}.py` + `state.py`（RUNNING / OCR_JOBS / 记账）；main.py 仅留 app 装配
-- [ ] `@app.on_event("shutdown")` → lifespan 上下文管理器（已弃用 API）
-- [ ] Pydantic 请求模型：CreateProject / Run overrides / Review edits / Regen / PromptUpdate / Preset 增删（当前全裸 dict）
-- [ ] 统一异常体系：`LLMError/SearchError/MinerUError/PipelineError` → 全局 `exception_handler` 映射结构化 4xx/5xx（当前裸 `except Exception`）
-- [ ] logging：`~/.medkit/logs/medkit.log` RotatingFileHandler + 控制台；UI 实时日志通道（log 回调）保留不动
-- [ ] **版本单源** `medkit/__init__.py` `__version__ = "0.5.0"`；`build.bat` 从中生成 iss 版本；README 引用（当前 iss/spec/README 三处手写）
-- [ ] `start.bat` 依赖检查补全 8 个包（当前漏 pymupdf/python-docx/markdown/httpx）；提示改「4880，占用自动回退 4881-4889」
-- [ ] 常量与逻辑去重：`CHARS_PER_TOKEN` 两处合一、成本公式两处合一、trial(2000) 与管线(4000) 的 teacher_text 截断统一
-- [ ] `main.py:393` 删除死参数 `ocr: str = Form("0")`
-- [ ] 测试补齐：渲染转义/过滤按钮单测、`delete_preset` 拒绝路径穿越、review/regen 运行中返回 409
-- [ ] （可选）`.github/workflows/ci.yml`：push 时 ruff + pytest，与 verify.cmd 等价
+- [x] **拆分 main.py（1088 行 / 33 路由）**：`routers/{config,ocr,parse,projects,pipeline,prompts,presets,search,review}.py` + `state.py`（RUNNING / OCR_JOBS / 记账）；main.py 仅留 app 装配（232 行，含兼容命名空间 re-export 保测试契约）
+- [x] `@app.on_event("shutdown")` → lifespan 上下文管理器（已弃用 API）
+- [x] Pydantic 请求模型：CreateProject / Run overrides / Review edits / Regen / PromptUpdate / Preset 增删（当前全裸 dict）→ 全部 BaseModel（含新增 /api/cost/estimate CostBody）
+- [x] 统一异常体系：`LLMError/SearchError/MinerUError/PipelineError` → 全局 `exception_handler` 映射结构化 4xx/5xx（当前裸 `except Exception`）
+- [x] logging：`~/.medkit/logs/medkit.log` RotatingFileHandler + 控制台（`logging_setup.py`，幂等，lifespan 初始化，测试不污染用户目录）；UI 实时日志通道（log 回调）保留不动
+- [x] **版本单源** `medkit/__init__.py` `__version__ = "0.5.0"`；`pack/build.bat` 从中生成 `pack/version.iss`（medkit.iss `#include`）；README/run_medkit 横幅引用（当前 iss/spec/README 三处手写）
+- [x] `start.bat` 依赖检查补全 8 个包（当前漏 pymupdf/python-docx/markdown/httpx）；提示改「4880，占用自动回退 4881-4889」
+- [x] 常量与逻辑去重：`CHARS_PER_TOKEN` 两处合一（main → core/cost）、成本公式两处合一（前端旧 JS 内嵌公式删除 → 统一走 `/api/cost/estimate` = core/cost.estimate_run）、trial(2000) 与管线(4000) 的 teacher_text 截断统一（medgen.TEACHER_CHAR_LIMIT 单源）
+- [x] `main.py:393` 删除死参数 `ocr: str = Form("0")`
+- [x] 测试补齐：渲染转义/过滤按钮单测、`delete_preset` 拒绝路径穿越、review/regen 运行中返回 409（S1 已配齐）；S2 新增 test_s2_refactor.py（版本单源/路由装配/state 单例/logging 幂等/成本公式同源）
+- [x] （可选）`.github/workflows/ci.yml`：push 时 ruff + pytest，与 verify.cmd 等价
 
-**S2 验收**：test_api 全绿证明 API 契约不变；ruff + pytest 绿；PyInstaller 打包后 exe 冒烟启动 → `git tag v0.5.0-s2`
+**S2 验收**：test_api 全绿证明 API 契约不变；ruff + pytest 绿；PyInstaller 打包后 exe 冒烟启动 → `git tag v0.5.0-s2` ✅
 
 ---
 
