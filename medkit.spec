@@ -21,7 +21,7 @@ hiddenimports += collect_submodules("pydantic")
 
 datas = [
     ("medkit/web", "medkit/web"),        # 静态前端（零 CDN）
-    ("medkit/prompts", "medkit/prompts"),  # 五角色提示词模板
+    ("medkit/prompts", "medkit/prompts"),  # 四个提示词模板（MedGen/QC/Fix/Review）
     ("medkit/data", "medkit/data"),      # 示例素材（/api/sample）
 ]
 

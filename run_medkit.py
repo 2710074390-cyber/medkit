@@ -11,6 +11,7 @@ import socket
 
 import uvicorn
 
+from medkit import __version__
 from medkit.main import app
 
 DEFAULT_PORT = 4880
@@ -32,5 +33,5 @@ def pick_port(start: int = DEFAULT_PORT, end: int = MAX_PORT) -> int:
 if __name__ == "__main__":
     port = pick_port()
     os.environ["MEDKIT_PORT"] = str(port)
-    print(f"MedKit v0.4.0 · 服务地址 http://127.0.0.1:{port}  （关闭此窗口即退出）")
+    print(f"MedKit v{__version__} · 服务地址 http://127.0.0.1:{port}  （端口被占自动回退 4881-4889；关闭此窗口即退出）")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
