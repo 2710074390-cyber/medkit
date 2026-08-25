@@ -22,7 +22,7 @@ pack\build.bat              # 或：python -m PyInstaller --noconfirm --clean me
 
 - 产物：`dist\MedKit\`（约 87 MB，含 `MedKit.exe` + `_internal\`）
 - 使用：**复制整个 `MedKit` 文件夹**到任意位置 → 双击 `MedKit.exe` → 自动打开浏览器
-- 自带资源：静态前端 / 五角色提示词 / 示例素材（打包路径已验证）；**无需安装 Python**
+- 自带资源：静态前端 / 四个提示词（MedGen·MedQC·MedFix·MedReview）/ 示例素材（打包路径已验证）；**无需安装 Python**
 
 ## 安装包（Inno Setup，可选）
 
@@ -33,7 +33,7 @@ pack\build.bat              # 或：python -m PyInstaller --noconfirm --clean me
 pack\build.bat              # 已在末尾自动检测 ISCC 并构建安装包
 ```
 
-- 产物：`dist-installer\MedKit-Setup-0.3.0.exe`（约 38 MB）
+- 产物：`dist-installer\MedKit-Setup-0.4.0.exe`（约 38 MB）
 - 特性：安装向导（中文/英文）· 开始菜单快捷方式 · 可选桌面图标 · 标准卸载（控制面板）· 安装后可选启动
 
 ## 目录
@@ -55,7 +55,7 @@ medkit/
 
 - **服务商 BYOK**：DeepSeek / 智谱 GLM / 通义千问 预置（卡片带官网注册跳转）+ 自定义 OpenAI 兼容端点；双模型档（下拉选择，获取模型列表后默认选最新，支持手动输入）；测试连接（30s 超时）；**保存配置空 Key = 保留原值**；**Key 落盘 DPAPI 加密**（Windows，ctypes 零依赖；旧明文自动升级）
 - **素材解析**：PDF(文本层)/DOCX/MD/TXT/图片；章节切片；教师重点词频配额加权；线程池执行不阻塞
-- **扫描件 OCR（MinerU · 任务制）**：精准 API（≤200MB/200页）/ 免 Token 轻量 API（≤10MB）；进度轮询 + 取消 + 自动加入输入；**UI 明示上传云端**
+- **扫描件 OCR（MinerU · 任务制）**：精准 API（≤200MB/≤600 页，每日 2000 页高优先级额度，2026-08 官方现行）/ 免 Token 轻量 API（≤10MB）；进度轮询 + 取消 + 自动加入输入；**UI 明示上传云端**
 - **出题管线（五阶段，后台线程 + 实时日志）**：
   - ① MedGen：按切片配额并发（≤3）出题（A1/A2/X；B1 自动分摊）；HC 命题规则 + [源:切片] 溯源；**题量不足自动补足 ≤2 轮**；**全文仅在 system 注入一次**（输入成本约 -40%）
   - ② 门禁①：选项质量（R 规则子集）+ Bloom 30/40/25/5 + 溯源回查 + **n-gram 查重（Jaccard>0.8 → MedFix 改写）**，自动修复 ≤2 轮
@@ -67,15 +67,15 @@ medkit/
 - **成本透明（U5）**：解析/创建前显示「预计 X 万 token · 约 ¥Y（参考价，以官网为准）」；跑完写实际 usage + 折算成本到项目 meta
 - **安全加固**：Host/Origin 校验中间件（防 CSRF 烧钱 / DNS rebinding 窃产物）；pid 路径消毒；损坏 meta.json 容错（422）；产物 HTML 全量转义 + 复习手册白名单消毒（std HTMLParser，零依赖）；Key 不进 URL
 - **引导与体验**：素材要求卡 / 一键示例 / 体检警告 / 就绪清单 / 成本预估；**拖拽上传 + 文件清单可移除**；**hash 路由（刷新保持 tab）**；配比实时合计；亮/暗主题切换（含产物页，记忆偏好）；SVG 图标；toast 堆叠；自定义删除确认；轮询失败 3 次才停
-- **质量**：ruff 检查（pyproject.toml）+ 三套测试（冒烟 / 离线管线含断点续跑与取消 / API 层 TestClient 含守卫与 DPAPI）
+- **质量**：`verify.cmd` 一键验证（ruff 检查 + pytest 全量）；测试套件：冒烟 / 离线管线（含断点续跑与取消）/ API 层 TestClient（含守卫与 DPAPI）/ S1 回归（渲染·后端·数据刷新）
 
 ## 服务商与模型（2026-08 官方信息核查版）
 
-| 服务商 | 默认模型（已更新） | 联网搜索 | 单价参考（元/百万 token，估算，以官网为准） |
+| 服务商 | 默认模型（2026-08 核查） | 联网搜索 | 单价参考（元/百万 token，估算，以官网为准） |
 |---|---|---|---|
 | DeepSeek | `deepseek-v4-flash`（官方现行：v4-flash / v4-pro / v4-flash-vision-exp；1M 上下文） | ✅ **自带**（Responses API `web_search` 工具） | 3.0 / 9.0（高峰；空闲减半，缓存命中 0.05~0.30） |
-| 智谱 GLM | `glm-4.6`（现行至 GLM-5.x） | ✅ **自带**（Web Search API，检索按次计费） | ≈4.3 / 15.8（官方 USD×7.2 估算） |
-| 通义千问 | `qwen-plus`（⚠️ qwen-max 32K 上下文且不支持联网搜索） | ✅ **自带**（enable_search；仅 Qwen3.5~3.8 Max/Plus/Flash） | 2.4 / 9.6（百炼华北2北京） |
+| 智谱 GLM | `glm-5.3`（现行主力；另有 5-Turbo / 4.7） | ✅ **自带**（Web Search API，检索按次计费） | 8.0 / 28.0（缓存命中 2.0） |
+| 通义千问 | `qwen-plus`（现行代际至 Qwen3.8 Max/Plus/Flash；qwen3-max 系列已支持联网） | ✅ **自带**（enable_search；qwen3-max 系列及以上） | 2.4 / 9.6（百炼华北2北京） |
 | 自定义端点 | 用户自填 | 🔴 需外部（博查/手动） | 以端点官网为准 |
 
 > 说明：DeepSeek 2026-08 官方启用「峰谷定价」（高峰=周一至周五 9:00-12:00、14:00-18:00；周末全天低谷价）；应用内的预估一律显示「参考价，以官网为准」。
@@ -83,7 +83,7 @@ medkit/
 - **多轮网络检索**（设计文档 §5.4）：`core/websearch.py` 可插拔后端，**自带/需外部能力实测核查（2026-08 官方文档）**：
   - 🟢 **DeepSeek 内置联网搜索**（自带）—— 官方 `POST /api.deepseek.com/responses` + `web_search` 工具（服务端托管，无需第三方 Key；仅 deepseek-v4 系列）
   - 🟢 **智谱 GLM**（自带）—— 官方专用 Web Search API `POST /open.bigmodel.cn/api/paas/v4/web_search`（`search_result[{title,content,link}]`）
-  - 🟢 **通义千问**（自带）—— DashScope `enable_search` + `search_options.enable_source`（`output.search_info.search_results`；⚠️ 仅 Qwen3.5~3.8 Max/Plus/Flash 支持联网，**qwen-max 不支持**）
+  - 🟢 **通义千问**（自带）—— DashScope `enable_search` + `search_options.enable_source`（`output.search_info.search_results`；2026-08 官方：**qwen3-max 系列已支持联网**，现行代际至 Qwen3.8 Max/Plus/Flash）
   - 🔴 **博查 AI**（需外部，独立计费，官方 `api.bochaai.com/v1/web-search`，响应 `data.webPages.value[{name,url,snippet,summary}]`）
   - ⚪ **手动粘贴**（兜底，无在线检索）
   - LLM 驱动 3 轮循环（考纲·真题·指南 → 缺口补充 ≤2 → 与教材切片冲突核查）；URL 去重 + 视频/社交站过滤 + 同项目缓存 + 单后端错误隔离；`网络参考素材.json` 落盘、MedGen 注入（`[源:网 URL]`，引用配额 0~30% 默认 0）、conflict 条目进 `人工复核清单.md` **绝不自动改写**；「① 服务商」卡片与「② 检索设置」**明示哪个模型自带/需外部**（`/api/search/backends` 数据源）

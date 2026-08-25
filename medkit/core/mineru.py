@@ -1,7 +1,8 @@
 """MinerU 文件解析客户端（扫描件 OCR / 复杂版式 PDF → Markdown）。
 
 双路径：
-- 精准解析 API（v4，需用户 Token）：≤200MB / ≤200 页 / 批量 / zip 结果
+- 精准解析 API（v4，需用户 Token）：≤200MB / ≤600 页 / 批量 / zip 结果
+  （2026-08 官方现行单文件上限：≤200MB / ≤600 页，每日 2000 页高优先级额度）
   POST https://mineru.net/api/v4/file-urls/batch  → PUT 上传 → GET .../extract-results/batch/{batch_id}
 - Agent 轻量 API（v1，免 Token，IP 限频）：≤10MB / 约 20 页 / 单文件 / Markdown CDN 直链
   POST https://mineru.net/api/v1/agent/parse/file → PUT 上传 → GET .../parse/{task_id}
@@ -21,7 +22,7 @@ BASE = "https://mineru.net/api"
 AGENT_FILE_LIMIT_MB = 10
 AGENT_PAGE_LIMIT = 20     # 官方对比表字段；错误码 -30003 文案为 50 页，取保守值
 V4_FILE_LIMIT_MB = 200
-V4_PAGE_LIMIT = 200
+V4_PAGE_LIMIT = 600       # 2026-08 官方现行单文件上限（旧值 200 页过时）
 
 STATE_LABELS = {
     "waiting-file": "等待文件上传",

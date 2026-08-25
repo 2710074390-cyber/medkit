@@ -288,7 +288,8 @@ def test_search_backends_2026():
     assert get_provider("deepseek")["default_model"] == "deepseek-v4-flash"
     assert get_provider("deepseek")["search_support"] is True
     assert get_provider("qwen")["default_model"] == "qwen-plus"
-    assert get_provider("zhipu")["default_model"] == "glm-4.6"
+    assert get_provider("zhipu")["default_model"] == "glm-5.3"
+    assert get_provider("zhipu")["price"]["input"] == 8.0 and get_provider("zhipu")["price"]["output"] == 28.0
 
 
 if __name__ == "__main__":

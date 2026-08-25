@@ -154,7 +154,7 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
     model_gen = body.model_gen or prov.get("default_model", saved.get("model_gen", ""))
     model_qc = body.model_qc or model_gen or saved.get("model_qc", "")
     if not model_gen:
-        raise HTTPException(400, "请填写生成模型（如 deepseek-chat）")
+        raise HTTPException(400, "请填写生成模型（如 deepseek-v4-flash）")
 
     api_key = body.api_key or saved.get("api_key", "")  # 空 = 保留
     mineru_api_key = body.mineru_api_key or (saved.get("mineru", {}) or {}).get("api_key", "")
@@ -917,8 +917,9 @@ def search_backends() -> dict[str, Any]:
     三家均自带；自定义 OpenAI 兼容端点多数不带联网工具 → 需外部（博查）或手动。"""
     return {"backends": ws.BACKENDS,
             "note": ("自带网络搜索（2026-08 官方核查）：DeepSeek（Responses API web_search，服务端托管）· "
-                     "智谱 GLM（专用 Web Search API）· 通义千问（enable_search，需 Qwen3.5~3.8 Max/Plus/Flash；"
-                     "qwen-max 不支持联网搜索）。自定义 OpenAI 兼容端点：多数不含联网工具，"
+                     "智谱 GLM（专用 Web Search API）· 通义千问（enable_search，"
+                     "qwen3-max 系列已支持，现行代际至 Qwen3.8 Max/Plus/Flash）。"
+                     "自定义 OpenAI 兼容端点：多数不含联网工具，"
                      "必须搭配「博查」外部搜索或「手动粘贴」。"),
             "builtin_backend_by_provider": ws.BUILTIN_BACKEND_BY_PROVIDER}
 

@@ -54,8 +54,8 @@ BACKENDS: list[dict[str, Any]] = [
      "note": "自带：专用 Web Search API（open.bigmodel.cn/api/paas/v4/web_search；"
              "用你的智谱 Key；检索计费见官网）"},
     {"id": "qwen_tool", "label": "通义千问联网搜索", "builtin": True,
-     "note": "自带：DashScope enable_search（需支持联网的模型：Qwen3.5~3.8 系列 Max/Plus/Flash；"
-             "qwen-max 不支持联网搜索！用你的千问 Key）"},
+     "note": "自带：DashScope enable_search（2026-08 官方：qwen3-max 系列已支持联网；"
+             "现行代际至 Qwen3.8 Max/Plus/Flash 均可。用你的千问 Key）"},
     {"id": "bocha", "label": "博查 AI 搜索", "builtin": False,
      "note": "外部搜索 API（独立计费，需博查 Key）；自定义 OpenAI 兼容端点选这个"},
     {"id": "manual", "label": "手动粘贴", "builtin": None,
@@ -122,7 +122,7 @@ def search_bocha(query: str, api_key: str, count: int = 10) -> list[dict[str, An
     return out
 
 
-def search_zhipu(query: str, api_key: str, model: str = "glm-4.6") -> list[dict[str, Any]]:
+def search_zhipu(query: str, api_key: str, model: str = "glm-5.3") -> list[dict[str, Any]]:
     """智谱专用 Web Search API（2026-08 官方文档核查）：
     POST https://open.bigmodel.cn/api/paas/v4/web_search
     body {search_query, search_engine: search_std|search_pro|..., search_intent, count}
@@ -168,6 +168,11 @@ def _collect_urls(obj: Any, out: list[dict[str, Any]]) -> None:
             _collect_urls(v, out)
 
 
+def _normalize_deepseek_model(model: Optional[str]) -> str:
+    """v0.5：DeepSeek 内置检索仅支持 v4 系列；非 v4（如旧默认 deepseek-chat）→ 回退 v4-flash。"""
+    return model if model and str(model).startswith("deepseek-v4") else "deepseek-v4-flash"
+
+
 def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") -> list[dict[str, Any]]:
     """DeepSeek 内置联网搜索（2026-08 官方文档核查）：
     官方 Responses API（POST https://api.deepseek.com/responses）web_search 工具，
@@ -175,6 +180,8 @@ def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") 
     """
     if not api_key:
         raise SearchError("未配置 DeepSeek API Key")
+    # v0.5 防御：非 v4 系列模型（如旧默认 deepseek-chat）会 400 → 回退 deepseek-v4-flash
+    model = _normalize_deepseek_model(model)
     body = {
         "model": model or "deepseek-v4-flash",
         "input": [{"type": "message", "role": "user",
@@ -216,7 +223,7 @@ def search_qwen(query: str, api_key: str, model: str = "qwen-plus") -> list[dict
     """通义千问 DashScope 原生 enable_search（2026-08 官方文档核查）：
     messages + parameters.enable_search=True, search_options.enable_source=True
     → output.search_info.search_results[{index, title, url, site_name, ...}]
-    注意：需支持联网搜索的模型（Qwen3.5~3.8 系列 Max/Plus/Flash；qwen-max 不支持！）。
+    注意：需支持联网搜索的模型（2026-08 官方：qwen3-max 系列已支持，现行代际至 Qwen3.8）。
     """
     if not api_key:
         raise SearchError("未配置通义千问 API Key")
@@ -298,7 +305,7 @@ def build_backend_fn(backend: str, api_key: str, model: str,
     if backend == "deepseek" or backend == "deepseek_tool":
         return lambda q: search_deepseek(q, api_key, model or "deepseek-v4-flash")
     if backend == "zhipu_tool":
-        return lambda q: search_zhipu(q, api_key, model or "glm-4.6")
+        return lambda q: search_zhipu(q, api_key, model or "glm-5.3")
     if backend == "qwen_tool":
         return lambda q: search_qwen(q, api_key, model or "qwen-plus")
     if backend == "bocha":

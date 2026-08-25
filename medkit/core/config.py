@@ -10,12 +10,15 @@ import base64
 import copy
 import ctypes
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from .providers import get_provider
+
+logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".medkit"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -26,12 +29,16 @@ DEFAULTS: dict[str, Any] = {
     "provider": "deepseek",
     "base_url": "https://api.deepseek.com",
     "api_key": "",
-    "model_gen": "deepseek-chat",
-    "model_qc": "deepseek-chat",
+    "model_gen": "deepseek-v4-flash",   # v0.5：2026-08 换代（旧值 deepseek-chat 在 load 时自动迁移）
+    "model_qc": "deepseek-v4-flash",
     "web_search": {"enabled": False, "backend": "auto", "api_key": ""},
     "mineru": {"api_key": "", "auto_ocr": True},
     "projects_dir": str(CONFIG_DIR / "projects"),
 }
+
+# v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行 v4-flash 自动迁移
+_LEGACY_MODEL = "deepseek-chat"
+_NEW_DEFAULT_MODEL = "deepseek-v4-flash"
 
 _DPAPI_PREFIX = "dpapi:"
 
@@ -124,6 +131,11 @@ def load() -> dict[str, Any]:
             cfg["base_url"] = prov["base_url"]
         if not cfg.get("model_gen"):
             cfg["model_gen"] = prov["default_model"]
+    # v0.5：默认模型换代自动迁移（旧值 deepseek-chat 无法用联网检索等新能力 → 提示并改写）
+    for k in ("model_gen", "model_qc"):
+        if cfg.get(k) == _LEGACY_MODEL:
+            logger.warning("配置模型「%s」为旧一代 deepseek-chat，已自动迁移为 %s", k, _NEW_DEFAULT_MODEL)
+            cfg[k] = _NEW_DEFAULT_MODEL
     return cfg
 
 

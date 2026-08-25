@@ -596,7 +596,7 @@ function fillModelSelect(selId, models, saved, hintId) {
 ["model_gen", "model_qc"].forEach(id => {
   $(id).addEventListener("change", () => {
     const manual = $(id + "_manual");
-    if ($(id).value === "__manual__") { manual.style.display = "block"; manual.focus(); manual.placeholder = "手动输入模型名（如 deepseek-chat）"; }
+    if ($(id).value === "__manual__") { manual.style.display = "block"; manual.focus(); manual.placeholder = "手动输入模型名（如 deepseek-v4-flash）"; }
     else manual.style.display = "none";
   });
 });
@@ -676,7 +676,7 @@ function pickProvider(pr) {
   if (pr.default_model) {
     fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
     const qc = modelValue("model_qc");
-    if (!qc || qc === "deepseek-v4-flash" || qc === "glm-4.6" || qc === "qwen-plus" || qc === "deepseek-chat") {
+    if (!qc || qc === "deepseek-v4-flash" || qc === "glm-5.3" || qc === "qwen-plus" || qc === "deepseek-chat") {
       fillModelSelect("model_qc", [], pr.default_model, "");
     }
   } else {
