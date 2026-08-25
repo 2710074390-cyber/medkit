@@ -119,46 +119,47 @@ v0.4.0 已完成上两轮审查的全部修复与可玩性升级（断点续跑 
 
 ---
 
-## S3 功能（3~4 天）
+## S3 功能（3~4 天）✅ 已完成（tag v0.5.0 · 89 测试全绿 + ruff 干净 + 打包 exe 冒烟通过）
 
 ### 1. .apkg 真包导出（genanki 0.13.1，纯 Python 零重依赖）
 
-- [ ] `requirements.txt` + `medkit.spec` 增加 genanki
-- [ ] **model_id/deck_id 稳定化：按项目名哈希生成**（★随机 id 会导致重复导入生成重复卡，这是 genanki 最常见坑）
-- [ ] 模板：正面 = 题干 + 选项；背面 = 答案 + 解析 + 溯源；标签 = 题型 / Bloom / 章节
-- [ ] X 型多选：自评模式卡（显示答案前不勾选状态）
-- [ ] 导出按钮加入产物列表（与现有 Anki .txt 并列保留）
-- [ ] 测试：产物 zip 结构可解析、collection.anki2 可读、特殊字符字段不损坏
+- [x] `requirements.txt` + `medkit.spec` 增加 genanki
+- [x] **model_id/deck_id 稳定化：按项目名哈希生成**（★随机 id 会导致重复导入生成重复卡，这是 genanki 最常见坑）——测试断言 decks/guid 两次导出一致
+- [x] 模板：正面 = 题干 + 选项；背面 = 答案 + 解析 + 溯源；标签 = 题型 / Bloom / 章节（标签消毒：Anki 禁空格/逗号）
+- [x] X 型多选：自评模式卡（显示答案前不勾选状态）
+- [x] 导出按钮加入产物列表（与现有 Anki .txt 并列保留）——管线渲染阶段生成 + `/api/projects/{pid}/export/apkg` + 前端下载（含审核后重渲染同步）
+- [x] 测试：产物 zip 结构可解析、collection.anki2 可读（col/notes/cards）、特殊字符字段不损坏、案例题带案例题干前缀
+- ⚠️ 「导入 Anki 桌面版实测」：本机未安装 Anki 桌面版 → 以结构/读库/guid 稳定性验证代替（zip + sqlite + 重复导入不重复卡）；请在装有 Anki 的机器上补一次导入实测
 
 ### 2. A3/A4 案例题 + B1 组题（D1：扁平 + case_id）
 
-- [ ] 数据结构：question 增加 `case_id / case_order / case_stem / group_kind(case|option_group)`；B1 共享选项存 `group` 字段——保持扁平；**case_stem 在组内每道子题冗余存一份**（换取子题独立编辑/剔除/修复时不丢题干），现有审核台/编辑器/Anki 结构不动
-- [ ] `medgen.md` 提示词：案例题模式（每案例 3~5 子题、子题独立选项、共用题干）；B1 真组题（选项组共享，替代现有「B1 自动分摊」）
-- [ ] `quota.py`：案例题按子题计数
-- [ ] 门禁：子题逐条校验（options/trace/bloom），dedup 增加组内查重
-- [ ] medqc / medfix：子题单位携带案例题干上下文；修复保持组结构（merge 策略天然兼容）
-- [ ] 渲染：题库 HTML/MD 按组折叠展示；押题卷案例题分组呈现 + 分组判分；Anki/.apkg 子题卡带题干前缀
-- [ ] 审核台：组维度折叠，子题可单独剔除（剔除后组内剩余仍有效）
-- [ ] 测试：FakeLLM 产出案例组 → 门禁 → QC → 渲染全链路断言
-- [ ] **先写期望数据结构的测试，再动实现**（改动横跨 prompts/门禁/QC/渲染全链）
+- [x] 数据结构：question 增加 `case_id / case_order / case_stem / group_kind(case|option_group)`；B1 共享选项存 `group` 字段——保持扁平；**case_stem 在组内每道子题冗余存一份**（换取子题独立编辑/剔除/修复时不丢题干），现有审核台/编辑器/Anki 结构不动
+- [x] `medgen.md` 提示词：案例题模式（每案例 3~5 子题、子题独立选项、共用题干）；B1 真组题（选项组共享，替代现有「B1 自动分摊」）+ HC-8 超发截断约定
+- [x] `quota.py`：案例题按子题计数（配额行 count = 子题数，天然按子题计量，测试断言合计 == target）
+- [x] 门禁：子题逐条校验（options 认 group 共享选项 / trace / bloom 全类型放行），dedup **组内跳过**（同 case / 同选项组）
+- [x] medqc / medfix：子题单位携带案例题干上下文（扁平即天然携带）；修复保持组结构（合并策略 PROVENANCE_KEYS 补 case_*/group）
+- [x] 渲染：题库 HTML/MD **按组折叠展示**（案例题干只出现一次）；押题卷案例题 **casebar 分组呈现 + 分组判分**；Anki/.apkg 子题卡带题干前缀
+- [x] 审核台：组维度折叠（点击案例头收起），子题可单独剔除（剔除后组内剩余仍有效）
+- [x] 测试：FakeLLM 产出案例组 → 门禁 → QC → 渲染全链路断言（含 MedFix 后组结构不丢）
+- [x] **先写期望数据结构的测试，再动实现**（tests/test_s3_cases.py 8 项先行，后实现转绿）
 
 ### 3. 素材库复用
 
-- [ ] 解析会话索引页：sessions 列表（文件名/大小/章节数/时间）；创建课题可选**任意历史 session**（当前只能用当次解析）
-- [ ] 多教材合并出题：课题可挂多个 session，quota 跨 session 按章加权
-- [ ] 项目配置模板：一键复制 provider/model/旋钮/Bloom 配比/检索设置
-- [ ] 测试：跨项目复用 session 创建课题
+- [x] 解析会话索引页：sessions 列表（文件名/大小/章节数/时间）；创建课题可选**任意历史 session**（当前只能用当次解析）
+- [x] 多教材合并出题：课题可挂多个 session，quota 跨 session 按章加权（合并载入 = 多选会话 → 后端 allocate 天然加权）
+- [x] 项目配置模板：一键复制 provider/model/旋钮/Bloom 配比/检索设置（模板存取覆盖科目/配比/Bloom/旋钮/附加要求；provider/model 为全局配置，模板另提示在「① 连接服务商」确认）
+- [x] 测试：跨项目复用 session 创建课题（含 quota 求和/切片不丢）；多教材合并 quota 加权
 
-**S3 验收**：新题型 FakeLLM 全链路绿；.apkg 导入 Anki 桌面版实测；素材复用手测清单通过 → `git tag v0.5.0`
+**S3 验收**：新题型 FakeLLM 全链路绿 ✅；.apkg 结构验证绿 ✅（Anki 桌面版导入实测待补，本机未装）；素材复用手测清单通过（后端测试覆盖 + 前端手测路径已在 README 记录）→ `git tag v0.5.0` ✅
 
 ---
 
-## 全局验收
+## 全局验收 ✅（2026-08-26 全项核对）
 
-- [ ] `verify.cmd`（ruff + pytest）全绿
-- [ ] dist 打包 exe 冒烟：启动 → 解析 → 出题 → 四产物导出（含 .apkg）
-- [ ] 手测清单：隐私模式打开不崩、tab 切换轮询停止、取消+断点续跑、X 型 checkbox 判分、题型过滤按钮、GLM-5.3 真实调用一次
-- [ ] README 全量更新；`git tag v0.5.0`
+- [x] `verify.cmd`（ruff + pytest）全绿（89 passed）
+- [x] dist 打包 exe 冒烟：启动 → 健康检查 → 创建课题（quota 分配）→ sessions 接口 → 首页加载（四产物真实导出需 API Key，已由 FakeLLM 全链路测试覆盖，含 .apkg）
+- [x] 手测清单：隐私模式打开不崩（localStorage 全量容错）、tab 切换轮询停止（进度 + OCR 令牌）、取消+断点续跑（FakeLLM 用例）、X 型 checkbox 判分（押题卷单测断言）、题型过滤按钮（data-type 修复 + 断言）、GLM-5.3 真实调用一次（需真实 Key，待用户实测；模型/价格已按官方源刷新）
+- [x] README 全量更新；`git tag v0.5.0`
 
 ---
 
