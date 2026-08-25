@@ -437,8 +437,12 @@
       <div class="btns">
         <button class="act gray" id="btn_parse">解析并预览</button>
         <button class="act" id="btn_trial">🎯 试出一题（先看效果）</button>
+        <button class="act" id="btn_sess">💾 保存解析为素材会话</button>
         <button class="act" id="btn_create">创建课题 →</button>
+        <button class="act gray" id="btn_tpl_save">📋 存为项目模板</button>
+        <button class="act gray" id="btn_tpl_apply">🔄 应用模板</button>
       </div>
+      <div id="sess_box" style="margin-top:10px"></div>
       <div id="trial_box"></div>
       <div id="ocr_progress"></div>
       <div id="ready_list"></div>
@@ -1133,6 +1137,120 @@ $("btn_sample").onclick = async () => {
   } catch (e) { toast(e.message, false); }
   $("btn_sample").disabled = false; $("btn_sample").textContent = "🎓 手头还没素材？载入示例体验";
 };
+
+/* ---- S3：素材库（历史解析会话）与项目模板 ---- */
+async function loadSessions() {
+  try {
+    const r = await api("/api/sessions");
+    const box = $("sess_box");
+    if (!box) return;
+    const list = r.sessions || [];
+    if (!list.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="card">
+      <h3 style="margin-bottom:6px">📚 素材库（历史解析会话 · 跨项目复用 / 多教材合并）</h3>
+      <div class="hint">勾选多个会话 → 「合并载入为教材」（quota 跨 session 按章加权）；单个会话可载入为教师重点。删除即失效。</div>
+      ${list.map(s => `<div class="sessrow" style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
+        <input type="checkbox" class="sessck" data-id="${esc(s.id)}">
+        <b style="width:220px">${esc(s.name)}</b>
+        <span class="hint">${esc(s.role)} · ${(s.chars || 0).toLocaleString()} 字 · ${s.slice_count} 章节 · ${esc(s.created)}</span>
+        <button class="inlineBtn blue" data-a="loadtg" data-id="${esc(s.id)}">载入为教师重点</button>
+        <button class="inlineBtn" data-a="del" data-id="${esc(s.id)}">删除</button>
+      </div>`).join("")}
+      <div class="btns"><button class="act" id="sess_merge">合并载入为教材</button></div>
+    </div>`;
+    box.querySelectorAll("[data-a=loadtg]").forEach(b => b.onclick = () => loadSessionAs(b.dataset.id, "teacher"));
+    box.querySelectorAll("[data-a=del]").forEach(b => b.onclick = async () => {
+      try { await api("/api/sessions/" + b.dataset.id, { method: "DELETE" }); toast("会话已删除"); loadSessions(); }
+      catch (e) { toast(e.message, false); }
+    });
+    $("sess_merge").onclick = () => {
+      const ids = [...box.querySelectorAll(".sessck:checked")].map(x => x.dataset.id);
+      if (!ids.length) { toast("请先勾选要合并的会话", false); return; }
+      loadSessionsAsTextbook(ids);
+    };
+  } catch (e) { /* 素材库不可用不阻塞主流程 */ }
+}
+async function loadSessionAs(sid, role) {
+  const s = await api("/api/sessions/" + sid);
+  const chars = (s.slices || []).reduce((a, x) => a + (x.text || "").length, 0);
+  const res = { ok: true, name: s.name, chars: chars, slice_count: s.slice_count,
+                slices: s.slices, est_tokens: Math.round(chars * 0.8), warnings: [], via: "session" };
+  if (role === "teacher") { pres.teacher = { results: [res], sample: false }; renderResults("教师重点（会话）", pres.teacher); }
+  else { pres.textbook = { results: [res], sample: false }; renderResults("教材（会话）", pres.textbook); }
+  state.pres = pres;
+  await updateReady();
+  toast(`已载入「${s.name}」（${s.slice_count} 章节）`);
+}
+async function loadSessionsAsTextbook(ids) {
+  const slices = [];
+  const names = [];
+  for (const sid of ids) {
+    const s = await api("/api/sessions/" + sid);
+    slices.push(...(s.slices || []));
+    names.push(s.name);
+  }
+  const chars = slices.reduce((a, x) => a + (x.text || "").length, 0);
+  const res = { ok: true, name: names.join(" + "), chars: chars, slice_count: slices.length,
+                slices: slices, est_tokens: Math.round(chars * 0.8), warnings: [], via: "session" };
+  pres.textbook = { results: [res], sample: false };
+  state.pres = pres;
+  renderResults("教材（多会话合并）", pres.textbook);
+  await updateReady();
+  toast(`已合并载入 ${slices.length} 章节（来自 ${ids.length} 个会话）`);
+}
+$("btn_sess").onclick = async () => {
+  try {
+    let saved = 0;
+    for (const [role, g, label] of [["textbook", pres.textbook, "教材"],
+                                    ["teacher", pres.teacher, "教师重点"]]) {
+      const slices = ((g && g.results) || []).flatMap(r => r.slices || []);
+      if (!slices.length) continue;
+      await api("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: label + "会话", role, slices,
+                               source_name: ((g.results || [])[0] || {}).name || "" }) });
+      saved++;
+    }
+    if (!saved) { toast("请先「解析并预览」（或用会话载入素材）再保存", false); return; }
+    toast("已保存 " + saved + " 个素材会话（见下方素材库，可跨项目复用）");
+    loadSessions();
+  } catch (e) { toast(e.message, false); }
+};
+/* 项目配置模板：subject/exam/target/题型配比/Bloom/旋钮/附加要求 一键存/取 */
+$("btn_tpl_save").onclick = () => {
+  try {
+    const tpl = {
+      subject: $("subject").value, exam: $("exam").value, target: $("target").value,
+      ratios: { A1: $("r_a1").value, A2: $("r_a2").value, B1: $("r_b1").value, X: $("r_x").value },
+      bloom: { 记忆: $("b_mem").value, 理解: $("b_und").value, 应用: $("b_app").value, 创造: $("b_cre").value },
+      knobs: { difficulty: $("k_difficulty").value, analysis_style: $("k_analysis").value, stem_style: $("k_stem").value },
+      requirements: $("requirements").value,
+    };
+    localStorage.setItem("medkit-tpl-project", JSON.stringify(tpl));
+    toast("已存为项目模板（配比/Bloom/旋钮/附加要求）");
+  } catch (e) { toast(e.message, false); }
+};
+$("btn_tpl_apply").onclick = async () => {
+  try {
+    const t = JSON.parse(localStorage.getItem("medkit-tpl-project") || "null");
+    if (!t) { toast("还没有保存过模板", false); return; }
+    if (t.subject) $("subject").value = t.subject;
+    if (t.exam) $("exam").value = t.exam;
+    if (t.target) { $("target").value = t.target; }
+    (["r_a1", "r_a2", "r_b1", "r_x"]).forEach(k => {
+      if (t.ratios) { const v = t.ratios[{ "r_a1": "A1", "r_a2": "A2", "r_b1": "B1", "r_x": "X" }[k]]; if (v) $(k).value = v; }
+    });
+    (["b_mem", "b_und", "b_app", "b_cre"]).forEach(k => { if (t.bloom) { const v = t.bloom[{ "b_mem": "记忆", "b_und": "理解", "b_app": "应用", "b_cre": "创造" }[k]]; if (v) $(k).value = v; } });
+    if (t.knobs) {
+      if (t.knobs.difficulty) $("k_difficulty").value = t.knobs.difficulty;
+      if (t.knobs.analysis_style) $("k_analysis").value = t.knobs.analysis_style;
+      if (t.knobs.stem_style) $("k_stem").value = t.knobs.stem_style;
+    }
+    if (t.requirements) $("requirements").value = t.requirements;
+    toast("模板已应用（服务商/模型为全局配置，在「① 连接服务商」确认）");
+    await updateReady();
+  } catch (e) { toast("模板应用失败：" + e.message, false); }
+};
+loadSessions();
 
 function fullSlices(res) {
   return (res && res.results || []).filter(r => r.ok).flatMap(r => (r.slices || []));

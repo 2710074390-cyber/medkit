@@ -1,12 +1,14 @@
-"""routers：素材解析（本地文本层 / 示例素材）。"""
+"""routers：素材解析（本地文本层 / 示例素材 / 素材会话 S3 复用）。"""
 
 import asyncio
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from ..core import extract as ex
+from ..core import sessions as sessmod
 from ..core.slice import slice_text
 from ._common import TEXT_SUFFIXES, _analyze_slices, _parse_bytes
 
@@ -50,3 +52,45 @@ def sample_materials() -> dict[str, Any]:
                 "teacher": load(SAMPLE_TEACHER, "示例_教师重点.md")}
     except ex.ExtractError as e:
         return {"sample": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------- 素材会话（S3 素材库复用）
+class SessionBody(BaseModel):
+    name: str = ""
+    role: str = "textbook"
+    source_name: str = ""
+    slices: list[dict[str, Any]] = []
+
+
+@router.post("/api/sessions")
+def create_session(body: SessionBody) -> dict[str, Any]:
+    """把一次解析结果保存为素材会话（跨项目复用 / 多教材合并）。"""
+    try:
+        info = sessmod.save_session(body.name, body.role, body.slices, body.source_name)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True, **info}
+
+
+@router.get("/api/sessions")
+def list_sessions() -> dict[str, Any]:
+    return {"sessions": sessmod.list_sessions()}
+
+
+@router.get("/api/sessions/{sid}")
+def get_session(sid: str) -> dict[str, Any]:
+    try:
+        return sessmod.get_session(sid)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(404, str(e)) from e
+
+
+@router.delete("/api/sessions/{sid}")
+def delete_session(sid: str) -> dict[str, Any]:
+    try:
+        ok = sessmod.delete_session(sid)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not ok:
+        raise HTTPException(404, "素材会话不存在")
+    return {"ok": True}
