@@ -3,7 +3,38 @@
 > 授人以渔：医学生自备教材 + 教师重点（+ 可选自备真题 / 网络检索），自选服务商与 API Key，
 > 本地一键生成**全新的**题库 / 押题卷 / 复习手册。不携带、不内置任何旧产物质料。
 
-## 运行（开发模式）
+## 医学生快速上手（拿到安装包开始）
+
+1. **安装**：双击 `MedKit-Setup-0.6.0.exe` → 一路下一步（可选桌面图标）。
+   或绿色版：解压 `MedKit` 文件夹到任意位置，双击 `MedKit.exe`，浏览器自动打开（无需安装 Python）。
+2. **首次启动**：会弹出 3 步欢迎向导——软件做什么、怎么拿 API Key、怎么开始，跟完即可。
+3. **连接 AI**（只需一次）：推荐注册 [DeepSeek 开放平台](https://platform.deepseek.com) → 充值 ¥10 →
+   「API Keys」页创建并复制 Key → 回到软件「① 连接服务商」选中 DeepSeek 卡片 → 粘贴 Key →
+   「测试连接」通过后「保存配置」。整套题约 ¥1~5。
+4. **出题**：「② 新建课题」→ 上传教材 PDF/Word + 老师重点 → 「解析并预览」→
+   （可选：调整题型配比 / Bloom 层级 / 附加要求）→「创建课题 →」→「开始生成」。
+   想先看效果？点「🎓 载入示例体验」不用上传任何文件。
+5. **拿产物**：生成完在「③ 我的项目」点开项目 → 下载 **题库 / 交互押题卷 / 复习手册 / Anki 卡片包**。
+   押题卷支持计时答题、自动判分、错题重练，可打印。
+6. **在线复习**：侧栏「题库与手册站」直达 [med-review-site.pages.dev](https://med-review-site.pages.dev/#reviews)
+   ——押题卷在线刷、题库 PDF 下载、复习手册分层背，与本软件产物同源同规格。
+7. **保持最新**：软件启动时自动检查 [GitHub Releases](https://github.com/2710074390-cyber/medkit/releases/latest)
+   新版本（仅提醒 + 跳转下载页）；遇到问题用侧栏信封按钮邮件反馈（自动附版本信息）。
+
+> 数据安全：素材与产物全部保存在本机 `~/.medkit/`；API Key 加密存储；除你自己的 AI 服务商外不上传任何数据。
+
+<details>
+<summary>常见问题（点开）</summary>
+
+- **端口被占用？** 自动回退 4881~4889，无需处理。
+- **生成可以中途停吗？** 可以，「停止」保留进度，重新「开始生成」断点续跑。
+- **题目不满意？** 生成完进入逐题审核台：剔除 / 行内编辑 / 单题重掷，再「保存并重渲染」。
+- **想改提示词？** 「④ 提示词与规则」可查看与编辑全部内置提示词（影子副本，随时恢复默认）。
+- **成本怎么算？** 创建前有费用预估，生成后写入实际用量；只花你自己的 Key，明明白白。
+
+</details>
+
+## 开发者：运行（开发模式）
 
 ```powershell
 # 依赖（国内镜像）
@@ -51,9 +82,9 @@ medkit/
 └── tests/                      # test_smoke / test_pipeline_offline / test_api（TestClient）
 ```
 
-## 已实现功能（v0.5.0 · S0~S3 全部落地）
+## 已实现功能（v0.6.0）
 
-- **服务商 BYOK**：DeepSeek / 智谱 GLM / 通义千问 预置（卡片带官网注册跳转）+ 自定义 OpenAI 兼容端点；双模型档（下拉选择，获取模型列表后默认选最新，支持手动输入）；测试连接（30s 超时）；**保存配置空 Key = 保留原值**；**Key 落盘 DPAPI 加密**（Windows，ctypes 零依赖；旧明文自动升级）
+- **服务商 BYOK**：DeepSeek / 智谱 GLM / 通义千问 / Kimi（月之暗面）预置（卡片带官网注册跳转）+ 自定义 OpenAI 兼容端点；双模型档（下拉选择，获取模型列表后默认选最新，支持手动输入）；测试连接（30s 超时）；**保存配置空 Key = 保留原值**；**Key 落盘 DPAPI 加密**（Windows，ctypes 零依赖；旧明文自动升级）；**多服务商 Key 存档**（切换服务商自动归档旧 Key，切回免重填；「API Key 管理」卡片统一查看掩码/切换/删除，仿 Cherry Studio）
 - **素材解析**：PDF(文本层)/DOCX/MD/TXT/图片；章节切片；教师重点词频配额加权；线程池执行不阻塞
 - **素材库复用（S3）**：解析结果可「保存为素材会话」（`~/.medkit/sessions/`），**跨项目复用**；多个会话**合并载入为教材**（多教材合并出题，quota 跨 session 按章加权）；项目**配置模板**一键存/取（科目/题型配比/Bloom/旋钮/附加要求）
 - **扫描件 OCR（MinerU · 任务制）**：精准 API（≤200MB/≤600 页，每日 2000 页高优先级额度，2026-08 官方现行）/ 免 Token 轻量 API（≤10MB）；进度轮询 + 取消 + 自动加入输入；**UI 明示上传云端**
@@ -68,9 +99,12 @@ medkit/
 - **长任务体验（U1/U2/U3/I1）**：**管线可取消**（停止按钮，保留断点）+ **断点续跑**（逐切片 checkpoint）+ 三线程并发 + 六阶段 stepper + 百分比进度
 - **成本透明（U5）**：解析/创建前显示「预计 X 万 token · 约 ¥Y（参考价，以官网为准）」——**公式前后端单源**（`/api/cost/estimate` ← `core/cost.py`）；跑完写实际 usage + 折算成本到项目 meta；run/trial/regen 按次上下文独立记账
 - **安全加固**：Host/Origin 校验中间件（含 IPv6 `[::1]`）；pid 路径消毒（含预设删除）；损坏 meta.json 容错（422）；产物 HTML 全量转义 + 复习手册白名单消毒（href 仅 http/https）；`javascript:` 剥纯文本；Key 不进 URL；配置深拷贝防默认值污染
-- **工程化（S2）**：`routers/*` 九模块 + `state.py`；lifespan；统一异常体（LLM/Search/MinerU/PipelineError）；`~/.medkit/logs/` RotatingFileHandler；**版本单源** `medkit/__init__.py`；`verify.cmd` 一键验证 + GitHub CI 工作流
-- **引导与体验**：素材要求卡 / 一键示例 / 体检警告 / 就绪清单 / 成本预估；**拖拽上传 + 文件清单可移除**；**hash 路由（刷新保持 tab）**；配比实时合计；亮/暗主题切换（含产物页，记忆偏好，隐私模式容错）；SVG 图标；toast 堆叠；自定义删除确认；轮询失败 3 次才停；全局 onerror/unhandledrejection 兜底
-- **质量**：**89 项 pytest**（冒烟 / 离线管线含断点续跑·取消·案例组 / API 层 TestClient / S1 回归四件套 / S2 重构契约 / S3 apkg·案例结构·素材会话）+ ruff 干净 + PyInstaller exe 冒烟
+- **工程化（S2）**：`routers/*` 十模块 + `state.py`；lifespan；统一异常体（LLM/Search/MinerU/PipelineError）；`~/.medkit/logs/` RotatingFileHandler；**版本单源** `medkit/__init__.py`；`verify.cmd` 一键验证 + GitHub CI 工作流
+- **在线入口与反馈（v0.6）**：侧栏「题库与手册站」外链（[med-review-site.pages.dev](https://med-review-site.pages.dev/#reviews)，题库/押题卷/复习手册在线合集）；邮件反馈弹窗（复制邮箱 + `mailto:` 自动附版本/系统信息，2710074390@qq.com）
+- **内置更新检查（v0.6）**：`GET /api/update/check` 请求 GitHub Releases（`core/update.py`，纯标准库比较逻辑）；启动 4s 静默检查 + 侧栏版本号红点 + 手动点击检查；仅提醒 + 跳转下载页；无网/无 Release 优雅降级不报错
+- **新图标（v0.6）**：与 med-review-site 网站图标同构（圆角方块 + MW 字标），青绿渐变 + Segoe UI 字体风格区分（`pack/make_icon.py` 逐尺寸原生绘制）
+- **引导与体验**：**首启 3 步欢迎向导**（软件做什么 → 怎么拿 Key → 两种开始方式；老用户不打扰）；素材要求卡 / 一键示例 / 体检警告 / 就绪清单 / 成本预估；**拖拽上传 + 文件清单可移除**；**hash 路由（刷新保持 tab）**；**配比条可视化 + 色块间把手拖拽调比**（相邻两段间转移百分比，合计恒定；键盘 ←/→ ±5%，触屏 pointer 通用）；配比实时合计；亮/暗主题切换（含产物页，记忆偏好，隐私模式容错）；SVG 图标；toast 堆叠；自定义删除确认；轮询失败 3 次才停；全局 onerror/unhandledrejection 兜底
+- **质量**：**99 项 pytest**（冒烟 / 离线管线含断点续跑·取消·案例组 / API 层 TestClient 含 Key 存档闭环 / S1 回归四件套 / S2 重构契约 / S3 apkg·案例结构·素材会话 / v0.6 更新检查 mock）+ ruff 干净 + PyInstaller exe 冒烟
 
 ## 服务商与模型（2026-08 官方信息核查版）
 
@@ -79,6 +113,7 @@ medkit/
 | DeepSeek | `deepseek-v4-flash`（官方现行：v4-flash / v4-pro / v4-flash-vision-exp；1M 上下文） | ✅ **自带**（Responses API `web_search` 工具） | 3.0 / 9.0（高峰；空闲减半，缓存命中 0.05~0.30） |
 | 智谱 GLM | `glm-5.3`（现行主力；另有 5-Turbo / 4.7） | ✅ **自带**（Web Search API，检索按次计费） | 8.0 / 28.0（缓存命中 2.0） |
 | 通义千问 | `qwen-plus`（现行代际至 Qwen3.8 Max/Plus/Flash；qwen3-max 系列已支持联网） | ✅ **自带**（enable_search；qwen3-max 系列及以上） | 2.4 / 9.6（百炼华北2北京） |
+| Kimi（月之暗面） | `kimi-k2-thinking`（K2 系列，262K 上下文；另有 turbo 高速档） | 🔴 需外部（博查/手动；境外端点 api.moonshot.ai/v1） | 4.0 / 16.0（缓存命中 1.0） |
 | 自定义端点 | 用户自填 | 🔴 需外部（博查/手动） | 以端点官网为准 |
 
 > 说明：DeepSeek 2026-08 官方启用「峰谷定价」（高峰=周一至周五 9:00-12:00、14:00-18:00；周末全天低谷价）；应用内的预估一律显示「参考价，以官网为准」。
@@ -101,4 +136,5 @@ medkit/
 - ✅ P1 迭代2：五阶段管线 + 产物渲染（离线全链路测试通过）
 - ✅ 全面审查修复（P0 全部 + P1 长任务闭环 + P2 路线图：Anki / 押题卷练习化 / 查重门禁 / 主题与图标 / 端口回退 / ruff+TestClient）
 - ✅ v0.5 S0~S3：安全网（git 基线 · verify.cmd）→ 正确性修复+数据刷新 → 工程化重构 → .apkg 导出 / A3·A4 案例题 / B1 组题 / 素材库复用
+- ✅ v0.6：题库与手册站入口 + 邮件反馈 + GitHub Releases 内置更新检查 + 品牌新图标；开源至 [github.com/2710074390-cyber/medkit](https://github.com/2710074390-cyber/medkit)
 - 🔲 后续可选：网络检索更多后端、自备真题引用配额滑杆、跨项目错题本 + 遗忘曲线复习计划

@@ -6,59 +6,85 @@
 <link rel="icon" href="data:,">
 <title>MedKit · 医学题库工坊</title>
 <style>
+  /* 设计语言：仿 Cherry Studio v2 —— 中性灰优先，主操作黑白反转，彩色仅语义反馈与数据可视化 */
   :root{
-    --bg1:#040a18; --bg2:#0a1a33; --card:rgba(16,34,64,.72); --card2:rgba(10,24,48,.85);
-    --line:rgba(120,180,255,.16); --accent:#38bdf8; --accent2:#7dd3fc; --good:#34d399;
-    --warn:#fbbf24; --bad:#f87171; --text:#dbeafe; --dim:#7d9ec9;
-    --bgstar1:#0d2a52; --bgstar2:#0a2440;
-    --codebg:rgba(4,10,24,.6); --codefg:#7d9ec9; --reqbg:rgba(30,58,100,.35);
-    --navbg:rgba(4,10,24,.78); --errbg:rgba(248,113,113,.14);
-    --s1:#38bdf8; --s2:#2dd4bf; --s3:#a78bfa; --s4:#fbbf24;   /* 配比条四段色 */
+    --bg1:#0a0a0a; --bg2:#0a0a0a; --card:#242424; --card2:#303030;
+    --line:#404040; --accent:#d4d4d4; --accent2:#e5e5e5; --good:#4ade80;
+    --warn:#fbbf24; --bad:#f87171; --text:#fafafa; --dim:#a3a3a3;
+    --link:#60a5fa;
+    --info:#60a5fa; --infobg:rgba(96,165,250,.13);
+    --goodbg:rgba(74,222,128,.12); --badbg:rgba(248,113,113,.12);
+    --codebg:#2e2e2e; --codefg:#a3a3a3; --reqbg:#2e2e2e;
+    --navbg:#171717; --errbg:rgba(248,113,113,.12);
+    --onaccent:#171717;
+    --s1:#60a5fa; --s2:#2dd4bf; --s3:#a78bfa; --s4:#fbbf24;   /* 配比条四段色（数据可视化豁免） */
   }
   :root[data-theme=light]{
-    --bg1:#eef4fb; --bg2:#f6f9fd; --card:rgba(255,255,255,.92); --card2:#ffffff;
-    --line:rgba(30,80,140,.20); --accent:#0e6fb8; --accent2:#12578f; --good:#0d7a4f;
-    --warn:#8a5a00; --bad:#b3261e; --text:#12233d; --dim:#5a6b85;
-    --bgstar1:#dbe9f8; --bgstar2:#eef4fb;
-    --codebg:#f0f4f9; --codefg:#3d4f6b; --reqbg:rgba(30,80,140,.07);
-    --navbg:rgba(246,249,253,.88); --errbg:rgba(179,38,30,.10);
-    --s1:#0ea5e9; --s2:#0d9488; --s3:#8b5cf6; --s4:#d97706;
+    --bg1:#ffffff; --bg2:#ffffff; --card:#ffffff; --card2:#f5f5f5;
+    --line:#e5e5e5; --accent:#171717; --accent2:#171717; --good:#16a34a;
+    --warn:#b45309; --bad:#dc2626; --text:#0a0a0a; --dim:#737373;
+    --link:#2563eb;
+    --info:#2563eb; --infobg:rgba(37,99,235,.08);
+    --goodbg:rgba(22,163,74,.10); --badbg:rgba(220,38,38,.08);
+    --codebg:#f5f5f5; --codefg:#525252; --reqbg:#f5f5f5;
+    --navbg:#fafafa; --errbg:rgba(220,38,38,.08);
+    --onaccent:#fafafa;
+    --s1:#3b82f6; --s2:#0d9488; --s3:#8b5cf6; --s4:#d97706;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{
     font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;color:var(--text);
-    background:radial-gradient(1200px 700px at 20% -10%,var(--bgstar1) 0%,transparent 55%),
-               radial-gradient(1000px 600px at 100% 0%,var(--bgstar2) 0%,transparent 50%),
-               linear-gradient(160deg,var(--bg1),var(--bg2));
-    min-height:100vh;
+    background:var(--bg1);
+    min-height:100vh;display:flex;
   }
-  header{display:flex;align-items:flex-start;justify-content:space-between;max-width:1000px;margin:0 auto;padding:22px 28px 6px}
-  header h1{font-size:22px;letter-spacing:1px}
-  header h1 b{color:var(--accent)}
-  header p{color:var(--dim);font-size:12.5px;margin-top:4px}
-  .themeBtn{background:var(--card);border:1px solid var(--line);color:var(--text);
-    border-radius:10px;padding:8px 12px;cursor:pointer;font-size:15px;font-family:inherit;line-height:1}
-  .themeBtn:hover{border-color:var(--accent)}
-  nav{display:flex;gap:10px;padding:10px 28px;flex-wrap:wrap;max-width:1000px;margin:0 auto;
-    position:sticky;top:0;z-index:50;background:var(--navbg);backdrop-filter:blur(12px);
-    -webkit-backdrop-filter:blur(12px);border-radius:0 0 14px 14px}
-  nav button{
-    background:var(--card);border:1px solid var(--line);color:var(--text);
-    padding:9px 20px;border-radius:10px;cursor:pointer;font-size:14px;font-family:inherit;
-    display:inline-flex;align-items:center;gap:7px;
+  /* ---- Cherry 式左侧栏：独立空间区域（浅 #fafafa / 深 #171717，右边框分隔） ---- */
+  aside.side{
+    width:212px;flex:none;background:var(--navbg);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;
   }
-  nav button.active{background:linear-gradient(180deg,rgba(56,189,248,.28),rgba(56,189,248,.10));border-color:var(--accent)}
+  .sidelogo{padding:20px 20px 14px;border-bottom:1px solid var(--line)}
+  .sidelogo h1{font-size:17px;font-weight:700;letter-spacing:.2px;line-height:1.2}
+  .sidelogo p{font-size:11px;color:var(--dim);margin-top:3px}
+  aside.side nav{display:flex;flex-direction:column;gap:2px;padding:10px 10px}
+  aside.side nav button{
+    background:none;border:none;color:var(--dim);
+    padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;font-family:inherit;
+    display:flex;align-items:center;gap:10px;text-align:left;transition:background .12s,color .12s;
+  }
+  aside.side nav button:hover{background:var(--card2);color:var(--text)}
+  aside.side nav button.active{background:var(--accent);color:var(--onaccent);font-weight:600}
+  .sidefoot{margin-top:auto;padding:10px 14px 14px;border-top:1px solid var(--line);
+    display:flex;align-items:center;gap:8px}
+  .sidefoot .v{font-size:11px;color:var(--dim);margin-left:auto}
+  .themeBtn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:8px;
+    padding:7px 9px;cursor:pointer;font-size:14px;font-family:inherit;line-height:1;
+    display:inline-flex;align-items:center;justify-content:center}
+  .themeBtn:hover{border-color:var(--text);color:var(--text)}
+  /* v0.6:侧栏外链入口(题库与手册站) */
+  .navsep{height:1px;background:var(--line);margin:8px 12px}
+  a.navext{
+    background:none;border:none;color:var(--dim);text-decoration:none;
+    padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;font-family:inherit;
+    display:flex;align-items:center;gap:10px;text-align:left;transition:background .12s,color .12s;
+  }
+  a.navext:hover{background:var(--card2);color:var(--text)}
+  a.navext .ic.arrow{width:11px;height:11px;margin-left:auto;opacity:.55}
+  /* v0.6:版本号可点(检查更新) + 更新提示红点 */
+  .sidefoot .v{cursor:pointer;user-select:none;position:relative;padding:2px 4px;border-radius:6px}
+  .sidefoot .v:hover{color:var(--text);background:var(--card2)}
+  .updot{position:absolute;top:-1px;right:-3px;width:7px;height:7px;border-radius:50%;
+    background:#e5484d;box-shadow:0 0 0 1.5px var(--navbg)}
   .ic{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
-  main{max-width:1000px;margin:0 auto;padding:0 28px 60px}
+  main{flex:1;min-width:0;padding:0 36px 60px;max-width:1000px;margin:0 auto;width:100%}
+  .ptitle{font-size:17px;font-weight:600;padding:30px 0 4px}
+  .psub{font-size:12.5px;color:var(--dim);margin-bottom:6px}
   .panel{display:none}
   .panel.show{display:block}
   .card{
-    background:var(--card);border:1px solid var(--line);border-radius:14px;
-    padding:20px;margin-top:18px;backdrop-filter:blur(10px);
-    box-shadow:0 8px 30px rgba(0,10,30,.35);
+    background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:20px;margin-top:16px;
   }
-  .card h2{font-size:16px;font-weight:600;margin-bottom:14px;color:var(--accent2);
-    border-left:3px solid var(--accent);padding-left:9px}
+  .card h2{font-size:14px;font-weight:600;margin-bottom:14px;color:var(--text)}
   label{display:block;font-size:13px;color:var(--dim);margin:12px 0 5px}
   input[type=text],input[type=password],input[type=number],select,textarea{
     width:100%;background:var(--card2);border:1px solid var(--line);color:var(--text);
@@ -71,12 +97,14 @@
   .row>div{flex:1;min-width:220px}
   .btns{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center}
   button.act{
-    background:linear-gradient(180deg,rgba(56,189,248,.9),rgba(29,129,186,.9));
-    color:#04101f;border:none;border-radius:10px;padding:10px 22px;font-size:14px;
+    background:var(--accent);
+    color:var(--onaccent);border:1px solid var(--accent);border-radius:8px;padding:9px 20px;font-size:13.5px;
     font-weight:600;cursor:pointer;font-family:inherit;
   }
-  button.act.gray{background:rgba(80,110,150,.25);color:var(--text);border:1px solid var(--line)}
-  button.act.danger{background:linear-gradient(180deg,rgba(248,113,113,.9),rgba(185,28,28,.9));color:#fff}
+  button.act:hover{opacity:.88}
+  button.act.gray{background:var(--card);color:var(--text);border:1px solid var(--line)}
+  button.act.gray:hover{background:var(--card2);opacity:1}
+  button.act.danger{background:var(--bad);color:#fff;border-color:var(--bad)}
   button.act:disabled{opacity:.45;cursor:not-allowed}
   .provs{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
   button.prov{
@@ -85,10 +113,10 @@
     color:var(--text);font-family:inherit;font-size:13.5px;display:block;width:100%;
   }
   button.prov:hover{border-color:var(--accent)}
-  button.prov.on{border-color:var(--accent);background:linear-gradient(180deg,rgba(56,189,248,.18),rgba(56,189,248,.05))}
+  button.prov.on{border-color:var(--text);background:var(--card2)}
   .prov b{display:block;font-size:14px;color:var(--text)}
   .prov span{display:block;font-size:11px;color:var(--dim);margin-top:4px;line-height:1.5}
-  .provlink{display:inline-block;margin-top:6px;font-size:11.5px;color:var(--accent2);text-decoration:none}
+  .provlink{display:inline-block;margin-top:6px;font-size:11.5px;color:var(--link);text-decoration:none}
   .provlink:hover{text-decoration:underline}
   .stag{display:inline-block;margin-top:5px;font-size:10.5px;padding:0 7px;border-radius:20px;
     border:1px solid var(--line);color:var(--dim)}
@@ -106,7 +134,7 @@
   .switch label{margin:0;cursor:pointer}
   .filegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
   .fbox{border:1px dashed var(--line);border-radius:11px;padding:14px;background:var(--card2);transition:.15s}
-  .fbox.over{border-color:var(--accent);background:rgba(56,189,248,.10)}
+  .fbox.over{border-color:var(--text);background:var(--card2)}
   .fbox .dzlist{margin-top:8px}
   .dzfile{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;
     padding:5px 10px;margin-top:6px;font-size:12.5px;background:var(--card2)}
@@ -128,18 +156,30 @@
   .ready .est{width:100%;color:var(--dim);font-size:12px;margin-top:4px}
   .ratioSum{display:inline-block;margin-left:8px;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
   .ratioSum.bad{color:var(--bad);font-weight:600}
+  .rst{border:1px solid var(--line);background:none;color:var(--dim);border-radius:20px;
+    padding:1px 9px;font-size:11px;cursor:pointer;font-family:inherit;margin-left:8px;vertical-align:1px}
+  .rst:hover{border-color:var(--text);color:var(--text)}
   /* ---- 配比可视化条（题型配比 / Bloom 共用组件） ---- */
-  .segbar{display:flex;height:26px;border-radius:9px;overflow:hidden;
+  .segbar{display:flex;height:26px;border-radius:9px;overflow:hidden;position:relative;touch-action:none;
     border:1px solid var(--line);background:var(--card2);margin-top:10px}
+  .seghandle{position:absolute;top:0;height:100%;width:20px;margin-left:-10px;cursor:ew-resize;z-index:3}
+  .seghandle::after{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:3px;height:16px;border-radius:2px;background:rgba(255,255,255,.9);box-shadow:0 0 3px rgba(0,0,0,.55)}
+  .seghandle:hover::after,.seghandle:focus-visible::after{background:var(--accent)}
+  .seghandle:focus-visible{outline:2px solid var(--accent);outline-offset:0px;border-radius:4px}
+  .segbar.dragging i{transition:none}
   .segbar i{display:flex;align-items:center;justify-content:center;min-width:0;font-style:normal;
     cursor:pointer;transition:width .28s ease}
   .segbar i b{font-size:11px;font-weight:700;color:#06121f;white-space:nowrap;
-    overflow:hidden;text-overflow:ellipsis;padding:0 5px;user-select:none}
+    padding:0 5px;user-select:none}
   .segbar i:hover{filter:brightness(1.12)}
-  .segbar i.gap{background:repeating-linear-gradient(45deg,transparent 0 6px,rgba(125,158,201,.16) 6px 12px);
-    border-left:1px dashed rgba(125,158,201,.45);cursor:default}
+  .segbar i.gap{background:repeating-linear-gradient(45deg,transparent 0 6px,rgba(128,128,128,.15) 6px 12px);
+    border-left:1px dashed rgba(128,128,128,.45);cursor:default}
   .segbar i.gap:hover{filter:none}
   .segbar.over{border-color:var(--bad);box-shadow:0 0 0 1px rgba(248,113,113,.28)}
+  /* 配比输入网格：宽屏 4 列，极窄屏 2 列（窄屏下配比条标签由 JS 像素级适配自动隐藏） */
+  .ratioinputs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+  @media (max-width:560px){.ratioinputs{grid-template-columns:repeat(2,1fr);gap:6px}}
   /* ---- OCR 进度区（与配比条同语言：状态芯片 + 渐变进度） ---- */
   .ocrwrap{border:1px solid var(--line);border-radius:11px;background:var(--card2);
     padding:12px 14px;margin-top:12px}
@@ -149,9 +189,9 @@
   .ocrhead .note{flex:1;text-align:right;color:var(--dim);font-size:11.5px}
   .ocrbar{height:8px;border-radius:6px;background:var(--card);border:1px solid var(--line);
     margin-top:10px;overflow:hidden;position:relative}
-  .ocrbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--good));
+  .ocrbar i{display:block;height:100%;width:0;background:var(--info);
     transition:width .5s ease}
-  .ocrbar i.bad{background:linear-gradient(90deg,var(--warn),var(--bad))}
+  .ocrbar i.bad{background:var(--bad)}
   .ocrbar.running::after{content:"";position:absolute;top:0;left:-30%;width:30%;height:100%;
     background:linear-gradient(90deg,transparent,rgba(255,255,255,.30),transparent);
     animation:ocrslide 1.6s linear infinite}
@@ -162,20 +202,20 @@
     max-width:42%;flex:none}
   .ocrst{font-size:11.5px;padding:1px 9px;border-radius:20px;white-space:nowrap;flex:none;
     border:1px solid var(--line);color:var(--dim)}
-  .ocrst.run{background:rgba(56,189,248,.14);border-color:var(--accent);color:var(--accent2);font-weight:600}
-  .ocrst.done{background:rgba(52,211,153,.12);border-color:var(--good);color:var(--good)}
-  .ocrst.failed{background:rgba(248,113,113,.12);border-color:var(--bad);color:var(--bad)}
-  .ocrst.cancel{background:rgba(125,158,201,.12);border-color:var(--dim);color:var(--dim)}
+  .ocrst.run{background:var(--infobg);border-color:var(--info);color:var(--info);font-weight:600}
+  .ocrst.done{background:var(--goodbg);border-color:var(--good);color:var(--good)}
+  .ocrst.failed{background:var(--badbg);border-color:var(--bad);color:var(--bad)}
+  .ocrst.cancel{background:var(--card2);border-color:var(--dim);color:var(--dim)}
   .ocrrow .msg{flex:1;min-width:0;color:var(--dim);font-size:12px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .ocrrow .msg.good{color:var(--good)}
   .ocrrow .msg.bad{color:var(--bad)}
-  .ocrmini{display:none;height:3px;border-radius:2px;background:rgba(56,189,248,.16);
+  .ocrmini{display:none;height:3px;border-radius:2px;background:var(--infobg);
     position:relative;overflow:hidden;width:64px;flex:none}
-  .ocrrow.running{box-shadow:inset 0 0 0 1px rgba(56,189,248,.28)}
+  .ocrrow.running{box-shadow:inset 0 0 0 1px var(--info)}
   .ocrrow.running .ocrmini{display:block}
   .ocrmini::after{content:"";position:absolute;top:0;left:-40%;width:40%;height:100%;
-    background:linear-gradient(90deg,transparent,var(--accent),transparent);
+    background:linear-gradient(90deg,transparent,var(--info),transparent);
     animation:ocrslide2 1.1s linear infinite}
   @keyframes ocrslide2{to{left:140%}}
   .ocrrow button.cancel{cursor:pointer;background:none;border:1px solid var(--line);color:var(--dim);
@@ -183,9 +223,9 @@
   .ocrrow button.cancel:hover{border-color:var(--bad);color:var(--bad)}
   .ocrrow button.cancel:disabled{opacity:.4;cursor:not-allowed}
   button:focus-visible,summary:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .proj a.art{color:var(--accent2);margin-right:10px}
+  .proj a.art{color:var(--link);margin-right:10px}
   .proj a.btnart{display:inline-block;border:1px solid var(--line);border-radius:7px;padding:3px 10px;
-    font-size:12px;margin:2px 6px 2px 0;color:var(--accent2);text-decoration:none}
+    font-size:12px;margin:2px 6px 2px 0;color:var(--link);text-decoration:none}
   .proj a.btnart:hover{border-color:var(--accent)}
   .inlineBtn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--dim);
     border-radius:7px;padding:4px 12px;font-size:12.5px;font-family:inherit;margin-right:8px}
@@ -205,39 +245,39 @@
   .stage{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:20px;font-size:11.5px;
     border:1px solid var(--line);color:var(--accent2)}
   .tag{display:inline-block;margin-right:6px;padding:1px 8px;border-radius:20px;font-size:11.5px;
-    background:rgba(56,189,248,.12);color:var(--accent2)}
+    background:var(--card2);color:var(--dim)}
   .quota{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-  .quota span{font-size:11.5px;background:rgba(52,211,153,.1);color:var(--good);border-radius:8px;padding:3px 8px}
+  .quota span{font-size:11.5px;background:var(--goodbg);color:var(--good);border-radius:8px;padding:3px 8px}
   .stepper{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;align-items:center}
   .stp{font-size:12px;padding:4px 12px;border-radius:20px;border:1px solid var(--line);color:var(--dim);background:var(--card2)}
-  .stp.cur{background:rgba(56,189,248,.16);border-color:var(--accent);color:var(--accent2);font-weight:600}
-  .stp.done{background:rgba(52,211,153,.12);border-color:var(--good);color:var(--good)}
+  .stp.cur{background:var(--infobg);border-color:var(--info);color:var(--info);font-weight:600}
+  .stp.done{background:var(--goodbg);border-color:var(--good);color:var(--good)}
   .pvbar{height:8px;border-radius:6px;background:var(--card2);border:1px solid var(--line);margin-top:10px;overflow:hidden}
-  .pvbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--good));transition:width .4s}
+  .pvbar i{display:block;height:100%;width:0;background:var(--info);transition:width .4s}
   #pvtext{font-size:12.5px;color:var(--dim);margin-top:6px}
   #toasts{position:fixed;right:24px;bottom:24px;display:flex;flex-direction:column;gap:10px;z-index:99;max-width:400px}
   .toast{background:var(--card2);border:1px solid var(--line);border-radius:11px;padding:12px 16px;
-    font-size:13px;box-shadow:0 8px 26px rgba(0,10,30,.4);animation:tin .25s}
+    font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.18);animation:tin .25s}
   .toast.good{border-color:var(--good)}
   .toast.bad{border-color:var(--bad)}
   @keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-  .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(56,189,248,.3);
-    border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
+    border-top-color:var(--text);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .modalMask{position:fixed;inset:0;background:rgba(2,8,20,.6);display:flex;align-items:center;justify-content:center;z-index:120}
+  .modalMask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:120}
   .modal{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:22px 24px;max-width:460px;width:92%}
   .modal h3{font-size:16px;margin-bottom:8px;color:var(--accent2)}
   .modal p{font-size:13.5px;color:var(--dim);line-height:1.8}
   .modal .btns{margin-top:16px}
-  .empty{padding:34px 20px;text-align:center;color:var(--dim)}
-  .empty svg{width:64px;height:64px;margin-bottom:12px;opacity:.7}
-  .empty .sub{font-size:13px;margin-bottom:14px}
+  .empty{padding:30px 20px;text-align:center;color:var(--dim)}
+  .empty svg{width:48px;height:48px;margin-bottom:10px;opacity:.6}
+  .empty .sub{font-size:13px;margin-bottom:16px;line-height:1.6}
   /* 预设芯片 */
   .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
   .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:20px;
     padding:4px 12px;font-size:12.5px;cursor:pointer;background:var(--card2);color:var(--text);font-family:inherit}
   .chip:hover{border-color:var(--accent)}
-  .chip.builtin{background:rgba(56,189,248,.12);border-color:var(--accent);color:var(--accent2)}
+  .chip.builtin{background:var(--card2);border-color:var(--text);color:var(--text)}
   .chip .x{cursor:pointer;color:var(--dim);font-size:13px;padding:0 2px}
   .chip .x:hover{color:var(--bad)}
   /* 试出题卡片 */
@@ -256,7 +296,7 @@
   .pstatus.drift{background:rgba(248,113,113,.12);border-color:var(--bad);color:var(--bad)}
   pre.pview{white-space:pre-wrap;font-size:12px;line-height:1.7;color:var(--codefg);
     background:var(--codebg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-height:340px;overflow:auto}
-  pre.pview mark{background:rgba(56,189,248,.25);color:var(--accent2);border-radius:4px;padding:0 3px}
+  pre.pview mark{background:var(--infobg);color:var(--info);border-radius:4px;padding:0 3px}
   textarea.pedit{min-height:300px;font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.6}
   .phchips .chip{font-size:11.5px;padding:2px 9px}
   .phchips .chip.missing{background:rgba(248,113,113,.15);border-color:var(--bad);color:var(--bad)}
@@ -287,6 +327,53 @@
   /* 校验错误态 */
   input.err,select.err,textarea.err{border-color:var(--bad);background:var(--errbg)}
   .toast{cursor:pointer}
+  /* 首启欢迎向导 */
+  #wizard_mask{position:fixed;inset:0;background:rgba(0,0,0,.5);
+    display:flex;align-items:center;justify-content:center;z-index:200;padding:20px}
+  .wizard{width:min(640px,100%);max-height:88vh;overflow:auto;background:var(--card2);
+    border:1px solid var(--line);border-radius:14px;padding:26px 30px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+  .wizard h2{font-size:19px;margin-bottom:4px}
+  .wizard h2 b{color:var(--accent)}
+  .wsteps{display:flex;gap:7px;margin:14px 0 18px}
+  .wsteps i{width:9px;height:9px;border-radius:50%;background:var(--line);transition:background .25s}
+  .wsteps i.on{background:var(--accent)}
+  .wgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}
+  .wcard{border:1px solid var(--line);border-radius:11px;padding:12px;background:var(--card);text-align:center;cursor:default}
+  .wcard .ic{width:26px;height:26px;color:var(--accent);stroke-width:1.6}
+  .wcard b{display:block;font-size:13px;margin-top:6px}
+  .wcard span{display:block;font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.5}
+  .wentry{display:flex;gap:12px;align-items:center;border:1px solid var(--line);border-radius:12px;
+    padding:14px 16px;margin-top:10px;background:var(--card);cursor:pointer;transition:border-color .2s}
+  .wentry:hover{border-color:var(--accent)}
+  .wentry .ic{width:24px;height:24px;color:var(--accent);flex:none;stroke-width:1.6}
+  .wentry b{font-size:14px;display:block}
+  .wentry span{font-size:12px;color:var(--dim);display:block;margin-top:2px;line-height:1.5}
+  .wprov{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:11px;
+    padding:11px 14px;margin-top:9px;background:var(--card)}
+  .wprov b{font-size:13px}
+  .wprov span{font-size:11.5px;color:var(--dim);flex:1;line-height:1.5}
+  /* API Key 管理 */
+  .keyrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border:1px solid var(--line);
+    border-radius:11px;margin-top:9px;background:var(--card2)}
+  .keyrow.on{border-color:var(--text);box-shadow:0 0 0 1px var(--text)}
+  .keyrow>b{font-size:13.5px;min-width:132px;display:flex;align-items:center;gap:7px}
+  .keyrow .ktag{font-size:10.5px;padding:1px 7px;border-radius:20px;border:1px solid var(--good);
+    color:var(--good);background:var(--goodbg)}
+  .keyrow .kmask{font-family:Consolas,"Courier New",monospace;font-size:11.5px;color:var(--dim);flex:1;min-width:170px}
+  .keyrow .kmeta{width:100%;font-size:11px;color:var(--dim);line-height:1.5}
+  .keyrow .mini{padding:4px 10px;font-size:11.5px}
+  @media (max-width:860px){
+    aside.side{width:60px}
+    .sidelogo{padding:14px 0 8px;text-align:center}
+    .sidelogo h1,.sidelogo p{display:none}
+    .sidelogo .logoicon{display:block;margin:0 auto;width:20px;height:20px;color:var(--text)}
+    aside.side nav button{justify-content:center;padding:12px 0}
+    aside.side nav button span{display:none}
+    .sidefoot .v{display:none}
+    .sidefoot{justify-content:center}
+    main{padding:0 16px 40px}
+  }
+  @media (max-width:640px){.wgrid{grid-template-columns:1fr}.wizard{padding:20px 18px}}
   @media (prefers-reduced-motion: reduce){
     *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
   }
@@ -300,25 +387,48 @@
   <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4M9 12h6M9 16h6"/></symbol>
   <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-bank" viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2zm0-1a2 2 0 0 1 2-2h13"/><path d="M9 7h7M9 11h7"/></symbol>
+  <symbol id="i-paper" viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6M9 16h4"/></symbol>
+  <symbol id="i-learn" viewBox="0 0 24 24"><path d="M12 5c-2-1.6-4.6-2-8-2v15c3.4 0 6 .4 8 2 2-1.6 4.6-2 8-2V3c-3.4 0-6 .4-8 2z"/><path d="M12 5v15"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3l1.5 1.5-1.5 1.5 1.5 1.5-2 2-1.5-1.5-2 2"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M19 14v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></symbol>
 </svg>
-<header>
-  <div>
-    <h1>Med<b>Kit</b> · 医学题库工坊</h1>
-    <p>MedAgentWork 桌面版 · 教材 + 教师重点 → 全新题库/押题卷/复习手册 · 本地生成 · 仅使用你自己的 API Key</p>
+<aside class="side">
+  <div class="sidelogo">
+    <h1>Med<b>Kit</b></h1>
+    <p>本地医学题库工坊</p>
+    <svg class="ic logoicon" style="display:none"><use href="#i-learn"></use></svg>
   </div>
-  <button class="themeBtn" id="btn_theme" title="切换亮/暗主题" onclick="toggleTheme()">
-    <svg class="ic"><use id="u_theme" href="#i-moon"></use></svg>
-  </button>
-</header>
-<nav>
-  <button data-tab="conn" class="active"><svg class="ic"><use href="#i-conn"></use></svg>① 连接服务商</button>
-  <button data-tab="proj"><svg class="ic"><use href="#i-proj"></use></svg>② 新建课题</button>
-  <button data-tab="mine"><svg class="ic"><use href="#i-mine"></use></svg>③ 我的项目</button>
-  <button data-tab="prompts"><svg class="ic"><use href="#i-doc"></use></svg>④ 提示词与规则</button>
-</nav>
+  <nav>
+    <button data-tab="conn" class="active"><svg class="ic"><use href="#i-conn"></use></svg><span>连接服务商</span></button>
+    <button data-tab="proj"><svg class="ic"><use href="#i-proj"></use></svg><span>新建课题</span></button>
+    <button data-tab="mine"><svg class="ic"><use href="#i-mine"></use></svg><span>我的项目</span></button>
+    <button data-tab="prompts"><svg class="ic"><use href="#i-doc"></use></svg><span>提示词与规则</span></button>
+    <div class="navsep" role="separator"></div>
+    <a class="navext" href="https://med-review-site.pages.dev/#reviews" target="_blank" rel="noopener"
+       title="题库与复习手册产物合集(在线答题 / 题库 PDF / 复习手册)">
+      <svg class="ic"><use href="#i-book"></use></svg><span>题库与手册站</span>
+      <svg class="ic arrow"><use href="#i-ext"></use></svg>
+    </a>
+  </nav>
+  <div class="sidefoot">
+    <button class="themeBtn" id="btn_theme" title="切换亮/暗主题" onclick="toggleTheme()" aria-label="切换主题">
+      <svg class="ic"><use id="u_theme" href="#i-moon"></use></svg>
+    </button>
+    <button class="themeBtn" id="btn_feedback" title="反馈与建议(邮件)" onclick="openFeedback()" aria-label="反馈与建议">
+      <svg class="ic"><use href="#i-mail"></use></svg>
+    </button>
+    <span class="v" id="side_ver" title="检查更新" role="button" tabindex="0">v0.5</span>
+  </div>
+</aside>
 <main>
-  <!-- ① 连接服务商 -->
+  <!-- 连接服务商 -->
   <section id="tab-conn" class="panel show">
+    <h1 class="ptitle">连接服务商</h1>
+    <p class="psub">教材 + 教师重点 → 全新题库 / 押题卷 / 复习手册 · 本地生成 · 仅使用你自己的 API Key</p>
     <div class="card">
       <h2>选择服务商（API 由你自己提供）</h2>
       <div class="provs" id="provs"></div>
@@ -341,6 +451,13 @@
         <button class="act" id="btn_save">保存配置</button>
       </div>
       <div class="hint" id="test_result"></div>
+    </div>
+
+    <div class="card">
+      <h2>API Key 管理（多服务商存档）</h2>
+      <div class="hint">每个服务商的 Key 独立存档（本机加密）：保存配置时自动归档，之后切换服务商<b>自动带出，无需重复粘贴</b>。
+      点「使用」立即切换到该服务商。</div>
+      <div id="keymgmt"><div class="hint"><span class="spin"></span>加载中…</div></div>
     </div>
 
     <div class="card">
@@ -389,6 +506,8 @@
 
   <!-- ② 新建课题 -->
   <section id="tab-proj" class="panel">
+    <h1 class="ptitle">新建课题</h1>
+    <p class="psub">上传教材与教师重点，配置出题参数，一键生成题库</p>
     <div class="card">
       <h2>课题参数</h2>
       <div class="row">
@@ -400,24 +519,26 @@
           </select></div>
         <div><label>目标题数（默认 100）</label><input type="number" id="target" value="100" min="10" max="500"></div>
       </div>
-      <div class="hint warn">💡 建议一次只生成<b>一个章节或一篇</b>的内容：切题更准，质检更稳，成本更低。</div>
+      <div class="hint warn">建议一次只生成<b>一个章节或一篇</b>的内容：切题更准，质检更稳，成本更低。</div>
       <div class="row">
         <div><label>题型配比 %（A1/A2/B1/X）
-          <span class="ratioSum" id="ratio_sum">合计 100%</span></label>
+          <span class="ratioSum" id="ratio_sum">合计 100%</span>
+          <button type="button" class="rst" id="btn_reset_ratio" title="恢复默认配比 A1 40 / A2 30 / B1 20 / X 10">重置</button></label>
           <div class="segbar" id="bar_ratios" role="img" aria-label="题型配比可视化"></div>
-          <div class="row" style="gap:8px;margin-top:8px">
-            <div style="min-width:70px"><label>A1</label><input type="number" id="r_a1" value="40" min="0" max="100"></div>
-            <div style="min-width:70px"><label>A2</label><input type="number" id="r_a2" value="30" min="0" max="100"></div>
-            <div style="min-width:70px"><label>B1</label><input type="number" id="r_b1" value="20" min="0" max="100"></div>
-            <div style="min-width:70px"><label>X</label><input type="number" id="r_x" value="10" min="0" max="100"></div>
+          <div class="ratioinputs">
+            <div><label>A1</label><input type="number" id="r_a1" value="40" min="0" max="100"></div>
+            <div><label>A2</label><input type="number" id="r_a2" value="30" min="0" max="100"></div>
+            <div><label>B1</label><input type="number" id="r_b1" value="20" min="0" max="100"></div>
+            <div><label>X</label><input type="number" id="r_x" value="10" min="0" max="100"></div>
           </div></div>
-        <div><label>Bloom 认知层级 % <span class="ratioSum" id="bloom_sum">合计 100%</span></label>
+        <div><label>Bloom 认知层级 % <span class="ratioSum" id="bloom_sum">合计 100%</span>
+          <button type="button" class="rst" id="btn_reset_bloom" title="恢复默认 记忆 30 / 理解 40 / 应用 25 / 创造 5">重置</button></label>
           <div class="segbar" id="bar_bloom" role="img" aria-label="Bloom 认知层级可视化"></div>
-          <div class="row" style="gap:8px;margin-top:8px">
-            <div style="min-width:62px"><label>记忆</label><input type="number" id="b_mem" value="30" min="0" max="100"></div>
-            <div style="min-width:62px"><label>理解</label><input type="number" id="b_und" value="40" min="0" max="100"></div>
-            <div style="min-width:62px"><label>应用</label><input type="number" id="b_app" value="25" min="0" max="100"></div>
-            <div style="min-width:62px"><label>创造</label><input type="number" id="b_cre" value="5" min="0" max="100"></div>
+          <div class="ratioinputs">
+            <div><label>记忆</label><input type="number" id="b_mem" value="30" min="0" max="100"></div>
+            <div><label>理解</label><input type="number" id="b_und" value="40" min="0" max="100"></div>
+            <div><label>应用</label><input type="number" id="b_app" value="25" min="0" max="100"></div>
+            <div><label>创造</label><input type="number" id="b_cre" value="5" min="0" max="100"></div>
           </div>
           <div class="hint">考研/执医可提高「应用」占比（门禁按你设定的配比校验）</div></div>
       </div>
@@ -426,11 +547,13 @@
           <select id="k_difficulty"><option value="">默认</option><option value="basic">基础题</option>
             <option value="clinical">临床综合题</option><option value="challenge">挑战题</option></select></div>
         <div><label>解析风格</label>
-          <select id="k_analysis"><option value="">默认</option><option value="detailed">详尽机制型（≥80 字）</option>
-            <option value="snappy">速记型（≤40 字）</option></select></div>
+          <select id="k_analysis"><option value="">默认</option><option value="detailed">详尽机制型（考点→机制→易错）</option>
+            <option value="snappy">速记型（≤40 字）</option><option value="examkey">考点速览（三行式）</option>
+            <option value="teaching">教学讲解（含干扰项评析）</option><option value="compare">鉴别对比（易混横向对照）</option></select></div>
         <div><label>题干风格</label>
           <select id="k_stem"><option value="">默认</option><option value="direct">直问直答（A1）</option>
-            <option value="narrative">病例叙事（A2 化）</option></select></div>
+            <option value="narrative">病例叙事（A2 化）</option><option value="staged">渐进披露（诊疗决策链）</option>
+            <option value="data">数据判读（检验/影像数值）</option></select></div>
       </div>
       <label>附加生成要求（可选，≤500 字）<span class="hint" style="display:inline;margin-left:6px" id="req_count"></span></label>
       <textarea id="requirements" maxlength="500" rows="3"
@@ -440,7 +563,7 @@
         <label>配置预设（一键回填下列参数）</label>
         <div class="chips" id="preset_chips"></div>
         <div class="btns" style="margin-top:8px">
-          <button class="act gray" id="btn_preset_save">💾 保存当前为预设</button>
+          <button class="act gray" id="btn_preset_save">保存当前为预设</button>
           <button class="act gray" id="btn_preset_export">⇩ 导出预设文件</button>
           <button class="act gray" id="btn_preset_import">⇧ 导入预设文件</button>
           <input type="file" id="f_preset_import" accept=".json" style="display:none">
@@ -472,11 +595,11 @@
         </div>
       </details>
       <div class="btns" style="margin-top:12px">
-        <button class="act gray" id="btn_sample">🎓 手头还没素材？载入示例体验</button>
+        <button class="act gray" id="btn_sample">手头还没素材？载入示例体验</button>
       </div>
       <div class="filegrid" style="margin-top:6px">
         <div class="fbox dz" id="dz_textbook">
-          <b>📕 教材（必填）</b><span class="hint">PDF(文本层)/DOCX/MD/TXT，可多个文件；支持拖拽</span>
+          <b>教材（必填）</b><span class="hint">PDF(文本层)/DOCX/MD/TXT，可多个文件；支持拖拽</span>
           <div class="dzlist" id="dzl_textbook"></div>
           <div class="btns">
             <button class="inlineBtn blue" onclick="pickFiles('textbook')">选择文件</button>
@@ -485,7 +608,7 @@
           <input type="file" id="f_textbook" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
         </div>
         <div class="fbox dz" id="dz_teacher">
-          <b>📌 教师重点（必填）</b><span class="hint">课堂重点/复习提纲，作为考点锚定；支持拖拽</span>
+          <b>教师重点（必填）</b><span class="hint">课堂重点/复习提纲，作为考点锚定；支持拖拽</span>
           <div class="dzlist" id="dzl_teacher"></div>
           <div class="btns">
             <button class="inlineBtn blue" onclick="pickFiles('teacher')">选择文件</button>
@@ -495,25 +618,38 @@
         </div>
       </div>
       <div style="margin-top:12px">
-        <div class="switch"><input type="checkbox" id="t_ocr" checked><label for="t_ocr">🔍 扫描件 / 图片自动识别（MinerU OCR；Token 在「① 连接服务商」页配置）</label></div>
-        <b style="font-size:13.5px">🔹 自备真题 / 其他考题（可选 · 默认不引用）</b>
-        <span class="hint">作为出题素材时标注 <code>[源:用户真题]</code>；引用配额在后续版本提供滑块；当前仅解析入库；支持拖拽</span>
-        <div class="fbox dz" id="dz_exam" style="margin-top:8px">
-          <div class="dzlist" id="dzl_exam"></div>
-          <div class="btns">
-            <button class="inlineBtn blue" onclick="pickFiles('exam')">选择文件</button>
-            <button class="inlineBtn" id="dzc_exam" style="display:none">清空</button>
+        <div class="switch"><input type="checkbox" id="t_ocr" checked><label for="t_ocr">扫描件 / 图片自动识别（MinerU OCR；Token 在「连接服务商」页配置）</label></div>
+        <b style="font-size:13.5px">自备真题 · 补充资料（可选）</b>
+        <div class="hint" style="margin-bottom:6px">真题仅用于<b>高频考点优先 + 题型风格校准</b>（严禁照抄原题，新题仍以教材为唯一依据）；
+          资料作为教材的<b>补充上下文</b>（课件/笔记/大纲；与教材冲突时以教材为准）</div>
+        <div class="filegrid">
+          <div class="fbox dz" id="dz_exam">
+            <b>自备真题（可选）</b><span class="hint">历年真题/模拟卷，用于考点与风格校准；支持拖拽</span>
+            <div class="dzlist" id="dzl_exam"></div>
+            <div class="btns">
+              <button class="inlineBtn blue" onclick="pickFiles('exam')">选择文件</button>
+              <button class="inlineBtn" id="dzc_exam" style="display:none">清空</button>
+            </div>
+            <input type="file" id="f_exam" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
           </div>
-          <input type="file" id="f_exam" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+          <div class="fbox dz" id="dz_extra">
+            <b>补充资料（可选）</b><span class="hint">课件/笔记/考纲等，补充出题细节与解析；支持拖拽</span>
+            <div class="dzlist" id="dzl_extra"></div>
+            <div class="btns">
+              <button class="inlineBtn blue" onclick="pickFiles('extra')">选择文件</button>
+              <button class="inlineBtn" id="dzc_extra" style="display:none">清空</button>
+            </div>
+            <input type="file" id="f_extra" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+          </div>
         </div>
       </div>
       <div class="btns">
         <button class="act gray" id="btn_parse">解析并预览</button>
-        <button class="act" id="btn_trial">🎯 试出一题（先看效果）</button>
-        <button class="act" id="btn_sess">💾 保存解析为素材会话</button>
+        <button class="act" id="btn_trial">试出一题（先看效果）</button>
+        <button class="act" id="btn_sess">保存解析为素材会话</button>
         <button class="act" id="btn_create">创建课题 →</button>
-        <button class="act gray" id="btn_tpl_save">📋 存为项目模板</button>
-        <button class="act gray" id="btn_tpl_apply">🔄 应用模板</button>
+        <button class="act gray" id="btn_tpl_save">存为项目模板</button>
+        <button class="act gray" id="btn_tpl_apply">应用模板</button>
       </div>
       <div id="sess_box" style="margin-top:10px"></div>
       <div id="trial_box"></div>
@@ -525,8 +661,10 @@
 
   <!-- ③ 我的项目 -->
   <section id="tab-mine" class="panel">
+    <h1 class="ptitle">我的项目</h1>
+    <p class="psub">管理已创建的课题 · 产物存于本机 ~/.medkit/projects/</p>
     <div class="card">
-      <h2>项目列表（产物存于本机 ~/.medkit/projects/）</h2>
+      <h2>项目列表</h2>
       <div id="proj_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
     </div>
     <div class="card" id="proj_detail" style="display:none">
@@ -543,6 +681,8 @@
 
   <!-- ④ 提示词与规则 -->
   <section id="tab-prompts" class="panel">
+    <h1 class="ptitle">提示词与规则</h1>
+    <p class="psub">查看出题管线使用的全部提示词与门禁规则，可编辑影子副本</p>
     <div class="card">
       <h2>提示词查看 / 编辑（影子副本机制）</h2>
       <div class="hint">内置提示词打包在安装目录（只读）；编辑将保存为 <b>~/.medkit/prompts/</b> 影子副本并优先生效（不改内置，升级不覆盖）；
@@ -570,11 +710,20 @@
     </div>
   </div>
 </div>
+<div id="wizard_mask" style="display:none">
+  <div class="wizard" role="dialog" aria-modal="true" aria-labelledby="wz_title">
+    <h2 id="wz_title">欢迎使用 Med<b>Kit</b> · 医学题库工坊</h2>
+    <div class="wsteps"><i class="on"></i><i></i><i></i></div>
+    <div id="wz_body"></div>
+    <div class="btns" id="wz_btns"></div>
+    <div class="hint" style="margin-top:12px;text-align:center"><button class="mini" id="wz_skip" style="border:none;background:none;color:var(--dim);cursor:pointer;font-size:12px">跳过引导，我自己探索 →</button></div>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
-let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [] },
-              pres: { textbook: null, teacher: null, exam: null, sample: false },
+let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [], extra: [] },
+              pres: { textbook: null, teacher: null, exam: null, extra: null, sample: false },
               current: null, cfg: null, providers: [], presets: null };
 const esc = s => String(s ?? "").replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -648,7 +797,10 @@ function askModal(title, label, placeholder, onOk) {
   input.onkeydown = e => { if (e.key === "Enter") submit(); };
 }
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && $("modal_mask").style.display === "flex") $("modal_mask").style.display = "none";
+  if (e.key === "Escape") {
+    if ($("modal_mask").style.display === "flex") $("modal_mask").style.display = "none";
+    else if ($("wizard_mask").style.display === "flex") wzClose();
+  }
 });
 $("md_cancel").onclick = () => { $("modal_mask").style.display = "none"; };
 
@@ -672,6 +824,101 @@ function toggleTheme() {
   applyTheme();
 })();
 
+/* ---- v0.6：反馈(邮件) + 更新检查 ---- */
+const FEEDBACK_MAIL = "2710074390@qq.com";
+const REVIEW_SITE = "https://med-review-site.pages.dev/#reviews";
+
+function copyText(text, btn) {
+  const done = () => { if (btn) { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制"; }, 1600); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); done(); } catch (e) { toast("复制失败，请手动选择邮箱复制", false); }
+  ta.remove();
+}
+
+function openFeedback() {
+  $("md_title").textContent = "反馈与建议";
+  const ver = state.version ? "v" + state.version : "";
+  $("md_body").innerHTML = `
+    <p style="margin:0 0 10px;color:var(--dim);font-size:13px">遇到问题或有功能建议，欢迎邮件反馈：</p>
+    <div style="display:flex;align-items:center;gap:9px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:10px 12px">
+      <svg class="ic" style="color:var(--dim)"><use href="#i-mail"></use></svg>
+      <b style="font-size:14px;letter-spacing:.3px">${FEEDBACK_MAIL}</b>
+      <button class="act gray" id="fb_copy" style="margin-left:auto;padding:5px 12px;font-size:12px">复制</button>
+    </div>
+    <p style="margin:10px 0 0;color:var(--dim);font-size:12px">点「写邮件」会自动附带版本与系统信息，方便快速定位问题。</p>`;
+  $("md_ok").textContent = "写邮件";
+  $("md_ok").className = "act";
+  $("modal_mask").style.display = "flex";
+  $("fb_copy").onclick = () => copyText(FEEDBACK_MAIL, $("fb_copy"));
+  $("md_ok").onclick = () => {
+    $("modal_mask").style.display = "none";
+    const subject = `MedKit ${ver} 反馈`;
+    const body = `版本：${ver || "未知"}\n系统：${navigator.platform || "未知"}\n时间：${new Date().toLocaleString("zh-CN")}\n\n（请在此描述你遇到的问题或功能建议）`;
+    location.href = `mailto:${FEEDBACK_MAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
+}
+
+/* 更新检查（GitHub Releases，仅提醒 + 跳转下载页） */
+function markUpdateDot(on) {
+  let d = $("upd_dot");
+  if (on && !d) {
+    d = document.createElement("span");
+    d.id = "upd_dot"; d.className = "updot";
+    d.title = "有新版本";
+    $("side_ver").appendChild(d);
+  } else if (!on && d) d.remove();
+}
+function showUpdateModal(r) {
+  $("md_title").textContent = "检查更新";
+  let html = "";
+  if (r.has_update) {
+    html = `<p style="margin:0 0 8px">当前版本 <b>v${esc(r.current)}</b> → 最新版本 <b style="color:var(--good)">v${esc(r.latest)}</b></p>`;
+    if (r.notes) html += `<div style="max-height:180px;overflow:auto;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12.5px;white-space:pre-wrap;line-height:1.6">${esc(r.notes)}</div>`;
+    $("md_ok").textContent = "打开下载页";
+  } else if (r.error) {
+    html = `<p style="margin:0;color:var(--dim)">网络检查失败（无法访问 GitHub），可稍后再试，或直接打开发布页查看。</p>`;
+    $("md_ok").textContent = "打开发布页";
+  } else {
+    html = `<p style="margin:0;color:var(--dim)">已是最新版本 <b>v${esc(r.current)}</b></p>`;
+    $("md_ok").textContent = "知道了";
+  }
+  $("md_body").innerHTML = html;
+  $("md_ok").className = "act";
+  $("modal_mask").style.display = "flex";
+  const url = r.html_url || "https://github.com/2710074390-cyber/medkit/releases/latest";
+  $("md_ok").onclick = () => {
+    $("modal_mask").style.display = "none";
+    if (r.has_update || r.error) window.open(url, "_blank", "noopener");
+  };
+}
+async function checkUpdate(silent = false) {
+  if (!silent) {
+    $("md_title").textContent = "检查更新";
+    $("md_body").innerHTML = `<p style="margin:0;color:var(--dim)">正在检查新版本…</p>`;
+    $("md_ok").textContent = "知道了";
+    $("md_ok").className = "act";
+    $("modal_mask").style.display = "flex";
+    $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
+  }
+  try {
+    const r = await api("/api/update/check");
+    if (r.has_update) {
+      markUpdateDot(true);
+      if (silent) toast(`发现新版本 v${r.latest} · 点击左下角版本号查看`);
+    } else markUpdateDot(false);
+    if (!silent) showUpdateModal(r);
+  } catch (e) {
+    if (!silent) showUpdateModal({ error: "net", current: state.version || "" });
+  }
+}
+
 /* ---- 导航 + hash 路由 */
 function showTab(name) {
   document.querySelectorAll("nav button").forEach(x => {
@@ -687,6 +934,7 @@ function showTab(name) {
   }
   if (name === "mine") loadProjects();
   if (name === "prompts") loadPrompts();
+  if (name === "proj") { ratioSum(); bloomSum(); }   // 面板从隐藏变可见 → 重测配比条标签适配
 }
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   location.hash = b.dataset.tab;
@@ -722,7 +970,7 @@ function fillModelSelect(selId, models, saved, hintId) {
   } else {
     sel.append(new Option("（点击「获取模型列表」自动填充最新）", ""));
   }
-  sel.append(new Option("✎ 手动输入…", "__manual__"));
+  sel.append(new Option("手动输入…", "__manual__"));
   sel.value = value || "";
   if (hintId) $(hintId).textContent = list.length ? `已加载 ${list.length} 个模型，默认选最新` : "";
 }
@@ -765,6 +1013,49 @@ async function loadConfig() {
   syncWsManual();
   loadSearchOptions().then(() => { $("ws_backend").value = wsc.backend || "auto"; updateWsNote(); syncWsManual(); });
   loadPresets().catch(() => {});
+  loadKeys().catch(() => {});
+}
+/* v0.5.1：API Key 管理（多服务商存档，仿 Cherry Studio 服务商独立配置） */
+async function loadKeys() {
+  const box = $("keymgmt");
+  const r = await api("/api/keys");
+  if (!r.keys.some(k => k.saved)) {
+    box.innerHTML = '<div class="hint" style="margin-top:6px">尚无存档——在上方配置任一并「保存配置」后，这里会自动出现（当前生效的 Key 也会归档）。</div>';
+    return;
+  }
+  box.innerHTML = r.keys.filter(k => k.saved).map(k => `
+    <div class="keyrow${k.active ? " on" : ""}">
+      <b>${esc(k.name)}${k.active ? '<span class="ktag">使用中</span>' : ""}</b>
+      <span class="kmask">${esc(k.key_masked)}</span>
+      <button class="act gray mini" data-use="${esc(k.id)}" ${k.active ? "disabled" : ""}>${k.active ? "当前" : "使用"}</button>
+      ${k.active ? "" : `<button class="act gray mini" data-del="${esc(k.id)}">删除</button>`}
+      <span class="kmeta">${esc(k.base_url)}${k.model_gen ? " · " + esc(k.model_gen) : ""}${k.model_qc && k.model_qc !== k.model_gen ? " / " + esc(k.model_qc) : ""}${k.active ? " · 当前生效配置（切换服务商时自动归档，届时可删）" : ""}</span>
+    </div>`).join("");
+  box.querySelectorAll("[data-use]").forEach(b => b.onclick = async () => {
+    const pid = b.dataset.use;
+    const k = r.keys.find(x => x.id === pid);
+    if (!k) return;
+    try {
+      b.disabled = true; b.textContent = "切换中…";
+      await api("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: pid, base_url: k.base_url, api_key: "",
+          model_gen: k.model_gen || "", model_qc: k.model_qc || "",
+          web_search_enabled: $("t_web").checked, web_search_api_key: "",
+          web_search_backend: $("ws_backend").value,
+          mineru_api_key: "", mineru_auto_ocr: $("t_autoocr").checked }) });
+      toast(`已切换到 ${k.name}（存档 Key 已生效）`);
+      loadConfig();
+    } catch (e) { toast(e.message, false); b.disabled = false; b.textContent = "使用"; }
+  });
+  box.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+    const pid = b.dataset.del;
+    const k = r.keys.find(x => x.id === pid);
+    confirmModal("删除 Key 存档", `删除「${esc(k.name)}」的已存档 Key？<br><span class="hint">仅清除该服务商的存档，不影响当前生效配置。</span>`,
+      "删除", async () => {
+        try { await api("/api/keys/" + encodeURIComponent(pid), { method: "DELETE" }); toast("存档已删除"); loadKeys(); }
+        catch (e) { toast(e.message, false); }
+      });
+  });
 }
 /* 检索能力标注（本轮新增：DeepSeek 选项 + 自带/需外部 告知） */
 let searchBackends = null;
@@ -800,11 +1091,20 @@ function updateWsNote() {
 }
 $("ws_backend").addEventListener("change", () => { syncWsManual(); updateWsNote(); });
 function pickProvider(pr) {
+  const prev = state.provider;
   document.querySelectorAll(".prov").forEach(x => {
     x.classList.toggle("on", x.dataset.id === pr.id);
     x.setAttribute("aria-checked", x.dataset.id === pr.id ? "true" : "false");
   });
   state.provider = pr.id;
+  if (prev && prev !== pr.id) {
+    // Key 跟随服务商：换卡片清空输入框，防止把上一家服务商的 Key 存到这一家名下
+    if ($("api_key").value.trim()) {
+      $("api_key").value = "";
+      toast("已切换服务商：请填写「" + pr.name + "」的 Key（原 Key 不通用，输入框已清空）");
+    }
+    $("keymask").textContent = "已切换到 " + pr.name + "——请填写该服务商的 Key";
+  }
   $("base_url").value = pr.base_url || "";
   if (pr.default_model) {
     fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
@@ -838,7 +1138,7 @@ $("btn_models").onclick = async () => {
       toast("已加载 " + r.models.length + " 个模型，默认选中最新");
     } else {
       fillModelSelect("model_gen", [], modelValue("model_gen"), "gen_hint");
-      toast(r.msg || "未能获取模型列表（可「✎ 手动输入」）", false);
+      toast(r.msg || "未能获取模型列表（可「手动输入」）", false);
     }
   } catch (e) { toast(e.message, false); }
   $("btn_models").textContent = "获取模型列表";
@@ -912,11 +1212,19 @@ function renderSegBar(barId, segs, label) {
   const sum = vals.reduce((a, b) => a + b, 0);
   bar.classList.toggle("over", sum > 100);
   let html = "";
+  let cum = 0;
   segs.forEach((s, i) => {
     const v = Math.max(0, vals[i]);
-    const label = v >= 12 ? `<b>${esc(s[0])} ${vals[i]}%</b>` : "";
+    const labelTxt = v >= 8 ? `<b>${esc(s[0])} ${vals[i]}%</b>` : "";
     html += `<i data-seg="${i}" style="width:${v}%;background:var(--s${i + 1})" title="${esc(s[0])} ${vals[i]}%">
-      ${label}</i>`;
+      ${labelTxt}</i>`;
+    cum += v;
+    // 边界把手：相邻两段之和 > 0 即渲染（某段被拖到 0 时把手仍在，可拖回）
+    if (i < segs.length - 1 && v + Math.max(0, vals[i + 1]) > 0) {
+      html += `<span class="seghandle" data-h="${i}" style="left:${cum}%" tabindex="0" role="slider"
+        aria-label="拖动调整 ${esc(s[0])} 与 ${esc(segs[i + 1][0])} 的配比（方向键 ±5%）"
+        aria-valuenow="${vals[i]}" aria-valuemin="0" aria-valuemax="${vals[i] + vals[i + 1]}"></span>`;
+    }
   });
   if (sum < 100) html += `<i class="gap" style="width:${100 - sum}%"
       title="未分配 ${(100 - sum).toFixed(1)}%（合计 ${sum}%）"></i>`;
@@ -925,9 +1233,129 @@ function renderSegBar(barId, segs, label) {
     segs.map((s, i) => `${s[0]} ${vals[i]}%`).join("，") + `，合计 ${sum}%`);
   segs.forEach((s, i) => {
     const seg = bar.querySelector(`i[data-seg="${i}"]`);
-    if (seg) seg.onclick = () => { const inp = $(s[1]); inp.focus(); inp.select(); };
+    if (!seg) return;
+    seg.onclick = () => {
+      if (bar._dragged) return;             // 刚结束一次拖拽 → 抑制 click 聚焦
+      const inp = $(s[1]); inp.focus(); inp.select();
+    };
+    // 窄屏像素级适配：标签放不下整段就隐藏（信息仍可从 title 悬停与下方输入框获得）
+    const b = seg.querySelector("b");
+    if (b && b.scrollWidth > seg.clientWidth - 6) b.style.display = "none";
   });
 }
+/* 配比条拖拽：把手或色块按下 → 边界跟手平移（抓取偏移补偿，按下不跳变，1% 步进，3px 死区）；
+   释放后统一重绘；键盘 ←/→ = ±5%。 */
+function bindSegBar(barId, segs, sumFn) {
+  const bar = $(barId);
+  const segVals = () => segs.map(s => Math.max(0, +$(s[1]).value || 0));
+  bar.addEventListener("pointerdown", e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    const h = e.target.closest(".seghandle");
+    const segEl = h ? null : e.target.closest("i[data-seg]");
+    if (!h && !segEl) return;
+    const vs = segVals();
+    let i;                                   // 边界左侧段索引
+    if (h) {
+      i = +h.dataset.h;
+    } else {
+      const si = +segEl.dataset.seg;
+      const leftOk = si > 0 && vs[si] + vs[si - 1] > 0;          // 左边界（si-1 | si）
+      const rightOk = si < segs.length - 1 && vs[si] + vs[si + 1] > 0;  // 右边界（si | si+1）
+      if (!leftOk && !rightOk) return;
+      if (leftOk && rightOk) {              // 两侧都有可拖边界 → 取离鼠标近的
+        const r0 = bar.getBoundingClientRect();
+        const pct = (e.clientX - r0.left) / r0.width * 100;
+        const leftPos = vs.slice(0, si).reduce((a, b) => a + b, 0);
+        i = pct - leftPos < vs[si] / 2 ? si - 1 : si;
+      } else i = leftOk ? si - 1 : si;
+    }
+    const j = i + 1;
+    if (j >= segs.length) return;
+    const total = vs[i] + vs[j];
+    const prefix = vs.slice(0, i).reduce((a, b) => a + b, 0);
+    const rect = bar.getBoundingClientRect();
+    const barW = rect.width;
+    if (!barW) return;
+    // 抓取偏移（%）：边界与鼠标保持按下时的相对距离 → 拖动跟手、按下瞬间不跳变
+    const grabOff = (e.clientX - rect.left) / barW * 100 - (prefix + vs[i]);
+    const startX = e.clientX;
+    let v1 = vs[i];
+    let moved = false;
+    const seg1 = bar.querySelector(`i[data-seg="${i}"]`);
+    const seg2 = bar.querySelector(`i[data-seg="${j}"]`);
+    const handle = h || bar.querySelector(`.seghandle[data-h="${i}"]`);
+    const setW = (el, v, name) => {
+      if (!el) return;
+      el.style.width = v + "%";
+      const b = el.querySelector("b");
+      if (!b) return;
+      b.textContent = `${name} ${v}%`;
+      b.style.display = "";                   // 先恢复可见再测量（display:none 时 scrollWidth=0 会误判）
+      if (b.scrollWidth > el.clientWidth - 6) b.style.display = "none";
+    };
+    bar.classList.add("dragging");
+    const target = handle || bar;
+    try { target.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    const move = ev => {
+      if (!moved && Math.abs(ev.clientX - startX) <= 3) return;   // 3px 死区：单击抖动不改值
+      moved = true;
+      let nv = Math.round((ev.clientX - rect.left) / barW * 100 - grabOff - prefix);
+      nv = Math.min(total, Math.max(0, nv));
+      if (nv === v1) return;
+      v1 = nv;
+      $(segs[i][1]).value = nv;
+      $(segs[j][1]).value = total - nv;
+      if (handle) {
+        handle.style.left = (prefix + nv) + "%";
+        handle.setAttribute("aria-valuenow", nv);
+      }
+      setW(seg1, nv, segs[i][0]);
+      setW(seg2, total - nv, segs[j][0]);
+    };
+    const up = () => {
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", up);
+      target.removeEventListener("pointercancel", up);
+      bar.classList.remove("dragging");
+      if (moved) {
+        bar._dragged = true;                  // 抑制随后的 click 聚焦
+        setTimeout(() => { bar._dragged = false; }, 50);
+        sumFn();   // 全量重绘 + 合计 + aria 同步
+      }
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", up);
+    target.addEventListener("pointercancel", up);
+    e.preventDefault();                      // 阻止拖拽时的文本选择
+  });
+  bar.addEventListener("keydown", e => {
+    const h = e.target.closest(".seghandle");
+    if (!h || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+    e.preventDefault();
+    const i = +h.dataset.h, j = i + 1;
+    const in1 = $(segs[i][1]), in2 = $(segs[j][1]);
+    let v1 = +in1.value || 0;
+    const total = v1 + (+in2.value || 0);
+    const nv = Math.min(total, Math.max(0, v1 + (e.key === "ArrowRight" ? 5 : -5)));
+    if (nv === v1) return;
+    in1.value = nv;
+    in2.value = total - nv;
+    sumFn();
+  });
+}
+bindSegBar("bar_ratios", RATIO_SEGS, ratioSum);
+bindSegBar("bar_bloom", BLOOM_SEGS, bloomSum);
+/* 重置：回到 HTML 默认值（defaultValue 跟随源码，改默认只需改 value 属性） */
+$("btn_reset_ratio").onclick = () => {
+  RATIO_SEGS.forEach(s => { $(s[1]).value = $(s[1]).defaultValue; });
+  ratioSum();
+  toast("题型配比已重置为默认（A1 40 / A2 30 / B1 20 / X 10）");
+};
+$("btn_reset_bloom").onclick = () => {
+  BLOOM_SEGS.forEach(s => { $(s[1]).value = $(s[1]).defaultValue; });
+  bloomSum();
+  toast("Bloom 认知层级已重置为默认（记忆 30 / 理解 40 / 应用 25 / 创造 5）");
+};
 function ratioSum() {
   const r = { A1: +$("r_a1").value || 0, A2: +$("r_a2").value || 0, B1: +$("r_b1").value || 0, X: +$("r_x").value || 0 };
   const s = Object.values(r).reduce((a, b) => a + b, 0);
@@ -1044,7 +1472,8 @@ $("f_preset_import").onchange = async () => {
 };
 
 /* ---- ② 素材拖拽 */
-["textbook", "teacher", "exam"].forEach(role => {
+const ROLE_LABEL = { textbook: "教材", teacher: "教师重点", exam: "真题", extra: "资料" };
+["textbook", "teacher", "exam", "extra"].forEach(role => {
   const dz = $("dz_" + role), input = $("f_" + role);
   input.onchange = () => { addFiles(role, [...input.files]); input.value = ""; };
   dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("over"); });
@@ -1053,7 +1482,7 @@ $("f_preset_import").onchange = async () => {
     e.preventDefault(); dz.classList.remove("over");
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
       addFiles(role, [...e.dataTransfer.files]);
-      toast(`已加入 ${role === "textbook" ? "教材" : role === "teacher" ? "教师重点" : "真题"}：${e.dataTransfer.files.length} 个文件`);
+      toast(`已加入${ROLE_LABEL[role] || role}：${e.dataTransfer.files.length} 个文件`);
     }
   });
   $("dzc_" + role).onclick = () => { state.files[role] = []; renderDz(role); };
@@ -1223,9 +1652,9 @@ function renderResults(roleLabel, res) {
   (res.results || []).forEach(r => {
     if (r.ok) {
       const ocrBadge = (r.via && r.via.startsWith("mineru"))
-        ? `<span class="tag">🔍 ${r.via === "mineru-v4" ? "MinerU 精准 API" : "MinerU 轻量 API"}</span><span class="hint good">${esc(r.via_note || "已自动加入输入")}</span> `
+        ? `<span class="tag">${r.via === "mineru-v4" ? "MinerU 精准 API" : "MinerU 轻量 API"}</span><span class="hint good">${esc(r.via_note || "已自动加入输入")}</span> `
         : "";
-      const warns = (r.warnings || []).map(w => `<div class="warnline">⚠️ ${esc(w)}</div>`).join("");
+      const warns = (r.warnings || []).map(w => `<div class="warnline">${esc(w)}</div>`).join("");
       wrap.innerHTML += `<div class="res"><span class="name">${esc(r.name)}</span> · ${r.chars} 字 · ${r.slice_count} 切片 · 估算输入 ≈ ${((r.est_tokens || 0) / 10000).toFixed(1)} 万 token
         ${ocrBadge}${warns}
         <details><summary>预览切片</summary>${(r.slices || []).slice(0, 12).map(s => `<div><b>[${esc(s.sid)}] ${esc(s.title || "（全文）")}</b><br>${esc(s.preview)}…</div>`).join("<hr>")}</details></div>`;
@@ -1251,7 +1680,7 @@ async function estimateCost() {
   } catch (e) { return { inp: 0, out: 0, tot: 0 }; }
 }
 async function updateReady() {
-  const tb = pres.textbook, tc = pres.teacher, ex = pres.exam;
+  const tb = pres.textbook, tc = pres.teacher, ex = pres.exam, xt = pres.extra;
   const warns = [];
   [...(tb && tb.results || []), ...(tc && tc.results || [])].forEach(r => warns.push(...(r.warnings || [])));
   let estLine = "解析后此处显示成本预估";
@@ -1272,9 +1701,10 @@ async function updateReady() {
       <span>素材就绪检查：</span>
       ${filesCount(tb) ? `<span class="ok">教材 ✓ ${filesCount(tb)} 文件</span>` : `<span class="no">教材 ✗ 未解析（必填）</span>`}
       ${filesCount(tc) ? `<span class="ok">教师重点 ✓ ${filesCount(tc)} 文件</span>` : `<span class="no">教师重点 ✗ 未解析（必填）</span>`}
-      ${filesCount(ex) ? `<span class="ok">自备真题 ✓（可选）</span>` : `<span class="opt">自备真题 —（可选）</span>`}
+      ${filesCount(ex) ? `<span class="ok">自备真题 ✓ ${filesCount(ex)} 文件</span>` : `<span class="opt">自备真题 —（可选）</span>`}
+      ${filesCount(xt) ? `<span class="ok">补充资料 ✓ ${filesCount(xt)} 文件</span>` : `<span class="opt">补充资料 —（可选）</span>`}
       ${pres.sample ? `<span class="opt">（示例素材）</span>` : ""}
-      ${$("t_web").checked ? `<span class="opt">网络检索 🔍 已开启</span>` : ""}
+      ${$("t_web").checked ? `<span class="opt">网络检索已开启</span>` : ""}
       <span class="est">${estLine}</span>
     </div>`;
 }
@@ -1286,6 +1716,7 @@ $("btn_parse").onclick = async () => {
       { res: await parseGroup("textbook"), role: "textbook", label: "教材（必填）", key: "textbook", render: true },
       { res: await parseGroup("teacher"), role: "teacher", label: "教师重点（必填）", key: "teacher", render: true },
       { res: await parseGroup("exam"), role: "exam", label: "自备真题（可选）", key: "exam", render: false },
+      { res: await parseGroup("extra"), role: "extra", label: "补充资料（可选）", key: "extra", render: false },
     ].filter(g => g.res && g.res.results.length);
     $("parse_results").innerHTML = "";
     for (const g of groups) {
@@ -1304,7 +1735,7 @@ $("btn_sample").onclick = async () => {
     $("btn_sample").disabled = true; $("btn_sample").textContent = "载入中…";
     const s = await api("/api/sample");
     if (!s.sample) throw new Error(s.error || "示例加载失败");
-    pres = { textbook: { results: [s.textbook] }, teacher: { results: [s.teacher] }, exam: null, sample: true };
+    pres = { textbook: { results: [s.textbook] }, teacher: { results: [s.teacher] }, exam: null, extra: null, sample: true };
     state.pres = pres;
     $("subject").value = s.subject;
     $("parse_results").innerHTML = "";
@@ -1314,7 +1745,7 @@ $("btn_sample").onclick = async () => {
     await updateReady();
     toast("示例素材已载入：先点「试出一题」看效果，满意后「创建课题 →」");
   } catch (e) { toast(e.message, false); }
-  $("btn_sample").disabled = false; $("btn_sample").textContent = "🎓 手头还没素材？载入示例体验";
+  $("btn_sample").disabled = false; $("btn_sample").textContent = "手头还没素材？载入示例体验";
 };
 
 /* ---- S3：素材库（历史解析会话）与项目模板 ---- */
@@ -1326,7 +1757,7 @@ async function loadSessions() {
     const list = r.sessions || [];
     if (!list.length) { box.innerHTML = ""; return; }
     box.innerHTML = `<div class="card">
-      <h3 style="margin-bottom:6px">📚 素材库（历史解析会话 · 跨项目复用 / 多教材合并）</h3>
+      <h3 style="margin-bottom:6px">素材库（历史解析会话 · 跨项目复用 / 多教材合并）</h3>
       <div class="hint">勾选多个会话 → 「合并载入为教材」（quota 跨 session 按章加权）；单个会话可载入为教师重点。删除即失效。</div>
       ${list.map(s => `<div class="sessrow" style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
         <input type="checkbox" class="sessck" data-id="${esc(s.id)}">
@@ -1425,7 +1856,9 @@ $("btn_tpl_apply").onclick = async () => {
       if (t.knobs.stem_style) $("k_stem").value = t.knobs.stem_style;
     }
     if (t.requirements) $("requirements").value = t.requirements;
-    toast("模板已应用（服务商/模型为全局配置，在「① 连接服务商」确认）");
+    ratioSum(); bloomSum();                                  // 刷新可视化配比条
+    $("req_count").textContent = $("requirements").value.length + "/500";
+    toast("模板已应用（服务商/模型为全局配置，在「连接服务商」确认）");
     await updateReady();
   } catch (e) { toast("模板应用失败：" + e.message, false); }
 };
@@ -1446,6 +1879,8 @@ $("btn_trial").onclick = async () => {
   $("btn_trial").disabled = true;
   try {
     const teacherText = fullSlices(pres.teacher).map(x => x.text).join("\n");
+    const examText = fullSlices(pres.exam).map(x => x.text).join("\n");      // v0.5.2：真题参与试出（风格校准）
+    const extraText = fullSlices(pres.extra).map(x => x.text).join("\n");    // v0.5.2：资料参与试出
     const r = await api("/api/trial", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subject: $("subject").value.trim() || "未命名科目",
@@ -1455,20 +1890,21 @@ $("btn_trial").onclick = async () => {
         ratios: ratioSum(),
         slice_sid: s.sid, slice_title: s.title || "", slice_text: s.text,
         teacher_text: teacherText,
+        exam_text: examText, extra_text: extraText,
       }) });
     const q = r.question;
     const LETTERS = "ABCDEF";
     const issues = (r.issues || []).map(i =>
-      `<div class="${i.severity === "fail" ? "failline" : "warnline"}">⚠️ [${esc(i.code)}] ${esc(i.reason)}</div>`).join("");
+      `<div class="${i.severity === "fail" ? "failline" : "warnline"}">[${esc(i.code)}] ${esc(i.reason)}</div>`).join("");
     box.innerHTML = `
       <div class="trialq">
-        <div class="src">🎯 试出题 · ${esc(r.from_slice || "")} · <span class="tag">${esc(q.type || "")}</span><span class="tag">${esc(q.bloom || "")}</span></div>
+        <div class="src">试出题 · ${esc(r.from_slice || "")} · <span class="tag">${esc(q.type || "")}</span><span class="tag">${esc(q.bloom || "")}</span></div>
         <div class="qtext">${esc(q.question)}</div>
         <div class="opts">${(q.options || []).map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("<br>")}</div>
         <details><summary>显示答案</summary>
-          <div class="ans">✅ 答案：<b>${esc(q.answer)}</b><br>💡 ${esc(q.analysis)}</div>
+          <div class="ans">✓ 答案：<b>${esc(q.answer)}</b><br>${esc(q.analysis)}</div>
         </details>
-        ${issues ? `<div style="margin-top:8px">${issues}</div>` : `<div class="hint good">门禁即检：未发现问题 ✅</div>`}
+        ${issues ? `<div style="margin-top:8px">${issues}</div>` : `<div class="hint good">门禁即检：未发现问题 ✓</div>`}
         <div class="hint">满意？带着这套要求点「创建课题 →」· 不满意？改要求再试一片（每次随机换切片）</div>
       </div>`;
   } catch (e) {
@@ -1516,7 +1952,7 @@ $("btn_create").onclick = async () => {
       requirements: $("requirements").value.trim(),
       toggles: { qbank: $("t_qbank").checked, paper: $("t_paper").checked, review: $("t_review").checked },
       textbook_slices: fullSlices(pres.textbook), teacher_slices: fullSlices(pres.teacher),
-      exam_slices: fullSlices(pres.exam),
+      exam_slices: fullSlices(pres.exam), extra_slices: fullSlices(pres.extra),
       teacher_text: fullSlices(pres.teacher).map(s => s.text).join("\n"),
       web_search: $("t_web").checked,
       web_backend: $("ws_backend").value,
@@ -1540,8 +1976,8 @@ async function loadProjects() {
   if (!r.projects.length) {
     box.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-mine"></use></svg>
-      <div class="sub">还没有项目 —— 传教材 + 教师重点，生成你的第一套题库</div>
-      <button class="act" onclick="location.hash='proj';showTab('proj')">→ 去「② 新建课题」</button>
+      <div class="sub">还没有项目 · 上传教材与教师重点，生成你的第一套题库</div>
+      <button class="act" onclick="location.hash='proj';showTab('proj')">去「新建课题」→</button>
     </div>`;
     return;
   }
@@ -1586,13 +2022,15 @@ async function showProject(pid) {
   $("pd_title").textContent = `项目详情 · ${meta.subject}`;
   const quota = (meta.quota || []).map(q =>
     `<span>${esc(q.title ? q.title.slice(0, 14) : q.sid)}：${q.count}题</span>`).join("");
-  const usage = meta.usage ? `<div class="hint" style="margin-top:6px">💧 本次消耗：输入 ${meta.usage.prompt_tokens} + 输出 ${meta.usage.completion_tokens} token
+  const usage = meta.usage ? `<div class="hint" style="margin-top:6px">本次消耗：输入 ${meta.usage.prompt_tokens} + 输出 ${meta.usage.completion_tokens} token
     ${meta.usage.est_cost_cny != null ? `≈ ¥${meta.usage.est_cost_cny}` : ""}（以官网为准）</div>` : "";
   const ankiOk = meta.stage === "done";
   const extra = [];
   if (meta.requirements) extra.push(`附加要求：${esc(meta.requirements).slice(0, 60)}`);
   if (meta.bloom && Object.keys(meta.bloom).length) extra.push(`Bloom：${["记忆","理解","应用","创造"].map(k => (meta.bloom[k] ?? 0) + "%").join("/")}`);
   if (meta.web_search) extra.push(`网络检索${meta.web_ref_quota ? "（引用 " + meta.web_ref_quota + "%）" : ""}`);
+  if (meta.exam_chars) extra.push(`自备真题 ${meta.exam_chars.toLocaleString()} 字（考点/风格校准，不照抄）`);
+  if (meta.extra_chars) extra.push(`补充资料 ${meta.extra_chars.toLocaleString()} 字`);
   $("pd_body").innerHTML = `
     <div class="meta hint">${esc(meta.exam)} · 目标 ${meta.target} 题 · 阶段：<span id="pd_stage">${esc(meta.stage_label || meta.stage || "……")}</span><br>
     产物：${meta.toggles.qbank ? "题库✓" : "题库✗"} ${meta.toggles.paper ? "押题卷✓" : "押题卷✗"} ${meta.toggles.review ? "复习手册✓" : "复习手册✗"}
@@ -1651,7 +2089,7 @@ function startPoll(pid) {
       updateRunBtn(s.running);
       if (!s.running && ["done", "error", "cancelled"].includes(s.stage)) {
         stopPoll();
-        if (s.stage === "done") { toast("全部产物生成完成 🎉"); $("btn_review").style.display = "inline-block"; }
+        if (s.stage === "done") { toast("全部产物生成完成 "); $("btn_review").style.display = "inline-block"; }
         if (s.stage === "cancelled") toast("已取消：题目与断点已保留，可再次「开始生成」续跑", false);
         loadLog(pid);
       }
@@ -1715,18 +2153,18 @@ function renderReview() {
   const kept = qs.filter(q => !reviewState.drop.has(q.id)).length;
   box.innerHTML = `<div class="card" style="margin-top:14px">
     <h2 id="rev_title">逐题审核（保留 ${kept} / 共 ${qs.length} 题）</h2>
-    <div class="hint">✓ 默认保留 · ✗ 剔除（可反悔）· ✎ 行内编辑 · 🎲 单题重掷（约 30 秒，消耗一次调用）· 完成后点「保存并重渲染」</div>
+    <div class="hint">✓ 默认保留 · ✗ 剔除（可反悔）· 行内编辑 · 单题重掷（约 30 秒，消耗一次调用）· 完成后点「保存并重渲染」</div>
     <div class="btns">
       <button class="act" id="rev_save" ${reviewState.dirty ? "" : "disabled"}>保存并重渲染</button>
       <button class="act gray" onclick="openReview()">刷新</button>
-      <button class="act gray" id="rev_hide">👁 隐藏已剔除</button>
+      <button class="act gray" id="rev_hide">隐藏已剔除</button>
     </div>
     <div id="rev_list"></div>
   </div>`;
   const list = $("rev_list");
   $("rev_hide").onclick = () => {
     const hidden = list.classList.toggle("hide-dropped");
-    $("rev_hide").textContent = hidden ? "👁 显示已剔除" : "👁 隐藏已剔除";
+    $("rev_hide").textContent = hidden ? "显示已剔除" : "隐藏已剔除";
   };
   /* S3：审核台组维度折叠（案例/选项组），子题仍可单独剔除/编辑/重掷 */
   const groups = [];
@@ -1742,7 +2180,7 @@ function renderReview() {
     if (g.cid) {
       const hd = document.createElement("div");
       hd.className = "casehead";
-      hd.innerHTML = `📋 案例 <b>${esc(g.cid)}</b> · ${g.items.length} 题 · <span class="hint">${esc((g.stem || "").slice(0, 50))}</span>`;
+      hd.innerHTML = `案例 <b>${esc(g.cid)}</b> · ${g.items.length} 题 · <span class="hint">${esc((g.stem || "").slice(0, 50))}</span>`;
       hd.style.cursor = "pointer";
       hd.onclick = () => {
         let sib = hd.nextElementSibling;
@@ -1763,12 +2201,12 @@ function renderReview() {
         <b>${esc(q.id)}</b><span class="tag">${esc(q.type)}</span><span class="tag">${esc(q.bloom)}</span>
         <span class="hint">${esc(q.subtopic || "")}</span>
         <button class="inlineBtn revact" data-a="drop">${dropped ? "↩ 恢复" : "✗ 剔除"}</button>
-        <button class="inlineBtn blue revact" data-a="edit">✎ 编辑</button>
-        <button class="inlineBtn blue revact" data-a="regen">🎲 重掷</button>
+        <button class="inlineBtn blue revact" data-a="edit">编辑</button>
+        <button class="inlineBtn blue revact" data-a="regen">重掷</button>
       </div>
       <div class="qbody" data-f="body">${esc(ed.question ?? q.question)}
         <ul>${(ed.options ?? (q.options || [])).map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("</li><li>")}</ul>
-        <div class="hint good">✅ 答案：${esc(ed.answer ?? q.answer)} · 💡 ${esc((ed.analysis ?? q.analysis) || "")}</div>
+        <div class="hint good">✓ 答案：${esc(ed.answer ?? q.answer)} · ${esc((ed.analysis ?? q.analysis) || "")}</div>
       </div>
       <div class="optsrow" data-f="editrow" style="${ed._editOpen ? "" : "display:none"}">
         <input class="eb" data-e="question" placeholder="题干" value="${esc(ed.question ?? q.question)}">
@@ -1805,7 +2243,7 @@ function renderReview() {
           headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: q.id }) });
         toast(`已重掷 ${q.id}`);
         await openReview();
-      } catch (e) { toast(e.message, false); btn.disabled = false; btn.textContent = "🎲 重掷"; }
+      } catch (e) { toast(e.message, false); btn.disabled = false; btn.textContent = "重掷"; }
     };
     d.querySelectorAll("[data-e]").forEach(inp => {
       inp.oninput = () => {
@@ -1880,7 +2318,7 @@ function renderPrompt(p) {
     </summary>
     <div class="hint">占位符（运行时替换，勿删）：<span class="phchips">${ph}</span></div>
     <div class="btns">
-      <button class="act gray" onclick="openPromptEdit('${esc(p.name)}')">✎ 编辑</button>
+      <button class="act gray" onclick="openPromptEdit('${esc(p.name)}')">编辑</button>
       ${p.using === "custom" ? `<button class="act gray" onclick="restorePrompt('${esc(p.name)}')">恢复默认</button>
       <button class="act gray" onclick="diffPrompt('${esc(p.name)}')">与官方版对比</button>` : ""}
     </div>
@@ -1913,7 +2351,7 @@ async function openPromptEdit(name) {
   ta.oninput = () => {
     const missing = (r.placeholders || []).filter(x => !ta.value.includes(x));
     const el = $("phcheck_" + name.replace(".", "_"));
-    el.textContent = missing.length ? `⚠️ 缺少：${missing.join("、")}` : "占位符齐全 ✓";
+    el.textContent = missing.length ? `缺少：${missing.join("、")}` : "占位符齐全 ✓";
     el.className = "hint " + (missing.length ? "bad" : "good");
     ed.querySelectorAll(".phchips .chip").forEach(c => {
       const t = c.dataset.ph;
@@ -1929,7 +2367,7 @@ async function savePrompt(name) {
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: ta.value }) });
     toast("已保存影子副本（生效中）");
     loadPrompts();
-    confirmModal("先试出一题验证效果？", "提示词已改——建议在「② 新建课题」点「试出一题」验证效果，防止改坏。",
+    confirmModal("先试出一题验证效果？", "提示词已改——建议在「新建课题」点「试出一题」验证效果，防止改坏。",
       "去试出题", () => { location.hash = "proj"; showTab("proj"); }, false);
   } catch (e) { toast(e.message, false); }
 }
@@ -1957,10 +2395,100 @@ async function diffPrompt(name) {
   el.innerHTML = `<div class="diffwrap"><pre>【内置】\n${la}</pre><pre>【自定义】\n${lb}</pre></div>`;
 }
 
+/* ---- 首启欢迎向导（医学生视角，3 步）----
+   触发：未配置 Key 且从未完成引导；完成或「跳过」写 localStorage，关闭/ESC 不写（下次再提示） */
+let wzStep = 0;
+function wzDone() {
+  localStorage.setItem("medkit-onboarded", "1");
+  $("wizard_mask").style.display = "none";
+}
+function wzClose() { $("wizard_mask").style.display = "none"; }
+function wzSetDots() {
+  document.querySelectorAll(".wsteps i").forEach((d, i) => d.classList.toggle("on", i === wzStep));
+}
+function wzRender() {
+  wzSetDots();
+  const body = $("wz_body"), btns = $("wz_btns");
+  if (wzStep === 0) {
+    body.innerHTML = `
+      <div class="hint" style="line-height:1.9">把你的<b>教材 + 老师划的重点</b>交给 AI，本地生成一套全新的复习资料。
+      所有素材只保存在你自己的电脑上，AI 调用使用你自己的 API Key（约 ¥1~5/套，费用透明可见）。</div>
+      <div class="wgrid">
+        <div class="wcard"><svg class="ic"><use href="#i-bank"></use></svg><b>全新题库</b><span>按你的教材章节出题<br>A1/A2/X 型 + 案例组题</span></div>
+        <div class="wcard"><svg class="ic"><use href="#i-paper"></use></svg><b>交互押题卷</b><span>计时答题 · 自动判分<br>错题重练 · 可打印</span></div>
+        <div class="wcard"><svg class="ic"><use href="#i-learn"></use></svg><b>复习手册</b><span>考点速记 / 易混淆<br>临床路径 / 数值速查</span></div>
+      </div>
+      <div class="hint">还可以导出 <b>Anki 卡片包</b>，直接导入 Anki 背题。</div>`;
+    btns.innerHTML = `<button class="act" id="wz_next">下一步：连接 AI（2 分钟）</button>`;
+    $("wz_next").onclick = () => { wzStep = 1; wzRender(); };
+  } else if (wzStep === 1) {
+    const provs = (state.providers || []).filter(p => p.register_url);
+    body.innerHTML = `
+      <div class="hint" style="line-height:1.9">出题需要一个大模型「API Key」——相当于你和 AI 服务商之间的<b>充值卡</b>。
+      推荐注册 <b>DeepSeek</b>（便宜，充值 ¥10 可出多套题）：点官网注册 → 充值 → 复制 Key，回到本软件「连接服务商」粘贴保存即可。</div>
+      ${provs.map(p => `<div class="wprov"><svg class="ic" style="width:20px;height:20px;color:var(--accent);flex:none"><use href="#i-key"></use></svg>
+        <b>${esc(p.name)}</b><span>${esc(p.note || "")}</span>
+        <a class="provlink" href="${esc(p.register_url)}" target="_blank" rel="noopener">官网注册 ↗</a></div>`).join("")}
+      <div class="hint" style="margin-top:10px">不知道选哪个？先用 DeepSeek 就够了。稍后再配置也不影响了解软件。</div>`;
+    btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
+      <button class="act" id="wz_next">我已拿到 Key（去配置）</button>
+      <button class="act gray" id="wz_later">稍后配置，先看看</button>`;
+    $("wz_back").onclick = () => { wzStep = 0; wzRender(); };
+    $("wz_next").onclick = () => { wzDone(); showTab("conn"); $("api_key").focus(); };
+    $("wz_later").onclick = () => { wzStep = 2; wzRender(); };
+  } else {
+    body.innerHTML = `
+      <div class="hint" style="line-height:1.9">准备好了？两种开始方式任选：</div>
+      <div class="wentry" id="wz_demo" role="button" tabindex="0">
+        <svg class="ic"><use href="#i-paper"></use></svg>
+        <div><b>载入示例，立即体验</b><span>不用上传任何文件，30 秒看懂出题效果（点「试出一题」）</span></div>
+      </div>
+      <div class="wentry" id="wz_own" role="button" tabindex="0">
+        <svg class="ic"><use href="#i-proj"></use></svg>
+        <div><b>用我自己的教材开始</b><span>上传 PDF/Word 教材 + 老师重点 → 创建课题 → 生成</span></div>
+      </div>`;
+    btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
+      <button class="act" id="wz_fin">完成，开始使用</button>`;
+    $("wz_back").onclick = () => { wzStep = 1; wzRender(); };
+    $("wz_fin").onclick = () => wzDone();
+    const goDemo = () => { wzDone(); showTab("proj"); $("btn_sample").click(); };
+    const goOwn = () => { wzDone(); showTab("proj"); };
+    $("wz_demo").onclick = goDemo;
+    $("wz_demo").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goDemo(); } };
+    $("wz_own").onclick = goOwn;
+    $("wz_own").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goOwn(); } };
+  }
+}
+function maybeShowWizard() {
+  try { if (localStorage.getItem("medkit-onboarded")) return; } catch (e) { return; }
+  const c = state.cfg;
+  if (!c || c.api_key_masked) return;   // 已有 Key → 老用户，不打扰
+  wzStep = 0; wzRender();
+  $("wizard_mask").style.display = "flex";
+}
+$("wz_skip").onclick = wzDone;
+$("wizard_mask").addEventListener("click", e => { if (e.target.id === "wizard_mask") wzClose(); });
+
 /* ---- init */
 ratioSum(); bloomSum();
+/* 窄屏适配：窗口尺寸变化（如侧栏折叠）→ 防抖重绘配比条，重新做标签像素级适配 */
+let segResizeT = 0;
+window.addEventListener("resize", () => {
+  clearTimeout(segResizeT);
+  segResizeT = setTimeout(() => {
+    if ($("tab-proj").classList.contains("show")) { ratioSum(); bloomSum(); }
+  }, 120);
+});
 $("req_count").textContent = "0/500";
-loadConfig().catch(e => toast(e.message, false));
+api("/api/health").then(h => {
+  state.version = h.version || "";
+  $("side_ver").textContent = "v" + (h.version || "");
+}).catch(() => {});
+/* v0.6:版本号可点 → 手动检查更新;启动 4s 后静默检查一次 */
+$("side_ver").onclick = () => checkUpdate(false);
+$("side_ver").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); checkUpdate(false); } };
+setTimeout(() => checkUpdate(true), 4000);
+loadConfig().then(maybeShowWizard).catch(e => toast(e.message, false));
 </script>
 </body>
 </html>
