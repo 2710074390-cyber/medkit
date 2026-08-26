@@ -22,26 +22,39 @@ from medkit.logging_setup import setup_logging  # noqa: E402
 
 
 def test_version_single_source():
-    assert medkit.__version__ == "0.5.0"
+    assert medkit.__version__, "__version__ 不应为空"
     assert m.APP_VERSION == medkit.__version__, "main.APP_VERSION 应引用单源版本"
     iss = (ROOT / "pack" / "version.iss").read_text(encoding="utf-8")
     assert f'"{medkit.__version__}"' in iss, "pack/version.iss 应与 __version__ 一致"
 
 
+def _iter_paths(routes):
+    """枚举路由路径。fastapi<0.141 平铺拷贝子路由；≥0.141 include_router 追加
+    _IncludedRouter 组合代理（无 path，经 original_router 委托匹配），需递归下钻。"""
+    for r in routes:
+        p = getattr(r, "path", None)
+        if p:
+            yield p
+        sub = getattr(r, "original_router", None)
+        if sub is not None:
+            yield from _iter_paths(sub.routes)
+
+
 def test_all_routes_still_assembled():
-    paths = {r.path for r in m.app.routes if getattr(r, "path", None)}
+    paths = set(_iter_paths(m.app.routes))
     expect = {
         "/", "/api/health", "/api/providers", "/api/config",
-        "/api/llm/test", "/api/llm/models",
+        "/api/llm/test", "/api/llm/models", "/api/keys", "/api/keys/{pid}",
         "/api/mineru/test", "/api/ocr/start", "/api/ocr/jobs/{job_id}",
-        "/api/parse", "/api/sample",
+        "/api/parse", "/api/sample", "/api/sessions", "/api/sessions/{sid}",
         "/api/projects", "/api/projects/{pid}", "/api/projects/{pid}/status",
         "/api/projects/{pid}/run", "/api/projects/{pid}/files/{name}",
-        "/api/projects/{pid}/export/anki", "/api/projects/{pid}/questions",
+        "/api/projects/{pid}/export/anki", "/api/projects/{pid}/export/apkg",
+        "/api/projects/{pid}/questions",
         "/api/projects/{pid}/questions/review", "/api/projects/{pid}/regen",
         "/api/trial", "/api/cost/estimate", "/api/prompts", "/api/prompts/{name}",
         "/api/presets", "/api/presets/{pid}",
-        "/api/search/backends", "/api/search/test",
+        "/api/search/backends", "/api/search/test", "/api/update/check",
     }
     missing = expect - paths
     assert not missing, f"拆分后缺失路由：{sorted(missing)}"
