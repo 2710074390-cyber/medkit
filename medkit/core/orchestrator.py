@@ -205,6 +205,9 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     textbook_slices = [s for s in slices if s.get("role") == "textbook"]
     teacher_slices = [s for s in slices if s.get("role") == "teacher"]
     teacher_text = "\n".join(s.get("text", "") for s in teacher_slices)
+    # v0.5.2：自备真题 / 补充资料（可选角色，仅考点/风格校准与补充上下文）
+    exam_text = "\n".join(filter(None, (s.get("text", "") for s in slices if s.get("role") == "exam")))
+    extra_text = "\n".join(filter(None, (s.get("text", "") for s in slices if s.get("role") == "extra")))
     slice_by_sid = {s["sid"]: s for s in textbook_slices}
     text_by_sid = {sid: s.get("text", "") for sid, s in slice_by_sid.items()}
     known_sids = set(slice_by_sid)
@@ -230,6 +233,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
 
     if len(teacher_text) > TEACHER_CHAR_LIMIT:
         _log(base, f"⚠️ 教师重点过长（{len(teacher_text)} 字），仅前 {TEACHER_CHAR_LIMIT} 字参与考点锚定")
+    if exam_text:
+        cut = "（超长截断）" if len(exam_text) > medgen.EXAM_CHAR_LIMIT else ""
+        _log(base, f"📎 自备真题 {len(exam_text)} 字参与考点/风格校准{cut}（严禁照抄原题）")
+    if extra_text:
+        cut = "（超长截断）" if len(extra_text) > medgen.EXTRA_CHAR_LIMIT else ""
+        _log(base, f"📎 自备资料 {len(extra_text)} 字作为补充上下文{cut}（与教材冲突以教材为准）")
 
     # ---------------- ⓪ 多轮网络检索（§5.4，默认关；同项目缓存）
     web_materials_text = ""
@@ -335,7 +344,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         qs, _ = medgen.generate_slice(
             gen_client, subject, exam, slice_by_sid[sid], cnt, ratios, teacher_text,
             ids_start=start_id, requirements=requirements, knobs=knobs, bloom=bloom,
-            web_materials=web_materials_text, web_quota=web_ref_quota)
+            web_materials=web_materials_text, web_quota=web_ref_quota,
+            exam_text=exam_text, extra_text=extra_text)
         for i, q in enumerate(qs):
             q["id"] = f"Q{start_id + i:03d}"
         if len(qs) < cnt:

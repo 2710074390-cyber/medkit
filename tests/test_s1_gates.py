@@ -79,6 +79,36 @@ def test_template_single_pass_no_second_injection():
     assert "{teacher_text}" in system, "教材中的字面量 {teacher_text} 不应被二次替换"
 
 
+def test_reference_block_injection():
+    """v0.5.2：自备真题/补充资料注入——块存在、防照抄硬约束在、不传则整块消失。"""
+    captured = []
+
+    class FakeSpy:
+        def chat_json(self, messages, **kwargs):
+            captured.append(messages[0]["content"])
+            return {"questions": [{"question": "题", "options": ["a", "b", "c", "d", "e"],
+                                   "answer": "A", "analysis": "解"}]}
+
+    slice_ = {"sid": "S001", "title": "章", "text": "教材正文"}
+    medgen.generate_slice(FakeSpy(), "儿科", "期末", slice_, 1, {"A1": 100}, "教师重点",
+                           exam_text="2024真题原文：佝偻病初期表现……",
+                           extra_text="课件笔记：维生素D来源……")
+    system = captured[0]
+    assert "用户自备真题参考" in system and "严禁照抄" in system
+    assert "2024真题原文：佝偻病初期表现……" in system
+    assert "用户自备补充资料" in system and "维生素D来源" in system
+    assert "[源:切片SXXX]" in system, "真题块应声明溯源仍指向教材切片"
+    # 超长截断：>4000 字的真题只保留前 4000（模板自身零星含「题」，用连续长串断言）
+    captured.clear()
+    medgen.generate_slice(FakeSpy(), "儿科", "期末", slice_, 1, {"A1": 100}, "教师重点",
+                           exam_text="题" * 5000)
+    assert "题" * (medgen.EXAM_CHAR_LIMIT + 1) not in captured[0], "真题注入应截断到上限"
+    # 不传 → 整块不出现（不污染默认流程）
+    captured.clear()
+    medgen.generate_slice(FakeSpy(), "儿科", "期末", slice_, 1, {"A1": 100}, "教师重点")
+    assert "用户自备真题参考" not in captured[0] and "用户自备补充资料" not in captured[0]
+
+
 def test_trace_fullwidth_colon_ok():
     # 全角冒号「源：」应被识别（旧实现只认半角 → 误报 F2）
     r = check_trace([{"id": "X", "analysis": "……【源：切片S001】"}], {"S001"})

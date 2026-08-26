@@ -34,6 +34,7 @@ DEFAULTS: dict[str, Any] = {
     "web_search": {"enabled": False, "backend": "auto", "api_key": ""},
     "mineru": {"api_key": "", "auto_ocr": True},
     "projects_dir": str(CONFIG_DIR / "projects"),
+    "provider_keys": {},   # v0.5.1：多服务商 Key 存档 {pid: {api_key, base_url, model_gen, model_qc}}
 }
 
 # v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行 v4-flash 自动迁移
@@ -170,4 +171,13 @@ def public_view(cfg: dict[str, Any]) -> dict[str, Any]:
         mu["api_key_masked"] = mask_api_key(resolve_key(mu.get("api_key", "")))
         mu["api_key"] = ""
         out["mineru"] = mu
+    if isinstance(out.get("provider_keys"), dict):
+        pk = {}
+        for pid, prof in out["provider_keys"].items():
+            if isinstance(prof, dict):
+                p = dict(prof)
+                p["api_key_masked"] = mask_api_key(resolve_key(p.get("api_key", "")))
+                p["api_key"] = ""
+                pk[pid] = p
+        out["provider_keys"] = pk
     return out

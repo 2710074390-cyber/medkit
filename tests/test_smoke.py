@@ -26,11 +26,11 @@ def test_json_extract():
 
 
 def test_providers():
-    # 2026-08：按用户要求移除 Ollama；保留 3 预置 + 自定义
-    assert len(PROVIDERS) == 4
+    # 2026-08：按用户要求移除 Ollama；保留 4 预置（+Kimi）+ 自定义
+    assert len(PROVIDERS) == 5
     assert all(p["id"] != "ollama" for p in PROVIDERS)
     for p in PROVIDERS:
-        assert p["id"] in ("deepseek", "zhipu", "qwen", "custom")
+        assert p["id"] in ("deepseek", "zhipu", "qwen", "kimi", "custom")
         assert p.get("register_url") is not None or p["id"] == "custom"
     assert get_provider("custom")["base_url"] == ""
     assert get_provider("ollama") is None  # 旧配置 → config.load 会回退

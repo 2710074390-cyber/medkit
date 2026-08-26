@@ -111,6 +111,53 @@ def test_config_roundtrip_dpapi():
     assert resolve_key(saved["mineru"]["api_key"]) == "mr-new"
 
 
+def test_provider_key_archive_and_promotion():
+    """v0.5.1 多服务商 Key 存档：归档 → 掩码列表 → 免 Key 切换（自动提升）→ 删除。"""
+    c = make_client()
+    _install_isolated_cfg()
+
+    def put(provider, key):
+        model = "kimi-k2-thinking" if provider == "kimi" else "deepseek-v4-flash"
+        return c.put("/api/config", json={
+            "provider": provider, "base_url": "", "api_key": key,
+            "model_gen": model, "model_qc": model,
+            "web_search_enabled": False, "web_search_api_key": "",
+            "mineru_api_key": "", "mineru_auto_ocr": True,
+        })
+
+    # 1) deepseek 存 Key
+    r = put("deepseek", "sk-ds-archive-1")
+    assert r.status_code == 200, r.text
+    # 2) 切到 kimi（带新 Key）→ deepseek 应自动归档
+    r = put("kimi", "sk-kimi-archive-1")
+    assert r.status_code == 200, r.text
+    rows = {k["id"]: k for k in c.get("/api/keys").json()["keys"]}
+    assert rows["deepseek"]["saved"] and rows["deepseek"]["key_masked"].startswith("sk-d")
+    assert rows["kimi"]["saved"] and rows["kimi"]["active"]
+    # 3) 不带 Key 切回 deepseek → 存档自动提升为生效 Key
+    r = put("deepseek", "")
+    assert r.status_code == 200, r.text
+    assert r.json()["api_key_masked"].startswith("sk-d"), "切回应自动提升存档 Key"
+    # 4) 删除 kimi 存档
+    assert c.delete("/api/keys/kimi").status_code == 200
+    rows = {k["id"]: k for k in c.get("/api/keys").json()["keys"]}
+    assert rows["kimi"]["saved"] is False
+    assert c.delete("/api/keys/kimi").status_code == 404  # 已删空
+    assert c.delete("/api/keys/ollama").status_code == 404  # 未知服务商
+    # 5) 同服务商重新保存（新 Key + 新端点/模型）→ 归档刷新为本次值（v0.5.2：不再滞留旧值）
+    r = c.put("/api/config", json={
+        "provider": "deepseek", "base_url": "https://api.deepseek.com/v5", "api_key": "sk-fresh-key-x",
+        "model_gen": "deepseek-v4-pro", "model_qc": "deepseek-v4-pro",
+        "web_search_enabled": False, "web_search_api_key": "",
+        "mineru_api_key": "", "mineru_auto_ocr": True,
+    })
+    assert r.status_code == 200, r.text
+    rows = {k["id"]: k for k in c.get("/api/keys").json()["keys"]}
+    assert rows["deepseek"]["key_masked"].startswith("sk-f"), "同服务商重存应刷新归档 Key"
+    assert rows["deepseek"]["base_url"].endswith("/v5"), "归档端点应为本次保存值"
+    assert rows["deepseek"]["model_gen"] == "deepseek-v4-pro", "归档模型应为本次保存值"
+
+
 def test_project_crud_and_meta_corrupt():
     c = make_client()
     saved = _install_isolated_cfg()
@@ -124,10 +171,18 @@ def test_project_crud_and_meta_corrupt():
             {"sid": "S002", "title": "第二章 营养", "text": "能量需求110kcal/kg。"}],
         "teacher_slices": [{"sid": "T001", "title": "重点", "text": "生长发育 3.25kg"}],
         "exam_slices": [],
+        "extra_slices": [{"sid": "E001", "title": "课件", "text": "课件补充：辅食添加原则。"}],
     }
     r = c.post("/api/projects", json=body)
     assert r.status_code == 200, r.text
     pid = r.json()["pid"]
+    # v0.5.2：extra 角色入 slices.json；meta 记录字数
+    slices = json.loads((Path(saved["projects_dir"]) / pid / "slices.json").read_text(encoding="utf-8"))
+    roles = {s["role"] for s in slices}
+    assert {"textbook", "teacher", "extra"} <= roles
+    meta = c.get("/api/projects/" + pid).json()
+    assert meta["extra_chars"] == len("课件补充：辅食添加原则。")
+    assert meta["exam_chars"] == 0
     # 列表 + 详情
     assert pid in [p["pid"] for p in c.get("/api/projects").json()["projects"]]
     meta = c.get("/api/projects/" + pid).json()
@@ -223,13 +278,13 @@ def test_prompts_api_and_shadow_copy():
 
 
 def test_presets_api():
-    """迭代2C：内置 3 套不可删；用户预设增删。"""
+    """迭代2C：内置 5 套不可删；用户预设增删。"""
     c = make_client()
     _install_isolated_cfg()
     r = c.get("/api/presets")
     assert r.status_code == 200
     body = r.json()
-    assert len(body["builtins"]) == 3
+    assert len(body["builtins"]) == 5
     assert c.delete("/api/presets/" + body["builtins"][0]["id"]).status_code == 400
     r = c.post("/api/presets", json={"name": "我的预设", "payload": {"target": 50, "exam": "期末"}})
     assert r.status_code == 200, r.text

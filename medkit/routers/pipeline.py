@@ -93,6 +93,8 @@ class TrialBody(BaseModel):
     slice_title: str = ""
     slice_text: str
     teacher_text: str = ""
+    exam_text: str = ""      # v0.5.2：自备真题（考点/风格校准）
+    extra_text: str = ""     # v0.5.2：自备资料（补充上下文）
 
 
 @router.post("/api/trial")
@@ -113,7 +115,9 @@ def trial(body: TrialBody) -> dict[str, Any]:
             qs, _ = medgen.generate_slice(
                 client, body.subject, body.exam, slice_, 1, body.ratios,
                 body.teacher_text[: _mg.TEACHER_CHAR_LIMIT], requirements=body.requirements[:500],
-                knobs=body.knobs)
+                knobs=body.knobs,
+                exam_text=body.exam_text[: _mg.EXAM_CHAR_LIMIT],
+                extra_text=body.extra_text[: _mg.EXTRA_CHAR_LIMIT])
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"试出题失败：{e}") from e
     if not qs:

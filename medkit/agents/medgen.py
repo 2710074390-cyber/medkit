@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BLOOM = {"记忆": 30, "理解": 40, "应用": 25, "创造": 5}
 TEACHER_CHAR_LIMIT = 4000  # 教师重点注入上限（S2：单源常量，管线/orchestrator/trial 共用）
+EXAM_CHAR_LIMIT = 4000    # 自备真题注入上限（v0.5.2：仅风格/考点校准，防照抄）
+EXTRA_CHAR_LIMIT = 4000    # 自备资料注入上限（v0.5.2：教材的补充上下文）
 
 # v0.5：一次性替换占位符（旧实现链式 replace，教材文本含 {teacher_text} 等字面量会被二次替换）
 _PLACEHOLDER = re.compile(r"\{(subject|exam|slice_count|ratios|bloom_ratios|slice_text|teacher_text)\}")
@@ -32,12 +34,17 @@ KNOB_FRAGMENTS: dict[str, dict[str, str]] = {
         "challenge": "难度定位：挑战题——细节陷阱、数值边界、易混淆概念对比，适合查漏。",
     },
     "analysis_style": {
-        "detailed": "解析风格：详尽机制型——写清机制/鉴别/易错点，≥80 字。",
+        "detailed": "解析风格：详尽机制型——按「考点定位 → 机制阐述 → 易错提醒」三段展开，≥80 字，适合第一轮系统学习。",
         "snappy": "解析风格：速记型——一句话点破考点 + 一行易错提醒，≤40 字。",
+        "examkey": "解析风格：考点速览——固定三行：「考点：…」「关键鉴别：…」「易错：…」，适合冲刺背诵与快速自测。",
+        "teaching": "解析风格：教学讲解型——结论先行，再逐项评析每个干扰项为何错、考什么，适合初学者与教研命题。",
+        "compare": "解析风格：鉴别对比型——以「最易混淆对象 → 关键区别点 → 记忆锚（口诀/类比）」呈现，突出横向对比。",
     },
     "stem_style": {
         "direct": "题干风格：直问直答（A1 干净无病例）。",
         "narrative": "题干风格：病例叙事（临床资料 → 提问，A2 化）。",
+        "staged": "题干风格：渐进披露——病例信息分阶段给出（首诊 → 复诊 → 辅助检查回报），考察诊疗决策的动态更新。",
+        "data": "题干风格：数据判读——题干附检验/影像数值（含单位与参考范围），考察判读与临界值分析。",
     },
 }
 
@@ -65,6 +72,35 @@ def build_web_block(web_materials: str = "", web_quota: int = 0) -> str:
     return ("\n\n## 网络检索参考素材（引用配额 ≤ %d%% —— 从下述素材选题时，"
             "analysis 末尾以 [源:网 URL] 结尾；标记【与教材冲突-勿用答案】的条目"
             "不得作为正确答案依据）\n%s") % (web_quota, web_materials)
+
+
+def build_reference_block(exam_text: str = "", extra_text: str = "") -> str:
+    """v0.5.2：自备真题 / 补充资料注入（追加在 system 末尾，与 web 块同通道）。
+
+    真题只做考点/风格校准（防照抄硬约束）；资料作为教材的补充上下文（冲突以教材为准）。
+    两者均为用户本机自备素材，不参与 [源:] 溯源——题目依据仍是教材切片 + 教师重点。
+    """
+    parts: list[str] = []
+    ex = (exam_text or "").strip()
+    if ex:
+        parts.append(
+            "## 用户自备真题参考（仅供校准，严禁照抄）\n"
+            "以下是用户自备的历年真题原文，仅用于两件事：\n"
+            "1. 高频考点优先：真题反复出现的考点，若出现在当前教材切片中，优先出题、加大题干深度；\n"
+            "2. 风格校准：题干长度/选项结构/难度分布贴近真题风格。\n"
+            "硬约束（违反即不合格）：\n"
+            "- 严禁照抄、改写、翻译或换选项复述任何一道真题原题（含题干与选项）；\n"
+            "- 所有题目必须出自当前教材切片，溯源仍标注 [源:切片SXXX]，不得标注或引用 [源:用户真题]；\n"
+            "- 真题中出现但教材切片没有的知识点不得出题（防超纲）。\n"
+            "```\n%s\n```" % ex)
+    et = (extra_text or "").strip()
+    if et:
+        parts.append(
+            "## 用户自备补充资料（课件/笔记/大纲）\n"
+            "以下资料与教材切片互补，可用于补充出题细节（数值/标准/表格）与解析措辞；\n"
+            "若与教材冲突，一律以教材切片为准；溯源仍标注 [源:切片SXXX]。\n"
+            "```\n%s\n```" % et)
+    return ("\n\n" + "\n\n".join(parts)) if parts else ""
 
 
 def _bloom_ratio_str(bloom: Optional[dict[str, Any]]) -> str:
@@ -153,7 +189,8 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
                    ids_start: int = 1, requirements: str = "",
                    knobs: Optional[dict[str, str]] = None,
                    bloom: Optional[dict[str, int]] = None,
-                   web_materials: str = "", web_quota: int = 0) -> tuple[list[dict[str, Any]], int]:
+                   web_materials: str = "", web_quota: int = 0,
+                   exam_text: str = "", extra_text: str = "") -> tuple[list[dict[str, Any]], int]:
     """单切片出题（可能含 ≤2 次补充调用）。返回 (questions, 下一个 id 序号)。
 
     v0.5：占位符一次性替换（防教材文本二次替换注入）；超发题数按配额截断。
@@ -170,6 +207,8 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
     system = _PLACEHOLDER.sub(lambda m: parts[m.group(1)], load_prompt("medgen.md"))
     system += build_extra_block(requirements, knobs)      # 迭代1/2 注入点
     system += build_web_block(web_materials, web_quota)   # §5.4 参考素材注入点
+    system += build_reference_block(exam_text[:EXAM_CHAR_LIMIT],
+                                    extra_text[:EXTRA_CHAR_LIMIT])  # v0.5.2 自备真题/资料注入点
     questions = _call_once(client, system, subject, exam, slice_, count, ratios)
     questions = questions[:count]  # v0.5：LLM 超发 → 按配额截断
     # U4：不足配额 → 补 2 轮

@@ -11,9 +11,11 @@ from typing import Any, Optional
 # deepseek：官方 api-docs.deepseek.com/zh-cn/quick_start/pricing（高峰时段，空闲减半）
 # zhipu：open.bigmodel.cn 官方（GLM-5.3 输入 8 / 输出 28；缓存命中 2）
 # qwen：阿里云百炼华北2北京官方价（qwen-max 页面）；qwen3.x 系列以控制台为准
+# kimi：platform.kimi.com 定价页（kimi-k2-thinking：缓存命中 1 / 输入 4 / 输出 16）
 PRICE_NOTES = {"deepseek": "官网 https://platform.deepseek.com（峰谷时段价，见实时页面）",
                "zhipu": "官网 https://open.bigmodel.cn（美元价×汇率估算）",
-               "qwen": "官网 https://bailian.console.aliyun.com"}
+               "qwen": "官网 https://bailian.console.aliyun.com",
+               "kimi": "官网 https://platform.moonshot.cn（K2 系列价格见文档定价页）"}
 
 PROVIDERS: list[dict[str, Any]] = [
     {
@@ -50,6 +52,18 @@ PROVIDERS: list[dict[str, Any]] = [
         "search_support": True,
         "search_tool": "qwen_tool",
         "price": {"input": 2.4, "output": 9.6, "unit": "元/1M token（百炼华北2北京）"},
+    },
+    {
+        "id": "kimi",
+        "name": "Kimi（月之暗面）",
+        "base_url": "https://api.moonshot.cn/v1",
+        "default_model": "kimi-k2-thinking",
+        "register_url": "https://platform.moonshot.cn",
+        "note": "国内直连 · OpenAI 兼容；Kimi K2 系列（262K 上下文；thinking 推理 / turbo 高速档），"
+                "境外端点 api.moonshot.ai/v1",
+        "search_support": False,
+        "price": {"input": 4.0, "output": 16.0, "cache_hit": 1.0,
+                  "unit": "元/1M token（kimi-k2-thinking；缓存命中 1 元/1M）"},
     },
     {
         "id": "custom",

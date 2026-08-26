@@ -32,6 +32,7 @@ class ProjectBody(BaseModel):
     teacher_slices: list[dict[str, Any]] = []
     teacher_text: str = ""
     exam_slices: list[dict[str, Any]] = []
+    extra_slices: list[dict[str, Any]] = []             # v0.5.2：自备资料（课件/笔记/大纲）
     # 可玩性 1A/2A/2B
     requirements: str = ""                              # 自由文本附加要求（≤500 字）
     knobs: dict[str, str] = {}                          # 结构化旋钮
@@ -86,7 +87,8 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
 
     all_slices = ([{**s, "role": "textbook"} for s in body.textbook_slices]
                   + [{**s, "role": "teacher"} for s in body.teacher_slices]
-                  + [{**s, "role": "exam"} for s in body.exam_slices])
+                  + [{**s, "role": "exam"} for s in body.exam_slices]
+                  + [{**s, "role": "extra"} for s in body.extra_slices])
     (proj_dir_path / "slices.json").write_text(
         json.dumps(all_slices, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -107,6 +109,8 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
         "web_backend": body.web_backend or "auto",
         "web_ref_quota": int(body.web_ref_quota or 0),
         "web_manual_text": (body.web_manual_text or "")[:20000],
+        "exam_chars": sum(len(s.get("text", "") or "") for s in body.exam_slices),   # v0.5.2
+        "extra_chars": sum(len(s.get("text", "") or "") for s in body.extra_slices),
         "stages": {"parsing": "done"},
         "stage": "quota",
         "quota": quota,

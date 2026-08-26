@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul
-cd /d %~dp0
+rem 脚本位于 pack\，spec/iss/资源都在仓库根目录 → 切到上一级
+cd /d "%~dp0.."
 
 where python >nul 2>nul
 if errorlevel 1 (
