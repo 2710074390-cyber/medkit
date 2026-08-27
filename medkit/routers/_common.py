@@ -9,11 +9,22 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from .. import state
 from ..core import config as cfg
 from ..core import extract as ex
 from ..core.cost import CHARS_PER_TOKEN  # 单源：见 core/cost.py
 from ..core.fsutil import write_json_atomic
 from ..core.slice import slice_text
+
+
+# ---------------------------------------------------------------- Feature flags（IMP-02）
+def require_flag(name: str) -> None:
+    """WP 级 feature flag 守卫：config.json `features` 节为 false 时整组接口 404（统一异常体）。
+
+    用法：路由函数首行 `require_flag("syllabus")`。关闭 = 服务端整体下线，前端入口同批隐藏。
+    """
+    if not state.flag(name):
+        raise HTTPException(404, f"功能「{name}」已在服务端禁用")
 
 
 # ---------------------------------------------------------------- 路径与 meta

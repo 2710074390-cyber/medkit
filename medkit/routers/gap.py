@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..core import gap as gap_mod
+from ._common import require_flag
 
 router = APIRouter()
 
@@ -23,6 +24,7 @@ class GapBody(BaseModel):
 
 @router.post("/api/library/gap-paper")
 def gap_paper(body: GapBody) -> dict[str, Any]:
+    require_flag("gap")
     count = max(10, min(int(body.question_count or 50), 500))
     w_freq = max(0.0, min(float(body.w_freq or 0), 30.0)) / 100.0
     return gap_mod.create_gap_project(subject=body.subject.strip(),

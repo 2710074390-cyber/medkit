@@ -100,6 +100,7 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
                    "auto_ocr": body.mineru_auto_ocr},
         "projects_dir": saved.get("projects_dir", cfg.DEFAULTS["projects_dir"]),
         "provider_keys": pkeys,
+        "features": saved.get("features", {}),   # IMP-02：前端 PUT 不改 features 节，原样保留
     }
     cfg.save(new_cfg)
     return cfg.public_view(new_cfg)

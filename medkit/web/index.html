@@ -949,7 +949,7 @@
       <div id="learn_reco"><div class="hint">暂无薄弱点</div></div>
       <div class="row" style="margin-top:16px;flex-wrap:wrap;align-items:center">
         <div class="hint" style="flex:1;min-width:220px">按薄弱点配题（单知识点 ≤3 题）→ 复用本科目教材/教师重点生成「薄弱点专项」卷；判错自动回流错题本。</div>
-        <button class="act" onclick="gapPaper()">⚡ 一键刷薄弱组卷</button>
+        <button class="act" id="btn_gap_paper" onclick="gapPaper()">⚡ 一键刷薄弱组卷</button>
       </div>
     </div>
   </div>
@@ -1078,7 +1078,7 @@
         </div>
         <div id="syl_paste_preview"><div class="hint">未解析。</div></div>
       </div>
-      <div class="card" style="margin-top:14px">
+      <div class="card" id="rex_card" style="margin-top:14px">
         <div class="cardh"><h2>真题考频（自备真题 · 人工确认门）</h2><span class="hint" id="rex_meta"></span></div>
         <div class="hint" style="margin-bottom:8px">粘贴/上传你的自备真题文本（如 GoldenSet 真题、题库 md）→ 本地按「大纲条目」词典统计考点命中频次 → <b>确认后进入权重</b>（未确认不参与任何推荐）。红线：只用频次，不展示真题原文。</div>
         <textarea id="rex_text" rows="4" placeholder="粘贴真题题干文本（每题一行或一段；例如从 真题上册.md 复制 20~200 题）…"></textarea>
@@ -1143,6 +1143,29 @@ let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exa
               current: null, cfg: null, providers: [], presets: null };
 const esc = s => String(s ?? "").replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* IMP-02：WP 级 feature flag（后端 /api/config `features` 节；缺省全开 = 现状兼容）。
+   关闭后：学习中心「大纲覆盖」pill / 「⚡一键刷薄弱」/ 项目详情「图片素材」卡 / 真题考频卡 整体隐藏。 */
+const FEATURES = { syllabus: true, realexams: true, gap: true, image_q: true };
+function applyFeatures(cfg) {
+  Object.assign(FEATURES, (cfg && cfg.features) || {});
+  const pill = document.querySelector('#learnnav button[data-lv="syllabus"]');
+  if (pill) pill.style.display = FEATURES.syllabus ? "" : "none";
+  const rexCard = $("rex_card");
+  if (rexCard) rexCard.style.display = FEATURES.realexams ? "" : "none";
+  const gapBtn = $("btn_gap_paper");
+  if (gapBtn) gapBtn.style.display = FEATURES.gap ? "" : "none";
+  const assetBox = $("pd_assets_box");
+  if (assetBox) assetBox.style.display = FEATURES.image_q ? "" : "none";
+  if (!FEATURES.syllabus) {
+    let v = null;
+    try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
+    if (v === "syllabus") {
+      try { sessionStorage.setItem("medkit-learn-view", "overview"); } catch (e) { /* ignore */ }
+      showLearnView("overview");
+    }
+  }
+}
 
 /* v0.5：轮询/项目状态声明提前（showTab 在初始化时即调用 stopPoll，需先于任何 IIFE 就绪） */
 let currentPid = null;
@@ -1444,7 +1467,7 @@ async function sylLoad() {
         .map(s => `<option value="${esc(s.subject)}">${esc(s.subject)}（${s.items} 条目）</option>`).join("");
     }
     if (st.seed && st.seed.exam && meta) meta.textContent = `种子：${st.seed.exam}`;
-    rexHeat();
+    if (FEATURES.realexams) rexHeat();
     const t = st.teacher || { items: 0, subjects: [] };
     const hint = document.getElementById("syl_std_hint");
     if (hint) hint.textContent = t.items
@@ -1627,6 +1650,7 @@ async function rexReport() {
 
 /* ---- ⑧ 一键刷薄弱组卷（WP-03） ---- */
 async function gapPaper() {
+  if (!FEATURES.gap) { toast("该功能已在服务端禁用", false); return; }
   const subject = document.getElementById("dash_subject").value || "";
   if (!subject) { toast("请先在上方选择科目范围", false); return; }
   try {
@@ -2538,6 +2562,7 @@ function fillModelSelect(selId, models, saved, hintId) {
 async function loadConfig() {
   const [c, p] = await Promise.all([api("/api/config"), api("/api/providers")]);
   state.cfg = c; state.providers = p.providers || [];
+  applyFeatures(c);   // IMP-02：合并服务端 feature flags（缺省全开）
   state.provider = c.provider || "";
   const keysR = await api("/api/keys").catch(() => ({ keys: [] }));
   const savedIds = new Set((keysR.keys || []).filter(k => k.saved).map(k => k.id));
@@ -3616,12 +3641,14 @@ async function showProject(pid) {
     <div class="quota">${quota}</div>
     <div id="pd_arts" class="hint" style="margin-top:8px">${artifactLinks(pid, meta.artifacts)}</div>
     ${usage}
-    <div class="hint" style="margin-top:12px"><b>图片素材（图/表题）</b>：上传教材插图 / 心电图 / 影像 / 辅检表截图，生成时提示出图题（image_ref 门禁校验，错题可随图查看）；无素材项目零影响。</div>
-    <div id="pd_assets" class="hint">加载中…</div>
-    <div class="row" style="margin-top:6px;flex-wrap:wrap">
-      <input type="text" id="pd_asset_cap" placeholder="图注（如：心电图 · 急性心梗）" style="flex:1;min-width:150px">
-      <button class="act gray" onclick="pdAssetPick()">上传图片</button>
-      <input type="file" id="pd_asset_file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif" style="display:none" onchange="pdAssetUp(this)">
+    <div id="pd_assets_box" style="margin-top:12px">
+      <div class="hint"><b>图片素材（图/表题）</b>：上传教材插图 / 心电图 / 影像 / 辅检表截图，生成时提示出图题（image_ref 门禁校验，错题可随图查看）；无素材项目零影响。</div>
+      <div id="pd_assets" class="hint">加载中…</div>
+      <div class="row" style="margin-top:6px;flex-wrap:wrap">
+        <input type="text" id="pd_asset_cap" placeholder="图注（如：心电图 · 急性心梗）" style="flex:1;min-width:150px">
+        <button class="act gray" onclick="pdAssetPick()">上传图片</button>
+        <input type="file" id="pd_asset_file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif" style="display:none" onchange="pdAssetUp(this)">
+      </div>
     </div>
     <pre id="pd_log"></pre>`;
   currentPid = pid;
@@ -3635,6 +3662,7 @@ async function showProject(pid) {
   else if (["done", "error", "cancelled"].includes(meta.stage)) loadLog(pid);
 }
 async function pdAssets() {
+  if (!FEATURES.image_q) return;   // IMP-02：flag 关闭时整卡已隐藏，跳过加载
   try {
     const r = await api("/api/projects/" + currentPid + "/assets");
     const box = $("pd_assets");

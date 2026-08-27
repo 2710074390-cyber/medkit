@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ..core import db as dbs
 from ..core import realexams as rex
+from ._common import require_flag
 
 router = APIRouter()
 
@@ -34,6 +35,7 @@ class ConfirmBody(BaseModel):
 
 @router.post("/api/library/realexams/analyze")
 def rex_analyze(body: AnalyzeBody) -> dict[str, Any]:
+    require_flag("realexams")
     if not body.text.strip():
         raise HTTPException(400, "请粘贴或上传真题文本")
     return rex.analyze(body.text, body.subject)
@@ -41,6 +43,7 @@ def rex_analyze(body: AnalyzeBody) -> dict[str, Any]:
 
 @router.post("/api/library/realexams/analyze-file")
 async def rex_analyze_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    require_flag("realexams")
     raw = await file.read()
     try:
         text = raw.decode("utf-8")
@@ -56,6 +59,7 @@ async def rex_analyze_file(file: UploadFile = File(...)) -> dict[str, Any]:
 
 @router.get("/api/library/realexams")
 def rex_list(subject: str = "", confirmed: bool = False) -> dict[str, Any]:
+    require_flag("realexams")
     dbs.migrate()
     return {"drafts": rex.list_drafts(subject, confirmed=confirmed),
             "all": rex.list_drafts(subject, confirmed=None)}
@@ -63,6 +67,7 @@ def rex_list(subject: str = "", confirmed: bool = False) -> dict[str, Any]:
 
 @router.post("/api/library/realexams/confirm")
 def rex_confirm(body: ConfirmBody) -> dict[str, Any]:
+    require_flag("realexams")
     if not body.items:
         raise HTTPException(400, "无条目")
     return rex.confirm([it.model_dump() for it in body.items])
@@ -70,6 +75,7 @@ def rex_confirm(body: ConfirmBody) -> dict[str, Any]:
 
 @router.delete("/api/library/realexams/{rid}")
 def rex_delete(rid: str) -> dict[str, Any]:
+    require_flag("realexams")
     if not rex.delete(rid):
         raise HTTPException(404, "条目不存在")
     return {"ok": True}
@@ -77,11 +83,13 @@ def rex_delete(rid: str) -> dict[str, Any]:
 
 @router.get("/api/library/realexams/freq")
 def rex_freq(subject: str = "") -> dict[str, Any]:
+    require_flag("realexams")
     dbs.migrate()
     return rex.freq_view(subject)
 
 
 @router.get("/api/library/realexams/report")
 def rex_report(subject: str = "") -> dict[str, str]:
+    require_flag("realexams")
     dbs.migrate()
     return {"markdown": rex.report_md(subject)}

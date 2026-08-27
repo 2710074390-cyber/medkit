@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from ..core import db as dbs
 from ..core import syllabus as syl
+from ._common import require_flag
 
 router = APIRouter()
 
@@ -40,6 +41,7 @@ class SeedBody(BaseModel):
 # ---------------------------------------------------------------- 种子与元信息
 @router.get("/api/syllabus/status")
 def syllabus_status() -> dict[str, Any]:
+    require_flag("syllabus")
     dbs.migrate()
     return {"seed": syl.seed_info(),
             "subjects": syl.list_subjects(),
@@ -49,6 +51,7 @@ def syllabus_status() -> dict[str, Any]:
 
 @router.post("/api/syllabus/ensure")
 def syllabus_ensure(body: SeedBody) -> dict[str, Any]:
+    require_flag("syllabus")
     dbs.migrate()
     return syl.ensure_seed(force=body.force)
 
@@ -56,12 +59,14 @@ def syllabus_ensure(body: SeedBody) -> dict[str, Any]:
 @router.post("/api/syllabus/sync-teacher")
 def syllabus_sync_teacher() -> dict[str, Any]:
     """以教师重点为纲：从所有项目扫描 teacher 切片 → 考点条目（幂等）。"""
+    require_flag("syllabus")
     return syl.sync_teacher()
 
 
 # ---------------------------------------------------------------- 粘贴解析（零 LLM）
 @router.post("/api/syllabus/parse")
 def syllabus_parse(body: ParseBody) -> dict[str, Any]:
+    require_flag("syllabus")
     if not body.text.strip():
         raise HTTPException(400, "粘贴内容为空")
     drafts = syl.parse_text(body.text, body.subject)
@@ -73,6 +78,7 @@ def syllabus_parse(body: ParseBody) -> dict[str, Any]:
 # ---------------------------------------------------------------- 确认落库（merge/订正）
 @router.post("/api/syllabus/confirm")
 def syllabus_confirm(body: ConfirmBody) -> dict[str, Any]:
+    require_flag("syllabus")
     if not body.items:
         raise HTTPException(400, "无条目")
     dbs.migrate()
@@ -106,17 +112,20 @@ def _now() -> str:
 # ---------------------------------------------------------------- 查询与报表
 @router.get("/api/syllabus/tree")
 def syllabus_tree(subject: str = "", source: str = "all") -> dict[str, Any]:
+    require_flag("syllabus")
     dbs.migrate()
     return syl.coverage(subject, source)
 
 
 @router.get("/api/syllabus/coverage")
 def syllabus_coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
+    require_flag("syllabus")
     dbs.migrate()
     return syl.coverage(subject, source)
 
 
 @router.get("/api/syllabus/report")
 def syllabus_report(subject: str = "", source: str = "all") -> dict[str, str]:
+    require_flag("syllabus")
     dbs.migrate()
     return {"markdown": syl.report_md(subject, source)}

@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from ..core import config as cfg
 from ..core.quota import allocate
 from ..state import RUNNING
-from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir
+from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir, require_flag
 
 _ALLOW_IMG = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 _IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -316,6 +316,7 @@ def _next_fig_no(base: Path) -> int:
 async def upload_asset(pid: str, file: UploadFile = File(...),
                        caption: str = Form("")) -> dict[str, Any]:
     """上传教材图片/表格素材 → assets/fig_N.ext + 追加 image 切片（生成时可出图题）。"""
+    require_flag("image_q")
     pid = _safe_pid(pid)
     base = proj_dir(pid)
     if not base.exists():
@@ -348,6 +349,7 @@ async def upload_asset(pid: str, file: UploadFile = File(...),
 
 @router.get("/api/projects/{pid}/assets")
 def list_assets(pid: str) -> dict[str, Any]:
+    require_flag("image_q")
     pid = _safe_pid(pid)
     base = proj_dir(pid)
     if not base.exists():
@@ -365,6 +367,7 @@ def list_assets(pid: str) -> dict[str, Any]:
 @router.get("/api/projects/{pid}/assets/{sid}")
 def asset_file(pid: str, sid: str) -> FileResponse:
     """图片文件服务（学习中心错题/产物预览用）。"""
+    require_flag("image_q")
     pid = _safe_pid(pid)
     if not re.match(r"^[A-Za-z0-9_\-]+$", sid):
         raise HTTPException(400, "非法图片标识")
@@ -380,6 +383,7 @@ def asset_file(pid: str, sid: str) -> FileResponse:
 
 @router.delete("/api/projects/{pid}/assets/{sid}")
 def delete_asset(pid: str, sid: str) -> dict[str, Any]:
+    require_flag("image_q")
     pid = _safe_pid(pid)
     base = proj_dir(pid)
     s = next((x for x in _image_slices(base) if x.get("sid") == sid), None)
