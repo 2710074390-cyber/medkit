@@ -458,7 +458,6 @@
           <div class="css-pills" id="syl_std" role="tablist" aria-label="数据标准">
             <button class="css-pill on" data-std="teacher" role="tab" aria-selected="true">教师重点（为纲）</button>
             <button class="css-pill" data-std="seed" role="tab" aria-selected="false">官方大纲</button>
-            <button class="css-pill" data-std="all" role="tab" aria-selected="false">全部</button>
           </div>
           <span class="hint" id="syl_std_hint" style="margin-left:10px"></span>
         </div>
@@ -476,11 +475,13 @@
         <div id="syl_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
       <div class="card" id="syl_paste_card" style="margin-top:14px;display:none">
-        <div class="cardh"><h2>粘贴大纲解析</h2><span class="hint">章一行（一、xx / 第x章 xx）+ 条目一行（1、xx），先解析预览再确认；官方大纲可上传 md/txt 一键导入（LLM 契约抽取，source=seed）</span></div>
+        <div class="cardh"><h2>粘贴大纲解析</h2><span class="hint">章一行（一、xx / 第x章 xx）+ 条目一行（1、xx），先解析预览再确认；教师重点文件（PDF文本层/DOCX/MD/TXT）可上传自动解析入库；官方大纲 md/txt 一键导入（LLM 契约抽取，source=seed）</span></div>
         <textarea id="syl_paste_text" rows="5" placeholder="例：&#10;一、绪论&#10;1、生理学的任务和研究手段&#10;2、机体的内环境和稳态&#10;二、细胞的基本功能&#10;1、物质跨细胞膜转运方式"></textarea>
         <div class="btns" style="margin-top:10px">
           <button class="act" onclick="sylParse()">解析预览</button>
           <button class="act gray" onclick="sylParseConfirm()">确认入库（当前科目）</button>
+          <button class="act gray" onclick="sylTeacherPick()">上传教师重点文件</button>
+          <input type="file" id="syl_teacher_file" accept=".pdf,.docx,.md,.markdown,.txt,.text" style="display:none" onchange="sylTeacherImport()">
           <button class="act gray" onclick="sylSeedPick()">上传官方大纲(md/txt)</button>
           <input type="file" id="syl_seed_file" accept=".md,.txt" style="display:none" onchange="sylSeedImport()">
         </div>

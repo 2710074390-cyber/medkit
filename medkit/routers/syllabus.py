@@ -81,10 +81,11 @@ def syllabus_sync_teacher() -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 教师重点 解析/自动导入（零 LLM）
 def _teacher_parse_or_400(text: str, subject: str) -> dict[str, Any]:
-    """教师重点文本 → 两档结构化草稿（structured：章/条目；flat：要点行）。"""
+    """教师重点文本 → 两档结构化草稿（structured：章/条目；flat：要点行）+ 知识点提取。"""
     parsed = syl.import_teacher_text(text, subject)
     return {"drafts": parsed["drafts"][:200], "count": len(parsed["drafts"]),
             "mode": parsed["mode"], "subject": parsed["subject"],
+            "knowledge": parsed.get("knowledge", [])[:100],
             "note": parsed["note"]}
 
 
@@ -114,6 +115,7 @@ def syllabus_teacher_import(body: TeacherImportBody) -> dict[str, Any]:
     return {"mode": parsed["mode"], "subject": parsed["subject"],
             "added": saved["added"], "total": saved["total"],
             "drafts": parsed["drafts"][:50],
+            "knowledge": (parsed.get("knowledge") or [])[:100],
             "note": parsed["note"] + f"；入库新增 {saved['added']} 条（幂等，重复导入不重复）"}
 
 

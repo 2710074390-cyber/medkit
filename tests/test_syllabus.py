@@ -329,3 +329,51 @@ def test_route_seed_parse_file_rejects_bad_ext():
     r = c.post("/api/syllabus/seed/parse-file",
                files={"file": ("大纲.pdf", b"x", "application/pdf")})
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------- 教师重点 v4：知识点提取 + 文件通道
+def test_extract_teacher_kps_normalize_and_dedupe():
+    drafts = [
+        {"subject": "内科学", "chapter": "呼吸系统疾病", "item": "重点掌握：肺通气与换气"},
+        {"subject": "内科学", "chapter": "呼吸系统疾病", "item": "肺通气与换气"},
+        {"subject": "内科学", "chapter": "循环系统疾病", "item": "心衰的 NYHA 分级"},
+        {"subject": "内科学", "chapter": "循环", "item": "超长条目" + "、依次罗列入院指征" * 8},
+        {"subject": "", "chapter": "", "item": ""},
+    ]
+    kps = syl.extract_teacher_kps(drafts)
+    names = [k["name"] for k in kps]
+    assert names[0] == "肺通气与换气"          # 前缀「重点掌握：」剔除 + 去重
+    assert len(names) == len(set(names))       # 保序去重
+    assert all(len(k["name"]) <= 40 for k in kps)   # 超长条目截断到 ≤40
+    assert kps[0]["subject"] == "内科学" and kps[0]["chapter"] == "呼吸系统疾病"
+
+
+def test_import_teacher_text_knowledge_field():
+    # structured：章/条目 → drafts + knowledge 同生
+    r1 = syl.import_teacher_text("一、呼吸系统\n1、肺通气\n2、肺炎", subject="内科学")
+    assert r1["mode"] == "structured" and r1["drafts"][0]["item"] == "肺通气"
+    assert len(r1["knowledge"]) == 2 and r1["knowledge"][0]["name"] == "肺通气"
+    # flat：无编号要点行
+    r2 = syl.import_teacher_text("肺通气与换气\n肺炎链球菌首选青霉素", subject="内科学")
+    assert r2["mode"] == "flat" and len(r2["knowledge"]) == 2
+    # none：空文本
+    r3 = syl.import_teacher_text("", subject="内科学")
+    assert r3["mode"] == "none" and r3["knowledge"] == []
+
+
+def test_route_teacher_import_file_md():
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    r = c.post("/api/syllabus/teacher/import-file",
+               files={"file": ("教师重点.md",
+                               "一、呼吸系统\n1、肺通气\n2、肺炎\n3、肺结核\n4、呼吸衰竭\n".encode("utf-8"),
+                               "text/markdown")},
+               data={"subject": "内科学"})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["mode"] == "structured" and j["added"] == 4
+    assert j["knowledge"] and j["knowledge"][0]["name"] == "肺通气"
+    cov = syl.coverage("内科学", "teacher")
+    assert cov["totals"]["items"] == 4

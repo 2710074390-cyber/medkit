@@ -400,6 +400,43 @@ def sync_teacher() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 教师重点文件自动处理（大纲二选一）
+_KP_CLEAN_RE = re.compile(
+    r"^\s*(?:重点掌握|考试大纲要求|应掌握|需掌握|重点|考点|掌握|熟悉|了解)\s*[:：]?\s*")
+
+
+def extract_teacher_kps(drafts: list[dict[str, str]], cap: int = 200) -> list[dict[str, str]]:
+    """教师重点草稿 → 知识点名（「知识点提取」步骤，零 LLM）。
+
+    规范化：去首部「重点/掌握/熟悉…」前缀与尾部标点噪声；压缩空白；超 40 字在最后一个
+    「、」处收束（保留主干）；按 (subject, name) 去重保序。返回
+    ``[{subject, chapter, name, item}]``。
+
+    设计边界（详见 AGENT_HANDOFF）：本步骤产出「知识点名」供导入预览人核、后续出题/记忆卡
+    （WP-05）锚点与覆盖匹配使用；**不写入学习库掌握度状态机**（避免凭空生成 weak 知识点
+    涌入推荐池，掌握度仅由真实错题/判分事件驱动）。
+    """
+    out: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for d in drafts or []:
+        name = _KP_CLEAN_RE.sub("", d.get("item") or "").strip()
+        name = re.sub(r"\s{2,}", " ", name)
+        if len(name) > 40:
+            cut = name.rfind("、", 0, 40)
+            name = name[:cut] if cut >= 2 else name[:40]
+        name = name.strip(" \u3000|·-—：:，。；;、【】[]")
+        if len(name) < 2:
+            continue
+        key = ((d.get("subject") or "").strip(), name)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"subject": key[0], "chapter": (d.get("chapter") or "").strip(),
+                    "name": name, "item": (d.get("item") or "").strip()})
+        if len(out) >= cap:
+            break
+    return out
+
+
 def import_teacher_text(text: str, subject: str = "",
                         chapter_hint: str = "教师重点",
                         structured_cap: int = 500) -> dict[str, Any]:
@@ -412,11 +449,12 @@ def import_teacher_text(text: str, subject: str = "",
     structured 草稿 <2 条视为结构识别失败，落 flat 兜底；structured 超 ``structured_cap``
     条取前 cap（文件型导入防超量）；两档均无结果返回空 drafts。
 
-    返回 ``{mode, subject, drafts:[{subject, chapter, item}], note}``（零副作用，不落库）。
+    返回 ``{mode, subject, drafts:[{subject, chapter, item}], knowledge, note}``
+    （零副作用，不落库）。
     """
     body = (text or "").strip()
     if not body:
-        return {"mode": "none", "subject": subject, "drafts": [],
+        return {"mode": "none", "subject": subject, "drafts": [], "knowledge": [],
                 "note": "文件未提取到文本（扫描件请先 OCR）"}
     drafts = parse_text(body, subject)
     if len(drafts) >= 2:
@@ -429,15 +467,16 @@ def import_teacher_text(text: str, subject: str = "",
         for d in drafts:
             d["subject"] = d["subject"] or subj
             d["chapter"] = d["chapter"] or chapter_hint
-        return {"mode": "structured", "subject": subj, "drafts": drafts, "note": note}
+        return {"mode": "structured", "subject": subj, "drafts": drafts,
+                "knowledge": extract_teacher_kps(drafts), "note": note}
     items = _teacher_items(body, cap=200)
     if not items:
-        return {"mode": "none", "subject": subject, "drafts": [],
+        return {"mode": "none", "subject": subject, "drafts": [], "knowledge": [],
                 "note": "未提取到考点条目（行文本均需 ≥6 字）"}
     subj = subject or "未分类"
-    return {"mode": "flat", "subject": subj,
-            "drafts": [{"subject": subj, "chapter": chapter_hint, "item": it}
-                       for it in items],
+    drafts = [{"subject": subj, "chapter": chapter_hint, "item": it} for it in items]
+    return {"mode": "flat", "subject": subj, "drafts": drafts,
+            "knowledge": extract_teacher_kps(drafts),
             "note": f"按要点行提取（{len(items)} 条，归入「{chapter_hint}」章）"}
 
 
@@ -467,27 +506,30 @@ def add_teacher_items(drafts: list[dict[str, str]]) -> dict[str, Any]:
             subjects.add(subj)
             chapters.add(chap)
     return {"added": added, "total": len(drafts),
-            "subjects": sorted(subjects), "chapters": len(chapters)}
+            "subjects": sorted(subjects), "chapters": len(chapters),
+            "knowledge": extract_teacher_kps(drafts)}
 
 
 def import_teacher_file(path: str | Path, subject: str = "",
                         chapter_hint: str = "教师重点") -> dict[str, Any]:
     """教师重点文件（PDF 文本层 / DOCX / MD / TXT）→ 自动处理全流程（零 LLM）。
 
-    文本抽取 → ``import_teacher_text`` 两档解析（结构化/要点行）→ ``add_teacher_items`` 幂等入库。
-    返回 ``{mode, subject, added, total, drafts, note, error?}``；扫描件 PDF 等抽取失败时
-    mode='error'（不落库，note 携带可读提示）。
+    文本抽取 → ``import_teacher_text`` 两档解析（结构化/要点行）+ ``extract_teacher_kps``
+    知识点提取 → ``add_teacher_items`` 幂等入库。
+    返回 ``{mode, subject, added, total, drafts, knowledge, note, error?}``；扫描件 PDF 等
+    抽取失败时 mode='error'（不落库，note 携带可读提示）。
     """
     from .extract import ExtractError, extract_text
     try:
         blocks = extract_text(Path(path))
     except ExtractError as e:
         return {"mode": "error", "subject": subject, "drafts": [],
-                "added": 0, "total": 0, "note": str(e), "error": True}
+                "added": 0, "total": 0, "knowledge": [], "note": str(e), "error": True}
     text = "\n".join(b.get("text", "") for b in blocks)
     parsed = import_teacher_text(text, subject, chapter_hint)
     base: dict[str, Any] = {"mode": parsed["mode"], "subject": parsed["subject"],
-                            "drafts": parsed["drafts"], "note": parsed["note"]}
+                            "drafts": parsed["drafts"], "knowledge": parsed.get("knowledge", []),
+                            "note": parsed["note"]}
     if parsed["mode"] == "none":
         base.update(added=0, total=0)
         return base

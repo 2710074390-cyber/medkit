@@ -82,7 +82,8 @@ function updateLearnBadges(d) {
 /* ---- ⑥ 大纲覆盖（WP-01 考试锚定 · 以教师重点为纲） ---- */
 let SYL_DRAFTS = [];
 let SYL_LOADED = false;
-let SYL_STD = "teacher";   // 数据标准：teacher=教师重点(默认) / official=官方大纲 / all=全部
+let SYL_STD = "teacher";   // 大纲标准二选一：teacher=教师重点(默认，即用户自供内容) / seed=官方大纲（内置种子或上传导入）
+/* 大纲标准二选一：syl_std pill 仅 teacher / seed 两档（移除历史 all 档，见 AGENT_HANDOFF） */
 async function sylLoad() {
   const meta = document.getElementById("syl_meta");
   try {
@@ -146,12 +147,12 @@ async function sylRender(subject) {
       <div class="syl-stat"><b>${pct}%</b><div class="hint">覆盖率</div></div>
     </div>`;
     if (!d.chapters || !d.chapters.length) {
-      const stdName = { teacher: "教师重点", seed: "官方大纲", all: "全部标准" }[SYL_STD];
+      const stdName = { teacher: "教师重点", seed: "官方大纲" }[SYL_STD] || SYL_STD;
       body.innerHTML = `<div class="empty">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-target"></use></svg>
         <div class="sub">暂无${stdName}条目 — ${SYL_STD === "teacher"
-          ? '在「新建课题」上传教师重点后自动同步；或先粘贴教师重点考点清单。'
-          : SYL_STD === "seed" ? '点「导入内置大纲」加载教材/真题种子，或先粘贴大纲。' : '点「导入内置大纲」或先粘贴大纲。'}</div>
+          ? '在「新建课题」上传教师重点后自动同步；或下方「上传教师重点文件」/粘贴教师重点考点清单。'
+          : '点「导入内置大纲」加载教材/真题种子；或下方「上传官方大纲(md/txt)」一键导入官方条目。'}</div>
         <button class="act gray" onclick="sylPaste()">粘贴/导入大纲 →</button>
       </div>`;
       return;
@@ -204,7 +205,37 @@ async function sylParseConfirm() {
 function sylSeedPick() {
   document.getElementById("syl_seed_file").click();
 }
-async function sylSeedImport() {
+function sylTeacherPick() {
+  document.getElementById("syl_teacher_file").click();
+}
+async function sylTeacherImport() {
+  // 教师重点文件（PDF文本层/DOCX/MD/TXT）→ 自动处理：解析 → 结构化 → 知识点提取 → 幂等入库（source='teacher'）
+  const inp = document.getElementById("syl_teacher_file");
+  const f = inp.files && inp.files[0];
+  inp.value = "";
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  const subject = document.getElementById("syl_subject")?.value || "";
+  if (subject) fd.append("subject", subject);
+  try {
+    const r = await api("/api/syllabus/teacher/import-file", { method: "POST", body: fd });
+    if (r.mode === "error") { toast(r.note || "文件解析失败", false); return; }
+    if (!r.drafts || !r.drafts.length) { toast(r.note || "未识别到条目", false); return; }
+    const kps = (r.knowledge || []).slice(0, 10).map(k => esc(k.name)).join("、");
+    toast(`${r.note || "教师重点导入"} · 入库新增 ${r.added ?? "?"} 条（共 ${r.total ?? r.drafts.length} 条，幂等）`);
+    SYL_DRAFTS = r.drafts;
+    document.getElementById("syl_paste_preview").innerHTML =
+      `<div class="hint">教师重点草稿 ${SYL_DRAFTS.length} 条（已入库 source=teacher${r.subject ? ` · 科目：${esc(r.subject)}` : ""}）：</div>` +
+      SYL_DRAFTS.slice(0, 30).map(d => `<div class="syl-item">
+        <span class="learn-chip pending">${esc(d.subject || "?")}</span>
+        <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span></div>`).join("") +
+      (kps ? `<div class="hint">知识点提取（前 10 条）：${kps}…（共 ${(r.knowledge || []).length} 条）</div>` : "");
+  } catch (e) {
+    toast(e.message || "导入失败", false);
+  }
+  sylLoad();
+}async function sylSeedImport() {
   // 官方大纲文件（md/txt）→ LLM 契约抽取 → source='seed' 幂等入库（一键导入）
   const inp = document.getElementById("syl_seed_file");
   const f = inp.files && inp.files[0];

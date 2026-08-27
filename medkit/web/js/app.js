@@ -59,8 +59,13 @@ function toast(msg, ok = true) {
   setTimeout(() => { t.remove(); }, 3800);
 }
 async function api(path, opts = {}) {
+  const o = { ...opts };
+  if (o.body && typeof o.body === "string" && (o.method || "GET") !== "GET") {
+    // 字符串体默认 JSON（FormData 原样透传，不设 header）
+    o.headers = { ...(o.headers || {}), "Content-Type": "application/json" };
+  }
   let r;
-  try { r = await fetch(path, opts); }
+  try { r = await fetch(path, o); }
   catch (e) { throw new Error("无法连接本地服务，请确认 MedKit 程序仍在运行"); }
   const j = await r.json().catch(() => ({}));
   // 统一错误消费：detail（HTTPException/4 类异常 handler）|| msg（工具端点 ok:false 信封）|| error_code || statusText
