@@ -9,6 +9,7 @@ import time
 from typing import Any, Optional
 
 from openai import OpenAI
+from pydantic import BaseModel, ValidationError
 
 from . import usage
 
@@ -94,16 +95,28 @@ class LLMClient:
         raise LLMError(f"调用失败({self.model}): {last_err}")
 
     def chat_json(self, messages: list[dict[str, str]], temperature: float = 0.7,
-                  max_tokens: Optional[int] = None) -> Any:
-        """chat + 回退解析：先 json_mode，失败后普通文本再剥围栏。"""
+                  max_tokens: Optional[int] = None,
+                  schema: Optional[type[BaseModel]] = None) -> Any:
+        """chat + 回退解析：先 json_mode，失败后普通文本再剥围栏。
+
+        schema（ADR-003 契约层）：传入了就在解析 JSON 后 ``model_validate``，
+        校验失败抛 ``LLMError``（带错误详情，供调用方走「修复重发 / 人工复核」）；
+        默认 ``None`` 时行为与旧版完全一致（向后兼容）。
+        """
         try:
             raw = self.chat(messages, temperature=temperature, json_mode=True,
                             max_tokens=max_tokens)
-            return _extract_json(raw)
+            parsed = _extract_json(raw)
         except LLMError:
             raw = self.chat(messages, temperature=temperature, json_mode=False,
                             max_tokens=max_tokens)
-            return _extract_json(raw)
+            parsed = _extract_json(raw)
+        if schema is not None:
+            try:
+                return schema.model_validate(parsed)
+            except ValidationError as e:
+                raise LLMError(f"LLM 输出未通过 {schema.__name__} 契约: {e}") from e
+        return parsed
 
     def list_models(self) -> list[str]:
         try:

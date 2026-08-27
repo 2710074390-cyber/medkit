@@ -1,10 +1,16 @@
 """MedQC：LLM-as-judge 分批质检（无金标准模式；U3：批次并发 ≤3）。"""
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from pydantic import ValidationError
+
+from ..core.schema import QcVerdict
 from . import load_prompt
+
+logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 20
 MAX_WORKERS = 3
@@ -60,6 +66,13 @@ def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
                 {"questions": payload}, ensure_ascii=False)},
         ], temperature=0.2)
         out = out if isinstance(out, dict) else {}
+        # IMP-03：QcVerdict 契约校验（软校验——校验失败仅记告警，不回退批次。
+        # 浮点容错语义由下方 _coerce_score / _normalize_issues 保留，行为保持不变。）
+        try:
+            QcVerdict.model_validate(out)
+        except ValidationError as e:
+            first = e.errors()[0] if e.errors() else {}
+            logger.warning("MedQC 输出未通过 QcVerdict 契约：%s", first.get("msg", str(e)))
         issues = _normalize_issues(out.get("issues"))
         score, score_warn = _coerce_score(out.get("score"))
         if score_warn:

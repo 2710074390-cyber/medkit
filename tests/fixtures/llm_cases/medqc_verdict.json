@@ -1,0 +1,9 @@
+{
+  "score": 86,
+  "gate_decision": "PASS_WITH_FIXES",
+  "issues": [
+    {"q_id": "Q001", "code": "D18", "severity": "warn", "reason": "题干关键词只出现在正确选项", "suggest": "调整题干措辞"},
+    {"q_id": "Q002", "code": "F2", "severity": "fail", "reason": "analysis 缺失 [源:切片] 溯源", "suggest": "在解析末尾补充切片溯源"}
+  ],
+  "summary": "整体质量良好，个别题存在解析溯源缺失与题干线索问题，需修复后放行。"
+}

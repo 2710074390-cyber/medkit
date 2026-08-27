@@ -12,6 +12,9 @@ U4：返回题数 < 配额 → 最多补 2 轮。
 import logging
 from typing import Any, Optional
 
+from pydantic import ValidationError
+
+from ..core.schema import QuestionItem
 from . import get_client as _get_client
 from . import render_prompt
 
@@ -137,6 +140,16 @@ def _parse_questions(data: Any, slice_: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     questions = [q for q in raw if isinstance(q, dict) and q.get("question")]
     for q in questions:
+        # IMP-03：QuestionItem 契约校验（软校验——仅记录告警，不删除。
+        # 与既有门禁（gate1 / 渲染前终检）分工：契约层冗余校验，避免改变
+        # 现有筛选与修复行为造成零回归；坏题仍交由门禁修复循环处理。）
+        try:
+            QuestionItem.model_validate(q)
+        except ValidationError as e:
+            first = e.errors()[0] if e.errors() else {}
+            logger.warning("MedGen 输出未通过 QuestionItem 契约（question=%r）：%s",
+                           str(q.get("question", ""))[:40],
+                           first.get("msg", str(e)))
         # v0.5：显式 null / 类型异常统一兜底（setdefault 不覆盖显式 null → 下游 enumerate 崩）
         q["type"] = str(q.get("type") or "A1")
         q["bloom"] = str(q.get("bloom") or "理解")

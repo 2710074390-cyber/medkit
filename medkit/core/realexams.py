@@ -16,6 +16,7 @@ import re
 from typing import Any, Optional
 
 from . import db as dbs
+from .schema import RealexamNorm, validate_or_repair
 
 _RE_COLS = ("subject", "chapter", "item", "freq", "confirmed", "source", "created_at")
 
@@ -187,3 +188,36 @@ def freq_map(subject: str = "") -> dict[str, float]:
     rows = list_drafts(subject, confirmed=True)
     max_freq = max([int(r.get("freq") or 0) for r in rows], default=0) or 1
     return {r.get("item") or "": min(int(r.get("freq") or 0) / max_freq, 1.0) for r in rows}
+
+
+# ---------------------------------------------------------------- LLM 考频归一（增强开关，默认关）
+# WP-02 红线：本地词典匹配确定性更高、零成本；LLM 归一仅作增强开关（默认关），
+# 且校验（RealexamNorm）失败 → 返回 None 走人工复核，不直接落库。
+NORM_SYSTEM = (
+    "你是医学考试考频分析助手。给定一段自备真题文本，请提取其中反复出现的考点条目，"
+    "并归一到大纲条目（item）；每条输出 subject / chapter / item / freq（该条目在本文本中"
+    "出现的次数，≥1）。严格输出 JSON："
+    "{'items':[{'subject':'','chapter':'','item':'','freq':1}]}，无多余文字；"
+    "仅为原文可支持的语义计数，未出现的条目不得编造。"
+)
+
+
+def analyze_llm(client: Any, text: str, subject: str = "", enabled: bool = False,
+                repair_fn: Optional[Any] = None,
+                max_chars: int = 8000) -> Optional[dict[str, Any]]:
+    """真题文本 → 频次草稿（LLM 归一增强；默认关，作 WP-02 的可玩性开关）。
+
+    返回 ``{"drafts": [...]}``，可直接喂 ``confirm_drafts``；校验 / 修复失败返回 ``None``
+    （调用方转人工复核，不入库）。``repair_fn`` 遵循 ``validate_or_repair`` 语义。
+    """
+    if not enabled:
+        return None
+    user = f"科目：{subject or '（未指定）'}\n真题文本：\n{(text or '')[:max_chars]}"
+    raw = client.chat_json([{"role": "system", "content": NORM_SYSTEM},
+                            {"role": "user", "content": user}], temperature=0.2)
+    norm = validate_or_repair(raw, RealexamNorm, repair_fn)
+    if norm is None:
+        return None
+    drafts = [item.model_dump() for item in norm.items]
+    return {"drafts": drafts, "stats": {"sentences": len(_sentences(text)),
+                                        "items": len(drafts), "unmatched": 0}}

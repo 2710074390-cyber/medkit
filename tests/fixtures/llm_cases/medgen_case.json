@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "question": "该患儿最可能的诊断是？",
+      "type": "A3",
+      "bloom": "理解",
+      "subtopic": "诊断",
+      "options": ["川崎病", "麻疹", "猩红热", "幼儿急疹", "药疹"],
+      "answer": "A",
+      "analysis": "患儿发热5天、口唇干裂、结膜充血、指端膜状脱屑，符合川崎病诊断。需与麻疹、猩红热鉴别。【源:切片S001】",
+      "case_id": "C001",
+      "case_order": 1,
+      "case_stem": "患儿男，3岁，发热5天，皮疹1天，口唇干裂，结膜充血，指端膜状脱屑，精神差。",
+      "group_kind": "case",
+      "group": {"options": []}
+    },
+    {
+      "question": "该病首选的辅助检查是？",
+      "type": "A3",
+      "bloom": "应用",
+      "subtopic": "检查",
+      "options": ["心脏彩超", "胸片", "头颅CT", "心电图", "腹部B超"],
+      "answer": "A",
+      "analysis": "川崎病首选心脏彩超评估冠状动脉损害，超声心动图是核心检查。【源:切片S001】",
+      "case_id": "C001",
+      "case_order": 2,
+      "case_stem": "患儿男，3岁，发热5天，皮疹1天，口唇干裂，结膜充血，指端膜状脱屑，精神差。",
+      "group_kind": "case",
+      "group": {"options": []}
+    },
+    {
+      "question": "该病急性期首选治疗是？",
+      "type": "A3",
+      "bloom": "应用",
+      "subtopic": "治疗",
+      "options": ["阿司匹林", "青霉素", "丙种球蛋白", "糖皮质激素", "阿昔洛韦"],
+      "answer": "C",
+      "analysis": "川崎病急性期首选阿司匹林联合静脉丙种球蛋白，丙种球蛋白可显著降低冠状动脉瘤风险。【源:切片S001】",
+      "case_id": "C001",
+      "case_order": 3,
+      "case_stem": "患儿男，3岁，发热5天，皮疹1天，口唇干裂，结膜充血，指端膜状脱屑，精神差。",
+      "group_kind": "case",
+      "group": {"options": []}
+    }
+  ]
+}
