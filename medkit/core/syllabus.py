@@ -1,11 +1,14 @@
 """WP-01 大纲覆盖度引擎（考试锚定，《结构化执行方案》§3 WP-01）。
 
 - 存储：SQLite `syllabus_items` 表（迁移 v2：kind=chapter 章行 / kind=item 考点行）。
-- 种子：`medkit/data/syllabus_seed_306.json`（由 docs/spikes/build_syllabus_seed.py 从
+- 大纲标准二选一（本版起）：① 软件内置西综306 大纲（source='seed'，bundled 种子幂等导入）；
+  ② 教师重点（source='teacher'，用户导入文件/粘贴/项目 teacher 切片自动处理而来）。
+  历史 source='paste' 由迁移 v4 归一为 'teacher'（用户自供内容统一归教师重点）。
+- 种子：`data/syllabus_seed_306.json`（由 docs/spikes/build_syllabus_seed.py 从
   GoldenSet 真题 + 知识库素材教材 chunks 元数据构建；ensure_seed 幂等导入）。
-- 零 LLM 原则：条目解析（本地规则）/ 覆盖判定（本地匹配）/ 报告（md）全本地；
-  仅「粘贴任文献 → 结构化草稿」的增强版才走 LLM（chat_json，见 routers/syllabus.py parse 的
-  LLM 增强分支，默认规则路径零成本）。
+- 零 LLM 原则：教师重点自动处理（两档解析：章/条目结构化 ↔ 要点行 flat）/ 覆盖判定（本地
+  匹配）/ 报告（md）全本地。唯一 LLM 触点：官方大纲文件导入的契约抽取（K3/IMP-13，
+  ``extract_outline``，逐科 chat_json + OutlineSubject；失败回退本地规则）。
 - 覆盖口径：条目文本与学习库「知识点名/错题主题」匹配 →
   matched（covered）/ mastered（匹配的知识点 state ∈ solid|mastered）/ pending（未覆盖）。
 """
@@ -17,6 +20,8 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Optional
+
+from pydantic import BaseModel
 
 from . import db as dbs
 
@@ -51,7 +56,7 @@ def ensure_seed(force: bool = False) -> dict[str, Any]:
     seed = json.loads(SEED_FILE.read_text(encoding="utf-8"))
     with dbs.tx(write=True) as cur:
         if force:
-            # 重建种子：删除旧 seed 行（用户粘贴行 source=paste 不受影响）
+            # 重建种子：删除旧 seed 行（教师重点行 source=teacher 不受影响）
             cur.execute("DELETE FROM syllabus_items WHERE source='seed'")
         rows = []
         for subj in seed.get("subjects", []):
@@ -126,6 +131,144 @@ def parse_text(text: str, subject: str = "") -> list[dict[str, str]]:
     return drafts
 
 
+
+# ---------------------------------------------------------------- 官方大纲 → 结构化草稿（K3/IMP-13 契约抽取）
+_OUTLINE_ANCHOR = "考查内容"
+_OUTLINE_TOP_RE = re.compile(r"^\s*(?:#{1,6}\s*)?([一二三四五六七八九十]+)、\s*(.+?)\s*$")
+
+
+def split_subjects(text: str) -> list[tuple[str, str]]:
+    """按「考查内容」锚点 + 中文数字顶级标题切分 → [(科目名, 该科正文)]。
+
+    仅识别 306 大纲式结构（「一、生理学」顶级，兼容 Markdown 标题前缀）；锚点缺失时
+    整篇参与切分；无顶级标题 → 空列表（调用方走本地规则兜底）。
+    """
+    body = text or ""
+    idx = body.find(_OUTLINE_ANCHOR)
+    if idx >= 0:
+        body = body[idx:]
+    out: list[tuple[str, str]] = []
+    cur_name, cur_lines = "", []
+    for raw in body.splitlines():
+        m = _OUTLINE_TOP_RE.match(raw)
+        if m and len(out) <= 16:
+            if cur_name:
+                out.append((cur_name, "\n".join(cur_lines)))
+            cur_name, cur_lines = m.group(2).strip(), []
+        elif cur_name:
+            cur_lines.append(raw)
+    if cur_name:
+        out.append((cur_name, "\n".join(cur_lines)))
+    return out
+
+
+def extract_outline(text: str, client: Any = None,
+                    schema: Optional[type[BaseModel]] = None) -> Optional[dict[str, Any]]:
+    """官方大纲 md → 结构化 outline（chat_json + OutlineSubject 契约，K3/IMP-13）。
+
+    按科目分块逐科调用（避免长文截断/降质），合并为 ``{exam, subjects, errors}``；
+    任一科失败仅记入 errors，其余照常返回；全部失败返回 ``None``（调用方走本地规则兜底）。
+
+    max_tokens=16000：探测确认当前推理型模型（deepseek-v4-flash）会把 reasoning_tokens
+    计入 max_tokens，6000 时内科/外科被推理吃满返回空（finish=length）；16000 后 6/6 稳定。
+
+    ``client`` 注入便于离线测试；``schema`` 供测试注入 mock 契约校验（默认逐科契约
+    :class:`OutlineSubject`，与 prompt 输出 ``{name, chapters}`` 对齐）。
+    """
+    from ..agents import get_client, load_prompt
+    from .llm import LLMError
+    from .schema import OutlineSubject
+
+    subjects = split_subjects(text)
+    if not subjects:
+        return None
+    client = client or get_client("gen")
+    model = schema or OutlineSubject
+    prompt = load_prompt("syllabus_extract.md")
+    merged: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for name, body in subjects:
+        if not body.strip():
+            continue
+        try:
+            # 标题行随正文下发：模型按提示词第 6 条取「原文科目名」，不猜名
+            raw = client.chat_json(
+                [{"role": "system", "content": prompt},
+                 {"role": "user", "content": f"{name}\n{body}"}],
+                temperature=0.1, max_tokens=16000, schema=model)
+        except LLMError as e:
+            errors.append(f"{name}: {e}")
+            continue
+        except Exception as e:  # noqa: BLE001 —— 网络/配置异常一律按科失败处理
+            errors.append(f"{name}: {e}")
+            continue
+        if raw is None:
+            errors.append(f"{name}: 契约校验失败（无有效输出）")
+            continue
+        merged.append(raw.model_dump())
+    if not merged:
+        return None
+    # 科目名归一（去尾部括号注释，如「外科学(含骨科学)」→「外科学」，与种子/知识库命名对齐）
+    for s in merged:
+        nm = s.get("name") or ""
+        m = re.search(r"[（(][^）)]*[）)]$", nm)
+        if m and m.start() > 0:
+            s["name"] = nm[:m.start()].strip()
+    # 科目保序去重（同名科目合并章节，保留首次出现位置）
+    seen: dict[str, dict[str, Any]] = {}
+    ordered: list[dict[str, Any]] = []
+    for s in merged:
+        key = s.get("name") or ""
+        if key in seen:
+            seen[key]["chapters"] += s.get("chapters", [])
+        else:
+            seen[key] = s
+            ordered.append(s)
+    first_line = next((ln.strip() for ln in (text or "").splitlines()
+                       if ln.strip() and not ln.startswith("#")), "")
+    exam = first_line[:60] if len(first_line) <= 60 else ""
+    return {"exam": exam, "subjects": ordered, "errors": errors}
+
+
+def outline_drafts(outline: dict[str, Any]) -> list[dict[str, str]]:
+    """结构化 outline → 与 parse_text 同形状的草稿（subject/chapter/item），供确认落库。"""
+    return [{"subject": s.get("name") or "", "chapter": c.get("name") or "",
+             "item": it}
+            for s in outline.get("subjects", [])
+            for c in s.get("chapters", [])
+            for it in c.get("items", [])]
+
+
+def add_seed_items(drafts: list[dict[str, str]]) -> dict[str, Any]:
+    """官方大纲草稿 → 落库（source='seed'，幂等 IDOR 更新）。返回统计。
+
+    seed = 官方大纲标准（与 ensure_seed 同源标签）；teacher = 教师重点/用户自供内容。
+    """
+    dbs.migrate()
+    added = 0
+    subjects: set[str] = set()
+    chapters: set[str] = set()
+    with dbs.tx(write=True) as cur:
+        for d in drafts:
+            subj = (d.get("subject") or "").strip()
+            chap = (d.get("chapter") or "").strip()
+            item = (d.get("item") or "").strip()
+            if not subj or len(item) < 2:
+                continue
+            rec = {"id": _row_id(subj, chap, item, "item", "seed"),
+                   "subject": subj, "chapter": chap, "kind": "item",
+                   "item": item, "weight": 1.0, "source": "seed",
+                   "created_at": _now()}
+            exists = cur.execute("SELECT 1 FROM syllabus_items WHERE id=?",
+                                 (rec["id"],)).fetchone()
+            dbs.put_row(cur, "syllabus_items", rec,
+                        ("subject", "chapter", "kind", "item", "weight", "source"))
+            if not exists:
+                added += 1
+            subjects.add(subj)
+            chapters.add(chap)
+    return {"added": added, "total": len(drafts),
+            "subjects": sorted(subjects), "chapters": len(chapters)}
 # ---------------------------------------------------------------- 查询与覆盖
 def _now() -> str:
     from datetime import datetime
@@ -254,6 +397,104 @@ def sync_teacher() -> dict[str, Any]:
                 subject_set.add(subject)
     stats["subjects"] = sorted(subject_set)
     return stats
+
+
+# ---------------------------------------------------------------- 教师重点文件自动处理（大纲二选一）
+def import_teacher_text(text: str, subject: str = "",
+                        chapter_hint: str = "教师重点",
+                        structured_cap: int = 500) -> dict[str, Any]:
+    """教师重点全文 → 结构化考点草稿（自动处理主流程，零 LLM）。
+
+    两档策略（自动判定，无需用户选择）：
+    - structured：文本带「章 + 编号条目」结构 → ``parse_text`` 提取 章/条目 层级；
+    - flat：无显式结构（讲义/PPT 式段落与要点符号）→ ``_teacher_items`` 行级要点提取，
+      全部挂到 ``chapter_hint`` 章下。
+    structured 草稿 <2 条视为结构识别失败，落 flat 兜底；structured 超 ``structured_cap``
+    条取前 cap（文件型导入防超量）；两档均无结果返回空 drafts。
+
+    返回 ``{mode, subject, drafts:[{subject, chapter, item}], note}``（零副作用，不落库）。
+    """
+    body = (text or "").strip()
+    if not body:
+        return {"mode": "none", "subject": subject, "drafts": [],
+                "note": "文件未提取到文本（扫描件请先 OCR）"}
+    drafts = parse_text(body, subject)
+    if len(drafts) >= 2:
+        if len(drafts) > structured_cap:
+            drafts = drafts[:structured_cap]
+            note = f"识别到章/条目结构（超 {structured_cap} 条，取前 {structured_cap} 条）"
+        else:
+            note = f"识别到章/条目结构（{len(drafts)} 条）"
+        subj = drafts[0]["subject"] or subject or "未分类"
+        for d in drafts:
+            d["subject"] = d["subject"] or subj
+            d["chapter"] = d["chapter"] or chapter_hint
+        return {"mode": "structured", "subject": subj, "drafts": drafts, "note": note}
+    items = _teacher_items(body, cap=200)
+    if not items:
+        return {"mode": "none", "subject": subject, "drafts": [],
+                "note": "未提取到考点条目（行文本均需 ≥6 字）"}
+    subj = subject or "未分类"
+    return {"mode": "flat", "subject": subj,
+            "drafts": [{"subject": subj, "chapter": chapter_hint, "item": it}
+                       for it in items],
+            "note": f"按要点行提取（{len(items)} 条，归入「{chapter_hint}」章）"}
+
+
+def add_teacher_items(drafts: list[dict[str, str]]) -> dict[str, Any]:
+    """教师重点草稿 → 落库（source='teacher'，幂等 IDOR 更新）。返回统计。"""
+    dbs.migrate()
+    added = 0
+    subjects: set[str] = set()
+    chapters: set[str] = set()
+    with dbs.tx(write=True) as cur:
+        for d in drafts:
+            subj = (d.get("subject") or "未分类").strip()
+            chap = (d.get("chapter") or "教师重点").strip()
+            item = (d.get("item") or "").strip()
+            if len(item) < 2:
+                continue
+            rec = {"id": _row_id(subj, chap, item, "item", "teacher"),
+                   "subject": subj, "chapter": chap, "kind": "item",
+                   "item": item, "weight": 1.0, "source": "teacher",
+                   "created_at": _now()}
+            exists = cur.execute("SELECT 1 FROM syllabus_items WHERE id=?",
+                                 (rec["id"],)).fetchone()
+            dbs.put_row(cur, "syllabus_items", rec,
+                        ("subject", "chapter", "kind", "item", "weight", "source"))
+            if not exists:
+                added += 1
+            subjects.add(subj)
+            chapters.add(chap)
+    return {"added": added, "total": len(drafts),
+            "subjects": sorted(subjects), "chapters": len(chapters)}
+
+
+def import_teacher_file(path: str | Path, subject: str = "",
+                        chapter_hint: str = "教师重点") -> dict[str, Any]:
+    """教师重点文件（PDF 文本层 / DOCX / MD / TXT）→ 自动处理全流程（零 LLM）。
+
+    文本抽取 → ``import_teacher_text`` 两档解析（结构化/要点行）→ ``add_teacher_items`` 幂等入库。
+    返回 ``{mode, subject, added, total, drafts, note, error?}``；扫描件 PDF 等抽取失败时
+    mode='error'（不落库，note 携带可读提示）。
+    """
+    from .extract import ExtractError, extract_text
+    try:
+        blocks = extract_text(Path(path))
+    except ExtractError as e:
+        return {"mode": "error", "subject": subject, "drafts": [],
+                "added": 0, "total": 0, "note": str(e), "error": True}
+    text = "\n".join(b.get("text", "") for b in blocks)
+    parsed = import_teacher_text(text, subject, chapter_hint)
+    base: dict[str, Any] = {"mode": parsed["mode"], "subject": parsed["subject"],
+                            "drafts": parsed["drafts"], "note": parsed["note"]}
+    if parsed["mode"] == "none":
+        base.update(added=0, total=0)
+        return base
+    saved = add_teacher_items(parsed["drafts"])
+    base["added"] = saved["added"]
+    base["total"] = saved["total"]
+    return base
 
 
 def _kp_pool() -> list[str]:

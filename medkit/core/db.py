@@ -99,7 +99,20 @@ _V3_DOWN: list[str] = [
     "DROP TABLE IF EXISTS realexam_freq",
 ]
 
-MIGRATIONS: list[int] = [1, 2, 3]  # 版本列表（只增不改）
+# v4（大纲二选一改造）：syllabus_items.source 归一 —— 历史 'paste'（用户粘贴）并入 'teacher'。
+# 二选一模型下用户自供内容统一为「教师重点」标准；data JSON 与查询列须同步更新（row_to_dict
+# 以 data 为权威，列仅作 WHERE 过滤）。此迁移幂等（仅命中仍为 paste 的行）。
+_V4_UP: list[str] = [
+    "UPDATE syllabus_items SET source='teacher', "
+    "data=json_set(data, '$.source', 'teacher') WHERE source='paste'",
+]
+
+# v4 不可精确回滚：行 id 是 sha1 哈希（不含 source 标记），无法区分「历史 paste 行」与
+# 「原生 teacher 行」。DOWN 仅恢复 user_version，数据保持归一结果——回滚兜底依赖升级前的
+# 全量自动备份（ADR-005 既有机制）。
+_V4_DOWN: list[str] = []
+
+MIGRATIONS: list[int] = [1, 2, 3, 4]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -113,6 +126,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 3:
         for stmt in _V3_UP:
+            cur.execute(stmt)
+        return
+    if ver == 4:
+        for stmt in _V4_UP:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")
@@ -129,6 +146,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 3:
         for stmt in _V3_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 4:
+        for stmt in _V4_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

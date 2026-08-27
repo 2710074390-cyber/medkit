@@ -201,6 +201,32 @@ async function sylParseConfirm() {
   document.getElementById("syl_paste_preview").innerHTML = '<div class="hint">已入库。可继续粘贴或点顶部「刷新」。</div>';
   await sylLoad();   // 等待确认后的刷新完成，避免迟到渲染覆盖后续标准切换
 }
+function sylSeedPick() {
+  document.getElementById("syl_seed_file").click();
+}
+async function sylSeedImport() {
+  // 官方大纲文件（md/txt）→ LLM 契约抽取 → source='seed' 幂等入库（一键导入）
+  const inp = document.getElementById("syl_seed_file");
+  const f = inp.files && inp.files[0];
+  inp.value = "";
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const r = await api("/api/syllabus/seed/import-file", { method: "POST", body: fd });
+    if (!r.drafts || !r.drafts.length) { toast(r.note || "未识别到条目", false); return; }
+    toast(`${r.note || "官方大纲导入"} · 入库新增 ${r.added ?? "?"} 条（共 ${r.total ?? r.drafts.length} 条，幂等）`);
+    SYL_DRAFTS = r.drafts;
+    document.getElementById("syl_paste_preview").innerHTML =
+      `<div class="hint">官方大纲草稿 ${SYL_DRAFTS.length} 条（已入库 source=seed）：</div>` +
+      SYL_DRAFTS.slice(0, 30).map(d => `<div class="syl-item">
+        <span class="learn-chip pending">${esc(d.subject || "?")}</span>
+        <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span></div>`).join("");
+  } catch (e) {
+    toast(e.message || "导入失败", false);
+  }
+  sylLoad();
+}
 async function sylReport() {
   const subject = document.getElementById("syl_subject").value || "";
   const qs = new URLSearchParams();

@@ -11,6 +11,7 @@
 - MedExplain 讲解文档 :class:`ExplainDoc`
 - MedTutor 判分回合 :class:`TutorTurn`
 - 真题考频归一 :class:`RealexamNorm`
+- 大纲结构化抽取（K3/IMP-13）:class:`SyllabusOutline`
 
 字段名与形态一律以实际提示词（medkit/prompts/*.md）与解析代码
 （medkit/agents/*.py、medkit/core/*.py）为准，不臆造。
@@ -36,6 +37,9 @@ __all__ = [
     "TutorTurn",
     "RealexamNormItem",
     "RealexamNorm",
+    "OutlineChapter",
+    "OutlineSubject",
+    "SyllabusOutline",
     "validate_or_repair",
 ]
 
@@ -272,6 +276,69 @@ class RealexamNorm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[RealexamNormItem] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- SyllabusOutline（K3/IMP-13 大纲抽取契约）
+class OutlineChapter(BaseModel):
+    """大纲一章：「章标题 + 条目列表」（条目为原文句子，去编号、去句尾句号）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = ""
+    items: list[str] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _word_name(cls, v: Any) -> str:
+        return str(v or "").strip(" \u3000\n\t。-")
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def _word_items(cls, v: Any) -> list[str]:
+        if not isinstance(v, (list, tuple)):
+            return []
+        out: list[str] = []
+        for it in v:
+            if isinstance(it, (str, int, float)):
+                s = str(it).strip(" \u3000\n\t。")
+                if s:
+                    out.append(s)
+        return out
+
+
+class OutlineSubject(BaseModel):
+    """大纲一科目：「科目名 + 章列表」（章为空的一律丢弃；科目名必填）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = ""
+    chapters: list[OutlineChapter] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _word_name(cls, v: Any) -> str:
+        return str(v or "").strip(" \u3000\n\t。-")
+
+    @model_validator(mode="after")
+    def _drop_empty_chapters(self) -> "OutlineSubject":
+        if not self.name:
+            raise ValueError("科目名不能为空")
+        self.chapters = [c for c in self.chapters if c.items]
+        return self
+
+
+class SyllabusOutline(BaseModel):
+    """大纲抽取总契约（K3/IMP-13：md → chat_json 结构化；字段与 syllabus_seed 一致）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    exam: str = ""
+    subjects: list[OutlineSubject] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _drop_empty_subjects(self) -> "SyllabusOutline":
+        self.subjects = [s for s in self.subjects if s.name and s.chapters]
+        return self
 
 
 # --------------------------------------------------------------------------- validate_or_repair

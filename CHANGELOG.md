@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **K3/IMP-13 官方大纲文件导入**：`/api/syllabus/seed/parse-file`（预览）与 `/api/syllabus/seed/import-file`（幂等入库 source='seed'）——md/txt → 按「考查内容」切 6 科逐科 `chat_json` + `OutlineSubject` 契约抽取（`core/schema.py` 新契约、`prompts/syllabus_extract.md` 提示词；`max_tokens=16000` 适配推理模型），LLM 不可用回退本地规则；spike 核验 recall 100.0% / precision 96.5% / 10 条抽样 10/10（`docs/spikes/K3_syllabus_extract.py` + `k3_out/` 记录）。
+- **大纲标准二选一（教师重点 v4）**：`/api/syllabus/teacher/import` / `teacher/import-file`（PDF 文本层/DOCX/MD/TXT → 两档解析：章/条目结构化 ↔ 要点行 flat，零 LLM，幂等入库 source='teacher'）；迁移 v4：历史 `source='paste'` 归一为 `'teacher'`。
+
+### Fixed
+
+- **NX-02**：FTS `fts_tokens` 在 jieba 缺失/词典损坏时不再抛错，回退 bigram 兜底（打包环境健壮性）。
+
 ### Changed
 
 - 仓库整理：S1 审查全套（2026-08-27 需求审查/前端审查/结构化执行方案/工程审查改进指南 + 3 张截图）归档至 `docs/reviews/s1-2026-08-27/`；v05~v07 历史设计规格归档至 `docs/archive/design-specs/`；README 文档引用同步；`.workbuddy-ai/` 移出版本库并加入 `.gitignore`；清理 pytest/ruff 缓存与构建产物。

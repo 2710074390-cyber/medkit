@@ -15,9 +15,12 @@ from pydantic import ValidationError
 
 from medkit.core.llm import LLMClient, LLMError
 from medkit.core.schema import (
+    OutlineChapter,
+    OutlineSubject,
     QcVerdict,
     QuestionItem,
     RealexamNorm,
+    SyllabusOutline,
     TutorTurn,
     validate_or_repair,
 )
@@ -240,3 +243,40 @@ def test_chat_json_no_schema_returns_raw():
     client = _make_client(json.dumps({"questions": [{"question": "题"}]}))
     out = client.chat_json([{"role": "user", "content": "hi"}])
     assert isinstance(out, dict) and out["questions"][0]["question"] == "题"
+
+
+# ------------------------------------------------------------------ SyllabusOutline（K3/IMP-13 大纲抽取契约）
+def test_syllabus_outline_valid_and_slim():
+    # 空章 / 空科目（无章）/ 空条目一律剔除；name 去首尾噪声。
+    o = SyllabusOutline.model_validate({
+        "exam": "306", "subjects": [
+            {"name": "生理学", "chapters": [
+                {"name": "绪论", "items": ["体液及其组成。", "  "]},
+                {"name": "空章", "items": []},
+            ]},
+            {"name": "无章科目", "chapters": []},
+        ]})
+    assert len(o.subjects) == 1
+    s = o.subjects[0]
+    assert s.name == "生理学" and len(s.chapters) == 1
+    assert s.chapters[0].name == "绪论" and s.chapters[0].items == ["体液及其组成"]
+
+
+def test_syllabus_outline_rejects_blank_name_subject():
+    # 科目名必填（逐科契约：空白科目名按抽取失败处理，不静默丢弃）。
+    with pytest.raises(ValidationError):
+        SyllabusOutline.model_validate({"subjects": [
+            {"name": "  ", "chapters": [{"name": "x", "items": ["i"]}]}]})
+
+
+def test_outline_subject_requires_name():
+    with pytest.raises(ValidationError):
+        OutlineSubject.model_validate({"name": " ", "chapters": [{"name": "x", "items": ["i"]}]})
+
+
+def test_outline_chapter_tolerant_types():
+    # items 容错：非数组视为空；数组内非 str/int/float 丢弃；条目去首尾空白与句号。
+    ch = OutlineChapter.model_validate({"name": "（一）绪论", "items": ["条目一。", 7, None, "  "]})
+    assert ch.name == "（一）绪论" and ch.items == ["条目一", "7"]
+    empty = OutlineChapter.model_validate({"name": "x", "items": None})
+    assert empty.items == []

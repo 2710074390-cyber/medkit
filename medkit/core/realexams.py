@@ -31,7 +31,7 @@ def _row_id(subject: str, chapter: str, item: str) -> str:
 
 
 def _dictionary() -> list[dict[str, str]]:
-    """词典：大纲条目（含所属章/科目）——来自 syllabus_items kind=item（seed+teacher+paste）。"""
+    """词典：大纲条目（含所属章/科目）——来自 syllabus_items kind=item（seed + teacher，二选一模型）。"""
     with dbs.tx(write=True) as cur:
         rows = dbs.list_rows(cur, "syllabus_items",
                              "WHERE kind='item' AND item != ''")

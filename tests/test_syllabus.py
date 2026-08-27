@@ -96,20 +96,22 @@ def test_coverage_pending_covered_mastered(subject_seed):
 def test_confirm_upsert_and_replace(subject_seed):
     from medkit.routers.syllabus import ConfirmBody, ConfirmItem
     body = ConfirmBody(items=[ConfirmItem(subject="内科学", chapter="呼吸系统疾病",
-                                          item="支气管哮喘（粘贴）")])
+                                          item="支气管哮喘（教师）")])
     r = syl_confirm_helper(body)
     assert r["added"] == 1
     cov = syl.coverage("内科学")
     assert cov["totals"]["items"] == 4 and cov["totals"]["pending"] == 4
     # 重复确认不重复加
     assert syl_confirm_helper(body)["added"] == 0
-    # replace 订正（删旧 ch 全部条目重新插入）
+    # replace 订正（v4：仅删该章 teacher 行，seed 行不受影响）
     body2 = ConfirmBody(items=[ConfirmItem(subject="内科学", chapter="呼吸系统疾病",
                                            item="COPD")], replace=True)
     r2 = syl_confirm_helper(body2)
     assert r2["replaced_rows"] > 0
-    cov = syl.coverage("内科学")
-    assert cov["totals"]["items"] == 1 and cov["totals"]["pending"] == 1
+    cov_all = syl.coverage("内科学")
+    assert cov_all["totals"]["items"] == 4      # 3 seed + 1 teacher
+    cov_t = syl.coverage("内科学", "teacher")
+    assert cov_t["totals"]["items"] == 1 and cov_t["totals"]["pending"] == 1
 
 
 def syl_confirm_helper(body):
@@ -129,8 +131,11 @@ def test_router_tree_and_report_api(subject_seed):
     assert r2.status_code == 200 and r2.json()["totals"]["items"] == 3
     r3 = c.get("/api/syllabus/report", params={"subject": "内科学"})
     assert "肺通气" in r3.json()["markdown"] and "未覆盖" in r3.json()["markdown"]
-    r4 = c.post("/api/syllabus/parse", json={"text": "一、消化系统\n1、食管癌", "subject": "内科学"})
-    assert r4.status_code == 200 and r4.json()["drafts"][0]["chapter"] == "消化系统"
+    r4 = c.post("/api/syllabus/parse", json={"text": "一、呼吸系统\n1、肺通气\n2、肺换气",
+                                             "subject": "内科学"})
+    assert r4.status_code == 200 and r4.json()["mode"] == "structured"
+    assert r4.json()["drafts"][0]["chapter"] == "呼吸系统"
+    assert r4.json()["drafts"][0]["item"] == "肺通气"
 
 
 # ---------------------------------------------------------------- 教师重点为纲（域内默认标准）
@@ -225,3 +230,102 @@ def test_route_import_file(tmp_path, monkeypatch):
     r = c.post("/api/library/mistakes/import-file",
                files={"file": ("错题.csv", csv_text.encode("utf-8"), "text/csv")})
     assert r.status_code == 200 and r.json()["added"] == 2
+
+
+# ---------------------------------------------------------------- K3/IMP-13：官方大纲文件输入路径 + 契约抽取
+def test_split_subjects_anchor_and_md_headers():
+    # 「考查内容」锚点 + Markdown 标题前缀都识别；锚点前的非考点文本不参与。
+    text = ("# 大纲\n\n## 第四部分 考查内容\n### 一、生理学\n#### （一）绪论\n\n体液及其组成。\n"
+            "### 二、生物化学\n#### （一）生物大分子\n\n氨基酸结构。\n")
+    subs = syl.split_subjects(text)
+    assert [n for n, _ in subs] == ["生理学", "生物化学"]
+    assert "体液及其组成。" in subs[0][1]
+    assert "第四部分" not in subs[0][1] and "考查内容" not in subs[0][1]
+
+
+def test_extract_outline_fake_client_merge_and_errors():
+    # 一科契约成功、一科异常 → 合并成功科 + errors 记录（不整体失败）。
+    class FakeClient:
+        def __init__(self):
+            self.n = 0
+
+        def chat_json(self, messages, **kw):
+            self.n += 1
+            from medkit.core.schema import OutlineSubject
+            if self.n == 2:
+                return OutlineSubject.model_validate(
+                    {"name": "生物化学", "chapters": [{"name": "生物大分子", "items": ["氨基酸结构"]}]})
+            raise RuntimeError("boom")
+
+    text = ("考查内容\n一、生理学\n绪论\n体液。\n二、生物化学\n生物大分子\n氨基酸结构。\n")
+    out = syl.extract_outline(text, client=FakeClient())
+    assert out is not None
+    assert [s["name"] for s in out["subjects"]] == ["生物化学"]
+    assert any("生理学" in e for e in out["errors"])
+    # 全部失败 → None（调用方走本地规则兜底）
+    class FailClient:
+        def chat_json(self, messages, **kw):
+            raise RuntimeError("boom")
+
+    assert syl.extract_outline(text, client=FailClient()) is None
+
+
+def test_outline_drafts_shape():
+    outline = {"exam": "306", "subjects": [
+        {"name": "生理学", "chapters": [
+            {"name": "绪论", "items": ["体液", "稳态"]}]}]}
+    drafts = syl.outline_drafts(outline)
+    assert drafts == [{"subject": "生理学", "chapter": "绪论", "item": "体液"},
+                      {"subject": "生理学", "chapter": "绪论", "item": "稳态"}]
+
+
+def test_add_seed_items_idempotent():
+    r1 = syl.add_seed_items([{"subject": "生理学", "chapter": "绪论", "item": "体液"}])
+    assert r1["added"] == 1 and r1["total"] == 1 and r1["subjects"] == ["生理学"]
+    r2 = syl.add_seed_items([{"subject": "生理学", "chapter": "绪论", "item": "体液"}])
+    assert r2["added"] == 0  # 幂等
+    cov = syl.coverage("生理学", "seed")
+    assert cov["totals"]["items"] == 1
+
+
+def test_route_seed_parse_file_llm_path(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    outline = {"exam": "306", "subjects": [
+        {"name": "内科学", "chapters": [{"name": "呼吸", "items": ["肺通气", "肺炎"]}]}]}
+    monkeypatch.setattr(syl, "extract_outline", lambda text, **kw: outline)
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    r = c.post("/api/syllabus/seed/parse-file",
+               files={"file": ("大纲.md", "# 306\n\n考查内容\n".encode("utf-8"), "text/markdown")})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["mode"] == "llm" and j["count"] == 2
+    assert j["drafts"][0] == {"subject": "内科学", "chapter": "呼吸", "item": "肺通气"}
+
+
+def test_route_seed_import_file_persists(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    outline = {"exam": "306", "subjects": [
+        {"name": "内科学", "chapters": [{"name": "呼吸", "items": ["肺通气"]}]}]}
+    monkeypatch.setattr(syl, "extract_outline", lambda text, **kw: outline)
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    r = c.post("/api/syllabus/seed/import-file",
+               files={"file": ("大纲.md", "考查内容\n一、内科学\n".encode("utf-8"), "text/markdown")})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["source"] == "seed" and j["added"] == 1
+    cov = syl.coverage("内科学", "seed")
+    assert cov["totals"]["items"] == 1
+
+
+def test_route_seed_parse_file_rejects_bad_ext():
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    r = c.post("/api/syllabus/seed/parse-file",
+               files={"file": ("大纲.pdf", b"x", "application/pdf")})
+    assert r.status_code == 400
