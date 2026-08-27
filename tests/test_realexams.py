@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from freezegun import freeze_time
 
 from medkit.core import gap as gap_mod
 from medkit.core import library as lib
@@ -97,6 +98,7 @@ def test_plan_allocation_cap_and_total():
     assert gap_mod.plan("", count=30, kps=weak)["plan"] == []
 
 
+@freeze_time("2026-08-27T12:00:00")   # IMP-09：24h 幂等窗冻结墙钟，任意日期跑都稳定
 def test_pick_and_recent(tmp_path, monkeypatch):
     from medkit.core import config as cfg
     proj_root = tmp_path / "projects"

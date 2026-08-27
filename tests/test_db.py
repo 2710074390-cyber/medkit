@@ -30,6 +30,7 @@ def _tables() -> set[str]:
     return {r[0] for r in rows}
 
 
+@pytest.mark.migration
 def test_migrate_creates_schema_and_version(iso):
     target = db.MIGRATIONS[-1]
     assert db.migrate() == target
@@ -40,6 +41,7 @@ def test_migrate_creates_schema_and_version(iso):
     assert db.migrate() == target
 
 
+@pytest.mark.migration
 def test_migrate_backs_up_existing_library(iso):
     (iso / "mistakes.json").write_text(json.dumps([], ensure_ascii=False), encoding="utf-8")
     (iso / "knowledge.json").write_text(json.dumps([], ensure_ascii=False), encoding="utf-8")
@@ -49,6 +51,7 @@ def test_migrate_backs_up_existing_library(iso):
     assert all(b.name.endswith(".bak") for b in baks)
 
 
+@pytest.mark.migration
 def test_downgrade_rollback(iso):
     target = db.MIGRATIONS[-1]
     assert db.migrate() == target
@@ -102,6 +105,7 @@ def test_concurrent_writes_no_lost_update(iso):
         assert cur.execute("SELECT ev FROM cnt").fetchone()[0] == 100
 
 
+@pytest.mark.migration
 def test_import_idempotent_and_renames(iso):
     db.migrate()
     recs = [{"id": "m1", "subject": "儿科", "question": "患儿 3 岁发热？"},
@@ -134,6 +138,7 @@ def test_import_idempotent_and_renames(iso):
         assert len(db.list_rows(cur, "mistakes")) == 2
 
 
+@pytest.mark.migration
 def test_import_rejects_missing_ids(iso):
     db.migrate()
     (iso / "mistakes.json").write_text(

@@ -15,3 +15,7 @@ testpaths = ["tests"]
 # P2#14：测试级超时兜底，避免 CI 上偶发挂起拖垮整个 job
 timeout = 300
 timeout_method = "thread"
+markers = [
+    # IMP-10：存储迁移升级/回滚/导入幂等测试（CI 单独跑 -m migration）
+    "migration: 存储迁移升级/回滚/备份/JSON 幂等导入测试",
+]

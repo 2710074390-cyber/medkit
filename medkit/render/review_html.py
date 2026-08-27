@@ -154,9 +154,13 @@ def _augment(body: str) -> str:
         return f"{hid}-{n}" if n > 1 else hid
 
     def _replace_heading(m: re.Match) -> str:
-        level, inner = m.group(1), m.group(2)
+        level = int(m.group(1))
+        # IMP-08：页面外壳提供唯一 h1（标题）；正文 md 的 h1 降为 h2，避免跳级/重复 h1
+        if level == 1:
+            level = 2
+        inner = m.group(2)
         hid = _uniq(_anchor_slug(inner))
-        toc.append((level, hid, inner))
+        toc.append((str(level), hid, inner))
         return f'<h{level} id="{hid}">{inner}</h{level}>'
 
     if _HEADING_RE.search(body):
@@ -166,7 +170,7 @@ def _augment(body: str) -> str:
             for lvl, hid, txt in toc
         )
         toc_block = (f'<details class="toc"><summary>目录（{len(toc)}）</summary>'
-                     f"<nav><ul>{items}</ul></nav></details>")
+                     f'<nav aria-label="目录"><ul>{items}</ul></nav></details>')
         body = toc_block + body
 
     return _TABLE_RE.sub(lambda m: '<div class="tw">' + m.group(0) + "</div>", body)
@@ -224,7 +228,7 @@ blockquote{{border-left:3px solid var(--acc);padding:6px 14px;margin:10px 0;colo
   <button onclick="rfFont(1)" title="增大字号">A＋</button>
   <button onclick="rfFont(0)" title="恢复默认字号">默认</button>
 </div>
-<main>{body}</main>
+<main><h1>{html_mod.escape(title)}</h1>{body}</main>
 <button class="rfup" id="rfup" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
 {THEME_BTN}
 {THEME_SCRIPT}

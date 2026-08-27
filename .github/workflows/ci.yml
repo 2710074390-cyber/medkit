@@ -30,3 +30,10 @@ jobs:
       - name: Test
         # --timeout 兜底；CLI 显式传入以便在 pyproject 配置之外可覆盖
         run: python -m pytest -q --timeout=300
+      - name: Migration tests (IMP-10)
+        run: python -m pytest -q -m migration
+      - name: Dependency integrity (IMP-10)
+        run: pip check
+      # 注：tests/browser（Playwright 浏览器层）是本地闸门，CI 暂不跑——
+      # CI 运行时无 chromium，跑该层会卡死/拖垮整个 job；本地用 `verify.cmd` 覆盖，
+      # 无浏览器环境用 `SKIP_BROWSER=1` 旁路。

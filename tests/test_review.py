@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from freezegun import freeze_time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -72,6 +73,7 @@ def test_enqueue_idempotent(isolated):
     assert len(rev.list_cards()) == 2
 
 
+@freeze_time("2026-08-27T10:00:00")
 def test_today_and_stats(isolated):
     rev.enqueue("a", "儿科学")
     rev.enqueue("b", "儿科学")
@@ -87,6 +89,7 @@ def test_today_and_stats(isolated):
 
 
 # ---------------------------------------------------------------- 路由（TestClient，纯本地）
+@freeze_time("2026-08-27T10:00:00")
 def test_router_review_flow(isolated):
     lib.add_mistake({"question": "q",
                      "know_tags": ["支气管肺炎首选治疗"], "subject": "儿科学"})
@@ -117,6 +120,7 @@ def test_router_review_flow(isolated):
                   json={"card_id": "nope", "quality": 3}).status_code == 404
 
 
+@freeze_time("2026-08-27T10:00:00")
 def test_router_review_grade_writes_back_mastery(isolated):
     lib.add_mistake({"question": "q",
                      "know_tags": ["支气管肺炎首选治疗"], "subject": "儿科学"})

@@ -34,14 +34,17 @@ button.mini,.mini{background:var(--card);border:1px solid var(--line);color:var(
 
 # 标准明暗切换按钮（固定右上角）
 THEME_BTN = """\
-<button class="mini" style="position:fixed;top:12px;right:12px;z-index:9;font-size:14px;padding:4px 12px;background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;cursor:pointer" onclick="toggleTheme()" title="切换亮/暗主题">🌓</button>"""
+<button id="themeBtn" class="mini" style="position:fixed;top:12px;right:12px;z-index:9;font-size:14px;padding:4px 12px;background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;cursor:pointer" onclick="toggleTheme()" title="切换亮/暗主题" aria-label="切换亮暗主题" aria-pressed="false">🌓</button>"""
 
 # 明暗切换脚本（localStorage 全容错：隐私模式不中断）
 THEME_SCRIPT = """\
 <script>
 try{if(localStorage.getItem("medkit-theme")==="light")document.documentElement.dataset.theme="light";}catch(e){}
 function toggleTheme(){const cur=document.documentElement.dataset.theme==="light"?"dark":"light";
-document.documentElement.dataset.theme=cur;try{localStorage.setItem("medkit-theme",cur);}catch(e){}}
+document.documentElement.dataset.theme=cur;try{localStorage.setItem("medkit-theme",cur);}catch(e){}applyThemeBtn();}
+function applyThemeBtn(){const b=document.getElementById("themeBtn");
+  if(b)b.setAttribute("aria-pressed",document.documentElement.dataset.theme==="light"?"true":"false");}
+applyThemeBtn();
 </script>"""
 
 # 打印基线：白底黑字 + 隐藏交互控件（各页可在 print 规则后追加自己的细化）

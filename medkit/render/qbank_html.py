@@ -411,15 +411,18 @@ function render(){{
     if(q.media) h+=q.media;
     h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(TL[q.type]||q.type)+'</span>'
       +'<span class="tag b">'+esc(q.bloom)+'</span> <b>'+(i+1)+'.</b> '+esc(q.question)+'</p>';
+    h+='<fieldset class="optfs"><legend class="sr">第 '+(i+1)+' 题选项</legend>';
     q.options.forEach((o,j)=>{{
       const t=q.type==="X"?"checkbox":"radio";
-      h+='<label class="opt"><input type="'+t+'" name="q'+i+'" value="'+LETTERS[j]+'"> '
+      const oid='oid'+i+'_'+LETTERS[j];
+      h+='<label class="opt" for="'+oid+'"><input type="'+t+'" id="'+oid+'" name="q'+i+'" value="'+LETTERS[j]+'"> '
         +LETTERS[j]+' · '+esc(o)+'</label>';
     }});
+    h+='</fieldset>';
     h+='<button class="mark gray mini" onclick="mark('+i+')">旗</button></div>';
   }});
   h+='<div class="btns"><button class="act" onclick="grade()">提交判分</button>'
-     +'<button class="gray" onclick="resetAll()">清空重做</button></div><div id="res"></div>';
+     +'<button class="gray" onclick="resetAll()">清空重做</button></div><div id="res" role="status" aria-live="polite" tabindex="-1"></div>';
   box.innerHTML=h;
   paintAnswers();
   buildGrid();
@@ -484,7 +487,7 @@ function buildGrid(){{
   QUESTIONS.forEach((q,i)=>{{
     const a=st.answers&&st.answers[i];
     const tip='第 '+(i+1)+' 题 · '+(a?'已答':'未答')+(st.marked===i?' · 已标记':'');
-    h+='<span class="cell'+(a?' done':'')+(st.marked===i?' mk':'')+'" title="'+tip+'" onclick="jump('+i+')">'+(i+1)+'</span>';
+    h+='<span class="cell'+(a?' done':'')+(st.marked===i?' mk':'')+'" title="'+tip+'" aria-label="'+tip+'" role="button" tabindex="0" onclick="jump('+i+')">'+(i+1)+'</span>';
   }});
   g.innerHTML=h;
 }}
@@ -541,6 +544,12 @@ function grade(){{
     (wrong.length?'<button class="gray" onclick="syncWrong()">同步错题到错题本</button>':'')+
     '<button class="gray" onclick="resetAll()">重新作答</button>'+
     '<div class="hint">作答已锁定（防止判分后误改）；如需重做请点「重新作答」或「清空重做」。</div>';
+  // IMP-08：判分结果对读屏可达（role=status 已声明）+ 滚动并聚焦到结果
+  const resEl=document.getElementById('res');
+  if(resEl){{
+    resEl.scrollIntoView({{behavior:'smooth',block:'nearest'}});
+    try{{resEl.focus({{preventScroll:true}});}}catch(e){{}}
+  }}
   // 锁定作答：判分后禁用输入，避免改答案与判分结果不一致
   document.querySelectorAll('#quiz input').forEach(x=>x.disabled=true);
   document.querySelectorAll('#quiz .q').forEach(d=>d.classList.add('judged'));
@@ -599,6 +608,18 @@ function banner(text,ok){{
   b._t=setTimeout(()=>{{ if(b) b.remove(); }}, 6000);
 }}
 
+/* IMP-12④：同步失败提示条附「重试」按钮（syncWrong 幂等，防误以为错题已回流） */
+function bannerRetry(text){{
+  const box=document.getElementById('quiz');
+  if(!box) return;
+  let b=document.getElementById('banner');
+  if(!b){{ b=document.createElement('div'); b.id='banner'; box.insertBefore(b, box.firstChild); }}
+  b.className='banner bad';
+  b.innerHTML=esc(text)+' <button class="mini" style="margin-left:8px;background:var(--card)" onclick="syncWrong()">重试 ↻</button>';
+  clearTimeout(b._t);
+  b._t=setTimeout(()=>{{ if(b) b.remove(); }}, 8000);
+}}
+
 async function syncWrong(){{
   const items=Object.values(WRONG_POOL);
   if(!items.length){{ banner("没有可同步的错题，请先「提交判分」",false); return; }}
@@ -608,9 +629,9 @@ async function syncWrong(){{
       body:JSON.stringify({{pid:PAPER_PID, questions:items}})
     }});
     const j=await r.json().catch(()=>({{}}));
-    if(!r.ok){{ banner("同步失败："+(j.detail||r.status),false); return; }}
+    if(!r.ok){{ bannerRetry("同步失败："+(j.detail||r.status)); return; }}
     banner("已同步 "+j.added+" 道错题到「学习中心 → 错题本」（重复题自动去重）",true);
-  }}catch(e){{ banner("同步失败："+e.message,false); }}
+  }}catch(e){{ bannerRetry("同步失败："+e.message); }}
 }}
 
 const T0=(loadState()||{{}}).t0||Date.now();
@@ -621,6 +642,12 @@ function tick(){{secs=Math.floor((Date.now()-T0)/1000);
   if(el) el.textContent='⏱ '+m+':'+(s<10?'0':'')+s;}}
 setInterval(tick,1000); tick();
 document.addEventListener('input',e=>{{if(e.target.matches('.opt input'))collectAnswers();}});
+/* IMP-08：答题卡格子可键盘激活（Enter/Space） */
+function gridKeys(e){{const c=e.target;
+  if((e.key==='Enter'||e.key===' ')&&c.classList&&c.classList.contains('cell')){{
+    e.preventDefault(); jump(parseInt(c.textContent,10)-1);
+  }}}}
+document.addEventListener('keydown',gridKeys);
 render();
 </script>""", extras="paper")
 
@@ -653,6 +680,8 @@ details.q .qs:hover{color:var(--acc)}
 .opt.right{border-color:var(--good);background:rgba(52,211,153,.12)}
 .opt.wrong{border-color:var(--bad);background:rgba(248,113,113,.12)}
 .opt.miss{border-color:var(--miss);background:rgba(251,191,36,.10)}
+.optfs{border:none;padding:0;margin:0;min-width:0}
+.sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .q.judged .opt{cursor:default}
 .q.judged .opt input{opacity:.85}
 .mark{float:right;font-size:11px}

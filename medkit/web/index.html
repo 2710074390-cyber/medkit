@@ -24,7 +24,7 @@
   :root[data-theme=light]{
     --bg1:#ffffff; --bg2:#ffffff; --card:#ffffff; --card2:#f5f5f5;
     --line:#e5e5e5; --accent:#171717; --accent2:#171717; --good:#16a34a;
-    --warn:#b45309; --bad:#dc2626; --text:#0a0a0a; --dim:#737373;
+    --warn:#b45309; --bad:#dc2626; --text:#0a0a0a; --dim:#6a6a6a;   /* IMP-08 对比度：4.35→4.96:1（card2 上） */
     --link:#2563eb;
     --info:#2563eb; --infobg:rgba(37,99,235,.08);
     --card3:#ececec;
@@ -50,6 +50,7 @@
   .sidelogo h1{font-size:17px;font-weight:700;letter-spacing:.2px;line-height:1.2}
   .sidelogo p{font-size:11px;color:var(--dim);margin-top:3px}
   aside.side nav{display:flex;flex-direction:column;gap:2px;padding:10px 10px}
+  .tabs{display:flex;flex-direction:column;gap:2px}
   aside.side nav button{
     background:none;border:none;color:var(--dim);
     padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;font-family:inherit;
@@ -80,6 +81,11 @@
     background:#e5484d;box-shadow:0 0 0 1.5px var(--navbg)}
   .ic{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
   main{flex:1;min-width:0;padding:0 36px 60px;max-width:1000px;margin:0 auto;width:100%}
+  /* IMP-08：skip link —— 键盘用户一键跳到主内容（聚焦时可见） */
+  a.skip{position:absolute;left:-9999px;top:0;background:var(--accent);color:var(--onaccent);
+    padding:9px 16px;border-radius:0 0 9px 0;font-size:13px;font-weight:600;z-index:99;
+    text-decoration:none;outline:2px solid var(--accent2)}
+  a.skip:focus{left:0}
   .ptitle{font-size:17px;font-weight:600;padding:30px 0 4px}
   .psub{font-size:12.5px;color:var(--dim);margin-bottom:6px}
   .panel{display:none}
@@ -491,6 +497,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">跳到主内容</a>
 <svg style="display:none" xmlns="http://www.w3.org/2000/svg">
   <symbol id="i-conn" viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M4 17h16M6 7h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/></symbol>
   <symbol id="i-proj" viewBox="0 0 24 24"><path d="M4 5h5l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M12 11v6M9 14h6"/></symbol>
@@ -514,12 +521,14 @@
     <p>本地医学题库工坊</p>
     <svg class="ic logoicon" style="display:none"><use href="#i-learn"></use></svg>
   </div>
-  <nav>
-    <button data-tab="conn" class="active" title="连接服务商（Ctrl+1）"><svg class="ic"><use href="#i-conn"></use></svg><span>连接服务商</span></button>
-    <button data-tab="proj" title="新建课题（Ctrl+2）"><svg class="ic"><use href="#i-proj"></use></svg><span>新建课题</span></button>
-    <button data-tab="mine" title="我的项目（Ctrl+3）"><svg class="ic"><use href="#i-mine"></use></svg><span>我的项目</span></button>
-    <button data-tab="learn" title="学习中心（Ctrl+4）"><svg class="ic"><use href="#i-learn"></use></svg><span>学习中心</span></button>
-    <button data-tab="prompts" title="提示词与规则（Ctrl+5）"><svg class="ic"><use href="#i-doc"></use></svg><span>提示词与规则</span></button>
+  <nav aria-label="主导航">
+    <div role="tablist" aria-label="主导航" class="tabs">
+      <button data-tab="conn" class="active" role="tab" aria-selected="true" aria-controls="tab-conn" title="连接服务商（Ctrl+1）"><svg class="ic"><use href="#i-conn"></use></svg><span>连接服务商</span></button>
+      <button data-tab="proj" role="tab" aria-selected="false" aria-controls="tab-proj" title="新建课题（Ctrl+2）"><svg class="ic"><use href="#i-proj"></use></svg><span>新建课题</span></button>
+      <button data-tab="mine" role="tab" aria-selected="false" aria-controls="tab-mine" title="我的项目（Ctrl+3）"><svg class="ic"><use href="#i-mine"></use></svg><span>我的项目</span></button>
+      <button data-tab="learn" role="tab" aria-selected="false" aria-controls="tab-learn" title="学习中心（Ctrl+4）"><svg class="ic"><use href="#i-learn"></use></svg><span>学习中心</span></button>
+      <button data-tab="prompts" role="tab" aria-selected="false" aria-controls="tab-prompts" title="提示词与规则（Ctrl+5）"><svg class="ic"><use href="#i-doc"></use></svg><span>提示词与规则</span></button>
+    </div>
     <div class="navsep" role="separator"></div>
     <a class="navext" href="https://med-review-site.pages.dev/#reviews" target="_blank" rel="noopener"
        title="题库与复习手册产物合集(在线答题 / 题库 PDF / 复习手册)">
@@ -537,7 +546,7 @@
     <span class="v" id="side_ver" title="检查更新" role="button" tabindex="0">v0.5</span>
   </div>
 </aside>
-<main>
+<main id="main" tabindex="-1">
   <!-- 连接服务商 -->
   <section id="tab-conn" class="panel show">
     <h1 class="ptitle"><svg class="ic"><use href="#i-conn"></use></svg>连接服务商</h1>
@@ -906,6 +915,9 @@
       .rv-legend{font-size:11px;margin-top:5px}
       .rv-hint{margin-top:9px;border:1px solid var(--line);border-radius:9px;padding:7px 11px;background:var(--reqbg)}
       .rv-hint summary{font-size:12.5px;color:var(--info)}
+      details.rex-fold{margin-top:8px;border:1px solid var(--line);border-radius:9px;
+        padding:8px 12px;background:var(--reqbg)}
+      details.rex-fold summary{font-size:12.5px;color:var(--info);cursor:pointer}
       .rv-hintbody{margin-top:8px}
       .rv-slice{margin:6px 0;padding:8px 11px;background:var(--card3);border-radius:8px;font-size:12.5px;line-height:1.75}
       .rv-slice b{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px}
@@ -916,12 +928,12 @@
 
     <!-- v0.7 子导航：一屏一任务（概览/错题本/讲解产物/提问学习/复习计划） -->
     <nav class="learnnav" id="learnnav" role="tablist" aria-label="学习中心分栏">
-      <button data-lv="overview" class="on" role="tab" aria-selected="true"><svg class="ic"><use href="#i-target"></use></svg>概览<span class="nb" id="nb_overview"></span></button>
-      <button data-lv="mistakes" role="tab" aria-selected="false"><svg class="ic"><use href="#i-paper"></use></svg>错题本<span class="nb" id="nb_mistakes"></span></button>
-      <button data-lv="explain" role="tab" aria-selected="false"><svg class="ic"><use href="#i-book"></use></svg>讲解产物<span class="nb" id="nb_explain"></span></button>
-      <button data-lv="tutor" role="tab" aria-selected="false"><svg class="ic"><use href="#i-learn"></use></svg>提问学习<span class="nb" id="nb_tutor"></span></button>
-      <button data-lv="review" role="tab" aria-selected="false"><svg class="ic"><use href="#i-refresh"></use></svg>复习计划<span class="nb" id="nb_review"></span></button>
-      <button data-lv="syllabus" role="tab" aria-selected="false"><svg class="ic"><use href="#i-target"></use></svg>大纲覆盖<span class="nb" id="nb_syllabus"></span></button>
+      <button data-lv="overview" class="on" role="tab" aria-selected="true" title="概览（Alt+1）"><svg class="ic"><use href="#i-target"></use></svg>概览<span class="nb" id="nb_overview"></span></button>
+      <button data-lv="mistakes" role="tab" aria-selected="false" title="错题本（Alt+2）"><svg class="ic"><use href="#i-paper"></use></svg>错题本<span class="nb" id="nb_mistakes"></span></button>
+      <button data-lv="explain" role="tab" aria-selected="false" title="讲解产物（Alt+3）"><svg class="ic"><use href="#i-book"></use></svg>讲解产物<span class="nb" id="nb_explain"></span></button>
+      <button data-lv="tutor" role="tab" aria-selected="false" title="提问学习（Alt+4）"><svg class="ic"><use href="#i-learn"></use></svg>提问学习<span class="nb" id="nb_tutor"></span></button>
+      <button data-lv="review" role="tab" aria-selected="false" title="复习计划（Alt+5）"><svg class="ic"><use href="#i-refresh"></use></svg>复习计划<span class="nb" id="nb_review"></span></button>
+      <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲覆盖（Alt+6）"><svg class="ic"><use href="#i-target"></use></svg>大纲覆盖<span class="nb" id="nb_syllabus"></span></button>
     </nav>
 
     <!-- 视图 1/5：概览（闭环总览 + 薄弱点诊断 + 推荐） -->
@@ -1000,6 +1012,7 @@
       <div class="hint" id="exp_cost" style="margin:6px 0"></div>
       <div id="explain_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
     </div>
+    </div>
 
     <!-- 视图 4/5：提问式学习（Socratic MedTutor） -->
     <div class="learnview" id="lv-tutor">
@@ -1060,7 +1073,7 @@
           <div style="flex:1;min-width:150px"><label>科目</label>
             <select id="syl_subject" onchange="sylRender(this.value)"><option value="">全部科目</option></select>
           </div>
-          <div style="flex:none;align-self:flex-end">
+          <div style="flex:none;min-width:0;max-width:100%;align-self:flex-end;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end">
             <button class="act" id="btn_syl_seed" onclick="sylEnsure()">导入内置大纲</button>
             <button class="act gray" onclick="sylPaste()">粘贴导入</button>
             <button class="act gray" onclick="sylReport()">导出未覆盖报告</button>
@@ -1368,6 +1381,7 @@ function showTab(name) {
     const on = x.dataset.tab === name;
     x.classList.toggle("active", on);
     if (on) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current");
+    x.setAttribute("aria-selected", on ? "true" : "false");   // IMP-08：主 tab 语义同步
   });
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
   $("tab-" + name).classList.add("show");
@@ -1415,6 +1429,34 @@ function showLearnView(name) {
 document.querySelectorAll("#learnnav button").forEach(b => {
   b.onclick = () => showLearnView(b.dataset.lv);
 });
+/* IMP-12①：学习中心子导航 Alt+1..6 直达（与主 tab Ctrl+1..5 同风格；flag 隐藏的 pill 自动跳过） */
+const LEARN_ALT_KEYS = ["overview", "mistakes", "explain", "tutor", "review", "syllabus"];
+window.addEventListener("keydown", e => {
+  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "6")) return;
+  const lv = LEARN_ALT_KEYS[+e.key - 1];
+  if (!lv) return;
+  const pill = document.querySelector('#learnnav button[data-lv="' + lv + '"]');
+  if (!pill || pill.style.display === "none") return;
+  e.preventDefault();
+  if (!$("tab-learn").classList.contains("show")) showTab("learn");
+  showLearnView(lv);
+});
+/* IMP-08：学习中心子导航 ←/→ 方向键循环（APG tab 模式；隐藏 pill 跳过） */
+(function initLearnNavKeys() {
+  const nav = document.getElementById("learnnav");
+  if (!nav) return;
+  nav.addEventListener("keydown", e => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const btns = [...nav.querySelectorAll("button")].filter(b => b.style.display !== "none");
+    if (!btns.length) return;
+    let i = btns.findIndex(b => b.classList.contains("on"));
+    if (i < 0) i = 0;
+    i = (i + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length;
+    e.preventDefault();
+    btns[i].focus();
+    showLearnView(btns[i].dataset.lv);
+  });
+})();
 (function initLearnView() {
   let v = null;
   try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
@@ -1514,9 +1556,13 @@ async function sylRender(subject) {
     </div>`;
     if (!d.chapters || !d.chapters.length) {
       const stdName = { teacher: "教师重点", seed: "官方大纲", all: "全部标准" }[SYL_STD];
-      body.innerHTML = `<div class="hint">暂无${stdName}条目 — ${SYL_STD === "teacher"
-        ? '在「新建课题」上传教师重点后自动同步；或「粘贴导入」教师重点考点清单。'
-        : SYL_STD === "seed" ? '点「导入内置大纲」加载教材/真题种子，或「粘贴导入」。' : '点「导入内置大纲」或「粘贴导入」。'}</div>`;
+      body.innerHTML = `<div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-target"></use></svg>
+        <div class="sub">暂无${stdName}条目 — ${SYL_STD === "teacher"
+          ? '在「新建课题」上传教师重点后自动同步；或先粘贴教师重点考点清单。'
+          : SYL_STD === "seed" ? '点「导入内置大纲」加载教材/真题种子，或先粘贴大纲。' : '点「导入内置大纲」或先粘贴大纲。'}</div>
+        <button class="act gray" onclick="sylPaste()">粘贴/导入大纲 →</button>
+      </div>`;
       return;
     }
     body.innerHTML = d.chapters.map(ch => {
@@ -1588,14 +1634,16 @@ async function rexAnalyze() {
     toast(`分析完成：命中 0 条（${r.stats?.unmatched ?? 0} 句未匹配）`, false);
     return;
   }
-  box.innerHTML = `<div class="hint">草稿 ${REX_DRAFTS.length} 条（来源句子 ${r.stats?.sentences} · 未命中 ${r.stats?.unmatched}）——核实后确认：</div>` +
+  // IMP-12③：草稿确认区折叠（默认收起，避免长表格把热力表挤出首屏）
+  box.innerHTML = `<details class="rex-fold" open><summary>草稿确认（${REX_DRAFTS.length} 条）</summary>
+    <div class="hint">来源句子 ${r.stats?.sentences} · 未命中 ${r.stats?.unmatched} ——核实后确认：</div>` +
     REX_DRAFTS.slice(0, 30).map((d, i) => `<div class="syl-item">
       <span class="learn-chip pending">×${d.freq}</span>
       <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")} · ${esc(d.subject || "?")}</div></span>
       <button class="act gray mini" data-skip="${i}">跳过</button></div>`).join("") +
     (REX_DRAFTS.length > 30 ? `<div class="hint">…共 ${REX_DRAFTS.length} 条（确认全部入库）</div>` : "") +
     `<div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
-     <span class="hint" style="align-self:center">未确认不进入任何推荐权重（红线）</span></div>`;
+     <span class="hint" style="align-self:center">未确认不进入任何推荐权重（红线）</span></div></details>`;
   box.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => {
     REX_DRAFTS.splice(+b.dataset.skip, 1);
     rexAnalyzeRender();
@@ -1615,7 +1663,11 @@ async function rexConfirmAll() {
   toast(`已确认 ${r.added} 条频次（可重复确认合并）`);
   REX_DRAFTS = [];
   document.getElementById("rex_drafts").innerHTML = '<div class="hint">已确认。热力表见下。</div>';
+  const fold = document.getElementById("rex_drafts").closest("details");
+  if (fold) fold.open = false;
   rexHeat();
+  // IMP-12③：确认后收起草稿并锚定到热力表
+  setTimeout(() => { const h = document.getElementById("rex_heat"); if (h) h.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, 150);
 }
 async function rexHeat() {
   const r = await api("/api/library/realexams/freq" + (rexSubject() ? "?subject=" + encodeURIComponent(rexSubject()) : ""));
@@ -1635,10 +1687,11 @@ async function rexFile(input) {
   REX_DRAFTS = r.drafts || [];
   document.getElementById("rex_text").value = `（已解析文件 ${f.name}：${r.stats?.sentences ?? 0} 句 · 命中 ${REX_DRAFTS.length} 条）`;
   const box = document.getElementById("rex_drafts");
-  box.innerHTML = REX_DRAFTS.length ? `<div class="hint">文件草稿 ${REX_DRAFTS.length} 条——核实后确认：</div>
+  box.innerHTML = REX_DRAFTS.length ? `<details class="rex-fold" open><summary>草稿确认（${REX_DRAFTS.length} 条）</summary>
+    <div class="hint">文件草稿——核实后确认：</div>
     ${REX_DRAFTS.slice(0, 30).map(d => `<div class="syl-item"><span class="learn-chip pending">×${d.freq}</span>
       <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter)}</div></span></div>`).join("")}
-    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button></div>`
+    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button></div></details>`
     : `<div class="hint">文件解析命中 0 条。</div>`;
   input.value = "";
 }
