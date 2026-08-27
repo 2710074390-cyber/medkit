@@ -1,3 +1,5 @@
 # 开发/测试依赖（运行与打包无需）：pip install -r requirements-dev.txt
 pytest>=8
 pytest-timeout>=2
+playwright>=1.44   # IMP-05 浏览器测试基座；装依赖后还需 `playwright install chromium`（缺浏览器时用例自动 skip）
+freezegun>=1.5     # IMP-09：时间相关测试时钟冻结（SM-2 due / 24h 幂等窗 / 掌握度衰减）

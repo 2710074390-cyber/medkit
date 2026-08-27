@@ -44,6 +44,9 @@ python run_medkit.py        # 或双击 start.bat
 # 浏览器打开 http://127.0.0.1:4880（4880 被占时自动回退 4881~4889）
 ```
 
+> 浏览器测试（Playwright，`verify.cmd` 第 3 步）：`pip install -r requirements-dev.txt` 后需再
+> `playwright install chromium`；无浏览器环境可设 `SKIP_BROWSER=1` 旁路该层。
+
 ## 绿色免安装版（P3）
 
 ```powershell
