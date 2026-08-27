@@ -45,6 +45,23 @@ def _store_is_sql() -> bool:
     return DB_FILE.exists()
 
 
+def _ensure_schema() -> None:
+    """NX-04：旧库（<v5，无 cards 表）按需迁移——与应用内既有按需迁移惯例一致。
+
+    仅 SQL 模式且 cards 表缺失时触发（幂等）；JSON 模式（未建库）零开销。
+    """
+    if not _store_is_sql():
+        return
+    conn = dbs.get_conn()
+    cur = conn.cursor()
+    try:
+        dbs.list_rows(cur, "cards")
+    except Exception:  # noqa: BLE001  表缺失 → 升级到 v5 后再由调用方读取
+        dbs.migrate()
+    finally:
+        cur.close()
+
+
 def _load() -> list[dict[str, Any]]:
     """读记忆卡列表；缺失/损坏 → 空（统一容错）。SQL 模式读表，JSON 模式读文件。"""
     if _store_is_sql():
@@ -92,6 +109,7 @@ def create_from_drafts(drafts: list[dict[str, Any]], subject: str, kp_name: str,
     """
     from .schema import CARD_KIND_LABELS, CardDraft
 
+    _ensure_schema()
     sched = sched if sched in ("fsrs", "sm2") else DEFAULT_SCHED
     added: list[dict[str, Any]] = []
     with _store() as st:
@@ -124,6 +142,7 @@ def create_from_drafts(drafts: list[dict[str, Any]], subject: str, kp_name: str,
 
 
 def list_cards(subject: str = "", due_only: bool = False) -> list[dict[str, Any]]:
+    _ensure_schema()
     cards = _load()
     if subject:
         cards = [c for c in cards if c.get("subject") == subject or c.get("subject") == ""]
@@ -152,6 +171,7 @@ def stats(subject: str = "") -> dict[str, int]:
 
 def grade_card(cid: str, quality: int) -> Optional[dict[str, Any]]:
     """按 quality(0~5) 推进一张记忆卡（算法 = 卡片创建时绑定的 sched）。"""
+    _ensure_schema()
     with _store() as st:
         idx = next((i for i, c in enumerate(st["cards"]) if c.get("id") == cid), None)
         if idx is None:
@@ -169,6 +189,7 @@ def grade_card(cid: str, quality: int) -> Optional[dict[str, Any]]:
 
 
 def delete_card(cid: str) -> bool:
+    _ensure_schema()
     with _store() as st:
         remains = [c for c in st["cards"] if c.get("id") != cid]
         if len(remains) == len(st["cards"]):
