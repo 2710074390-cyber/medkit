@@ -199,7 +199,7 @@ async function sylParseConfirm() {
   toast(`大纲条目入库：新增 ${r.added} 条`);
   SYL_DRAFTS = [];
   document.getElementById("syl_paste_preview").innerHTML = '<div class="hint">已入库。可继续粘贴或点顶部「刷新」。</div>';
-  sylLoad();
+  await sylLoad();   // 等待确认后的刷新完成，避免迟到渲染覆盖后续标准切换
 }
 async function sylReport() {
   const subject = document.getElementById("syl_subject").value || "";

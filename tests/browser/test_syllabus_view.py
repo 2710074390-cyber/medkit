@@ -70,8 +70,14 @@ def test_syllabus_paste_parse_confirm(page, server_url):
         timeout=15000,
     )
     page.evaluate("() => sylSetStd('all')")
-    page.wait_for_function(
-        "() => (document.getElementById('syl_body') || {innerText:''}).innerText.includes('呼吸系统')",
-        timeout=15000,
-    )
+    # 兜底：页面打开时触发的初始 sylLoad（每次新页面都会跑 sync-teacher，耗时不定）可能
+    # 迟到并以旧标准渲染覆盖 all 标准结果 → 收敛循环：未命中则重触发 setStd('all') 再等。
+    for _ in range(10):
+        txt = page.locator("#syl_body").inner_text()
+        if "呼吸系统" in txt:
+            break
+        page.evaluate("() => sylSetStd('all')")
+        page.wait_for_timeout(1000)
+    else:
+        raise AssertionError("章树未渲染出「呼吸系统」（sylLoad 竞态重试耗尽）")
     assert "呼吸系统" in page.locator("#syl_body").inner_text()
