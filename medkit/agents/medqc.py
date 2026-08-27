@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..core.schema import QcVerdict
+from ..core.schema import QcVerdict, validate_or_repair
 from . import load_prompt
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,26 @@ def _normalize_issues(raw: Any) -> list[dict[str, Any]]:
     return issues
 
 
+def _repair_verdict(client: Any, system: str, raw: Any, exc: ValidationError) -> Any:
+    """NX-03（R-2）：契约校验失败 → 把错误明细带回重发一次（ADR-003 修复-重试闭环）。
+
+    返回可再校验的 dict；重发异常/非 dict → None（调用方走 score=-1 不计分 + 人工复核）。
+    """
+    errs = [{"loc": list(e.get("loc") or []), "msg": str(e.get("msg", e))}
+            for e in exc.errors()[:10]]
+    try:
+        out = client.chat_json([
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps({
+                "notice": "你上一轮输出未满足质检报告 JSON 契约，请按契约修复后完整重发（仅 JSON）",
+                "previous_output": raw if isinstance(raw, dict) else {"raw": raw},
+                "validation_errors": errs}, ensure_ascii=False)},
+        ], temperature=0.2)
+        return out if isinstance(out, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
                    slice_by_sid: dict[str, str]) -> dict[str, Any]:
     payload = [{"q": _question_payload(q, slice_by_sid.get(q.get("sid", ""), ""))}
@@ -66,13 +86,19 @@ def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
                 {"questions": payload}, ensure_ascii=False)},
         ], temperature=0.2)
         out = out if isinstance(out, dict) else {}
-        # IMP-03：QcVerdict 契约校验（软校验——校验失败仅记告警，不回退批次。
-        # 浮点容错语义由下方 _coerce_score / _normalize_issues 保留，行为保持不变。）
-        try:
-            QcVerdict.model_validate(out)
-        except ValidationError as e:
-            first = e.errors()[0] if e.errors() else {}
-            logger.warning("MedQC 输出未通过 QcVerdict 契约：%s", first.get("msg", str(e)))
+        # NX-03（R-2 返工）：契约硬闭环——校验失败 → 带错误重发 1 次修复 → 仍失败 →
+        # score=-1 不计分 + fail 问题进人工复核（既有「score=-1 不计分」兜底语义，对齐 TutorTurn）。
+        verdict = validate_or_repair(out, QcVerdict,
+                                     lambda raw, exc: _repair_verdict(client, system, raw, exc))
+        if verdict is None:
+            return {
+                "issues": [{"q_id": "QC_CONTRACT", "code": "QC_CONTRACT", "severity": "fail",
+                            "reason": "质检输出两次未通过 QcVerdict 契约（首次+带错误重发仍失败）"
+                                      "→ score=-1 不计分，待人工复核"}],
+                "score": -1, "decision": "BLOCKED",
+                "summary": "契约校验失败（已带错误重发一次仍失败），待人工复核",
+            }
+        out = verdict.model_dump()
         issues = _normalize_issues(out.get("issues"))
         score, score_warn = _coerce_score(out.get("score"))
         if score_warn:
@@ -130,8 +156,11 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
     has_fail = any(x.get("severity") == "fail" for x in issues)
     has_warn = any(x.get("severity") == "warn" for x in issues)
     decision = "BLOCKED" if has_fail else ("PASS_WITH_FIXES" if has_warn else "PASS")
+    # NX-03：契约失败批次 score=-1 不计入平均分；全部不可计分 → 整体 -1
+    countable = [s for s in scores if s >= 0]
+    score = round(sum(countable) / max(len(countable), 1), 1) if countable else -1
     return {
-        "score": round(sum(scores) / max(len(scores), 1), 1),
+        "score": score,
         "gate_decision": decision,
         "issues": issues,
         "summary": "；".join(x for x in summaries if x)[:600],

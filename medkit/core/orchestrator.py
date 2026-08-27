@@ -83,6 +83,19 @@ def _append_review_list(base: Path, dropped: list[dict[str, Any]]) -> None:
     target.write_text(pre + "\n".join(section) + "\n", encoding="utf-8")
 
 
+def _append_contract_review(base: Path, fails: list[dict[str, Any]]) -> None:
+    """NX-03：质检契约失败批次追加进人工复核清单.md（score=-1 不计分）。"""
+    section = ["", "## 质检契约失败批次（QcVerdict 两次校验未过 · score=-1 不计分）", "",
+               "> 该批 LLM 判分输出两次未通过契约（首次 + 带错误重发），评分不可信未计入平均分；"
+               "对应题目仍保留在最终题库，请人工复核后重判（详见 质检报告/质检报告.json）：", ""]
+    for f in fails:
+        section.append(f"- {f.get('reason', '')}")
+    section.append("")
+    target = base / "人工复核清单.md"
+    pre = target.read_text(encoding="utf-8") + "\n" if target.exists() else ""
+    target.write_text(pre + "\n".join(section) + "\n", encoding="utf-8")
+
+
 class PipelineError(Exception):
     pass
 
@@ -359,6 +372,9 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     total_slices = len(items)
     progress_done = len(done_sids)
 
+    # NX-03（R-2）：软校验契约告警计数（medgen append 线程安全；出题完成后落项目 meta）
+    contract_bad: list[int] = []
+
     def gen_one(idx: int, item: dict[str, Any], cnt: int, sid: str,
                 start_id: int) -> tuple[str, list[dict[str, Any]]]:
         if cancel.is_set():
@@ -371,7 +387,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             ids_start=start_id, requirements=requirements, knobs=knobs, bloom=bloom,
             web_materials=web_materials_text, web_quota=web_ref_quota,
             exam_text=exam_text, extra_text=extra_text, syllabus_text=syllabus_text,
-            image_sections=image_sections)
+            image_sections=image_sections, contract_bad=contract_bad)
         for i, q in enumerate(qs):
             q["id"] = f"Q{start_id + i:03d}"
         if len(qs) < cnt:
@@ -468,6 +484,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     (base / "中间产物" / "questions_raw.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
     _log(base, f"  出题完成：{len(questions)} 题")
+    # NX-03（R-2）：软校验契约告警计数落项目 meta（学习中心概览卡可见；0 也会覆盖旧值）
+    meta["contract_warnings"] = len(contract_bad)
+    _write_json_atomic(meta_path, meta)
+    if contract_bad:
+        _log(base, f"  ⚠️ 本批 {len(contract_bad)} 条输出未通过 QuestionItem 契约"
+                   f"（软校验告警，不影响门禁兜底；已记入 meta contract_warnings）")
 
     # ---------------- ② 门禁①（选项/Bloom/溯源/查重/图像引用 自动修复循环）
     # WP-04：image_ref 必须指向已上传的图片素材；不匹配 → 剔除并记 warning（防悬空图/幻觉图）
@@ -524,6 +546,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     qc_report = medqc.qc_batch(qc_client, questions, text_by_sid)
     (base / "质检报告" / "质检报告.json").write_text(
         json.dumps(qc_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    # NX-03（R-2）：契约硬闭环失败批次 → 人工复核清单（与网络冲突/渲染前剔除并存）
+    contract_fails = [i for i in qc_report.get("issues", []) if i.get("code") == "QC_CONTRACT"]
+    if contract_fails:
+        _log(base, f"  ⚠️ {len(contract_fails)} 个质检批次契约校验失败（score=-1 不计分）"
+                   f"→ 人工复核清单.md")
+        _append_contract_review(base, contract_fails)
     _log(base, f"  QC score={qc_report['score']} decision={qc_report['gate_decision']}"
                f" issues={len(qc_report['issues'])}")
     if qc_report["gate_decision"] == "BLOCKED":

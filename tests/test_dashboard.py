@@ -119,3 +119,25 @@ def test_dashboard_router_endpoint(isolated):
     assert body["mastery"]["total_knowledge"] == 1
     assert body["tutor"]["total"] == 1
     assert "loop" in body
+    assert "contract_warnings" in body   # NX-03：dashboard 端点携带契约告警计数
+
+
+def test_dashboard_contract_warnings(isolated, monkeypatch, tmp_path):
+    """NX-03：项目 meta contract_warnings 聚合（按科目可选过滤）。"""
+    import json as _json
+
+    projs = tmp_path / "projs"
+    a = projs / "p1"
+    a.mkdir(parents=True)
+    (a / "meta.json").write_text(_json.dumps({"subject": "内科学", "contract_warnings": 3}),
+                                 encoding="utf-8")
+    b = projs / "p2"
+    b.mkdir()
+    (b / "meta.json").write_text(_json.dumps({"subject": "儿科学", "contract_warnings": 5}),
+                                 encoding="utf-8")
+    # 无计数项目 / 未生成过 meta 的项目应被忽略
+    monkeypatch.setattr(expl, "_PROJ_ROOT", projs)
+    s = dash.summary()
+    assert s["contract_warnings"] == {"total": 8, "by_subject": {"内科学": 3, "儿科学": 5}}
+    assert dash.summary(subject="内科学")["contract_warnings"]["total"] == 3
+    assert dash.summary(subject="外科学")["contract_warnings"]["total"] == 0

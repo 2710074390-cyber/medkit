@@ -234,6 +234,65 @@ def test_medqc_empty_bank_not_pass():
     assert any(x["code"] == "EMPTY_BANK" for x in r["issues"])
 
 
+# ---------------------------------------------------------------- NX-03（R-2）：契约硬闭环（修复-重试）
+def test_medqc_contract_repair_once_then_ok():
+    """契约校验失败 → 带错误重发 1 次修复成功 → 正常计分（ADR-003 闭环）。"""
+
+    class RepairOnce:
+        def __init__(self):
+            self.calls = 0
+
+        def chat_json(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {"score": "not-a-number", "issues": "bad",
+                        "gate_decision": "PASS", "summary": ""}
+            return {"score": 88, "gate_decision": "PASS", "issues": [], "summary": "ok"}
+
+    q = [{"id": "Q001", "type": "A1", "bloom": "理解", "question": "题",
+          "options": ["a", "b", "c", "d", "e"], "answer": "A", "analysis": "解析", "sid": "S001"}]
+    r = medqc._qc_batch_once(RepairOnce(), q, {"S001": "教材"})
+    assert r["score"] == 88 and r["decision"] == "PASS"
+    assert not any(x["code"] == "QC_CONTRACT" for x in r["issues"])
+
+
+def test_medqc_contract_fail_after_repair_not_counted():
+    """重发仍失败 → score=-1 不计分 + QC_CONTRACT fail（进人工复核）。"""
+
+    class AlwaysBad:
+        def chat_json(self, messages, **kwargs):
+            return {"score": "not-a-number", "issues": "bad"}
+
+    q = [{"id": "Q001", "type": "A1", "bloom": "理解", "question": "题",
+          "options": ["a", "b", "c", "d", "e"], "answer": "A", "analysis": "解析", "sid": "S001"}]
+    r = medqc._qc_batch_once(AlwaysBad(), q, {"S001": "教材"})
+    assert r["score"] == -1
+    assert any(x["code"] == "QC_CONTRACT" and x["severity"] == "fail" for x in r["issues"])
+    assert r["decision"] == "BLOCKED"
+
+
+def test_medqc_avg_excludes_contract_fail_batch():
+    """qc_batch 平均分跳过 -1 批次（契约失败不计分），且 fail → BLOCKED。"""
+
+    class Mixed:
+        def __init__(self):
+            self.calls = 0
+
+        def chat_json(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls <= 2:      # 批次1：首次 + 修复重发都失败 → 契约失败不计分
+                return {"score": "bad", "issues": "zzz"}
+            return {"score": 80, "gate_decision": "PASS", "issues": [], "summary": ""}
+
+    q = [{"id": f"Q{i:03d}", "type": "A1", "bloom": "理解", "question": f"题{i}",
+          "options": ["a", "b", "c", "d", "e"], "answer": "A", "analysis": "解析", "sid": "S001"}
+         for i in range(medqc.BATCH_SIZE + 1)]
+    r = medqc.qc_batch(Mixed(), q, {"S001": "教材"}, concurrency=1)
+    assert r["score"] == 80.0, "契约失败批（-1）不应计入平均分"
+    assert r["gate_decision"] == "BLOCKED"
+    assert any(x["code"] == "QC_CONTRACT" for x in r["issues"])
+
+
 def test_render_precheck_drops_invalid():
     good = {"id": "Q001", "type": "A1", "bloom": "理解", "question": "题？",
             "options": ["a", "b", "c", "d", "e"], "answer": "A", "analysis": "解析"}

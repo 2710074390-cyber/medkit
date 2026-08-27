@@ -499,7 +499,14 @@ function renderDashboard(d) {
        <button class="mini-btn primary" onclick="healLibrary()">一键修复（先备份）</button>
        <span class="hint">可逆的自动还原；不可逆的仅做标记，不删除数据</span></div>`
     : "";
-  $("dash_loop").innerHTML = dBanner + '<div class="loop-flow">' + stages.map(([k, v, cls], i) =>
+  // NX-03（R-2）：契约告警可见化——最近一轮生成有输出未通过契约校验
+  const cw = d.contract_warnings || {};
+  const cwBanner = (cw.total || 0) > 0
+    ? `<div class="databanner"><span>⚠ 最近一轮生成有 <b>${cw.total}</b> 条输出未通过契约校验`
+      + `（${Object.entries(cw.by_subject || {}).map(([k, v]) => `${esc(k)} ${v}`).join("、") || "未分类"}）`
+      + `——不影响最终门禁兜底，详见项目「质检报告」与「人工复核清单」</span></div>`
+    : "";
+  $("dash_loop").innerHTML = dBanner + cwBanner + '<div class="loop-flow">' + stages.map(([k, v, cls], i) =>
       (i ? '<div class="loop-arrow">→</div>' : "") +
       `<div class="loop-node ${cls}"><b>${v}</b><span>${k}</span></div>`).join("") +
     '</div>' +

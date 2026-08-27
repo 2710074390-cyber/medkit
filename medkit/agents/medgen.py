@@ -134,7 +134,8 @@ def build_user_message(subject: str, exam: str, slice_: dict[str, Any],
             f"请输出 JSON：{{'questions': [...]}}，恰好 {count} 道题。")
 
 
-def _parse_questions(data: Any, slice_: dict[str, Any]) -> list[dict[str, Any]]:
+def _parse_questions(data: Any, slice_: dict[str, Any],
+                     contract_bad: Optional[list[int]] = None) -> list[dict[str, Any]]:
     raw = data.get("questions", []) if isinstance(data, dict) else data
     if not isinstance(raw, list):
         return []
@@ -150,6 +151,9 @@ def _parse_questions(data: Any, slice_: dict[str, Any]) -> list[dict[str, Any]]:
             logger.warning("MedGen 输出未通过 QuestionItem 契约（question=%r）：%s",
                            str(q.get("question", ""))[:40],
                            first.get("msg", str(e)))
+            # NX-03（R-2）：软校验告警计数 → 项目 meta（学习中心概览可见）
+            if contract_bad is not None:
+                contract_bad.append(1)
         # v0.5：显式 null / 类型异常统一兜底（setdefault 不覆盖显式 null → 下游 enumerate 崩）
         q["type"] = str(q.get("type") or "A1")
         q["bloom"] = str(q.get("bloom") or "理解")
@@ -187,7 +191,8 @@ def _parse_questions(data: Any, slice_: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _call_once(client: Any, system: str, subject: str, exam: str, slice_: dict[str, Any],
-               count: int, ratios: dict[str, int], supplement: bool = False) -> list[dict[str, Any]]:
+               count: int, ratios: dict[str, int], supplement: bool = False,
+               contract_bad: Optional[list[int]] = None) -> list[dict[str, Any]]:
     msg = build_user_message(subject, exam, slice_, count, ratios)
     if supplement:
         msg = ("当前不足要求题数，请仅补充缺少的题目：\n" + msg)
@@ -195,7 +200,7 @@ def _call_once(client: Any, system: str, subject: str, exam: str, slice_: dict[s
         {"role": "system", "content": system},
         {"role": "user", "content": msg},
     ], temperature=0.7)
-    return _parse_questions(data, slice_)
+    return _parse_questions(data, slice_, contract_bad)
 
 
 def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
@@ -205,10 +210,12 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
                    bloom: Optional[dict[str, int]] = None,
                    web_materials: str = "", web_quota: int = 0,
                    exam_text: str = "", extra_text: str = "",
-                   syllabus_text: str = "", image_sections: str = "") -> tuple[list[dict[str, Any]], int]:
+                   syllabus_text: str = "", image_sections: str = "",
+                   contract_bad: Optional[list[int]] = None) -> tuple[list[dict[str, Any]], int]:
     """单切片出题（可能含 ≤2 次补充调用）。返回 (questions, 下一个 id 序号)。
 
     v0.5：占位符一次性替换（防教材文本二次替换注入）；超发题数按配额截断。
+    ``contract_bad``：软校验失败计数器（list，线程安全 append；None = 不计数）。
     """
     parts = {
         "subject": subject,
@@ -226,14 +233,16 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
     system += build_web_block(web_materials, web_quota)   # §5.4 参考素材注入点
     system += build_reference_block(exam_text[:EXAM_CHAR_LIMIT],
                                     extra_text[:EXTRA_CHAR_LIMIT])  # v0.5.2 自备真题/资料注入点
-    questions = _call_once(client, system, subject, exam, slice_, count, ratios)
+    questions = _call_once(client, system, subject, exam, slice_, count, ratios,
+                           contract_bad=contract_bad)
     questions = questions[:count]  # v0.5：LLM 超发 → 按配额截断
     # U4：不足配额 → 补 2 轮
     for _ in range(2):
         if len(questions) >= count:
             break
         extra = _call_once(client, system, subject, exam, slice_,
-                           count - len(questions), ratios, supplement=True)
+                           count - len(questions), ratios, supplement=True,
+                           contract_bad=contract_bad)
         if not extra:
             break
         questions.extend(extra)

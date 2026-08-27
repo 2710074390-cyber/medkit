@@ -145,3 +145,20 @@ def test_bloom_small_bank_relaxed():
     # n=50：同样的极端分布 → 仍 fail
     big = check_bloom([{"bloom": "记忆"}] * 40 + [{"bloom": "应用"}] * 10)
     assert big["fail_count"] >= 1, big["issues"]
+
+
+# ---------------------------------------------------------------- NX-03（R-2）：软校验契约告警计数
+def test_medgen_contract_bad_counted():
+    """generate_slice(contract_bad=...) 对契约失败的输出计数（X 型答案非升序触发）。"""
+
+    class BadAnswer:
+        def chat_json(self, messages, **kwargs):
+            return {"questions": [{"question": "题？", "type": "X",
+                                   "options": ["a", "b", "c", "d"], "answer": "EA"}]}
+
+    cb: list[int] = []
+    qs, nxt = medgen.generate_slice(BadAnswer(), "儿科", "期末",
+                                    {"sid": "S001", "title": "第一章", "text": "教材"},
+                                    1, {"A1": 100}, "教师重点", contract_bad=cb)
+    assert len(qs) == 1 and cb == [1], "契约失败应计数 1 条（软校验，题目仍保留）"
+    assert nxt == 2

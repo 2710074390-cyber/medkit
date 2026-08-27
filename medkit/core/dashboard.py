@@ -18,6 +18,37 @@ def _subject_kps(subject: str) -> list[dict[str, Any]]:
     return [k for k in kps if k.get("subject") == subject]
 
 
+def _contract_warnings(subject: str = "") -> dict[str, Any]:
+    """NX-03（R-2）：项目 meta 契约告警计数聚合（medgen 软校验计数落 meta）。
+
+    读取各项目 meta.json 的 ``contract_warnings``（最近一轮生成计数），按科目可选过滤；
+    项目目录不存在/未生成过 → 全 0（概览卡仅 count>0 时显示提示）。
+    """
+    import json as _json
+
+    total = 0
+    by_subject: dict[str, int] = {}
+    root = expl._proj_root()
+    if root.is_dir():
+        for proj in root.iterdir():
+            mp = proj / "meta.json"
+            if not mp.is_file():
+                continue
+            try:
+                meta = _json.loads(mp.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            n = int(meta.get("contract_warnings") or 0)
+            if n <= 0:
+                continue
+            s = (meta.get("subject") or "").strip() or "未分类"
+            if subject and s != subject:
+                continue
+            total += n
+            by_subject[s] = by_subject.get(s, 0) + n
+    return {"total": total, "by_subject": by_subject}
+
+
 def summary(subject: str = "") -> dict[str, Any]:
     subject = (subject or "").strip()
 
@@ -73,4 +104,6 @@ def summary(subject: str = "") -> dict[str, Any]:
         "review": review,
         "tutor": tutor,
         "loop": loop,
+        # NX-03（R-2）：契约告警计数（生成输出软校验；0 表示最近一轮无告警或未生成过）
+        "contract_warnings": _contract_warnings(subject),
     }
