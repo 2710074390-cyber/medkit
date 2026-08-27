@@ -157,7 +157,8 @@ def freq_view(subject: str = "", top: int = 60) -> dict[str, Any]:
         ch = r.get("chapter") or "（未分章）"
         bucket = by_chapter.setdefault(ch, {"chapter": ch, "items": [], "freq": 0})
         bucket["freq"] += int(r.get("freq") or 0)
-        bucket["items"].append({"item": r.get("item") or "", "freq": int(r.get("freq") or 0)})
+        bucket["items"].append({"id": r.get("id"), "item": r.get("item") or "",
+                                "freq": int(r.get("freq") or 0)})
         total += int(r.get("freq") or 0)
     chapters = sorted(by_chapter.values(), key=lambda c: -c["freq"])[:max(top, 1)]
     for c in chapters:

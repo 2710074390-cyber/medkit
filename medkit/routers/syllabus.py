@@ -257,6 +257,15 @@ def syllabus_coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
     return syl.coverage(subject, source)
 
 
+@router.delete("/api/syllabus/items/{item_id}")
+def syllabus_item_delete(item_id: str) -> dict[str, Any]:
+    """删除一条大纲条目（seed/teacher 均可；误删可重新导入种子）。"""
+    require_flag("syllabus")
+    if not syl.delete_item(item_id):
+        raise HTTPException(404, "大纲条目不存在")
+    return {"ok": True}
+
+
 @router.get("/api/syllabus/report")
 def syllabus_report(subject: str = "", source: str = "all") -> dict[str, str]:
     require_flag("syllabus")

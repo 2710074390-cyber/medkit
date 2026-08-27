@@ -54,15 +54,17 @@ window.addEventListener("keydown", e => {
   const ok = ["overview", "mistakes", "explain", "tutor", "review", "syllabus"].includes(v);
   if (ok) showLearnView(v);
 })();
-/* 侧栏「学习中心」徽章：薄弱 + 需复习 知识点数（>0 显示） */
-function setLearnNavBadge(n) {
+/* 侧栏「学习中心」徽章：真实待办 = 今日到期复习卡 + 进行中提问会话（>0 显示） */
+function setLearnNavBadge(n, detail) {
   const b = document.querySelector('button[data-tab="learn"]');
   if (!b) return;
   let d = b.querySelector(".navbadge");
   if (n > 0) {
     if (!d) { d = document.createElement("span"); d.className = "navbadge"; b.appendChild(d); }
     d.textContent = n > 99 ? "99+" : String(n);
-    d.title = "薄弱知识点：" + n + " 个 → 去学习中心";
+    d.title = detail
+      ? `待办 ${n} 项：今日到期复习 ${detail.due} · 进行中提问 ${detail.tutor} → 去学习中心`
+      : `待办 ${n} 项 → 去学习中心`;
   } else if (d) d.remove();
 }
 /* 子导航计数徽章（闭环数据回填） */
@@ -72,12 +74,15 @@ function updateLearnBadges(d) {
     el.textContent = v > 0 ? v : "";
     el.classList.toggle("hot", !!hot && v > 0); };
   nb("nb_overview", 0);
-  nb("nb_mistakes", loop.mistakes || 0, true);
+  nb("nb_mistakes", loop.mistakes || 0);                              // 资料库规模，非待办 → 不标红
   nb("nb_explain", loop.explains || 0);
   nb("nb_tutor", loop.tutor || 0);
   nb("nb_review", loop.review || 0, (d && d.review && d.review.due) > 0);
-  const m = (d && d.mastery) || {};
-  setLearnNavBadge((m.weak || 0) + (m.shaky || 0));
+  const r = (d && d.review) || {};
+  const t = (d && d.tutor) || {};
+  // 真实待办（可立即执行）：今日到期复习 + 进行中提问会话；无待办 → 无红点
+  setLearnNavBadge((r.due || 0) + (t.in_progress || 0),
+                   { due: r.due || 0, tutor: t.in_progress || 0 });
 }
 /* ---- ⑥ 大纲覆盖（WP-01 考试锚定 · 以教师重点为纲） ---- */
 let SYL_DRAFTS = [];
@@ -162,7 +167,8 @@ async function sylRender(subject) {
         const s = it.status === "mastered" ? ["已掌握", "mastered"] :
                   it.status === "covered" ? ["已覆盖", "solid"] : ["未覆盖", "pending"];
         return `<div class="syl-item"><span class="learn-chip ${s[1]}">${s[0]}</span>
-          <span class="grow"><b>${esc(it.item)}</b>${it.matched ? `<div class="hint">已匹配：${esc(it.matched)}</div>` : ""}</span></div>`;
+          <span class="grow"><b>${esc(it.item)}</b>${it.matched ? `<div class="hint">已匹配：${esc(it.matched)}</div>` : ""}</span>
+          ${it.id ? `<button class="rv-x" title="删除该条目（可重新导入）" onclick="sylItemDel('${esc(it.id)}')">×</button>` : ""}</div>`;
       }).join("");
       return `<div class="syl-chap">${esc(ch.chapter)} <span class="hint">（覆盖 ${ch.covered + ch.mastered}/${ch.total} · 未覆盖 ${ch.pending}）</span></div>` +
         (items || '<div class="hint" style="margin-left:10px">（无条目，待粘贴）</div>');
@@ -188,10 +194,12 @@ async function sylParse() {
     return;
   }
   pv.innerHTML = `<div class="hint">预览 ${SYL_DRAFTS.length} 条：</div>` +
-    SYL_DRAFTS.slice(0, 30).map(d => `<div class="syl-item">
+    SYL_DRAFTS.slice(0, 30).map((d, i) => `<div class="syl-item">
       <span class="learn-chip pending">${esc(d.subject || "?")}</span>
-      <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span></div>`).join("") +
-    (SYL_DRAFTS.length > 30 ? `<div class="hint">…共 ${SYL_DRAFTS.length} 条（全部入库）</div>` : "");
+      <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span>
+      <button class="rv-x" title="移除该草稿" onclick="sylDraftDel(${i})">×</button></div>`).join("") +
+    (SYL_DRAFTS.length > 30 ? `<div class="hint">…共 ${SYL_DRAFTS.length} 条（全部入库）</div>` : "") +
+    `<div class="btns" style="margin-top:8px"><button class="mini-btn" onclick="sylDraftClear()">取消草稿</button></div>`;
 }
 async function sylParseConfirm() {
   if (!SYL_DRAFTS || !SYL_DRAFTS.length) { toast("先解析再确认"); return; }
@@ -202,6 +210,30 @@ async function sylParseConfirm() {
   document.getElementById("syl_paste_preview").innerHTML = '<div class="hint">已入库。可继续粘贴或点顶部「刷新」。</div>';
   await sylLoad();   // 等待确认后的刷新完成，避免迟到渲染覆盖后续标准切换
 }
+function sylDraftDel(i) {
+  SYL_DRAFTS.splice(i, 1);
+  document.getElementById("syl_paste_preview").innerHTML = SYL_DRAFTS.length
+    ? `<div class="hint">预览 ${SYL_DRAFTS.length} 条：</div>` + SYL_DRAFTS.slice(0, 30)
+        .map((d, j) => `<div class="syl-item"><span class="learn-chip pending">${esc(d.subject || "?")}</span>
+          <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span>
+          <button class="rv-x" title="移除该草稿" onclick="sylDraftDel(${j})">×</button></div>`).join("")
+    : '<div class="hint">草稿已清空。</div>';
+}
+function sylDraftClear() {
+  SYL_DRAFTS = [];
+  document.getElementById("syl_paste_preview").innerHTML = '<div class="hint">草稿已取消。</div>';
+}
+window.sylDraftDel = sylDraftDel; window.sylDraftClear = sylDraftClear;
+async function sylItemDel(id) {
+  confirmModal("删除大纲条目", `<p style="margin:0;color:var(--dim)">确定删除该条目？删除后覆盖率将即时更新；误删可重新导入（种子/教师重点源）。</p>`, "删除", async () => {
+    try {
+      await api("/api/syllabus/items/" + encodeURIComponent(id), { method: "DELETE" });
+      toast("已删除条目");
+      await sylLoad();
+    } catch (e) { toast(e.message, false); }
+  });
+}
+window.sylItemDel = sylItemDel;
 function sylSeedPick() {
   document.getElementById("syl_seed_file").click();
 }
@@ -291,6 +323,7 @@ async function rexAnalyze() {
       <button class="act gray mini" data-skip="${i}">跳过</button></div>`).join("") +
     (REX_DRAFTS.length > 30 ? `<div class="hint">…共 ${REX_DRAFTS.length} 条（确认全部入库）</div>` : "") +
     `<div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
+     <button class="mini-btn" onclick="rexDraftClear()">取消草稿</button>
      <span class="hint" style="align-self:center">未确认不进入任何推荐权重（红线）</span></div></details>`;
   box.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => {
     REX_DRAFTS.splice(+b.dataset.skip, 1);
@@ -323,7 +356,10 @@ async function rexHeat() {
   document.getElementById("rex_meta").textContent = `累计命中 ${r.total} 次`;
   if (!r.chapters.length) { box.innerHTML = '<div class="hint">暂无已确认频次。</div>'; return; }
   box.innerHTML = `<table class="rex-tab"><thead><tr><th>章节</th><th>频次</th><th>高频条目（前5）</th></tr></thead><tbody>` +
-    r.chapters.slice(0, 15).map(ch => `<tr><td>${esc(ch.chapter)}</td><td><b>${ch.freq}</b></td><td>${esc(ch.items.slice(0, 5).map(i => i.item + "×" + i.freq).join(" · "))}</td></tr>`).join("") +
+    r.chapters.slice(0, 15).map(ch => `<tr><td>${esc(ch.chapter)}</td><td><b>${ch.freq}</b></td><td>` +
+      ch.items.slice(0, 5).map(i => `<span class="rex-item">${esc(i.item)}×${i.freq}` +
+        (i.id ? ` <button class="rv-x" title="删除该频次记录" onclick="rexItemDel('${esc(i.id)}')">×</button>` : "") +
+        `</span>`).join(" · ") + `</td></tr>`).join("") +
     `</tbody></table>`;
 }
 function rexFilePick() { document.getElementById("rex_file").click(); }
@@ -339,10 +375,26 @@ async function rexFile(input) {
     <div class="hint">文件草稿——核实后确认：</div>
     ${REX_DRAFTS.slice(0, 30).map(d => `<div class="syl-item"><span class="learn-chip pending">×${d.freq}</span>
       <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter)}</div></span></div>`).join("")}
-    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button></div></details>`
+    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
+      <button class="mini-btn" onclick="rexDraftClear()">取消草稿</button></div></details>`
     : `<div class="hint">文件解析命中 0 条。</div>`;
   input.value = "";
 }
+function rexDraftClear() {
+  REX_DRAFTS = [];
+  const box = document.getElementById("rex_drafts");
+  if (box) box.innerHTML = '<div class="hint">草稿已取消。</div>';
+}
+async function rexItemDel(id) {
+  confirmModal("删除频次记录", `<p style="margin:0;color:var(--dim)">确定删除这条已确认的频次记录？仅删除统计数据，不影响真题原文；删除后热力表即时更新。</p>`, "删除", async () => {
+    try {
+      await api("/api/library/realexams/" + encodeURIComponent(id), { method: "DELETE" });
+      toast("已删除频次记录");
+      rexHeat();
+    } catch (e) { toast(e.message, false); }
+  });
+}
+window.rexDraftClear = rexDraftClear; window.rexItemDel = rexItemDel;
 async function rexReport() {
   const qs = rexSubject() ? "?subject=" + encodeURIComponent(rexSubject()) : "";
   const r = await api("/api/library/realexams/report" + qs);

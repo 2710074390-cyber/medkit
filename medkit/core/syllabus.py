@@ -98,6 +98,14 @@ def seed_info() -> dict[str, Any]:
             "note": seed.get("note"), "gs_subject_counts": seed.get("gs_subject_counts")}
 
 
+def delete_item(item_id: str) -> bool:
+    """删除一条大纲条目（seed/teacher 均可；误删可经 ensure(force) 重建种子或重新导入）。"""
+    dbs.migrate()
+    with dbs.tx(write=True) as cur:
+        n = cur.execute("DELETE FROM syllabus_items WHERE id=?", (item_id,)).rowcount
+    return bool(n)
+
+
 # ---------------------------------------------------------------- 本地规则解析（粘贴任文献 → 草稿）
 def parse_text(text: str, subject: str = "") -> list[dict[str, str]]:
     """把粘贴的「分章节条目」文本解析为 [subject, chapter, item] 草稿（零 LLM）。

@@ -138,6 +138,22 @@ def test_router_tree_and_report_api(subject_seed):
     assert r4.json()["drafts"][0]["item"] == "肺通气"
 
 
+def test_route_syllabus_item_delete(subject_seed):
+    """删除大纲条目：DELETE /api/syllabus/items/{id} → 覆盖总数 -1；重复删除 → 404。"""
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    cov = c.get("/api/syllabus/coverage", params={"subject": "内科学"}).json()
+    before = cov["totals"]["items"]
+    item_id = next(it["id"] for ch in cov["chapters"] for it in ch["items"] if it.get("id"))
+    r = c.delete(f"/api/syllabus/items/{item_id}")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    after = c.get("/api/syllabus/coverage", params={"subject": "内科学"}).json()["totals"]["items"]
+    assert after == before - 1
+    assert c.delete(f"/api/syllabus/items/{item_id}").status_code == 404
+
+
 # ---------------------------------------------------------------- 教师重点为纲（域内默认标准）
 def _mk_teacher_project(tmp_path, subject="内科学"):
     from medkit.core import config as cfg

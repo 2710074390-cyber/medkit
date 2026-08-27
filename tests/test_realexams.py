@@ -58,6 +58,13 @@ def test_confirm_gate_and_freq_view(dict_seed):
     after_n = len(rex.list_drafts("内科学", confirmed=True))
     assert after_n <= before_n
 
+    # 频次视图条目带记录 id（前端逐条删除用）；删除后 total 随之减少
+    item0 = view["chapters"][0]["items"][0]
+    assert item0.get("id"), "频次视图条目应带 id"
+    assert rex.delete(item0["id"]) is True
+    assert rex.freq_view("内科学")["total"] == view["total"] - item0["freq"]
+    assert rex.delete(item0["id"]) is False                # 重复删除 → False（404 语义）
+
 
 def test_w_freq_default_zero_keeps_behavior():
     """w_freq=0（默认旋钮）时排序与现状一致；>0 时高频题被boost（freq_map 只含已确认）。"""
