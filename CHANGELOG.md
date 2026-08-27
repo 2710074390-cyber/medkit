@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 仓库整理：S1 审查全套（2026-08-27 需求审查/前端审查/结构化执行方案/工程审查改进指南 + 3 张截图）归档至 `docs/reviews/s1-2026-08-27/`；v05~v07 历史设计规格归档至 `docs/archive/design-specs/`；README 文档引用同步；`.workbuddy-ai/` 移出版本库并加入 `.gitignore`；清理 pytest/ruff 缓存与构建产物。
+
 ## [0.8.0] - 2026-08-27
 
 ### Added

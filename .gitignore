@@ -17,3 +17,5 @@ projects/
 .DS_Store
 
 docs/spikes/k4_out/
+
+.workbuddy-ai/
