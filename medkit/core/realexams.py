@@ -57,28 +57,24 @@ def analyze(text: str, subject: str = "") -> dict[str, Any]:
     chapter_hits: dict[tuple[str, str], int] = {}
     unmatched = 0
     for sent in _sentences(text):
-        hit = None
-        for e in entries:
-            if e["item"] and e["item"] in sent:
-                hit = e
+        # 一句可命中多条目标（不再首命中即 break）→ 频次更接近语义命中率
+        hits = [e for e in entries
+                if e["item"] and len(e["item"]) >= 2 and e["item"] in sent]
+        if hits:
+            for hit in hits:
+                subject_of = hit["subject"] or subject
+                key = (subject_of, hit["chapter"] or "", hit["item"])
+                drafts[key] = drafts.get(key, 0) + 1
+            continue
+        # 章级命中（条目词典未覆盖而章名出现）
+        for e in chapters_src:
+            ch = e["chapter"]
+            if ch and len(ch) >= 2 and ch in sent:
+                subj = e["subject"] or subject
+                chapter_hits[(subj, ch)] = chapter_hits.get((subj, ch), 0) + 1
                 break
-        key = None
-        if hit:
-            subject_of = hit["subject"] or subject
-            key = (subject_of, hit["chapter"] or "", hit["item"])
         else:
-            # 章级命中（条目词典未覆盖而章名出现）
-            for e in chapters_src:
-                ch = e["chapter"]
-                if ch and len(ch) >= 2 and ch in sent:
-                    subj = e["subject"] or subject
-                    chapter_hits[(subj, ch)] = chapter_hits.get((subj, ch), 0) + 1
-                    break
-            else:
-                unmatched += 1
-                continue
-        if key:
-            drafts[key] = drafts.get(key, 0) + 1
+            unmatched += 1
     out = {
         "drafts": [{"subject": k[0], "chapter": k[1], "item": k[2], "freq": v}
                    for k, v in drafts.items()],

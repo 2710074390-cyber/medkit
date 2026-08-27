@@ -118,10 +118,12 @@ class LLMClient:
                 raise LLMError(f"LLM 输出未通过 {schema.__name__} 契约: {e}") from e
         return parsed
 
-    def list_models(self) -> list[str]:
+    def list_models(self, raise_on_error: bool = False) -> list[str]:
         try:
             return [m.id for m in self._client.models.list().data]
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            if raise_on_error:
+                raise LLMError(f"获取模型列表失败：{e}") from e
             return []
 
     def test(self) -> tuple[bool, str]:

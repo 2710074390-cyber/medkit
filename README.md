@@ -60,7 +60,7 @@ pack\build.bat              # 或：python -m PyInstaller --noconfirm --clean me
 
 - 产物：`dist\MedKit\`（约 87 MB，含 `MedKit.exe` + `_internal\`）
 - 使用：**复制整个 `MedKit` 文件夹**到任意位置 → 双击 `MedKit.exe` → 自动打开浏览器
-- 自带资源：静态前端 / 四个提示词（MedGen·MedQC·MedFix·MedReview）/ 示例素材（打包路径已验证）；**无需安装 Python**
+- 自带资源：静态前端 / 八个提示词（MedGen·MedQC·MedFix·MedReview·MedExplain·MedTutor·MedCards·SyllabusExtract）/ 示例素材 / **内置西综306 大纲种子**（打包路径已验证）；**无需安装 Python**
 
 ## 安装包（Inno Setup，可选）
 
@@ -68,6 +68,7 @@ pack\build.bat              # 或：python -m PyInstaller --noconfirm --clean me
 # Inno Setup 7.1（已装则跳过；注意 jrsoftware 官网/Aliyun 源不可用时走 ghproxy）
 # 下载：https://ghproxy.net/https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe
 # 安装后 ISCC.exe 位于 %LOCALAPPDATA%\Programs\Inno\ISCC.exe
+# 注意：medkit.iss 使用 ArchitecturesInstallIn64BitMode=x64compatible，需 Inno Setup 6.3+（推荐 7.x）
 pack\build.bat              # 已在末尾自动检测 ISCC 并构建安装包
 ```
 
@@ -81,7 +82,7 @@ medkit/
 ├── run_medkit.py / start.bat   # 入口（端口 4880~4889 自动探测）
 ├── medkit/
 │   ├── main.py                 # FastAPI + 静态前端（Host/Origin 守卫）
-│   ├── core/                   # config / providers / llm / cost / usage / extract / slice / quota / mineru(OCR)
+│   ├── core/                   # config / providers / llm / cost / usage / extract / slice / quota / mineru(OCR) / db(SQLite·迁移) / syllabus / realexams / gap / scheduler(FSRS·SM-2) / cards / websearch / library / review / explain / tutor
 │   ├── agents/                 # medgen / medqc / medfix / medreview
 │   ├── prompts/                # 从 MedAgentWork Prompt版本/ 模板化迁移
 │   ├── gates/                  # options_check / bloom_check / trace_check / dedup_check
@@ -96,22 +97,22 @@ medkit/
 - **素材库复用（S3）**：解析结果可「保存为素材会话」（`~/.medkit/sessions/`），**跨项目复用**；多个会话**合并载入为教材**（多教材合并出题，quota 跨 session 按章加权）；项目**配置模板**一键存/取（科目/题型配比/Bloom/旋钮/附加要求）
 - **扫描件 OCR（MinerU · 任务制）**：精准 API（≤200MB/≤600 页，每日 2000 页高优先级额度，2026-08 官方现行）/ 免 Token 轻量 API（≤10MB）；进度轮询 + 取消 + 自动加入输入；**UI 明示上传云端**
 - **出题管线（五阶段，后台线程 + 实时日志）**：
-  - ① MedGen：按切片配额并发（≤3）出题（A1/A2/X；**S3：A3/A4 案例组题（3~5 子题共用案例题干）+ B1 真组题（共享选项组）**）；HC 命题规则 + [源:切片] 溯源；**题量不足自动补足 ≤2 轮 + 超发截断**；**全文仅在 system 注入一次**（输入成本约 -40%）；模板占位符一次性替换（防教材文本二次注入）
+  - ① MedGen：按切片配额并发（≤3）出题（A1/A2/X + **B1 真组题（共享选项组）**；A3/A4 案例组题随配额按需输出、无独立配比入口）；HC 命题规则 + [源:切片] 溯源；**题量不足自动补足 ≤2 轮 + 超发截断**；**全文仅在 system 注入一次**（输入成本约 -40%）；模板占位符一次性替换（防教材文本二次注入）
   - ② 门禁①：选项质量（R 规则子集）+ Bloom 30/40/25/5 + 溯源回查 + **n-gram 查重（Jaccard>0.8 → MedFix 改写；案例组/选项组内跳过）**，自动修复 ≤2 轮
   - ③ MedQC：LLM-as-judge 并行分批质检，score + gate_decision（浮点/None score 容错）
   - ④ MedFix：按 issue 定向修复（**合并策略保留溯源/案例/组结构字段**）
   - ⑤ MedReview：分层复习手册（考点速记/易混淆/临床路径/数值速查/背诵清单）
   - ⑥ 渲染：题库 MD+HTML（**案例/选项组按组折叠**）/ **交互押题卷（X 型 checkbox+集合判分 / localStorage 续答 / 答题卡 / 计时断点恢复 / 错题重练 / 案例组分组呈现+分组判分 / 打印）** / 复习手册 MD+HTML / **Anki 导出（.txt + S3 .apkg 真包：项目名稳定哈希，标准卡+X 型自评卡，标签=题型/Bloom/章节）**
   - **渲染前终检（D2）**：修复轮用尽仍超限/缺字段的题剔除出产物 + 写入人工复核清单，绝不强行渲染
-- **长任务体验（U1/U2/U3/I1）**：**管线可取消**（停止按钮，保留断点）+ **断点续跑**（逐切片 checkpoint）+ 三线程并发 + 六阶段 stepper + 百分比进度
-- **成本透明（U5）**：解析/创建前显示「预计 X 万 token · 约 ¥Y（参考价，以官网为准）」——**公式前后端单源**（`/api/cost/estimate` ← `core/cost.py`）；跑完写实际 usage + 折算成本到项目 meta；run/trial/regen 按次上下文独立记账
+- **长任务体验（U1/U2/U3/I1）**：**管线可取消**（停止按钮带确认，保留断点）+ **断点续跑**（逐切片 checkpoint）+ 三线程并发 + 六阶段 stepper（出题/门禁/质检/修复/汇总/产物）+ 百分比进度 + 阶段明细（质检按批回写）+ 日志着色高亮
+- **成本透明（U5）**：解析/创建前显示「预计 X 万 token · 约 ¥Y（参考价，以官网为准）」——**项目创建走 `/api/cost/estimate`（`core/cost.py` 单源公式）**；学习中心讲解/提问为前端粗估（显示「参考价」）；跑完写实际 usage + 折算成本到项目 meta；run/trial/regen 按次上下文独立记账
 - **安全加固**：Host/Origin 校验中间件（含 IPv6 `[::1]`）；pid 路径消毒（含预设删除）；损坏 meta.json 容错（422）；产物 HTML 全量转义 + 复习手册白名单消毒（href 仅 http/https）；`javascript:` 剥纯文本；Key 不进 URL；配置深拷贝防默认值污染
 - **工程化（S2）**：`routers/*` 十模块 + `state.py`；lifespan；统一异常体（LLM/Search/MinerU/PipelineError）；`~/.medkit/logs/` RotatingFileHandler；**版本单源** `medkit/__init__.py`；`verify.cmd` 一键验证 + GitHub CI 工作流
 - **在线入口与反馈（v0.6）**：侧栏「题库与手册站」外链（[med-review-site.pages.dev](https://med-review-site.pages.dev/#reviews)，题库/押题卷/复习手册在线合集）；邮件反馈弹窗（复制邮箱 + `mailto:` 自动附版本/系统信息，2710074390@qq.com）
 - **内置更新检查（v0.6）**：`GET /api/update/check` 请求 GitHub Releases（`core/update.py`，纯标准库比较逻辑）；启动 4s 静默检查 + 侧栏版本号红点 + 手动点击检查；仅提醒 + 跳转下载页；无网/无 Release 优雅降级不报错
 - **新图标（v0.6）**：与 med-review-site 网站图标同构（圆角方块 + MW 字标），青绿渐变 + Segoe UI 字体风格区分（`pack/make_icon.py` 逐尺寸原生绘制）
 - **引导与体验**：**首启 3 步欢迎向导**（软件做什么 → 怎么拿 Key → 两种开始方式；老用户不打扰）；素材要求卡 / 一键示例 / 体检警告 / 就绪清单 / 成本预估；**拖拽上传 + 文件清单可移除**；**hash 路由（刷新保持 tab）**；**配比条可视化 + 色块间把手拖拽调比**（相邻两段间转移百分比，合计恒定；键盘 ←/→ ±5%，触屏 pointer 通用）；配比实时合计；亮/暗主题切换（含产物页，记忆偏好，隐私模式容错）；SVG 图标；toast 堆叠；自定义删除确认；轮询失败 3 次才停；全局 onerror/unhandledrejection 兜底
-- **前端设计刷新（2026-08-27 全面审查落地）**：学习中心改「子导航 + 五视图」（概览/错题本/讲解产物/提问学习/复习计划，一屏一任务，记忆上次视图）；页面标题层级提升（图标 + 21px）；卡片头组件替代 float 计数（窄屏不再挤压换行）；**错题行增强**（→讲解 / →提问 直达、详情展开、chip 化 meta）；**讲解产物默认折叠 + 重新生成 + 复制反馈**；**触发 LLM 前展示成本预估**（讲解/提问，参考价）；侧栏学习中心红色徽章（薄弱知识点数）；**Ctrl/⌘+1..5 页签快捷键**；390px 窄屏溢出修复（学习中心全视图无横向滚动）；统一空状态组件（大图标 + 引导文案）
+- **前端设计刷新（2026-08-27 全面审查落地）**：学习中心改「子导航 + 六视图」（概览/错题本/讲解产物/提问学习/复习计划/大纲覆盖，一屏一任务，记忆上次视图）；页面标题层级提升（图标 + 21px）；卡片头组件替代 float 计数（窄屏不再挤压换行）；**错题行增强**（→讲解 / →提问 直达、详情展开、chip 化 meta）；**讲解产物默认折叠 + 重新生成（带确认）+ 复制反馈**；**触发 LLM 前展示成本预估**（讲解/提问，参考价；点击后展示）；侧栏学习中心红色徽章（今日到期复习卡 + 进行中提问会话）；**Ctrl/⌘+1..5 页签快捷键 + Alt+1..6 学习中心子视图**；390px 窄屏溢出修复（学习中心全视图无横向滚动）；统一空状态组件（大图标 + 引导文案）
 - **产物页优化（第二轮）**：题库 HTML 全题型过滤+计数、关键词搜索（含案例题干，索引不重复可见文案）；押题卷题型标签中文化、已答计数、判分 ✓/✗ 徽章、内联提示条替代原生 alert、打印样式完善；**学习库数据卫生**——乱码检测（dashboard 计数 + 横幅提醒）与一键修复（可逆 cp1252→utf-8 还原 + 不可逆记录标记 + 自动备份，不删数据）
 - **审核台与加载优化（第三轮）**：逐题审核台新增搜索/题型/Bloom 过滤、批量保留/剔除（带确认）、单题重掷后其余编辑与剔除状态保留并自动定位；「刷新」对未保存修改弹确认；项目详情产物区卡片化（图标+中文名网格）；学习中心 subjects/mastery 30s 缓存减少重复请求
 - **押题卷作答闭环（第四轮）**：未答确认（防漏答）、判分后锁定（防误改）与重新作答解锁、重开页续答归还提示（计时延续）、得分含用时、答题卡 tooltip；连接页 provider 卡片「已配置 Key ✓」角标 + 当前模型回显
@@ -144,7 +145,7 @@ medkit/
 - **提示词编辑器（迭代3）**：影子副本 `~/.medkit/prompts/`（打包安装目录零写入）；保存占位符校验（缺 `{slice_text}` 等 → 400 列明）；base_hash 漂移检测（升级后「官方已更新」+ 双栏 diff）；恢复默认一键回滚
 - **逐题审核台（迭代4）**：项目详情内嵌题目卡片（✓保留/✗剔除/✎行内编辑/🎲单题重掷），保存后重渲染全部产物（题库/押题卷/复习手册/Anki）
 
-## 开发里程碑（设计文档见 `docs/archive/design-specs/`，S1 审查全套见 `docs/reviews/s1-2026-08-27/`）
+## 开发里程碑（设计文档见 `docs/archive/design-specs/`，S1 审查全套见 `docs/archive/reviews/s1-2026-08-27/`）
 
 - ✅ P1 迭代1：设置页 + 素材解析预览 + 课题创建
 - ✅ P1 迭代2：五阶段管线 + 产物渲染（离线全链路测试通过）
@@ -157,4 +158,4 @@ medkit/
 - ✅ 四项体验升级：① 网络检索「测试后端」修复——内置后端（DeepSeek/智谱/千问）复用服务商 LLM Key，博查缺 Key 时明确提示（原 bug：把博查 Key 槽位传给内置后端 → 永远「未配置 api key」）；② 错题导入多格式——批量导入支持 **.json / .csv / .md / .txt**（CSV 表头别名 + A~F 列、MD/TXT 按题号切块、JSON 兼容 stem/options[{label,text}] 官方结构，全部本地解析零 LLM）；③ 厂商信息去时效化——注记不再固化模型代际/版本断言，统一「以官方最新为准」引导 +「获取模型列表」动态拉取（检索后端说明同步精简）；④ **以教师重点为纲**——大纲覆盖视图默认标准 =「教师重点」：自动扫描所有项目的教师重点切片 → 考点条目（幂等同步），错题/掌握度按教师重点标准判定覆盖；「官方大纲 / 全部」标准可切换（备用）
 - ✅ WP-02 真题考频 + WP-03 薄弱组卷（v0.8·考试锚定闭环）：`core/realexams.py` + 迁移 v3（`realexam_freq`）——粘贴/上传自备真题 → 本地词典匹配计数（零 LLM）→ **人工确认门**（未确认不进任何权重）→ 章节×频次热力表 + 导出（**不展示真题原文**）；`/api/library/realexams/*` + 学习中心「大纲覆盖」内集成「真题考频」卡；`core/gap.py`——`plan()` 纯本地配题（priority×考频×未覆盖，单知识点≤3题）+ 复用课题创建通道（薄弱点清单注入 + scope=gap + 成本预估前置 + 24h 幂等）+ 概览「⚡一键刷薄弱组卷」；pytest 210 全绿
 - ✅ WP-04 医学图像/表格题（v0.8·结构性补齐）：项目详情「图片素材」上传（教材图/心电图/血常规截图 → `assets/fig_N` + image 切片）→ 出题注入「至少 1 题引用 + 题干写『如图所示』」（image_ref 门禁硬校验，不匹配剔除）→ 产物渲染 base64 内嵌 `<figure>`（单文件可移动）+ Markdown 表格 → `<table>`（XSS 白名单 + 打印防跨页）→ 错题随图回流（学习中心可看图）；pytest 217 全绿
-- 🔲 后续可选：网络检索更多后端、自备真题引用配额滑杆、v0.8 收尾（每日学习计划 WP-08 / 数据可携带 WP-09，见 `docs/reviews/s1-2026-08-27/结构化执行方案_2026-08-27.md`）
+- 🔲 后续可选：网络检索更多后端、自备真题引用配额滑杆、v0.8 收尾（每日学习计划 WP-08 / 数据可携带 WP-09，见 `docs/archive/reviews/s1-2026-08-27/结构化执行方案_2026-08-27.md`）

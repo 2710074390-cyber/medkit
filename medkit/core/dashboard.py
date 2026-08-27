@@ -10,6 +10,21 @@ from . import library as lib
 from . import review as rev
 from . import tutor as tut
 
+_TUTOR_IDLE_DAYS = 7  # 提问会话「进行中」判定：无活动超过该天数视为弃会话（不污染徽章）
+
+
+def _active_within(session: dict[str, Any], days: int) -> bool:
+    """会话最近活动是否在 days 天内（无 updated_at/异常 → 保守按进行中）。"""
+    try:
+        from datetime import datetime, timedelta
+        updated = session.get("updated_at") or session.get("created_at") or ""
+        if not updated:
+            return True
+        t = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+        return datetime.now(t.tzinfo) - t <= timedelta(days=days)
+    except Exception:  # noqa: BLE001
+        return True
+
 
 def _subject_kps(subject: str) -> list[dict[str, Any]]:
     kps = lib.get_mastery_view()["knowledge"]
@@ -83,7 +98,10 @@ def summary(subject: str = "") -> dict[str, Any]:
         answered_rounds += len(s.get("rounds") or [])
     tutor = {
         "total": len(sessions),
-        "in_progress": sum(1 for s in sessions if s.get("state") != "mastered"),
+        # 进行中 = 未掌握 且 7 天内有活动（弃会话不再永久污染「进行中」徽章）
+        "in_progress": sum(1 for s in sessions
+                           if s.get("state") != "mastered"
+                           and _active_within(s, 7)),
         "answered_rounds": answered_rounds,
         "by_state": by_state,
     }

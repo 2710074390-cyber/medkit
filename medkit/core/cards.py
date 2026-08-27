@@ -30,7 +30,7 @@ _LOCK = threading.RLock()
 _C_COLS = ("subject", "source", "kind", "state", "due", "created_at")
 _SEQ = itertools.count()
 
-MAX_CARDS_PER_EXPLAIN = 8   # 一次讲解最多生成 8 张（提示词 3~6，契约上限 10，此处软上限）
+MAX_CARDS_PER_EXPLAIN = 6   # 一次讲解最多生成 6 张（与 medcards.md「3~6 张」提示词口径一致；契约上限 10 兜底）
 
 
 def _now() -> str:

@@ -56,7 +56,7 @@
     <button class="themeBtn" id="btn_feedback" title="反馈与建议(邮件)" onclick="openFeedback()" aria-label="反馈与建议">
       <svg class="ic"><use href="#i-mail"></use></svg>
     </button>
-    <span class="v" id="side_ver" title="检查更新" role="button" tabindex="0">v0.5</span>
+    <span class="v" id="side_ver" title="检查更新" role="button" tabindex="0">v—</span>
   </div>
 </aside>
 <main id="main" tabindex="-1">
@@ -454,7 +454,7 @@
     <div class="learnview" id="lv-syllabus">
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>大纲覆盖</h2><span class="hint" id="syl_meta"></span></div>
-        <div class="hint" style="margin-bottom:10px">考试锚定：大纲（章 → 考点条目）与你的错题/掌握度实时对齐 —— 回答「这章考点我出过几题、掌握几项、还差什么」。条目可粘贴导入（本地解析零 LLM），缺什么补什么。</div>
+        <div class="hint" style="margin-bottom:10px">考试锚定：大纲（章 → 考点条目）与你的错题/掌握度实时对齐 —— 回答「这章考点我错题命中几项、掌握几项、还差什么」（覆盖 = 该考点条目已被错题/掌握度标签命中，非「出过题」）。条目可粘贴导入（本地解析零 LLM），缺什么补什么。</div>
         <div class="row" style="margin-top:8px;flex-wrap:wrap;align-items:center">
           <div class="css-pills" id="syl_std" role="tablist" aria-label="数据标准">
             <button class="css-pill on" data-std="teacher" role="tab" aria-selected="true">教师重点（为纲）</button>

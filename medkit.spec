@@ -25,8 +25,9 @@ hiddenimports += collect_submodules("fsrs")
 
 datas = [
     ("medkit/web", "medkit/web"),        # 静态前端（零 CDN）
-    ("medkit/prompts", "medkit/prompts"),  # 提示词模板（medgen/medqc/medfix/medreview/medexplain/medtutor）
+    ("medkit/prompts", "medkit/prompts"),  # 提示词模板（medgen/medqc/medfix/medreview/medexplain/medtutor/medcards/syllabus_extract）
     ("medkit/data", "medkit/data"),      # 示例素材（/api/sample）
+    ("data/syllabus_seed_306.json", "data"),  # WP-01：内置西综306 大纲种子（core/syllabus.py:28 按 仓库根 data/ 解析）
 ]
 # NX-02（R-3）：jieba 词典（dict.txt ≈5MB）不随包自动收集——缺词典则 FTS 分词静默退化
 datas += collect_data_files("jieba")

@@ -16,7 +16,7 @@ router = APIRouter()
 
 @router.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "version": __version__, "stage": "v0.5-S2"}
+    return {"ok": True, "version": __version__, "stage": "ready"}
 
 
 @router.get("/api/providers")
@@ -26,7 +26,10 @@ def providers() -> dict[str, Any]:
 
 @router.get("/api/config")
 def get_config() -> dict[str, Any]:
-    return cfg.public_view(cfg.load())
+    out = cfg.public_view(cfg.load())
+    # 配置曾损坏（已备份 + 回退默认）→ 标识给前端提示（用户需要重新配置服务商）
+    out["config_corrupt"] = cfg.LAST_LOAD_CORRUPT
+    return out
 
 
 class ConfigBody(BaseModel):
@@ -103,7 +106,9 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
         "features": saved.get("features", {}),   # IMP-02：前端 PUT 不改 features 节，原样保留
     }
     cfg.save(new_cfg)
-    return cfg.public_view(new_cfg)
+    v = cfg.public_view(new_cfg)
+    v["key_encrypted"] = str(new_cfg.get("api_key", "")).startswith(cfg._DPAPI_PREFIX)
+    return v
 
 
 @router.get("/api/keys")
@@ -173,10 +178,11 @@ class ModelsBody(BaseModel):
 
 @router.post("/api/llm/models")
 def llm_models(body: ModelsBody) -> dict[str, Any]:
-    """POST + JSON body：Key 不进 URL（避免日志记录）。"""
+    """POST + JSON body：Key 不进 URL（避免日志记录）。失败时返回真实原因（Key 错/网络/端点不支持）。"""
     key = body.api_key or resolve_key(cfg.load().get("api_key", ""))
     try:
         client = LLMClient(body.base_url, key, "x", timeout=20)
-        return {"ok": True, "models": client.list_models()}
+        models = client.list_models(raise_on_error=True)
+        return {"ok": True, "models": models}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "models": [], "msg": str(e)}

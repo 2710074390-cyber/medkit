@@ -34,6 +34,9 @@ async function loadConfig() {
   const [c, p] = await Promise.all([api("/api/config"), api("/api/providers")]);
   state.cfg = c; state.providers = p.providers || [];
   applyFeatures(c);   // IMP-02：合并服务端 feature flags（缺省全开）
+  if (c.config_corrupt) {
+    toast("检测到配置文件损坏：已备份并恢复默认设置，请重新选择服务商并保存配置", false);
+  }
   state.provider = c.provider || "";
   const keysR = await api("/api/keys").catch(() => ({ keys: [] }));
   const savedIds = new Set((keysR.keys || []).filter(k => k.saved).map(k => k.id));
@@ -205,12 +208,16 @@ $("btn_save").onclick = async () => {
       api_key: $("api_key").value.trim(),
       model_gen: modelValue("model_gen"),
       model_qc: modelValue("model_qc"),
-      web_search_enabled: false, web_search_api_key: "",
+      web_search_enabled: $("t_web").checked,
+      web_search_api_key: $("ws_key").value.trim(),
+      web_search_backend: $("ws_backend").value,
       mineru_api_key: $("mineru_key").value.trim(),
       mineru_auto_ocr: $("t_autoocr").checked,
     };
-    await api("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    toast("配置已保存（本机 ~/.medkit/config.json，Key 已加密）");
+    const r = await api("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast(r.key_encrypted === false
+      ? "配置已保存（本机 ~/.medkit/config.json；⚠️ 当前环境未能 DPAPI 加密 Key，已明文保存——请注意本机安全）"
+      : "配置已保存（本机 ~/.medkit/config.json，Key 已加密）");
     $("api_key").value = ""; $("mineru_key").value = ""; loadConfig();
   } catch (e) { toast(e.message, false); }
 };
@@ -853,6 +860,8 @@ async function loadSessionsAsTextbook(ids) {
     slices.push(...(s.slices || []));
     names.push(s.name);
   }
+  // F4：多会话合并 → 各会话切片 sid 均从 S001 起始，合并后统一重编号（后端 create_project 亦防御性重编号）
+  slices.forEach((s, i) => { s.sid = `S${String(i + 1).padStart(3, "0")}`; });
   const chars = slices.reduce((a, x) => a + (x.text || "").length, 0);
   const res = { ok: true, name: names.join(" + "), chars: chars, slice_count: slices.length,
                 slices: slices, est_tokens: Math.round(chars * 0.8), warnings: [], via: "session" };
@@ -959,13 +968,18 @@ $("btn_trial").onclick = async () => {
           <div class="ans">✓ 答案：<b>${esc(q.answer)}</b><br>${esc(q.analysis)}</div>
         </details>
         ${issues ? `<div style="margin-top:8px">${issues}</div>` : `<div class="hint good">门禁即检：未发现问题 ✓</div>`}
-        <div class="hint">满意？带着这套要求点「创建课题 →」· 不满意？改要求再试一片（每次随机换切片）</div>
+        <div class="btns" style="margin-top:8px">
+          <button class="act" onclick="$('btn_create').click()">满意，创建课题 →</button>
+          <button class="act gray" onclick="doclickTrialAgain()">不满意，再试一题</button>
+        </div>
+        <div class="hint">每次随机换切片；创建后将带着这套参数正式生成全部题（创建前会展示成本预估）</div>
       </div>`;
   } catch (e) {
     box.innerHTML = `<div class="hint bad">试出题失败：${esc(e.message)}</div>`;
   }
   $("btn_trial").disabled = false;
 };
+function doclickTrialAgain() { $("btn_trial").click(); }
 
 /* 校验失败：标红 + 滚动定位 + toast（长表单上方可见） */
 function markErr(el, msg) {
@@ -1067,24 +1081,32 @@ function artifactLinks(pid, names) {
       <span class="ai">${ico}</span><span><b>${esc(label)}</b><small>${esc(n)}</small></span></a>`;
   }).join("") + `</div>`;
 }
-const STEPS = [["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"], ["reviewing", "复习"], ["rendering", "产物"]];
+const STEPS = [["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"],
+               ["finalizing", "汇总"], ["reviewing", "复习"], ["rendering", "产物"]];
 function stepIdx(stage) {
-  if (stage === "done") return 6;
-  if (stage === "finalizing") return 5;
+  if (stage === "done") return STEPS.length;
+  // 可选/终态阶段不给步骤高亮（stage_label 负责显示真实状态，stepper 保持全灰避免误导）
+  if (["websearch", "cancelled", "error", "quota", "parsing"].includes(stage)) return -1;
   const i = STEPS.findIndex(s => s[0] === stage);
   return i === -1 ? 0 : i;
+}
+function fmtClock(iso) {
+  try { const d = new Date(iso); return d.toLocaleTimeString("zh-CN", { hour12: false }); }
+  catch (e) { return ""; }
 }
 function renderStepper(stage, progress) {
   const cur = stepIdx(stage);
   return STEPS.map((s, i) =>
     `<span class="stp ${i === cur ? "cur" : i < cur ? "done" : ""}">${s[1]}</span>`).join("")
-    + `<span class="stp ${cur >= 6 ? "done" : ""}">完成</span>`
+    + `<span class="stp ${cur >= STEPS.length ? "done" : ""}">完成</span>`
     + (progress ? `<div style="flex:1;min-width:180px">
         <div class="pvbar"><i style="width:${progress.pct || 0}%"></i></div>
-        <div id="pvtext">${progress.detail ? esc(progress.detail) : ""} · ${progress.pct || 0}%</div>
+        <div id="pvtext">${progress.detail ? esc(progress.detail) : ""} · ${progress.pct || 0}%`
+        + (progress.updated ? ` · 更新 ${fmtClock(progress.updated)}` : "") + `</div>
       </div>` : "");
 }
 async function showProject(pid) {
+  if (currentPid && pid !== currentPid && typeof reviewDirtyGuard === "function" && !reviewDirtyGuard()) return;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   const meta = await api("/api/projects/" + pid);
   $("proj_detail").style.display = "block";
@@ -1098,6 +1120,7 @@ async function showProject(pid) {
   if (meta.requirements) extra.push(`附加要求：${esc(meta.requirements).slice(0, 60)}`);
   if (meta.bloom && Object.keys(meta.bloom).length) extra.push(`Bloom：${["记忆","理解","应用","创造"].map(k => (meta.bloom[k] ?? 0) + "%").join("/")}`);
   if (meta.web_search) extra.push(`网络检索${meta.web_ref_quota ? "（引用 " + meta.web_ref_quota + "%）" : ""}`);
+  if (meta.image_warning) extra.push(`⚠️ 本轮未产出图题（已有图片素材可重试/加大题量）`);
   if (meta.exam_chars) extra.push(`自备真题 ${meta.exam_chars.toLocaleString()} 字（考点/风格校准，不照抄）`);
   if (meta.extra_chars) extra.push(`补充资料 ${meta.extra_chars.toLocaleString()} 字`);
   $("pd_body").innerHTML = `
@@ -1105,10 +1128,11 @@ async function showProject(pid) {
     产物：${meta.toggles.qbank ? "题库✓" : "题库✗"} ${meta.toggles.paper ? "押题卷✓" : "押题卷✗"} ${meta.toggles.review ? "复习手册✓" : "复习手册✗"}
     ${ankiOk ? `<a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/anki">导出 Anki（.txt）</a>
       <a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/apkg" download>S3 导出 Anki（.apkg）</a>
-      <a class="btnart" href="javascript:void(0)" onclick="ankiPreview('${esc(pid)}')" title="导出前先看卡面样式">预览 Anki 卡样</a>` : ""}</div>
+      <a class="btnart" href="javascript:void(0)" onclick="ankiPreview('${esc(pid)}')" title="导出前先看卡面样式">预览 Anki 卡样</a>
+      <a class="btnart" href="javascript:void(0)" onclick="ankiHelp()" title="如何把导出文件导入 Anki">Anki 导入指引</a>` : ""}</div>
     ${extra.length ? `<div class="hint" style="margin-top:6px">${extra.join(" · ")}</div>` : ""}
     <div id="pd_stepper" class="stepper">${renderStepper(meta.stage, meta.progress)}</div>
-    <div class="hint" style="margin-top:6px">各章节配额（教师重点词频加权）· B1 组题暂由 A1/A2/X 分摊：</div>
+    <div class="hint" style="margin-top:6px">各章节配额（教师重点词频加权）：</div>
     <div class="quota">${quota}</div>
     <div id="pd_arts" class="hint" style="margin-top:8px">${artifactLinks(pid, meta.artifacts)}</div>
     ${usage}
@@ -1170,8 +1194,7 @@ async function pdAssetDel(sid) {
 async function loadLog(pid) {
   try {
     const s = await api("/api/projects/" + pid + "/status");
-    const logEl = $("pd_log");
-    if (logEl) { logEl.textContent = (s.log || []).join("\n"); logEl.scrollTop = logEl.scrollHeight; }
+    renderLog($("pd_log"), s.log || []);
   } catch (e) { /* ignore */ }
 }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } pollFails = 0; }
@@ -1187,6 +1210,17 @@ function updateRunBtn(running) {
     b.dataset.running = "";
   }
 }
+function fmtLogLine(l) {
+  const cls = (l.includes("❌") || l.includes("失败") || l.includes("错误")
+    || l.includes("Exception") || l.includes("Traceback")) ? " lg-err"
+    : (l.includes("⚠️")) ? " lg-warn" : "";
+  return `<div class="lg${cls}">${esc(l)}</div>`;
+}
+function renderLog(el, lines) {
+  if (!el) return;
+  el.innerHTML = lines.map(fmtLogLine).join("");
+  el.scrollTop = el.scrollHeight;
+}
 function startPoll(pid) {
   stopPoll();
   pollTimer = setInterval(async () => {
@@ -1198,7 +1232,7 @@ function startPoll(pid) {
       const st = $("pd_stepper");
       if (st) st.innerHTML = renderStepper(s.stage, s.progress);
       const logEl = $("pd_log");
-      if (logEl) { logEl.textContent = (s.log || []).join("\n"); logEl.scrollTop = logEl.scrollHeight; }
+      if (logEl) renderLog(logEl, s.log || []);
       const arts = $("pd_arts");
       if (arts && s.artifacts) arts.innerHTML = "已生成：" + artifactLinks(pid, s.artifacts);
       updateRunBtn(s.running);
@@ -1206,6 +1240,10 @@ function startPoll(pid) {
         stopPoll();
         if (s.stage === "done") { toast("全部产物生成完成 "); $("btn_review").style.display = "inline-block"; }
         if (s.stage === "cancelled") toast("已取消：题目与断点已保留，可再次「开始生成」续跑", false);
+        if (s.stage === "error") {
+          toast("生成出错：详见下方日志；可点「开始生成」从断点重试（质检及之后阶段会重跑）", false);
+          const b = $("btn_run"); if (b) { b.textContent = "重试生成（从断点）"; }
+        }
         loadLog(pid);
       }
     } catch (e) {
@@ -1221,11 +1259,17 @@ $("btn_run").onclick = async () => {
   try {
     const pid = currentPid;
     if ($("btn_run").dataset.running === "1") {
-      await api("/api/projects/" + pid + "/run", { method: "DELETE" });
-      toast("正在停止…（已生成部分保留）");
+      confirmModal("停止生成？",
+        "<p>已生成的部分题目与断点会保留；再次「开始生成」将从断点续跑（<b>质检/修复/复习/渲染阶段会重跑</b>）。</p>",
+        "停止", async () => {
+          try {
+            await api("/api/projects/" + pid + "/run", { method: "DELETE" });
+            toast("正在停止…（已生成部分保留）");
+          } catch (e) { toast(e.message, false); }
+        });
     } else {
       await api("/api/projects/" + pid + "/run", { method: "POST" });
-      toast("管线已启动：⓪网络检索(可选) → MedGen → 门禁① → MedQC → MedFix → MedReview");
+      toast("管线已启动：⓪网络检索(可选) → MedGen 出题 → 门禁① → MedQC 质检 → MedFix 修复 → 汇总 → MedReview 复习手册 → 渲染产物");
       startPoll(pid);
     }
   } catch (e) { toast(e.message, false); }
@@ -1250,6 +1294,14 @@ $("btn_review").onclick = () => openReview();
 let reviewState = { questions: [], keep: null, drop: new Set(), edits: {}, dirty: false,
                     select: new Set(),
                     filter: { q: "", type: "", bloom: "" } };
+/* 审核台脏状态守卫：切主 tab / 换项目 / 刷新关闭都要确认（防未保存修改静默丢失） */
+function reviewDirtyGuard() {
+  if (reviewState.dirty && !confirm("审核台有未保存的修改（剔除/编辑/重掷尚未保存），确定离开？修改将丢失。")) return false;
+  return true;
+}
+window.addEventListener("beforeunload", (e) => {
+  if (reviewState.dirty) { e.preventDefault(); e.returnValue = ""; }
+});
 async function openReview(preserve = false, scrollToId = null) {
   if (!currentPid) return;
   $("review_panel").style.display = "block";
@@ -1406,6 +1458,14 @@ function renderReview(scrollToId = null) {
     g.items.forEach(q => {
     const dropped = reviewState.drop.has(q.id);
     const ed = reviewState.edits[q.id] || {};
+    // B1 组题共享选项在 group.options（自身 options 为空）——与渲染层 _effective_options 同口径
+    const optSrc = (qq, ee) => {
+      const o = (ee && ee.options) || qq.options || [];
+      if (o.length || qq.group_kind !== "option_group") return o;
+      const gg = qq.group || {};
+      return Array.isArray(gg.options) ? gg.options : [];
+    };
+    const opList = optSrc(q, ed);
     const d = document.createElement("div");
     d.className = "revq" + (dropped ? " dropped" : "");
     d.dataset.qid = q.id;
@@ -1420,7 +1480,7 @@ function renderReview(scrollToId = null) {
         <button class="inlineBtn blue revact" data-a="copy" title="复制题面文本到剪贴板">复制</button>
       </div>
       <div class="qbody" data-f="body">${esc(ed.question ?? q.question)}
-        <ul>${(ed.options ?? (q.options || [])).map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("</li><li>")}</ul>
+        <ul>${opList.map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("</li><li>")}</ul>
         <div class="hint good">✓ 答案：${esc(ed.answer ?? q.answer)} · ${esc((ed.analysis ?? q.analysis) || "")}</div>
       </div>
       <div class="optsrow" data-f="editrow" style="${ed._editOpen ? "" : "display:none"}">
@@ -1430,7 +1490,7 @@ function renderReview(scrollToId = null) {
         <input class="eb" data-e="bloom" placeholder="Bloom（记忆/理解/应用/创造）" value="${esc(ed.bloom ?? q.bloom)}" style="max-width:180px">
       </div>
       <div class="optsrow" data-f="editopts" style="${ed._editOpen ? "" : "display:none"}">
-        ${(ed.options ?? (q.options || [])).map((o, i) =>
+        ${opList.map((o, i) =>
           `<input class="eb" data-e="opt${i}" placeholder="选项${LETTERS[i]}" value="${esc(o)}">`).join("")}
       </div>`;
     d.querySelector("[data-a=drop]").onclick = () => {
@@ -1453,7 +1513,7 @@ function renderReview(scrollToId = null) {
     d.querySelector("[data-a=copy]").onclick = () => {
       const e = reviewState.edits[q.id] || {};
       const L = "ABCDEF";
-      const opts = (e.options ?? (q.options || [])).map((o, i) => `${L[i]}. ${o}`).join("\n");
+      const opts = (e.options ?? optSrc(q, null)).map((o, i) => `${L[i]}. ${o}`).join("\n");
       const text = `[${q.id}] ${q.type} · ${(e.bloom ?? q.bloom) || ""} · ${(e.subtopic ?? q.subtopic) || ""}\n`
         + `${(e.question ?? q.question) || ""}\n${opts}\n答案：${(e.answer ?? q.answer) || ""}\n解析：${(e.analysis ?? q.analysis) || ""}`;
       copyText(text, d.querySelector("[data-a=copy]"));
@@ -1475,7 +1535,7 @@ function renderReview(scrollToId = null) {
       inp.oninput = () => {
         const e = reviewState.edits[q.id] = reviewState.edits[q.id] || {};
         const k = inp.dataset.e;
-        if (k.startsWith("opt")) { e.options = (e.options || (q.options || []).slice()); e.options[+k.slice(3)] = inp.value; }
+        if (k.startsWith("opt")) { e.options = (e.options || optSrc(q, null).slice()); e.options[+k.slice(3)] = inp.value; }
         else e[k] = inp.value;
         reviewState.dirty = true;
         $("rev_save").disabled = false;
@@ -1692,10 +1752,14 @@ async function diffPrompt(name) {
    触发：未配置 Key 且从未完成引导；完成或「跳过」写 localStorage，关闭/ESC 不写（下次再提示） */
 let wzStep = 0;
 function wzDone() {
-  localStorage.setItem("medkit-onboarded", "1");
+  try { localStorage.setItem("medkit-onboarded", "1"); } catch (e) { /* ignore */ }
   $("wizard_mask").style.display = "none";
 }
-function wzClose() { $("wizard_mask").style.display = "none"; }
+/* 关闭/ESC 不写「已完成」（下次仍会提示），但记本会话内不再重复弹（防反复打扰） */
+function wzClose() {
+  try { sessionStorage.setItem("medkit-wz-seen", "1"); } catch (e) { /* ignore */ }
+  $("wizard_mask").style.display = "none";
+}
 function wzSetDots() {
   document.querySelectorAll(".wsteps i").forEach((d, i) => d.classList.toggle("on", i === wzStep));
 }
@@ -1754,7 +1818,10 @@ function wzRender() {
   }
 }
 function maybeShowWizard() {
-  try { if (localStorage.getItem("medkit-onboarded")) return; } catch (e) { return; }
+  try {
+    if (localStorage.getItem("medkit-onboarded")) return;
+    if (sessionStorage.getItem("medkit-wz-seen")) return;   // 本会话已看过（关闭/ESC 过）→ 不重复弹
+  } catch (e) { return; }
   const c = state.cfg;
   if (!c || c.api_key_masked) return;   // 已有 Key → 老用户，不打扰
   wzStep = 0; wzRender();

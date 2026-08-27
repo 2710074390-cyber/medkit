@@ -42,7 +42,8 @@ def _extract_pdf(p: Path) -> list[dict[str, Any]]:
                            "chars": len(text)})
     if total < 200:
         raise ExtractError(
-            "该 PDF 疑似扫描件（无文本层）。请使用带文本层的 PDF、或先用 WPS/OCR 转成文字文档。"
+            "该 PDF 疑似扫描件（无文本层）。请改用「连接服务商」页配置的 MinerU OCR 识别"
+            "（扫描件会自动识别并加入输入），或使用带文本层的 PDF。"
         )
     return blocks
 

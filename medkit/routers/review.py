@@ -107,11 +107,30 @@ def review_questions(pid: str, body: ReviewBody) -> dict[str, Any]:
             for k in ("question", "options", "answer", "analysis", "bloom", "type", "subtopic"):
                 if k in e:
                     q[k] = e[k]
+            # S3/B1：编辑选项时同步 group.options（渲染/聚合与 q.options 同口径）
+            if q.get("group_kind") == "option_group" and "options" in e and isinstance(q.get("group"), dict):
+                q["group"]["options"] = e["options"]
         out.append(q)
     if not out:
         raise HTTPException(400, "保留题数为 0，请至少保留一题")
-    write_json_atomic(f, out)  # v0.5：原子写（旧实现裸 write_text）
-    rendered = _rerender_project(base, out, meta)
+    # 先备份旧题库再写；重渲染失败时回滚 JSON——避免「编辑已持久化但产物未更新」的不一致态
+    bak = f.with_suffix(".json.review-bak")
+    try:
+        bak.write_bytes(f.read_bytes())
+    except OSError:
+        pass
+    write_json_atomic(f, out)
+    try:
+        rendered = _rerender_project(base, out, meta)
+    except Exception as e:  # noqa: BLE001
+        if bak.exists():
+            try:
+                write_json_atomic(f, json.loads(bak.read_text(encoding="utf-8")))
+            except Exception:  # noqa: BLE001  回滚失败：保留备份文件供手工恢复
+                pass
+        raise HTTPException(500, f"重渲染失败，已回滚本次修改：{type(e).__name__}（见日志；可稍后重试）") from e
+    finally:
+        bak.unlink(missing_ok=True)
     return {"ok": True, "questions": len(out), "rendered": rendered}
 
 
@@ -159,8 +178,24 @@ def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
     new_q["id"] = q["id"]
     idx = questions.index(q)
     questions[idx] = new_q
+    # 与审核保存同策略：备份 → 写 → 重渲染失败回滚
+    bak = f.with_suffix(".json.review-bak")
+    try:
+        bak.write_bytes(f.read_bytes())
+    except OSError:
+        pass
     write_json_atomic(f, questions)  # v0.5：原子写（旧实现裸 write_text）
-    rendered = _rerender_project(base, questions, meta)
+    try:
+        rendered = _rerender_project(base, questions, meta)
+    except Exception as e:  # noqa: BLE001
+        if bak.exists():
+            try:
+                write_json_atomic(f, json.loads(bak.read_text(encoding="utf-8")))
+            except Exception:  # noqa: BLE001
+                pass
+        raise HTTPException(500, f"重掷后重渲染失败，已回滚：{type(e).__name__}（见日志）") from e
+    finally:
+        bak.unlink(missing_ok=True)
     return {"ok": True, "question": new_q, "rendered": rendered,
             "usage": uctx.snapshot(),  # v0.5：重掷独立记账随响应返回
             "issues": options_check.check_all([new_q])["issues"]}

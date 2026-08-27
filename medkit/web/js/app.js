@@ -7,9 +7,13 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g,
 
 /* IMP-02：WP 级 feature flag（后端 /api/config `features` 节；缺省全开 = 现状兼容）。
    关闭后：学习中心「大纲覆盖」pill / 「⚡一键刷薄弱」/ 项目详情「图片素材」卡 / 真题考频卡 整体隐藏。 */
-const FEATURES = { syllabus: true, realexams: true, gap: true, image_q: true };
+const FEATURES = { syllabus: true, realexams: true, gap: true, image_q: true, cards: true };
 function applyFeatures(cfg) {
   Object.assign(FEATURES, (cfg && cfg.features) || {});
+  // 防御：后端未下发某键（如旧 config 无 features 节）时保持默认开，避免「缺键=关闭」的隐性门禁
+  for (const k of ["syllabus", "realexams", "gap", "image_q", "cards"]) {
+    if (FEATURES[k] === undefined) FEATURES[k] = true;
+  }
   const pill = document.querySelector('#learnnav button[data-lv="syllabus"]');
   if (pill) pill.style.display = FEATURES.syllabus ? "" : "none";
   const rexCard = $("rex_card");
@@ -230,6 +234,12 @@ async function checkUpdate(silent = false) {
 
 /* ---- 导航 + hash 路由 */
 function showTab(name) {
+  if (typeof window.reviewDirtyGuard === "function" && !window.reviewDirtyGuard()) {
+    // 审核台有未保存修改：回滚 hash 到当前 tab，不切换
+    const cur = (location.hash || "").replace("#", "");
+    if (cur && cur !== name) history.replaceState(null, "", "#" + cur);
+    return;
+  }
   document.querySelectorAll("nav button").forEach(x => {
     const on = x.dataset.tab === name;
     x.classList.toggle("active", on);

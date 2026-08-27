@@ -108,6 +108,20 @@ def _esc_anki(s: Any) -> str:
     return _esc(s).replace("\n", "<br>").replace("\t", " ")
 
 
+def _md_media(q: dict[str, Any]) -> list[str]:
+    """MD 版图/表题：data_table 渲染为 Markdown 表格；图片标注（base64 不内嵌文本，提示见 HTML 版）。"""
+    out: list[str] = []
+    tbl = str(q.get("data_table") or "").strip()
+    if tbl:
+        out.append("📋 **附数据表格**：")
+        out.append(tbl if "\n" in tbl else tbl.replace("|", " | "))
+        out.append("")
+    if q.get("image_ref"):
+        out.append(f"🖼 **本题含图片**（{q.get('image_ref')}）：请查看 HTML 版（题库.html）中的图。")
+        out.append("")
+    return out
+
+
 def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = True) -> list[str]:
     out = [f"{prefix} {q.get('id')} · {TYPE_LABELS.get(q.get('type'), q.get('type', ''))} · {q.get('bloom', '')}"]
     out.append(f"**{q.get('subtopic', '')}**")
@@ -115,6 +129,7 @@ def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = Tr
     if show_options:
         for i, opt in enumerate(_effective_options(q)):
             out.append(f"- {LETTERS[i]}. {opt}")
+    out += _md_media(q)
     out.append(f"**✅ 答案：{q.get('answer', '')}**")
     out.append(f"💡 {q.get('analysis', '')}")
     out.append("")
@@ -252,9 +267,29 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
   <input id="qsearch" type="search" aria-label="搜索题干 / 考点 / 章节" placeholder="🔍 搜索题干 / 考点 / 章节…" oninput="ftq(this.value)">
   <button id="qreset" class="mini" title="清除全部筛选" aria-label="清除全部筛选" onclick="resetFilter()">重置</button>
 </div>
-{''.join(items)}
+<div class="qpager" id="qpager" style="margin:10px 0 2px;display:flex;align-items:center;gap:8px;font-size:13px">
+  <button class="mini" onclick="pg(-1)" aria-label="上一页">‹ 上一页</button>
+  <span id="pginfo" role="status"></span>
+  <button class="mini" onclick="pg(1)" aria-label="下一页">下一页 ›</button>
+</div>
+{''.join(f'<div class="qpage" data-pg="{i}" style="display:{"block" if i == 0 else "none"}">' + "".join(items[i*50:(i+1)*50]) + '</div>' for i in range(0, (len(items)+49)//50))}
 <script>
 let FT_T='',FT_B='',FT_Q='';
+const PS=50;
+let PAGES=Math.max(1,Math.ceil(document.querySelectorAll('details.q').length/PS));
+let PG=0;
+function renderPg(){{
+  document.querySelectorAll('.qpage').forEach(p=>{{p.style.display=(p.dataset.pg==String(PG))?'':'none';}});
+  const info=document.getElementById('pginfo');
+  if(info) info.textContent='第 '+(PG+1)+' / '+PAGES+' 页';
+  const pr=document.getElementById('qpager');
+  if(pr) pr.style.display=(FT_T||FT_B||FT_Q)?'none':'flex';
+}}
+function pg(d){{
+  PG=Math.max(0,Math.min(PAGES-1,PG+d));
+  renderPg();
+  window.scrollTo({{top:0,behavior:'smooth'}});
+}}
 function saveFilter(){{
   try{{localStorage.setItem('medkitQbFilter',JSON.stringify({{t:FT_T,b:FT_B,q:FT_Q}}));}}catch(e){{}}
 }}
@@ -288,6 +323,10 @@ function apply(){{
     d.style.display=(okT&&okB&&okQ)?'':'none';
     if(okT&&okB&&okQ) n++;
   }});
+  // 过滤/搜索激活 → 跨页显示全部匹配（分页条隐藏）；未过滤 → 回到当前页
+  const filtered=!!(FT_T||FT_B||FT_Q);
+  document.querySelectorAll('.qpage').forEach(p=>{{p.style.display=filtered?'':'none';}});
+  if(!filtered) renderPg();
   const c=document.getElementById('qcount');
   if(c) c.textContent=(FT_T||FT_B||FT_Q)?('显示 '+n+' / '+document.querySelectorAll('details.q').length+' 题'):'';
 }}
@@ -303,6 +342,7 @@ function setCounts(){{
   }});
 }}
 setCounts();
+renderPg();
 /* 记忆上次过滤状态（题型/Bloom/关键词），下次打开保持不变 */
 try{{
   const saved=JSON.parse(localStorage.getItem('medkitQbFilter')||'null');
@@ -348,18 +388,26 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
                       image_index: Optional[dict[str, Any]] = None) -> str:
     """交互押题卷（I3 练习化）：
     - X 型 checkbox + 集合判分（A1 修复）
-    - localStorage 实时保存作答 + 重开续答 + 答题卡 + 计时器
+    - localStorage 实时保存作答 + 重开续答 + 答题卡 + 计时器（练习计时；可开启限时模式→到点自动判分）
     - 判分后「错题重练」（localStorage 错题集，可返回全卷）
     - 判分后「同步错题到学习中心错题本」（v0.7，POST /api/library/mistakes/sync-paper）
     - 所有插值经 esc()（A4 修复）
+    - 无选项题剔除（防御：不参与判分与计数，页面提示数量）
     """
+    no_opt = [q for q in questions if not _effective_options(q)]
+    questions = [q for q in questions if _effective_options(q)]
+    dropped_n = len(no_opt)
     qs = _questions_json_for_page(questions, image_index)
     pid_json = json.dumps(pid or "")
     subj_json = json.dumps(subject or "")
     return _page(title, f"""
 <h1>{html_mod.escape(title)}</h1>
 <p class="meta">共 {len(questions)} 题 · 作答自动保存 · <button class="mini" onclick="window.print()">🖨 打印</button>
+  <label style="margin-left:12px;font-size:12.5px"><input type="checkbox" id="ctMode" onchange="ctToggle()"> 限时模式</label>
+  <input type="number" id="ctMin" value="60" min="5" max="240" style="width:56px;margin-left:4px;padding:1px 4px;font-size:12.5px" title="限时分钟数（到点自动判分）"> 分钟
+  <span class="hint" style="font-size:11.5px;margin-left:6px">默认练习计时（不锁定），自行提交判分</span>
   <span id="timer" style="float:right"></span></p>
+{f'<p class="hint" style="margin:4px 0 0">⚠️ {dropped_n} 题缺选项，已从本卷剔除（不参与判分）。</p>' if dropped_n else ''}
 <div id="quiz"><span class="spin"></span>加载中…</div>
 <script>
 let QUESTIONS = {qs};
@@ -370,9 +418,10 @@ const PAPER_PID = {pid_json};
 const PAPER_SUBJECT = {subj_json};
 const KEY = "medkit-paper-" + (PAPER_PID || location.pathname.split('/').pop());
 const RETRY_KEY = KEY + "-retry";
-const WRONG_POOL = {{}};   // v0.7：判分用错题集（按题干去重），供「同步到错题本」
+const WRONG_POOL = {{}};   // v0.7：判分用错题集，供「同步到错题本」
 let secs = 0;
 let judged = false;   // 判分防重入：提交一次后再次点击不重复计分/铺解析
+let showCt = false;   // 限时模式开关（当前页面生命周期内）
 
 function esc(s){{return String(s??"").replace(/[&<>"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));}}
 function loadState(){{try{{return JSON.parse(localStorage.getItem(KEY)||"null")}}catch(e){{return null}}}}
@@ -393,7 +442,9 @@ function writeAnswer(i,val){{
 }}
 function answersEqual(a,b){{
   if(typeof a!=="string"||typeof b!=="string") return false;
-  const sa=a.split("").sort().join(""), sb=b.split("").sort().join("");
+  // 空白归一化：答案键可能带空格（如"B D "/"B, D"），归一后再排序比较
+  const sa=a.replace(/[\s,，、]+/g,"").split("").sort().join("");
+  const sb=b.replace(/[\s,，、]+/g,"").split("").sort().join("");
   return sa.length>0 && sa===sb;
 }}
 
@@ -513,7 +564,8 @@ function grade(){{
     if(right) score++;
     else {{
       wrong.push(i+1);
-      WRONG_POOL[String(q.question||"").slice(0,40)] = {{
+      // 去重键改用题目 id（案例组子题题干共享前 40 字会被误并；id 唯一稳定）
+      WRONG_POOL[String(q.id||"")||String(q.question||"").slice(0,40)] = {{
         id: q.id||"", subject: PAPER_SUBJECT, source:"paper",
         sid: q.sid||"", question: q.question||"", options: q.options||[],
         answer: q.answer||"", analysis: q.analysis||"",
@@ -581,6 +633,7 @@ function grade(){{
     d.insertAdjacentHTML('beforeend',
       '<p class="ans">✅ 答案 '+esc(q.answer)+' · 💡 '+esc(q.analysis)+'</p>');
   }});
+  if(wrong.length) syncWrong();   // 判分后自动回流错题本（幂等；按钮仅作手动兜底/重试）
 }}
 function retryWrong(){{
   let r=null; try{{r=JSON.parse(localStorage.getItem(RETRY_KEY)||"null");}}catch(e){{r=null;}}
@@ -638,10 +691,26 @@ async function syncWrong(){{
 
 const T0=(loadState()||{{}}).t0||Date.now();
 function fmtT(s){{const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}}
-function tick(){{secs=Math.floor((Date.now()-T0)/1000);
-  const m=Math.floor(secs/60), s=secs%60;
+function ctLimit(){{
+  const m=Math.max(5,Math.min(240,parseInt((document.getElementById('ctMin')||{{}}).value||'60',10)||60));
+  return m*60;
+}}
+function ctToggle(){{
+  const el=document.getElementById('ctMode');
+  showCt=!!(el&&el.checked);
+  if(showCt && secs>=ctLimit()){{ grade(); return; }}
+  tick();
+}}
+function tick(){{
+  secs=Math.floor((Date.now()-T0)/1000);
   const el=document.getElementById('timer');
-  if(el) el.textContent='⏱ '+m+':'+(s<10?'0':'')+s;}}
+  if(!el) return;
+  if(showCt){{
+    const left=Math.max(0,ctLimit()-secs);
+    el.textContent='⏳ 剩 '+Math.floor(left/60)+':'+(left%60<10?'0':'')+(left%60);
+    if(left<=0 && !judged){{ grade(); return; }}
+  }} else el.textContent='⏱ '+fmtT(secs)+'（练习计时）';
+}}
 setInterval(tick,1000); tick();
 document.addEventListener('input',e=>{{if(e.target.matches('.opt input'))collectAnswers();}});
 /* IMP-08：答题卡格子可键盘激活（Enter/Space） */

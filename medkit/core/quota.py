@@ -11,6 +11,7 @@ from typing import Any
 KEYWORD_MIN_LEN = 2
 KEYWORD_MAX_LEN = 8
 BOOST = 2.0  # 命中权重上限倍率
+TEACHER_TEXT_LIMIT = 4000  # 与 medgen.TEACHER_CHAR_LIMIT 对齐：配额词频与出题注入同口径（超长重点后段不参与锚定）
 
 
 def extract_keywords(teacher_text: str, limit: int = 120) -> list[str]:
@@ -39,7 +40,7 @@ def extract_keywords(teacher_text: str, limit: int = 120) -> list[str]:
 def allocate(slices: list[dict[str, Any]], teacher_text: str,
              target: int) -> list[dict[str, Any]]:
     """返回 [{sid, count}]，舍入后求和 == target（最大余额法）。"""
-    kws = extract_keywords(teacher_text)
+    kws = extract_keywords(teacher_text[:TEACHER_TEXT_LIMIT])
     weights: list[float] = []
     for s in slices:
         text = s.get("text", "")

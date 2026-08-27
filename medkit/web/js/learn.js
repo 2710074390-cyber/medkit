@@ -177,7 +177,13 @@ async function sylRender(subject) {
 }
 async function sylEnsure() {
   const r = await api("/api/syllabus/ensure", { method: "POST", body: JSON.stringify({ force: false }) });
-  toast(`大纲种子导入：新增 ${r.imported} 条（幂等）`);
+  if (r.note === "seed missing") {
+    toast("内置大纲文件缺失：请上传官方大纲(md/txt) 或改用「教师重点」标准", false);
+  } else if (!r.imported) {
+    toast("内置大纲已导入过（幂等，无新增）");
+  } else {
+    toast(`大纲种子导入：新增 ${r.imported} 条（幂等）`);
+  }
   sylLoad();
 }
 function sylPaste() {
@@ -339,8 +345,16 @@ function rexAnalyzeRender() {
 }
 async function rexConfirmAll() {
   if (!REX_DRAFTS.length) { toast("先分析"); return; }
+  const total = REX_DRAFTS.length;
+  const batch = REX_DRAFTS.slice(0, 200);
   const r = await api("/api/library/realexams/confirm",
-    { method: "POST", body: JSON.stringify({ items: REX_DRAFTS.slice(0, 200) }) });
+    { method: "POST", body: JSON.stringify({ items: batch }) });
+  if (total > 200) {
+    REX_DRAFTS = REX_DRAFTS.slice(200);
+    toast(`已确认 ${r.added} 条（单次上限 200 条；剩余 ${REX_DRAFTS.length} 条待确认，请再次点击「确认全部入库」）`);
+    rexAnalyzeRender();
+    return;
+  }
   toast(`已确认 ${r.added} 条频次（可重复确认合并）`);
   REX_DRAFTS = [];
   document.getElementById("rex_drafts").innerHTML = '<div class="hint">已确认。热力表见下。</div>';
@@ -726,7 +740,7 @@ async function mkLearn(id, learned) {
     await api(`/api/library/mistakes/${id}/learn`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ learned: learned }) });
-    toast("已计入掌握度"); loadLibrary();
+    toast(learned ? "已标记为已掌握（仅归档标记；掌握度仍由真实作答驱动）" : "已取消已掌握标记"); loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
 async function mkDel(id) {
@@ -868,6 +882,9 @@ async function loadExplains() {
         <div class="exp-article">${expMd(e.content || "")}</div>
         ${e.sources && e.sources.length ? `<details style="margin-top:8px"><summary style="font-size:11.5px">来源（${e.sources.length}）——点击查看</summary>
           <div class="hint" style="margin-top:6px;font-size:11.5px;line-height:1.9">${e.sources.map(s => (s.kind === "web" ? "🌐" : "📖") + " " + esc(s.title || s.url || "")).join("<br>")}</div></details>` : ""}
+        ${e.kp_name ? `<details style="margin-top:8px" ontoggle="expHint(this,'${esc(e.subject || "")}','${esc(e.kp_name)}')">
+          <summary style="font-size:11.5px;cursor:pointer">📄 查看教材切片原文（不消耗 AI）</summary>
+          <div class="rv-hintbody exp-slices" id="exps_${esc(e.id)}"><span class="hint">展开后自动检索教材切片…</span></div></details>` : ""}
         <div class="btns" style="margin-top:10px">
           ${e.kp_name ? `<button class="mini-btn" onclick="learnRecAction('tutor','${esc(e.subject || "")}','${esc(e.kp_name)}')">→ 提问练习</button>` : ""}
           ${(window.FEATURES && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards('${esc(e.id)}','${esc(e.subject || "")}')">🧠 生成记忆卡</button>` : ""}
@@ -929,10 +946,13 @@ function expFold(id) {
   if (lbl) lbl.textContent = open ? "收起" : "展开";
 }
 async function expRegen(id, subject, kpName) {
-  try {
-    await api("/api/library/explains/" + id, { method: "DELETE" });
-    await learnRecAction("explain", subject, kpName);
-  } catch (e) { toast(e.message, false); loadExplains(); }
+  confirmModal("重新生成讲解", "<p>将<b>删除当前讲解</b>并以同名重新生成（AI 失败时旧讲解不会自动恢复）。继续？</p>",
+    "重新生成", async () => {
+      try {
+        await api("/api/library/explains/" + id, { method: "DELETE" });
+        await learnRecAction("explain", subject, kpName);
+      } catch (e) { toast(e.message, false); loadExplains(); }
+    }, false);
 }
 window.expFold = expFold; window.expRegen = expRegen;
 /* WP-05/NX-04：讲解产物 → 医学记忆卡（flag = cards 前端同步隐藏按钮） */
@@ -1137,6 +1157,7 @@ async function tutorSubmit() {
       cur.updated_at = r.session.updated_at; }
     $("tutor_cost").textContent = `本轮得分 ${r.score}/3` + (r.gap ? ` —— ${r.gap}` : "");
     tutorShowConversation();
+    invalidateLearnCache();   // 判分回写掌握度 → 失效学习中心缓存，概览到手最新值
   } catch (e) { toast(e.message, false); $("tutor_cost").textContent = ""; }
   finally { if (btn) { btn.textContent = old; btn.disabled = false; } }
 }
@@ -1258,6 +1279,22 @@ async function rvHint(det, kpName, subject) {
   }
 }
 window.rvHint = rvHint;
+/* 讲解产物「查看教材切片原文」：懒加载（复用 explain/slices 端点，零 LLM） */
+async function expHint(det, subject, kpName) {
+  if (!det || det.dataset.loaded === "1" || !det.open) return;
+  det.dataset.loaded = "1";
+  const body = det.querySelector(".exp-slices");
+  if (!body) return;
+  body.innerHTML = '<span class="spin"></span><span class="hint">正在检索教材切片…</span>';
+  try {
+    const r = await api(`/api/library/explain/slices?subject=${encodeURIComponent(subject || "")}&query=${encodeURIComponent(kpName || "")}&limit=5`);
+    const sl = r.slices || [];
+    if (!sl.length) { body.innerHTML = `<div class="hint">教材中未检索到「${esc(kpName)}」相关内容（可开启联网补充生成）。</div>`; return; }
+    body.innerHTML = sl.map(s =>
+      `<div class="rv-slice"><b>${esc(s.title || s.sid || "切片")}</b><br>${esc((s.text || "").slice(0, 400))}${(s.text || "").length > 400 ? "…" : ""}</div>`).join("");
+  } catch (e) { body.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
+}
+window.expHint = expHint;
 async function rvGrade(cid, q) {
   try {
     await api("/api/library/review/grade", {
@@ -1360,4 +1397,23 @@ async function ankiPreview(pid) {
     $("modal_mask").style.display = "flex";
     $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
   } catch (e) { toast(e.message, false); }
+}
+window.ankiHelp = ankiHelp;
+/* Anki 导入指引（.txt 文本导入 / .apkg 桌面导入，含手机端说明） */
+function ankiHelp() {
+  $("md_title").textContent = "Anki 导入指引";
+  $("md_body").innerHTML = `
+    <div class="hint" style="line-height:1.9">
+      <b>.</b> <b>.apkg 卡包</b>（推荐，电脑端）：<br>
+      ① 下载 .apkg 文件 → ② 双击打开（或 Anki「文件 → 导入」）→ ③ 自动建「MedKit 医学题库」牌组 ✓<br><br>
+      <b>.</b> <b>.txt 文本</b>（Anki 桌面版）：<br>
+      ① 打开 Anki → ② 「文件 → 导入」→ ③ 选择 .txt → ④ 字段分隔符选「Tab」，前 4 行不要跳过 → 导入 ✓<br><br>
+      <b>.</b> <b>手机端（AnkiDroid / AnkiMobile）</b>：<br>
+      把 .apkg 文件传到手机（微信/QQ/网盘均可）→ 点开文件选择「用 Anki 打开」即可导入；.txt 需先在电脑版导入。<br><br>
+      <b>.</b> 标签（题型 / Bloom / 章节）导入后自动带出；「x 型自评卡」正面为判断题干关键词，反面给出正确答案，适合多选自测。
+    </div>`;
+  $("md_ok").textContent = "知道了";
+  $("md_ok").className = "act";
+  $("modal_mask").style.display = "flex";
+  $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
 }

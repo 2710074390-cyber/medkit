@@ -10,11 +10,27 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 FONT = r"C:\Windows\Fonts\segoeuib.ttf"
+FONT_FALLBACKS = [r"C:\Windows\Fonts\arialbd.ttf", r"C:\Windows\Fonts\arial.ttf",
+                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                  "/System/Library/Fonts/Helvetica.ttc"]
 SIZES = [16, 24, 32, 48, 64, 128, 256]
 # 135° 渐变三档(对齐网站 .brand .logo 的渐变结构,色系换成青绿)
 STOPS = [(0.0, (45, 212, 191)), (0.6, (13, 148, 136)), (1.0, (19, 78, 74))]
 TEXT = "MW"
 TEXT_FILL = (245, 250, 248, 255)
+
+
+def _load_font(size: int) -> ImageFont.ImageFont:
+    """按候选顺序加载字体；全缺失回退 PIL 默认字体（再生成不抛错）。"""
+    for path in [FONT, *FONT_FALLBACKS]:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:  # noqa: BLE001
+            continue
+    try:
+        return ImageFont.load_default()
+    except Exception:  # noqa: BLE001
+        return ImageFont.load_default(size) if hasattr(ImageFont, "load_default") else ImageFont.load_default()
 
 
 def _interp(t: float) -> tuple[int, int, int]:
@@ -41,13 +57,13 @@ def draw_icon(size: int) -> Image.Image:
     draw = ImageDraw.Draw(img)
     target_w = size * 0.60
     fs = max(6, round(size * 0.55))
-    font = ImageFont.truetype(FONT, fs)
+    font = _load_font(fs)
     while fs > 6:
         bbox = draw.textbbox((0, 0), TEXT, font=font)
         if bbox[2] - bbox[0] <= target_w:
             break
         fs -= 1
-        font = ImageFont.truetype(FONT, fs)
+        font = _load_font(fs)
     bbox = draw.textbbox((0, 0), TEXT, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     x = (size - w) / 2 - bbox[0]

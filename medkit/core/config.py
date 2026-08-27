@@ -112,7 +112,12 @@ def encrypt_for_save(value: str) -> str:
 
 
 # ---------------------------------------------------------------- 读写
+LAST_LOAD_CORRUPT = False  # 最近一次 load() 是否因配置损坏回退（前端提示用）
+
+
 def load() -> dict[str, Any]:
+    global LAST_LOAD_CORRUPT
+    LAST_LOAD_CORRUPT = False
     cfg = copy.deepcopy(DEFAULTS)  # v0.5：深拷贝（旧实现 dict() 浅拷贝，嵌套 dict 被 update 污染模块级默认值）
     if CONFIG_FILE.exists():
         try:
@@ -123,6 +128,7 @@ def load() -> dict[str, Any]:
                 else:
                     cfg[k] = v
         except Exception as e:  # noqa: BLE001  配置损坏：先备份原始文件（抢救 Key），再回退默认值
+            LAST_LOAD_CORRUPT = True
             try:
                 bak = CONFIG_FILE.with_name(
                     f"{CONFIG_FILE.name}.corrupt-{int(time.time())}.bak")

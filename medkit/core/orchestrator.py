@@ -28,7 +28,6 @@ from ..core.config import resolve_key
 from ..gates import bloom_check, dedup_check, options_check, trace_check
 from ..render import qbank_html, review_html
 
-B1_WEIGHT_REDIST = {"A1": 0.5, "A2": 0.4, "X": 0.1}  # B1 未支持时配额再分配
 FIX_ROUNDS_GATE = 2
 PAPER_DEFAULT = 50
 PIPELINE_CONCURRENCY = 3  # 切片出题并发（DeepSeek 等限额友好）
@@ -138,13 +137,12 @@ def _set_progress(proj_dir: Path, stage: str, done: int, total: int, detail: str
 
 
 def _effective_ratios(ratios: dict[str, int]) -> dict[str, int]:
-    """B1 尚未支持 → 按权重并入 A1/A2/X（批次备注记录）。"""
-    out = dict(ratios)
-    b1 = out.pop("B1", 0)
-    if b1:
-        for k, w in B1_WEIGHT_REDIST.items():
-            out[k] = out.get(k, 0) + round(b1 * w)
-    return {k: v for k, v in out.items() if v > 0}
+    """B1 组题已端到端支持（HC-7 契约 + 门禁/渲染/导出全链路），配额原样直达 MedGen。
+
+    历史：v0.5 曾把 B1 按权重并入 A1/A2/X（B1 未支持时配额再分配）；S3 起渲染/门禁/审核均已适配
+    group_kind=option_group，此处只做「去掉零值键」，保证 trial 与正式管线口径一致。
+    """
+    return {k: v for k, v in dict(ratios).items() if v > 0}
 
 
 def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
@@ -541,9 +539,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _save_checkpoint(base, done_sids, questions)
         return {"stage": "cancelled", "questions": len(questions), "partial": True}
     _set_stage(base, meta_path, "qc", "③ MedQC 质检（LLM-as-judge 并行分批）…")
-    _set_progress(base, "qc", 0, (len(questions) + medqc.BATCH_SIZE - 1) // medqc.BATCH_SIZE,
-                  "质检中…")
-    qc_report = medqc.qc_batch(qc_client, questions, text_by_sid)
+    total_batches = (len(questions) + medqc.BATCH_SIZE - 1) // medqc.BATCH_SIZE
+    _set_progress(base, "qc", 0, total_batches, "质检中…")
+    qc_report = medqc.qc_batch(
+        qc_client, questions, text_by_sid,
+        on_progress=lambda done, tot: _set_progress(
+            base, "qc", done, tot, f"质检中… 第 {done}/{tot} 批"))
     (base / "质检报告" / "质检报告.json").write_text(
         json.dumps(qc_report, ensure_ascii=False, indent=2), encoding="utf-8")
     # NX-03（R-2）：契约硬闭环失败批次 → 人工复核清单（与网络冲突/渲染前剔除并存）
@@ -556,7 +557,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                f" issues={len(qc_report['issues'])}")
     if qc_report["gate_decision"] == "BLOCKED":
         _set_stage(base, meta_path, "fixing", "④ MedFix（质检 BLOCKED → 定向修复）…")
-        _set_progress(base, "fixing", 0, 1, "定向修复中…")
+        _set_progress(base, "fixing", 0, 1, "定向修复中…（最长约 1~2 分钟）")
         fixed = medfix.fix_questions(fix_client, questions,
                                      qc_report["issues"], text_by_sid)
         by_id = {q["id"]: q for q in questions}
@@ -589,6 +590,11 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     if dropped_list:
         _log(base, f"  ⚠️ 渲染前终检剔除 {len(dropped_list)} 题 → 人工复核清单.md")
         _append_review_list(base, dropped_list)
+    # WP-04：已上传图片素材但本批无图题 → 记 visible 提示（前端项目详情展示）
+    if image_index and not any(q.get("image_ref") for q in questions):
+        _log(base, "  ⚠️ 已有图片素材但本批未产出图题（可稍后重试/加大题量）")
+        meta["image_warning"] = True
+        _write_json_atomic(meta_path, meta)
     (base / "最终产物").mkdir(exist_ok=True)
     (base / "最终产物" / "questions_final.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -598,7 +604,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     review_md = ""
     if toggles.get("review", True):
         _set_stage(base, meta_path, "reviewing", "⑤ MedReview 复习手册生成…")
-        _set_progress(base, "reviewing", 0, 1, "生成复习手册…")
+        _set_progress(base, "reviewing", 0, 1, "生成复习手册…（预计 1~2 分钟）")
         if cancel.is_set():
             _set_stage(base, meta_path, "cancelled", "⏹ 已取消（题目已保留）")
             return {"stage": "cancelled", "questions": len(questions), "partial": True}

@@ -3,7 +3,7 @@
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Callable, Optional
 
 from pydantic import ValidationError
 
@@ -120,8 +120,12 @@ def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
 
 def qc_batch(client: Any, questions: list[dict[str, Any]],
              slice_by_sid: dict[str, str],
-             concurrency: int = MAX_WORKERS) -> dict[str, Any]:
-    """分批质检（并发），聚合报告（按批次顺序）。"""
+             concurrency: int = MAX_WORKERS,
+             on_progress: Optional[Callable[[int, int], None]] = None) -> dict[str, Any]:
+    """分批质检（并发），聚合报告（按批次顺序）。
+
+    ``on_progress(done, total)``：每完成一批回调（长任务进度可见性；QL-2026-08）。
+    """
     if not questions:
         # 空题库：跳过该批 + warn（原逻辑会把空列表判成 PASS 0 分）
         return {"score": 0, "gate_decision": "PASS_WITH_FIXES",
@@ -134,13 +138,22 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
     def run(i: int, batch: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
         return i, _qc_batch_once(client, batch, slice_by_sid)
 
+    def _call_progress(done: int) -> None:
+        if on_progress:
+            try:
+                on_progress(done, len(batches))
+            except Exception:  # noqa: BLE001  进度回调失败不阻断质检
+                pass
+
     if len(batches) <= 1 or concurrency <= 1:
         for i, b in enumerate(batches):
             results[i] = _qc_batch_once(client, b, slice_by_sid)
+            _call_progress(i + 1)
     else:
         with ThreadPoolExecutor(max_workers=concurrency) as ex:
             for i, r in ex.map(run, range(len(batches)), batches):
                 results[i] = r
+                _call_progress(i + 1)
 
     issues: list[dict[str, Any]] = []
     scores: list[int] = []

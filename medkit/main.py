@@ -74,8 +74,9 @@ async def _lifespan(_app: FastAPI):
         def _open() -> None:
             try:
                 webbrowser.open(f"http://127.0.0.1:{port}")
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                # 审查（2026-08）：打开失败不再静默——打印可访问地址到控制台
+                print(f"⚠️ 未能自动打开浏览器（{e}），请手动访问 http://127.0.0.1:{port}")
         threading.Timer(0.6, _open).start()
     yield
     # shutdown：无全局资源需清理（线程均为 daemon；文件写均原子）

@@ -165,6 +165,32 @@ def recent_gap_project(subject: str = "") -> Optional[str]:
     return None
 
 
+def recent_gap_done_project(subject: str = "") -> Optional[str]:
+    """最近 24h 内已完成（stage==done）的同科目 gap 项目（防重复建卷提示用）。"""
+    root = Path(cfg.load().get("projects_dir") or (cfg.CONFIG_DIR / "projects"))
+    if not root.is_dir():
+        return None
+    cutoff = datetime.now() - timedelta(hours=GAP_WINDOW_HOURS)
+    for d in sorted(root.iterdir(), reverse=True):
+        if not d.is_dir() or not (d / "meta.json").exists():
+            continue
+        try:
+            meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if meta.get("scope") != "gap" or meta.get("stage") != "done":
+            continue
+        if subject and (meta.get("subject") or "") != subject:
+            continue
+        try:
+            created = datetime.fromisoformat(meta.get("created") or "")
+        except Exception:  # noqa: BLE001
+            continue
+        if created >= cutoff:
+            return d.name
+    return None
+
+
 def create_gap_project(subject: str = "", count: int = 50, w_freq: float = 0.15,
                        source_pid: str = "") -> dict[str, Any]:
     """一键刷薄弱：配题 → 复制来源项目切片 → 追加薄弱清单 → 走 create_project 通道。"""
@@ -179,6 +205,11 @@ def create_gap_project(subject: str = "", count: int = 50, w_freq: float = 0.15,
     if reused:
         return {"ok": True, "pid": reused, "reused": True, "plan": plan_data,
                 "msg": f"已有未完成的薄弱组卷（{reused}），直接复用——可在其详情页继续/删除"}
+    recent_done = recent_gap_done_project(subject)
+    if recent_done:
+        return {"ok": False, "pid": recent_done, "plan": plan_data,
+                "msg": f"最近 24 小时内已生成过薄弱组卷（{recent_done}，已完成）：为避免重复创建/扣费，"
+                       f"请先在「我的项目」查看或删除它，或改变薄弱点后再试"}
 
     src = source_pid or pick_source_project(subject)
     if not src:

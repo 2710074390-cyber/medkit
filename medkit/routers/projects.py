@@ -89,16 +89,23 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
         proj_dir_path = proj_dir(pid)
     proj_dir_path.mkdir(parents=True, exist_ok=False)
 
-    all_slices = ([{**s, "role": "textbook"} for s in body.textbook_slices]
+    # F4（全链路审查）：多教材会话合并后各会话 sid 均从 S001 起始 → 在去重前统一重编号，
+    # 防止 orchestrator slice_by_sid 按 sid 覆盖导致前一教材切片静默丢失/配额错配（见 core/orchestrator.py _load）
+    tb_slices = body.textbook_slices
+    sids = [s.get("sid", "") or "" for s in tb_slices]
+    if len(set(sids)) != len(sids):
+        tb_slices = [{**s, "sid": f"S{i + 1:03d}"} for i, s in enumerate(tb_slices)]
+
+    all_slices = ([{**s, "role": "textbook"} for s in tb_slices]
                   + [{**s, "role": "teacher"} for s in body.teacher_slices]
                   + [{**s, "role": "exam"} for s in body.exam_slices]
                   + [{**s, "role": "extra"} for s in body.extra_slices])
     (proj_dir_path / "slices.json").write_text(
         json.dumps(all_slices, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    title_by_sid = {s["sid"]: s.get("title", "") for s in body.textbook_slices}
+    title_by_sid = {s["sid"]: s.get("title", "") for s in tb_slices}
     quota = [{**q, "title": title_by_sid.get(q["sid"], "")} for q in
-             allocate(body.textbook_slices, body.teacher_text, body.target)]
+             allocate(tb_slices, body.teacher_text, body.target)]
     meta = {
         "pid": pid,
         "subject": body.subject,
@@ -254,11 +261,9 @@ def export_anki(pid: str) -> FileResponse:
     """U8：Anki 文本导入文件（正面/反面 Tab 分隔 + HTML 换行）。"""
     pid = _safe_pid(pid)
     base = proj_dir(pid)
-    meta = _read_meta_checked(base)
-    if meta.get("stage") != "done":
-        raise HTTPException(409, "项目尚未生成完成，无题库可导出")
+    _read_meta_checked(base)  # 项目存在性校验（不依赖 stage=done：error/部分完成时已生成产物应可取）
     f = base / "最终产物" / "anki_export.txt"
-    if not f.exists():
+    if not f.exists():  # 产物存在即可下载（不依赖 stage=done：error/部分完成时已生成的产物应可取）
         raise HTTPException(404, "anki_export.txt 不存在，请重新生成")
     return FileResponse(f, media_type="text/plain; charset=utf-8",
                         filename="anki_export.txt")
@@ -270,8 +275,6 @@ def export_apkg_file(pid: str) -> FileResponse:
     pid = _safe_pid(pid)
     base = proj_dir(pid)
     meta = _read_meta_checked(base)
-    if meta.get("stage") != "done":
-        raise HTTPException(409, "项目尚未生成完成，无题库可导出")
     out_dir = base / "最终产物"
     apkg = None
     if out_dir.exists():

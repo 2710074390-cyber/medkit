@@ -236,6 +236,9 @@
   #pd_log{white-space:pre-wrap;font-size:12px;line-height:1.7;color:var(--codefg);
     background:var(--codebg);border:1px solid var(--line);border-radius:10px;
     padding:10px 14px;margin-top:10px;max-height:220px;overflow:auto}
+  #pd_log .lg{min-height:1.4em}
+  #pd_log .lg-err{color:var(--bad);font-weight:600}
+  #pd_log .lg-warn{color:var(--warn)}
   #pd_stage{font-size:13px;color:var(--accent2);margin:8px 0 0}
   .proj{border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin-top:10px;background:var(--card2);cursor:pointer;transition:.15s}
   .proj:hover{border-color:var(--accent)}

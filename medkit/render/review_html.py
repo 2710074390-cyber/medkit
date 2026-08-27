@@ -169,7 +169,7 @@ def _augment(body: str) -> str:
             f'<li style="margin-left:{0 if lvl == "2" else 14}px"><a href="#{hid}">{txt}</a></li>'
             for lvl, hid, txt in toc
         )
-        toc_block = (f'<details class="toc"><summary>目录（{len(toc)}）</summary>'
+        toc_block = (f'<details class="toc" open><summary>目录（{len(toc)}）</summary>'
                      f'<nav aria-label="目录"><ul>{items}</ul></nav></details>')
         body = toc_block + body
 
