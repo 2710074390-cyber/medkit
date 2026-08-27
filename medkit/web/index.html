@@ -416,6 +416,9 @@
   .css-pill{padding:5px 12px;border:none;border-radius:7px;background:none;color:var(--dim);cursor:pointer;font-size:12.5px}
   .css-pill:hover{background:var(--card3);color:var(--text)}
   .css-pill.on{background:var(--accent);color:var(--onaccent);font-weight:600}
+  .rex-tab{width:100%;border-collapse:collapse;font-size:12.5px}
+  .rex-tab th,.rex-tab td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+  .rex-tab th{color:var(--dim);font-weight:600;font-size:11.5px}
   .learnview{display:none}
   .learnview.show{display:block}
   /* 侧栏徽章（学习中心：薄弱知识点数） */
@@ -944,6 +947,10 @@
       <div id="learn_kp"><div class="hint"><span class="spin"></span>诊断中…</div></div>
       <h3 style="margin-top:18px;font-size:13.5px;color:var(--text)">接下来重点学什么</h3>
       <div id="learn_reco"><div class="hint">暂无薄弱点</div></div>
+      <div class="row" style="margin-top:16px;flex-wrap:wrap;align-items:center">
+        <div class="hint" style="flex:1;min-width:220px">按薄弱点配题（单知识点 ≤3 题）→ 复用本科目教材/教师重点生成「薄弱点专项」卷；判错自动回流错题本。</div>
+        <button class="act" onclick="gapPaper()">⚡ 一键刷薄弱组卷</button>
+      </div>
     </div>
   </div>
 
@@ -1070,6 +1077,20 @@
           <button class="act gray" onclick="sylParseConfirm()">确认入库（当前科目）</button>
         </div>
         <div id="syl_paste_preview"><div class="hint">未解析。</div></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>真题考频（自备真题 · 人工确认门）</h2><span class="hint" id="rex_meta"></span></div>
+        <div class="hint" style="margin-bottom:8px">粘贴/上传你的自备真题文本（如 GoldenSet 真题、题库 md）→ 本地按「大纲条目」词典统计考点命中频次 → <b>确认后进入权重</b>（未确认不参与任何推荐）。红线：只用频次，不展示真题原文。</div>
+        <textarea id="rex_text" rows="4" placeholder="粘贴真题题干文本（每题一行或一段；例如从 真题上册.md 复制 20~200 题）…"></textarea>
+        <div class="btns" style="margin-top:8px">
+          <button class="act" onclick="rexAnalyze()">分析频次</button>
+          <button class="act gray" onclick="rexFilePick()">上传真题文件(md/txt)</button>
+          <button class="act gray" onclick="rexReport()">导出高频考点md</button>
+          <input type="file" id="rex_file" accept=".md,.txt" style="display:none" onchange="rexFile(this)">
+        </div>
+        <div id="rex_drafts"><div class="hint">未分析。</div></div>
+        <h3 style="margin-top:18px;font-size:13.5px;color:var(--text)">确认后热力表（章节 × 频次）</h3>
+        <div id="rex_heat"><div class="hint">暂无已确认频次。</div></div>
       </div>
     </div>
   </section>
@@ -1423,6 +1444,7 @@ async function sylLoad() {
         .map(s => `<option value="${esc(s.subject)}">${esc(s.subject)}（${s.items} 条目）</option>`).join("");
     }
     if (st.seed && st.seed.exam && meta) meta.textContent = `种子：${st.seed.exam}`;
+    rexHeat();
     const t = st.teacher || { items: 0, subjects: [] };
     const hint = document.getElementById("syl_std_hint");
     if (hint) hint.textContent = t.items
@@ -1526,6 +1548,104 @@ async function sylReport() {
   qs.set("source", SYL_STD);
   const r = await api("/api/syllabus/report?" + qs.toString());
   downloadText("大纲覆盖报告_" + (subject || "全部") + ".md", r.markdown);
+}
+
+/* ---- ⑦ 真题考频（WP-02） ---- */
+let REX_DRAFTS = [];
+function rexSubject() { return document.getElementById("syl_subject")?.value || ""; }
+async function rexAnalyze() {
+  const text = document.getElementById("rex_text").value;
+  if (!text.trim()) { toast("先粘贴真题文本", false); return; }
+  const r = await api("/api/library/realexams/analyze",
+    { method: "POST", body: JSON.stringify({ text, subject: rexSubject() }) });
+  REX_DRAFTS = r.drafts || [];
+  const box = document.getElementById("rex_drafts");
+  if (!REX_DRAFTS.length) {
+    box.innerHTML = `<div class="hint">未识别到考点命中（${r.stats?.unmatched ?? 0} 句未命中词典）——可先导入大纲种子或粘贴大纲，词典越全频次越准。</div>`;
+    toast(`分析完成：命中 0 条（${r.stats?.unmatched ?? 0} 句未匹配）`, false);
+    return;
+  }
+  box.innerHTML = `<div class="hint">草稿 ${REX_DRAFTS.length} 条（来源句子 ${r.stats?.sentences} · 未命中 ${r.stats?.unmatched}）——核实后确认：</div>` +
+    REX_DRAFTS.slice(0, 30).map((d, i) => `<div class="syl-item">
+      <span class="learn-chip pending">×${d.freq}</span>
+      <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")} · ${esc(d.subject || "?")}</div></span>
+      <button class="act gray mini" data-skip="${i}">跳过</button></div>`).join("") +
+    (REX_DRAFTS.length > 30 ? `<div class="hint">…共 ${REX_DRAFTS.length} 条（确认全部入库）</div>` : "") +
+    `<div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
+     <span class="hint" style="align-self:center">未确认不进入任何推荐权重（红线）</span></div>`;
+  box.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => {
+    REX_DRAFTS.splice(+b.dataset.skip, 1);
+    rexAnalyzeRender();
+  });
+}
+function rexAnalyzeRender() {
+  const box = document.getElementById("rex_drafts");
+  if (!REX_DRAFTS.length) { box.innerHTML = '<div class="hint">已清空选择。</div>'; return; }
+  document.querySelectorAll("#rex_drafts .syl-item").forEach((el, i) => {
+    if (i < REX_DRAFTS.length) { el.querySelector("b").textContent = REX_DRAFTS[i].item; }
+  });
+}
+async function rexConfirmAll() {
+  if (!REX_DRAFTS.length) { toast("先分析"); return; }
+  const r = await api("/api/library/realexams/confirm",
+    { method: "POST", body: JSON.stringify({ items: REX_DRAFTS.slice(0, 200) }) });
+  toast(`已确认 ${r.added} 条频次（可重复确认合并）`);
+  REX_DRAFTS = [];
+  document.getElementById("rex_drafts").innerHTML = '<div class="hint">已确认。热力表见下。</div>';
+  rexHeat();
+}
+async function rexHeat() {
+  const r = await api("/api/library/realexams/freq" + (rexSubject() ? "?subject=" + encodeURIComponent(rexSubject()) : ""));
+  const box = document.getElementById("rex_heat");
+  document.getElementById("rex_meta").textContent = `累计命中 ${r.total} 次`;
+  if (!r.chapters.length) { box.innerHTML = '<div class="hint">暂无已确认频次。</div>'; return; }
+  box.innerHTML = `<table class="rex-tab"><thead><tr><th>章节</th><th>频次</th><th>高频条目（前5）</th></tr></thead><tbody>` +
+    r.chapters.slice(0, 15).map(ch => `<tr><td>${esc(ch.chapter)}</td><td><b>${ch.freq}</b></td><td>${esc(ch.items.slice(0, 5).map(i => i.item + "×" + i.freq).join(" · "))}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+function rexFilePick() { document.getElementById("rex_file").click(); }
+async function rexFile(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  const r = await api("/api/library/realexams/analyze-file", { method: "POST", body: fd });
+  REX_DRAFTS = r.drafts || [];
+  document.getElementById("rex_text").value = `（已解析文件 ${f.name}：${r.stats?.sentences ?? 0} 句 · 命中 ${REX_DRAFTS.length} 条）`;
+  const box = document.getElementById("rex_drafts");
+  box.innerHTML = REX_DRAFTS.length ? `<div class="hint">文件草稿 ${REX_DRAFTS.length} 条——核实后确认：</div>
+    ${REX_DRAFTS.slice(0, 30).map(d => `<div class="syl-item"><span class="learn-chip pending">×${d.freq}</span>
+      <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter)}</div></span></div>`).join("")}
+    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button></div>`
+    : `<div class="hint">文件解析命中 0 条。</div>`;
+  input.value = "";
+}
+async function rexReport() {
+  const qs = rexSubject() ? "?subject=" + encodeURIComponent(rexSubject()) : "";
+  const r = await api("/api/library/realexams/report" + qs);
+  downloadText("真题高频考点_" + (rexSubject() || "全部") + ".md", r.markdown);
+}
+
+/* ---- ⑧ 一键刷薄弱组卷（WP-03） ---- */
+async function gapPaper() {
+  const subject = document.getElementById("dash_subject").value || "";
+  if (!subject) { toast("请先在上方选择科目范围", false); return; }
+  try {
+    const r = await api("/api/library/gap-paper", { method: "POST",
+      body: JSON.stringify({ subject, question_count: 50, w_freq: 15 }) });
+    if (!r.ok) { toast(r.msg || "无法组卷", false); return; }
+    const est = r.est ? `预计消耗约 ${(r.est.total_tokens / 10000).toFixed(1)} 万 token`
+      + (r.est.cny ? ` · 约 ¥${r.est.cny.toFixed(2)}（参考价，以官网为准）` : "") : "";
+    confirmModal("薄弱组卷就绪",
+      `<div class="hint">科目：${esc(subject)} · 共 ${r.plan.total} 题<br>薄弱点：${esc((r.plan.weak_top || []).join("、"))}</div>` +
+      `<div class="hint" style="margin-top:8px">${est}</div>` +
+      (r.reused ? '<div class="hint" style="margin-top:6px">已复用现有薄弱组卷项目（不重复创建）。</div>' : ""),
+      r.reused ? "去查看" : "开始生成", () => {
+        if (r.reused) { showTab("mine"); return; }
+        api("/api/projects/" + r.pid + "/run", { method: "POST" })
+          .then(() => { toast("已开始生成「薄弱点专项」卷；进度见下方轮询"); showTab("mine"); })
+          .catch(e => toast(e.message, false));
+      }, false);
+  } catch (e) { toast(e.message, false); }
 }
 
 /* 学习中心基础数据缓存：subjects/mastery 30s 内复用，避免多次「加载中」闪烁 */

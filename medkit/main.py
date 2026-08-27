@@ -25,6 +25,7 @@ from .core.orchestrator import PipelineError
 from .core.websearch import SearchError
 from .logging_setup import setup_logging
 from .routers import config as r_config
+from .routers import gap as r_gap
 from .routers import library as r_library
 from .routers import ocr as r_ocr
 from .routers import parse as r_parse
@@ -32,6 +33,7 @@ from .routers import pipeline as r_pipeline
 from .routers import presets as r_presets
 from .routers import projects as r_projects
 from .routers import prompts as r_prompts
+from .routers import realexams as r_realexams
 from .routers import review as r_review
 from .routers import search as r_search
 from .routers import syllabus as r_syllabus
@@ -114,6 +116,7 @@ app.add_exception_handler(PipelineError, lambda _r, e: _err_response(500, e, "PI
 
 # ---------------------------------------------------------------- 路由装配
 app.include_router(r_config.router)
+app.include_router(r_gap.router)
 app.include_router(r_library.router)
 app.include_router(r_ocr.router)
 app.include_router(r_parse.router)
@@ -122,6 +125,7 @@ app.include_router(r_pipeline.router)
 app.include_router(r_prompts.router)
 app.include_router(r_presets.router)
 app.include_router(r_search.router)
+app.include_router(r_realexams.router)
 app.include_router(r_syllabus.router)
 app.include_router(r_review.router)
 app.include_router(r_update.router)

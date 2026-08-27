@@ -81,7 +81,24 @@ _V2_DOWN: list[str] = [
     "DROP TABLE IF EXISTS syllabus_items",
 ]
 
-MIGRATIONS: list[int] = [1, 2]  # 版本列表（只增不改）
+# v3（WP-02 真题考频）：realexam_freq —— 自备真题考点频次（人工确认门，未确认不进权重）。
+_V3_UP: list[str] = [
+    """
+    CREATE TABLE IF NOT EXISTS realexam_freq (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        subject TEXT, chapter TEXT, item TEXT,
+        freq INTEGER, confirmed INTEGER, source TEXT, created_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_re_subject ON realexam_freq(subject)",
+    "CREATE INDEX IF NOT EXISTS idx_re_confirmed ON realexam_freq(confirmed)",
+]
+
+_V3_DOWN: list[str] = [
+    "DROP TABLE IF EXISTS realexam_freq",
+]
+
+MIGRATIONS: list[int] = [1, 2, 3]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -91,6 +108,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 2:
         for stmt in _V2_UP:
+            cur.execute(stmt)
+        return
+    if ver == 3:
+        for stmt in _V3_UP:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")
@@ -103,6 +124,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 2:
         for stmt in _V2_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 3:
+        for stmt in _V3_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")
