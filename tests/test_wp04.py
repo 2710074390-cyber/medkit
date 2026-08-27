@@ -89,3 +89,42 @@ def test_asset_upload_list_delete(tmp_path, monkeypatch):
     assert r3.status_code == 200 and r3.headers["content-type"].startswith("image/png")
     r4 = c.delete("/api/projects/demo/assets/IMG1")
     assert r4.status_code == 200 and not (p_root / "demo" / "assets" / "fig_1.png").exists()
+
+
+def test_render_media_oversize_image_placeholder(tmp_path):
+    """D9：超过内嵌上限且无法降采样的图 → 不塞进页面，给可读占位提示（题面保留）。"""
+    p = tmp_path / "big.png"
+    # 伪造超限 PNG（解码必失败 → 保持原图 → 仍超限 → 占位）
+    p.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * (1_301_000))
+    out = qb.render_media({"image_ref": "IMG1"},
+                          {"IMG1": {"path": str(p), "caption": "大图"}})
+    assert "体积过大未嵌入本页" in out and "IMG1" in out
+    assert "data:image" not in out
+
+
+def test_qbank_pagination_by_questions_and_project_key():
+    """D7：分页按题目数（每页 ≤50；案例组整组归属单页）；D8：筛选 key 按 pid 隔离。"""
+    singles = [{"id": f"Q{i}", "type": "A1", "bloom": "理解", "subtopic": "章",
+                "question": f"题{i}？", "options": ["A", "B", "C", "D", "E"],
+                "answer": "A", "analysis": "解析 [源:切片S001]"} for i in range(40)]
+    case = [{"id": "Qx", "type": "A4", "bloom": "应用", "subtopic": "案例",
+             "group_kind": "case", "case_id": "C1", "case_stem": "一例发热患者…",
+             "question": f"子题{i}？", "options": ["A", "B", "C", "D", "E"],
+             "answer": "A", "analysis": "a"} for i in range(30)]
+    html_ = qb.export_html(singles + case, "题库", pid="p1")
+    # 40 单题 + 案例组 30 子题 → 40+30>50 → 案例组整组进第 2 页（共 2 页，组不拆散）
+    assert html_.count('class="qpage"') == 2
+    assert 'QB_PID="p1"' in html_
+    assert '"medkitQbFilter-"' in html_          # key 前缀（运行时拼接 pid）
+    html2 = qb.export_html(singles + case, "题库", pid="p2")
+    assert 'QB_PID="p2"' in html2
+
+
+def test_paper_answers_declaration_note():
+    """D21：押题卷页顶明示答案内嵌源码、请勿用于正式考试。"""
+    q = {"id": "Q1", "type": "A1", "bloom": "记忆", "subtopic": "x",
+         "question": "q？", "options": ["A", "B", "C", "D", "E"],
+         "answer": "A", "analysis": "a"}
+    out = qb.export_paper_html([q], "押题卷", pid="p1", subject="儿科学")
+    assert "请勿用于正式考试" in out
+    assert "答案内嵌于本页源码" in out

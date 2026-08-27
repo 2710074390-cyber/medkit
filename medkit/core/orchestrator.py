@@ -83,10 +83,11 @@ def _append_review_list(base: Path, dropped: list[dict[str, Any]]) -> None:
 
 
 def _append_contract_review(base: Path, fails: list[dict[str, Any]]) -> None:
-    """NX-03：质检契约失败批次追加进人工复核清单.md（score=-1 不计分）。"""
-    section = ["", "## 质检契约失败批次（QcVerdict 两次校验未过 · score=-1 不计分）", "",
-               "> 该批 LLM 判分输出两次未通过契约（首次 + 带错误重发），评分不可信未计入平均分；"
-               "对应题目仍保留在最终题库，请人工复核后重判（详见 质检报告/质检报告.json）：", ""]
+    """NX-03：质检契约失败批次追加进人工复核清单.md（D20：自然语言，去技术黑话）。"""
+    section = ["", "## 质检判分不可信批次（需人工复核）", "",
+               "> 该批题目交给 AI 质检两次，两次判分结果都不符合格式要求，"
+               "因此计分未被采纳（题目本身仍保留在最终题库）。"
+               "建议打开「质检报告」看一下这几批题，有问题的直接到审核台修改。", ""]
     for f in fails:
         section.append(f"- {f.get('reason', '')}")
     section.append("")
@@ -591,7 +592,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     # NX-03（R-2）：契约硬闭环失败批次 → 人工复核清单（与网络冲突/渲染前剔除并存）
     contract_fails = [i for i in qc_report.get("issues", []) if i.get("code") == "QC_CONTRACT"]
     if contract_fails:
-        _log(base, f"  ⚠️ {len(contract_fails)} 个质检批次契约校验失败（score=-1 不计分）"
+        _log(base, f"  ⚠️ {len(contract_fails)} 个质检批次判分不可信（格式两次未过，计分未采纳）"
                    f"→ 人工复核清单.md")
         _append_contract_review(base, contract_fails)
     _log(base, f"  QC score={qc_report['score']} decision={qc_report['gate_decision']}"
@@ -660,7 +661,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     _set_progress(base, "rendering", 0, 1, "生成 HTML…")
     qbank_md = qbank_html.export_md(questions, f"{subject} 题库")
     qbank_html_text = qbank_html.export_html(questions, f"{subject} 题库",
-                                             image_index=image_index)
+                                             image_index=image_index, pid=pid)
     (base / "最终产物" / "qbank.md").write_text(qbank_md, encoding="utf-8")
     (base / "最终产物" / "qbank.html").write_text(qbank_html_text, encoding="utf-8")
     rendered = ["qbank.md", "qbank.html"]

@@ -37,6 +37,26 @@ def test_is_newer():
     assert not is_newer("", "0.6.0")
 
 
+def test_is_newer_prerelease():
+    """A10：版本后缀纳入比较——0.8.0-rc.1 不再被折叠成 0.8.0。"""
+    assert is_newer("0.8.0-rc.1", "0.8.0") is False    # 正式版 > 预览版
+    assert is_newer("0.8.0", "0.8.0-rc.1") is True     # 预览 → 正式版 = 更新
+    assert is_newer("0.8.1-rc.1", "0.8.0") is True     # 数值部分更高 = 更新
+    assert is_newer("0.8.0-rc.2", "0.8.0-rc.1") is True
+    assert is_newer("0.8.0-beta.1", "0.8.0-alpha.1") is True   # beta > alpha
+    assert is_newer("0.8.0-rc.1", "0.8.0-beta.9") is True      # rc > beta
+    assert is_newer("0.8.0a", "0.8.0") is False                # 无分隔符后缀同样识别
+    assert is_newer("0.8.0rc2", "0.8.0") is False
+
+
+def test_is_prerelease():
+    from medkit.core.update import is_prerelease
+    assert is_prerelease("0.8.0-rc.1") is True
+    assert is_prerelease("0.8.0a") is True
+    assert is_prerelease("0.8.0") is False
+    assert is_prerelease("v1.2.3") is False
+
+
 class _FakeResp:
     def __init__(self, payload, status=200):
         self._payload = payload

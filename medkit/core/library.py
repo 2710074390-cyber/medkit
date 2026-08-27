@@ -650,6 +650,39 @@ def recommend(limit: int = 10, subject: str = "") -> list[dict[str, Any]]:
     return kps[: max(1, int(limit))]
 
 
+# ---------------------------------------------------------------- 近期活动时间线（C22）
+ACTIVITY_EVENTS = {
+    "explain": "生成讲解",
+    "review": "复习打卡",
+    "quiz": "提问作答",
+    "mistake": "入库错题",
+}
+
+
+def recent_activity(limit: int = 8, subject: str = "") -> list[dict[str, Any]]:
+    """跨知识点时间线：聚合各知识点 history（讲解/复习/提问），按时间倒序。
+
+    数据来自既有 knowledge.history（log_knowledge_event 已写入），纯只读聚合，
+    零额外 IO；subject 过滤与概览科目口径一致（未分类/空科目记录纳入全部）。
+    """
+    kps = _load(KNOWLEDGE_FILE)
+    if subject:
+        kps = [k for k in kps if k.get("subject") == subject or not subject]
+    rows: list[dict[str, Any]] = []
+    for k in kps:
+        for h in (k.get("history") or []):
+            ev = str(h.get("event") or "")
+            if ev not in ACTIVITY_EVENTS:
+                continue
+            rows.append({
+                "t": h.get("t", ""), "event": ev, "label": ACTIVITY_EVENTS[ev],
+                "note": h.get("note", ""), "kp_name": k.get("name", ""),
+                "subject": k.get("subject", ""),
+            })
+    rows.sort(key=lambda r: str(r.get("t") or ""), reverse=True)
+    return rows[: max(1, int(limit))]
+
+
 # ---------------------------------------------------------------- 数据卫生（乱码识别与修复，v0.7.1）
 # 历史导入曾出现编码损坏：① UTF-8 字节被按 cp1252 误读（可逆：æ¯… → 中文）
 # ② 中间环节已丢失字符（不可逆：???）。本组函数只做「可逆修复 + 不可逆标记」，绝不删除用户数据。

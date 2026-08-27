@@ -510,6 +510,12 @@ async function cachedMastery() {
   return r;
 }
 function invalidateLearnCache() { LEARN_CACHE.subjects = null; LEARN_CACHE.mastery = null; LEARN_CACHE.t = 0; }
+/* C12：讲解答题等操作后刷新概览（保持当前科目口径；失败静默） */
+function refreshOverviewIfAny() {
+  if (typeof loadOverview !== "function") return;
+  const sel = document.getElementById("dash_subject");
+  loadOverview(sel ? sel.value : "").catch(() => {});
+}
 
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
 const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
@@ -665,6 +671,15 @@ function renderDashboard(d) {
       `<div class="dmr acc"><div class="dm-top"><b>${t.in_progress || 0}</b><em>进行中提问会话</em></div>` +
       `<div class="dm-sub">共 ${t.total || 0} 场 · 已答 ${t.answered_rounds || 0} 轮</div></div>` +
     '</div>';
+  // C22：近期活动时间线（讲解/复习打卡/提问作答；来自知识点 history 聚合）
+  const acts = d.recent || [];
+  $("dash_loop").innerHTML += acts.length
+    ? `<div class="dash-act"><h3>近期活动</h3>` + acts.map(a => {
+        const t = String(a.t || "").slice(5, 16).replace("T", " ");
+        return `<div class="act-row"><span class="act-t">${esc(t)}</span><b>${esc(a.label)}</b>
+          <span class="act-note">${esc(a.kp_name || "")}${a.subject ? " · " + esc(a.subject) : ""}${a.note ? "（" + esc(a.note) + "）" : ""}</span></div>`;
+      }).join("") + `</div>`
+    : "";
 }
 
 async function loadLibrary() {
@@ -821,10 +836,12 @@ async function mkLearn(id, learned) {
   } catch (e) { toast(e.message, false); }
 }
 async function mkDel(id) {
-  confirmModal("删除错题", `<p style="margin:0;color:var(--dim)">确定删除这道错题吗？对应知识点掌握度会随之刷新。</p>`, "删除", async () => {
-    try { await api("/api/library/mistakes/" + id, { method: "DELETE" }); toast("已删除"); loadLibrary(); }
-    catch (e) { toast(e.message, false); }
-  });
+  confirmModal("删除错题", `<p style="margin:0;color:var(--dim)">确定删除这道错题吗？对应知识点掌握度会随之刷新。<br>
+    <span class="hint">已生成的讲解 / 提问会话 / 复习卡 / 记忆卡会<b>保留</b>；如不再需要请到对应视图删除。</span></p>`,
+    "删除", async () => {
+      try { await api("/api/library/mistakes/" + id, { method: "DELETE" }); toast("已删除"); loadLibrary(); }
+      catch (e) { toast(e.message, false); }
+    });
 }
 async function addMistakeRaw() {
   const text = $("mk_text").value.trim();
@@ -860,6 +877,9 @@ function mkBatchPick() { $("mk_json").click(); }
 async function mkBatchFile(input) {
   const f = input.files && input.files[0];
   if (!f) return;
+  const btn = $("btn_mk_batch"); const old = btn.textContent;
+  // C11：批量导入单请求——禁用按钮 + 进度文案（防连点重复导入）
+  btn.disabled = true; btn.textContent = "导入中…";
   const name = (f.name || "").toLowerCase();
   const ext = name.includes(".") ? name.split(".").pop() : "txt";
   try {
@@ -880,7 +900,7 @@ async function mkBatchFile(input) {
       loadLibrary();
     }
   } catch (e) { toast(`批量导入失败：${e.message}`, false); }
-  finally { input.value = ""; }
+  finally { input.value = ""; btn.disabled = false; btn.textContent = old; }
 }
 window.mkLearn = mkLearn; window.mkDel = mkDel; window.mkOcrPick = mkOcrPick;
 window.mkBatchPick = mkBatchPick;
@@ -1027,6 +1047,9 @@ async function expGenerate() {
     const v = r.explain && r.explain.via_web ? "含联网补充" : "基于教材切片";
     $("exp_cost").textContent = `已生成：《${r.title}》· ${v}`;
     loadExplains();
+    // C12：生成讲解 → 概览诊断/学习闭环同步刷新（受掌握的讲解产物计数变化）
+    invalidateLearnCache();
+    refreshOverviewIfAny();
   } catch (e) { toast(e.message, false); $("exp_cost").textContent = ""; }
   finally { btn.textContent = old; btn.disabled = false; }
 }
@@ -1069,7 +1092,12 @@ async function expCards(eid, subject) {
       body: JSON.stringify({ explain_id: eid }) });
     toast(r.added ? `已生成 ${r.added} 张医学记忆卡（复习计划「🧠 医学记忆卡」可见）`
                   : "记忆卡已存在（幂等，未新增）");
-    if (typeof loadReviewCtx === "function") loadReviewCtx(rvSubject);
+    // C19：用「生成卡时的讲解科目」刷新（复习视图过滤可能不含新卡 → 切到对应科目可见）
+    const target = subject || rvSubject;
+    if (typeof loadReviewCtx === "function") loadReviewCtx(target);
+    if (rvSubject && subject && rvSubject !== subject) {
+      toast(`记忆卡科目「${subject}」——复习过滤已切到该科目查看`, false);
+    }
   } catch (e) { toast(e.message, false); }
 }
 window.expCards = expCards;
@@ -1165,9 +1193,25 @@ function renderTutorSide(err) {
     </div>`;
     return;
   }
-  box.innerHTML = `<div class="tu-wrap"><div class="tu-side">${list.map(sessionItem).join("")}</div>
+  box.innerHTML = `<div class="hint" style="margin-bottom:6px">
+      <button class="mini-btn" onclick="tutorCleanup()" title="删除 30 天无活动的会话（不可恢复）">清理 30 天无活动会话</button>
+      <span style="font-size:11px">会话按最近活动排序；太久没动的会越排越后</span></div>
+    <div class="tu-wrap"><div class="tu-side">${list.map(sessionItem).join("")}</div>
     <div class="hint" style="padding:24px 8px">左侧选一场会话继续，或上方「开始提问」开启新对话。</div></div>`;
   $("btn_tu_exit").style.display = "none";
+}
+/* C18：清理 30 天无活动提问会话（防列表无限增长；不可恢复） */
+async function tutorCleanup() {
+  confirmModal("清理无活动会话？", `<p style="margin:0;color:var(--dim)">将删除 <b>30 天无活动</b>的提问会话，问答记录不可恢复（知识点掌握度不受影响）。</p>`,
+    "清理", async () => {
+      try {
+        const r = await api("/api/library/tutor/cleanup", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ days: 30 }) });
+        toast(r.removed ? `已清理 ${r.removed} 场无活动会话` : "没有 30 天无活动的会话");
+        loadTutorSessions();
+      } catch (e) { toast(e.message, false); }
+    }, false);
 }
 function sessionItem(s) {
   const lv = TUTOR_QTYPES[s.current && s.current.type] || "解释";
@@ -1269,6 +1313,8 @@ async function tutorSubmit() {
     }
     tutorShowConversation();
     invalidateLearnCache();   // 判分回写掌握度 → 失效学习中心缓存，概览到手最新值
+    // C12：提问判分后概览诊断同步刷新（掌握度/优先级可能已变化）
+    refreshOverviewIfAny();
   } catch (e) { toast(e.message, false); $("tutor_cost").textContent = ""; }
   finally { if (btn) { btn.textContent = old; btn.disabled = false; } }
 }
@@ -1297,6 +1343,7 @@ function tutorDel(id) {
 }
 window.fillTutorKp = fillTutorKp; window.tutorStart = tutorStart; window.tutorSubmit = tutorSubmit;
 window.tutorResume = tutorResume; window.tutorExit = tutorExit; window.tutorDel = tutorDel;
+window.tutorCleanup = tutorCleanup;
 
 /* ---- M5：复习计划（SM-2 间隔重复）---- */
 const RVC_STATES = {
@@ -1462,13 +1509,14 @@ async function renderMemoryCards() {
     sec.innerHTML = `<div class="cardh" style="margin-top:6px"><h3 style="margin:0">🧠 医学记忆卡</h3>
       <span class="hint">讲解产物自动沉淀 · 总 ${st.total || 0} / 今日到期 ${st.due || 0}</span>
       <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button class="act gray mini" style="padding:4px 10px" onclick="expCardsHint()">+ 生成记忆卡</button>
         <button class="act gray mini" style="padding:4px 10px" onclick="memExportApkg()">导出 Anki（.apkg）</button>
         <button class="act gray mini" style="padding:4px 10px" onclick="memExportTxt()">导出 .txt</button>
         <button class="act gray mini" style="padding:4px 10px" onclick="ankiHelp()">导入指引</button>
       </span></div>`
       + (cards.length
         ? cards.map(memCard).join("")
-        : `<div class="empty" style="padding:16px 0"><div class="sub">今日无到期记忆卡<br>到「讲解与学习产物」选中讲解 →「🧠 生成记忆卡」入队（FSRS 默认算法，SM-2 可切）</div></div>`);
+        : `<div class="empty" style="padding:16px 0"><div class="sub">今日无到期记忆卡<br>到「讲解与学习产物」选中讲解 →「🧠 生成记忆卡」入队（FSRS 间隔重复算法，自动排出每日复习计划）</div></div>`);
   } catch (e) { sec.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
 function memCard(c) {
@@ -1506,6 +1554,12 @@ async function memDel(cid) {
   }, false);
 }
 window.renderMemoryCards = renderMemoryCards; window.memGrade = memGrade; window.memDel = memDel;
+/* C8：记忆卡面板内新增入口——跳转讲解视图（讲解产物是记忆卡的生成源） */
+function expCardsHint() {
+  showLearnView("explain");
+  toast("选中一条讲解产物 → 点「🧠 生成记忆卡」即可入队", false);
+}
+window.expCardsHint = expCardsHint;
 /* D15：记忆卡导出（.apkg 真包 / .txt 文本；空库时给可读提示） */
 async function memExportApkg() {
   try {

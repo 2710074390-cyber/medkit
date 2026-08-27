@@ -32,20 +32,29 @@ def project_questions(pid: str) -> dict[str, Any]:
     return {"questions": json.loads(f.read_text(encoding="utf-8"))}
 
 
-def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any]) -> list[str]:
-    """审核后重渲染全部产物（复用渲染层；复习手册若有旧 MD 则重转 HTML）。"""
+def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any],
+                      which: str | None = None) -> list[str]:
+    """审核后重渲染产物（复用渲染层；复习手册若有旧 MD 则重转 HTML）。
+
+    which（B17「仅重渲染此产物」）：None=全部；"qbank"=题库 md/html；"paper"=押题卷；
+    "review"=复习手册 html；"anki"=anki_export.txt + .apkg。
+    """
     from ..core.orchestrator import select_paper_stable
     from ..render import qbank_html, review_html
     subject = meta.get("subject", "")
     toggles = meta.get("toggles", {})
     out_dir = base / "最终产物"
     out_dir.mkdir(exist_ok=True)
-    qbank_md = qbank_html.export_md(questions, f"{subject} 题库")
-    (out_dir / "qbank.md").write_text(qbank_md, encoding="utf-8")
-    (out_dir / "qbank.html").write_text(
-        qbank_html.export_html(questions, f"{subject} 题库"), encoding="utf-8")
-    rendered = ["qbank.md", "qbank.html"]
-    if toggles.get("paper", True):
+    rendered: list[str] = []
+    full = which is None
+    if full or which == "qbank":
+        qbank_md = qbank_html.export_md(questions, f"{subject} 题库")
+        (out_dir / "qbank.md").write_text(qbank_md, encoding="utf-8")
+        (out_dir / "qbank.html").write_text(
+            qbank_html.export_html(questions, f"{subject} 题库", pid=base.name),
+            encoding="utf-8")
+        rendered += ["qbank.md", "qbank.html"]
+    if (full or which == "paper") and toggles.get("paper", True):
         # ME-7：押题卷复用上次抽样的题目 id（仅当题库变化致数量不足时重新抽样）——
         # 否则审核台只改一题解析也会让押题卷 50 题「换一批」。
         ids: list[str] = []
@@ -67,24 +76,26 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
             pass
         rendered.append("押题卷.html")
     review_md_path = out_dir / "复习手册.md"
-    if review_md_path.exists():
+    if (full or which == "review") and review_md_path.exists():
         (out_dir / "复习手册.html").write_text(
             review_html.review_to_html(review_md_path.read_text(encoding="utf-8"),
                                        f"{subject} 复习手册"), encoding="utf-8")
         rendered.append("复习手册.html")
-    (out_dir / "anki_export.txt").write_text(
-        qbank_html.export_anki(questions, f"{subject} 题库"), encoding="utf-8")
-    rendered.append("anki_export.txt")
-    try:  # S3：审核后同步重生成 .apkg（失败不阻断其余产物）
-        from ..render.apkg import export_apkg
+    if full or which == "anki":
+        (out_dir / "anki_export.txt").write_text(
+            qbank_html.export_anki(questions, f"{subject} 题库"), encoding="utf-8")
+        rendered.append("anki_export.txt")
+        try:  # S3：审核后同步重生成 .apkg（失败不阻断其余产物）
+            from ..render.apkg import export_apkg
 
-        apkg_path = out_dir / f"{subject} 题库.apkg"
-        export_apkg(questions, subject, base.name, apkg_path)
-        rendered.append(apkg_path.name)
-    except Exception as e:  # noqa: BLE001
-        _log_project(base, f"⚠️ .apkg 重生成失败：{e}")
-    meta["final_count"] = len(questions)
-    _write_meta_atomic(base, meta)
+            apkg_path = out_dir / f"{subject} 题库.apkg"
+            export_apkg(questions, subject, base.name, apkg_path)
+            rendered.append(apkg_path.name)
+        except Exception as e:  # noqa: BLE001
+            _log_project(base, f"⚠️ .apkg 重生成失败：{e}")
+    if full:
+        meta["final_count"] = len(questions)
+        _write_meta_atomic(base, meta)
     _log_project(base, f"✏️ 审核后重渲染：{len(questions)} 题（{', '.join(rendered)}）")
     return rendered
 
@@ -180,6 +191,36 @@ def review_questions(pid: str, body: ReviewBody) -> dict[str, Any]:
 
 class RegenBody(BaseModel):
     id: str
+
+
+class RerenderBody(BaseModel):
+    what: str = "all"
+
+
+@router.post("/api/projects/{pid}/rerender")
+def rerender_project(pid: str, body: RerenderBody) -> dict[str, Any]:
+    """B17：仅重渲染指定产物（不重跑管线、无 token 消耗；题库内容不变）。
+
+    what ∈ {qbank, paper, review, anki}（缺省/all = 全部，等价审核保存后的重渲染）。
+    """
+    pid = _safe_pid(pid)
+    if RUNNING.get(pid):  # 与审核同策略：生成中禁止并发渲染
+        raise HTTPException(409, "项目正在生成中，暂不可重渲染（请等待完成或先停止）")
+    base = proj_dir(pid)
+    meta = _read_meta_checked(base)
+    f = base / "最终产物" / "questions_final.json"
+    if not f.exists():
+        raise HTTPException(404, "题库尚未生成，无法重渲染")
+    questions = json.loads(f.read_text(encoding="utf-8"))
+    what = body.what if body.what in ("qbank", "paper", "review", "anki") else None
+    try:
+        rendered = _rerender_project(base, questions, meta, what)
+    except Exception as e:  # noqa: BLE001
+        _log_project(base, f"❌ 仅重渲染失败：{type(e).__name__}: {e}")
+        raise HTTPException(500, f"重渲染失败：{type(e).__name__}（详见日志）") from e
+    if not rendered:
+        raise HTTPException(400, "没有可重渲染的产物（复习手册.html 需要先有「复习手册.md」；押题卷需开启产物开关）")
+    return {"ok": True, "rendered": rendered}
 
 
 @router.post("/api/projects/{pid}/regen")

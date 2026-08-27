@@ -122,6 +122,8 @@ def summary(subject: str = "") -> dict[str, Any]:
         "review": review,
         "tutor": tutor,
         "loop": loop,
+        # C22：近期活动时间线（讲解/复习/提问，倒序；前端概览卡直接消费）
+        "recent": lib.recent_activity(8, subject),
         # NX-03（R-2）：契约告警计数（生成输出软校验；0 表示最近一轮无告警或未生成过）
         "contract_warnings": _contract_warnings(subject),
     }

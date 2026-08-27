@@ -116,3 +116,12 @@
       .rv-slice{margin:6px 0;padding:8px 11px;background:var(--card3);border-radius:8px;font-size:12.5px;line-height:1.75}
       .rv-slice b{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px}
       @media(max-width:480px){.rv-stats{grid-template-columns:1fr 1fr}}
+      /* ---- C22 近期活动时间线 ---- */
+      .dash-act{margin-top:14px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+      .dash-act h3{font-size:12.5px;color:var(--dim);margin:0 0 6px;font-weight:600}
+      .act-row{display:flex;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px dashed var(--line);font-size:12.5px;flex-wrap:wrap}
+      .act-row:last-child{border-bottom:none}
+      .act-row .act-t{color:var(--dim);font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
+      .act-row b{font-weight:600;white-space:nowrap}
+      .act-row .act-note{flex:1;min-width:120px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      @media(max-width:480px){.act-row{font-size:12px}}

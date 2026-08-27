@@ -174,6 +174,39 @@ def delete_session(sid: str) -> bool:
     return True
 
 
+def cleanup_stale(days: int = 30) -> int:
+    """C18：清理 days 天无活动的会话（防止会话列表无限增长）。
+
+    与 dashboard._active_within 同口径：无 updated_at/created_at 的异常记录保守保留。
+    返回删除条数。
+    """
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+    cutoff = now - timedelta(days=max(1, int(days)))
+    removed = 0
+    with _store() as st:
+        sessions = st["sessions"]
+        keep: list[dict[str, Any]] = []
+        for s in sessions:
+            ts = s.get("updated_at") or s.get("created_at") or ""
+            stale = False
+            if ts:
+                try:
+                    t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                    stale = t.replace(tzinfo=None) < cutoff
+                except Exception:  # noqa: BLE001  无法解析 → 保守保留
+                    stale = False
+            if stale:
+                removed += 1
+            else:
+                keep.append(s)
+        if removed:
+            st["sessions"] = keep
+            st["dirty"] = True
+    return removed
+
+
 def list_sessions(subject: str = "") -> list[dict[str, Any]]:
     sessions = _load()
     if subject:

@@ -486,6 +486,17 @@ def tutor_sessions(subject: str = "") -> dict[str, Any]:
     return {"sessions": recs, "total": len(recs)}
 
 
+class TutorCleanupBody(BaseModel):
+    days: int = 30
+
+
+@router.post("/api/library/tutor/cleanup")
+def tutor_cleanup(body: TutorCleanupBody) -> dict[str, Any]:
+    """C18：清理 days 天无活动的提问会话（防会话列表无限增长；不可恢复）。"""
+    removed = tut.cleanup_stale(max(1, min(int(body.days), 365)))
+    return {"ok": True, "removed": removed}
+
+
 @router.get("/api/library/tutor/{sid}")
 def tutor_session(sid: str) -> dict[str, Any]:
     s = tut.get_session(sid)

@@ -127,6 +127,43 @@ def test_fsutil_atomic_write(tmp_path):
     # 覆盖写 + 无 tmp 残留
     write_json_atomic(target, {"a": [3]})
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": [3]}
+
+
+def test_rerender_single_artifact(monkeypatch, tmp_path):
+    """B17：仅重渲染单个产物——只产出指定文件，不重跑其它渲染。"""
+    import json
+
+    _isolate_cfg(monkeypatch, tmp_path)
+    from medkit.routers._common import _write_meta_atomic, proj_dir
+
+    pid = "rerender_t1"
+    base = proj_dir(pid)
+    (base / "最终产物").mkdir(parents=True)
+    _write_meta_atomic(base, {"subject": "儿科学",
+                              "toggles": {"qbank": True, "paper": True, "review": True}})
+    qs = [{"id": "Q1", "type": "A1", "bloom": "理解", "subtopic": "章",
+           "question": "题1？", "options": ["A", "B", "C", "D", "E"],
+           "answer": "A", "analysis": "解析 [源:切片S001]"}]
+    out_dir = base / "最终产物"
+    (out_dir / "questions_final.json").write_text(json.dumps(qs), encoding="utf-8")
+    (out_dir / "复习手册.md").write_text("# 复习手册\n\n## 考点\n- 内容", encoding="utf-8")
+
+    c = _client()
+    r = c.post(f"/api/projects/{pid}/rerender", json={"what": "qbank"})
+    assert r.status_code == 200, r.text
+    assert "qbank.html" in r.json()["rendered"]
+    assert (out_dir / "qbank.html").exists()
+    assert not (out_dir / "押题卷.html").exists(), "仅重渲染题库，不应产出押题卷"
+
+    r2 = c.post(f"/api/projects/{pid}/rerender", json={"what": "review"})
+    assert r2.status_code == 200 and "复习手册.html" in r2.json()["rendered"]
+
+    r3 = c.post(f"/api/projects/{pid}/rerender", json={"what": "paper"})
+    assert r3.status_code == 200 and "押题卷.html" in r3.json()["rendered"]
+
+    # 未生成题库 → 404
+    r4 = c.post("/api/projects/rerender_none/rerender", json={"what": "qbank"})
+    assert r4.status_code == 404
     leftovers = [p.name for p in tmp_path.rglob("*.tmp*")]
     assert not leftovers, f"临时文件未清理：{leftovers}"
 

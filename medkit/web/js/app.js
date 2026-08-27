@@ -138,6 +138,11 @@ function toggleTheme() {
     if (saved === "dark" || saved === "light") state.theme = saved;
   } catch (e) { /* 隐私模式：跳过偏好读取，不中断脚本 */ }
   applyTheme();
+  // A9：未手动选过主题 → 跟随系统亮/暗变化（手动切换后即显式固定，不再跟随）
+  try {
+    const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)");
+    if (mq && mq.addEventListener) mq.addEventListener("change", () => { if (!state.theme) applyTheme(); });
+  } catch (e) { /* 旧浏览器无 matchMedia → 保持初次结果 */ }
 })();
 
 /* ---- v0.6：反馈(邮件) + 更新检查 ---- */
@@ -178,6 +183,8 @@ function openFeedback() {
     const subject = `MedKit ${ver} 反馈`;
     const body = `版本：${ver || "未知"}\n系统：${navigator.platform || "未知"}\n时间：${new Date().toLocaleString("zh-CN")}\n\n（请在此描述你遇到的问题或功能建议）`;
     location.href = `mailto:${FEEDBACK_MAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    // A11：邮件客户端可能未安装/静默无反应——给出复制手动发送的兜底提示
+    toast("如未弹出邮件客户端：请点「复制」把邮箱发到微信/备忘录，再手动发送", false);
   };
 }
 
@@ -195,7 +202,8 @@ function showUpdateModal(r) {
   $("md_title").textContent = "检查更新";
   let html = "";
   if (r.has_update) {
-    html = `<p style="margin:0 0 8px">当前版本 <b>v${esc(r.current)}</b> → 最新版本 <b style="color:var(--good)">v${esc(r.latest)}</b></p>`;
+    const pre = r.prerelease ? " <span style='color:var(--warn)'>（预览版）</span>" : "";
+    html = `<p style="margin:0 0 8px">当前版本 <b>v${esc(r.current)}</b> → 最新版本 <b style="color:var(--good)">v${esc(r.latest)}</b>${pre}</p>`;
     if (r.notes) html += `<div style="max-height:180px;overflow:auto;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12.5px;white-space:pre-wrap;line-height:1.6">${esc(r.notes)}</div>`;
     $("md_ok").textContent = "打开下载页";
   } else if (r.error) {
@@ -211,9 +219,26 @@ function showUpdateModal(r) {
   const url = r.html_url || "https://github.com/2710074390-cyber/medkit/releases/latest";
   $("md_ok").onclick = () => {
     $("modal_mask").style.display = "none";
-    if (r.has_update || r.error) window.open(url, "_blank", "noopener");
+    if ((r.has_update || r.error) && openExternal(url) === false) {
+      toast("当前处于离线状态，无法打开外链（联网后重试）", false);
+    }
   };
 }
+/* A12：统一外链守卫——离线时拦截并提示（浏览器在线状态为轻量预估，仅供提示）
+   返回 true=已打开（或无需拦截），false=离线被拦截 */
+function openExternal(url) {
+  if (navigator.onLine === false) return false;
+  window.open(url, "_blank", "noopener");
+  return true;
+}
+document.addEventListener("click", e => {
+  const a = e.target && e.target.closest ? e.target.closest("a[target='_blank'][href^='http']") : null;
+  if (!a) return;
+  if (navigator.onLine === false) {
+    e.preventDefault();
+    toast("当前处于离线状态，无法打开外链（联网后重试）", false);
+  }
+});
 async function checkUpdate(silent = false) {
   if (!silent) {
     $("md_title").textContent = "检查更新";
@@ -227,7 +252,7 @@ async function checkUpdate(silent = false) {
     const r = await api("/api/update/check");
     if (r.has_update) {
       markUpdateDot(true);
-      if (silent) toast(`发现新版本 v${r.latest} · 点击左下角版本号查看`);
+      if (silent) toast(`发现新版本 v${r.latest}${r.prerelease ? "（预览版）" : ""} · 点击左下角版本号查看`);
     } else markUpdateDot(false);
     if (!silent) showUpdateModal(r);
   } catch (e) {

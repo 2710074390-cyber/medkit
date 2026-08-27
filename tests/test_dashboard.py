@@ -109,6 +109,20 @@ def test_dashboard_mastered_tally(isolated):
     assert d["loop"]["mastered"] == 1
 
 
+def test_dashboard_recent_activity(isolated):
+    """C22：近期活动时间线——history 聚合、倒序、科目过滤。"""
+    _seed(isolated)
+    lib.log_knowledge_event("支气管肺炎", "explain", "已生成讲解")
+    d = dash.summary("儿科学")
+    evs = d["recent"]
+    assert evs, "近期活动应有记录"
+    assert {e["event"] for e in evs} >= {"quiz", "explain"}
+    assert all(e["kp_name"] == "支气管肺炎" for e in evs)
+    ts = [e["t"] for e in evs]
+    assert ts == sorted(ts, reverse=True)        # 倒序（时间并列时保持写入顺序）
+    assert dash.summary("解剖学")["recent"] == []  # 解剖学无活动 → 空
+
+
 def test_dashboard_router_endpoint(isolated):
     _seed(isolated)
     c = TestClient(m.app, base_url="http://127.0.0.1")

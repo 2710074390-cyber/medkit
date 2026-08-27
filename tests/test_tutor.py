@@ -107,6 +107,50 @@ def test_quiz_writes_back_mastery(isolated):
     assert any(h["event"] == "quiz" for h in kp["history"])
 
 
+def test_cleanup_stale_sessions(isolated):
+    """C18：清理无活动会话——保留最近活跃，删除 days 天前无活动的。"""
+    from datetime import datetime, timedelta
+
+    from medkit.core import tutor as tut_mod
+
+    old = datetime.now() - timedelta(days=60)
+    tut.start_session("儿科学", "支气管肺炎首选治疗")
+    tut.start_session("儿科学", "旧会话1")
+    tut.start_session("儿科学", "旧会话2")
+    sessions = tut.list_sessions()
+    old1, old2 = sessions[1], sessions[2]
+    for s in (old1, old2):
+        data = tut_mod._load()
+        for x in data:
+            if x["id"] == s["id"]:
+                x["updated_at"] = old.isoformat(timespec="seconds")
+        tut_mod._save(data)
+    removed = tut.cleanup_stale(30)
+    assert removed == 2, "60 天前无活动的 2 场应被清理"
+    remain = tut.list_sessions()
+    assert len(remain) == 1
+    assert remain[0]["kp_name"] == "支气管肺炎首选治疗"
+
+
+def test_router_tutor_cleanup(mock_agents, isolated):
+    """C18 路由：/api/library/tutor/cleanup 带确认语义（仅清理，返回删数）。"""
+    from datetime import datetime, timedelta
+
+    from medkit.core import tutor as tut_mod
+
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    tut.start_session("儿科学", "活跃会话")
+    old = (datetime.now() - timedelta(days=90)).isoformat(timespec="seconds")
+    data = tut_mod._load()
+    data.append({"id": "tu_old_1", "subject": "儿科学", "kp_name": "弃会话",
+                 "state": "weak", "streak": 0, "current": {"type": "explain", "text": ""},
+                 "rounds": [], "created_at": old, "updated_at": old})
+    tut_mod._save(data)
+    r = c.post("/api/library/tutor/cleanup", json={"days": 30})
+    assert r.status_code == 200 and r.json()["removed"] == 1
+    assert len(tut.list_sessions()) == 1
+
+
 # ---------------------------------------------------------------- medtutor mock
 class _FakeClient:
     def __init__(self, reply="", json_reply=None):

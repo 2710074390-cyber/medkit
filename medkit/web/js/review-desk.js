@@ -147,7 +147,31 @@ function updateWsNote() {
     + (b ? `已选：${esc(b.label)} —— ${esc(b.note)}` : "已选：自动匹配（按所选服务商能力）");
 }
 $("ws_backend").addEventListener("change", () => { syncWsManual(); updateWsNote(); });
+/* A4：接口地址客户端预校验（http/https 或 OpenAI 兼容端点；留空 = 服务商默认） */
+function validBaseUrl(v) {
+  const s = String(v || "").trim();
+  if (!s) return true;
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch (e) { return false; }
+}
+/* A5：用户手改过 base_url 后切换服务商 → 确认再覆盖（防止静默吞掉自定义端点） */
+let baseUrlDirty = false;
+$("base_url").addEventListener("input", () => { baseUrlDirty = true; $("base_url").classList.remove("err"); });
 function pickProvider(pr) {
+  const prev = state.provider;
+  if (prev && prev !== pr.id && baseUrlDirty && $("base_url").value.trim()) {
+    // A5：手改的 base_url + 不是默认值 → 覆盖前确认（防止静默吞掉自定义端点）
+    confirmModal("切换服务商？",
+      `<p style="margin:0;color:var(--dim)">你修改过「接口地址」为 <b>${esc($("base_url").value.trim())}</b>。<br>
+      切换后将被覆盖为「${esc(pr.name)}」的默认地址（回答可重填）。</p>`,
+      "覆盖并切换", () => { baseUrlDirty = false; doPickProvider(pr); }, false);
+    return;
+  }
+  doPickProvider(pr);
+}
+function doPickProvider(pr) {
   const prev = state.provider;
   document.querySelectorAll(".prov").forEach(x => {
     x.classList.toggle("on", x.dataset.id === pr.id);
@@ -163,6 +187,7 @@ function pickProvider(pr) {
     $("keymask").textContent = "已切换到 " + pr.name + "——请填写该服务商的 Key";
   }
   $("base_url").value = pr.base_url || "";
+  baseUrlDirty = false;
   if (pr.default_model) {
     fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
     const qc = modelValue("model_qc");
@@ -175,6 +200,11 @@ function pickProvider(pr) {
   updateWsNote();
 }
 $("btn_test").onclick = async () => {
+  if (!validBaseUrl($("base_url").value.trim())) {
+    toast("接口地址格式不对（需 http:// 或 https:// 开头，或留空用默认）", false);
+    $("base_url").classList.add("err"); $("base_url").focus();
+    return;
+  }
   const btn = $("btn_test"); btn.disabled = true;
   const old = btn.textContent; btn.textContent = "连接中…";
   $("test_result").innerHTML = '<span class="spin"></span>正在连接…';
@@ -186,6 +216,11 @@ $("btn_test").onclick = async () => {
   finally { btn.disabled = false; btn.textContent = old; }
 };
 $("btn_models").onclick = async () => {
+  if (!validBaseUrl($("base_url").value.trim())) {
+    toast("接口地址格式不对（需 http:// 或 https:// 开头，或留空用默认）", false);
+    $("base_url").classList.add("err"); $("base_url").focus();
+    return;
+  }
   const btn = $("btn_models"); btn.disabled = true;
   $("btn_models").innerHTML = '<span class="spin"></span>获取中…';
   try {
@@ -205,6 +240,11 @@ $("btn_models").onclick = async () => {
   finally { btn.disabled = false; btn.textContent = "获取模型列表"; }
 };
 $("btn_save").onclick = async () => {
+  if (!validBaseUrl($("base_url").value.trim())) {
+    toast("接口地址格式不对（需 http:// 或 https:// 开头，或留空用默认地址）", false);
+    $("base_url").classList.add("err"); $("base_url").focus();
+    return;
+  }
   try {
     const body = {
       provider: state.provider || "deepseek",
@@ -222,7 +262,7 @@ $("btn_save").onclick = async () => {
     toast(r.key_encrypted === false
       ? "配置已保存（本机 ~/.medkit/config.json；⚠️ 当前环境未能 DPAPI 加密 Key，已明文保存——请注意本机安全）"
       : "配置已保存（本机 ~/.medkit/config.json，Key 已加密）");
-    $("api_key").value = ""; $("mineru_key").value = ""; loadConfig();
+    $("api_key").value = ""; $("mineru_key").value = ""; baseUrlDirty = false; loadConfig();
   } catch (e) { toast(e.message, false); }
 };
 $("btn_mineru_test").onclick = async () => {
@@ -431,7 +471,9 @@ function ratioSum() {
   const r = { A1: +$("r_a1").value || 0, A2: +$("r_a2").value || 0, B1: +$("r_b1").value || 0, X: +$("r_x").value || 0 };
   const s = Object.values(r).reduce((a, b) => a + b, 0);
   const el = $("ratio_sum");
-  el.textContent = "合计 " + s + "%";
+  // B7：合计≠100 时给可视化提示——「还差 X%」/「超出 X%，请调低」，配比条同步 over 态
+  el.textContent = "合计 " + s + "%"
+    + (s < 100 ? `（还差 ${100 - s}%）` : s > 100 ? `（超出 ${s - 100}%，请调低）` : " ✓");
   el.classList.toggle("bad", s !== 100);
   renderSegBar("bar_ratios", RATIO_SEGS, "题型配比");
   return r;
@@ -441,7 +483,8 @@ function bloomSum() {
   const b = { 记忆: +$("b_mem").value || 0, 理解: +$("b_und").value || 0, 应用: +$("b_app").value || 0, 创造: +$("b_cre").value || 0 };
   const s = Object.values(b).reduce((a, x) => a + x, 0);
   const el = $("bloom_sum");
-  el.textContent = "合计 " + s + "%";
+  el.textContent = "合计 " + s + "%"
+    + (s < 100 ? `（还差 ${100 - s}%）` : s > 100 ? `（超出 ${s - 100}%，请调低）` : " ✓");
   el.classList.toggle("bad", s !== 100);
   renderSegBar("bar_bloom", BLOOM_SEGS, "Bloom 认知层级");
   return b;
@@ -799,6 +842,9 @@ async function updateReady() {
     </div>`;
 }
 $("btn_parse").onclick = async () => {
+  const btn = $("btn_parse"); const old = btn.textContent;
+  // B19：解析期间禁用按钮（防双击 → 重复解析/409 混淆）
+  btn.disabled = true; btn.textContent = "解析中…";
   $("parse_results").innerHTML = '<div class="hint"><span class="spin"></span>解析中…</div>';
   $("ocr_progress").innerHTML = "";
   try {
@@ -818,6 +864,7 @@ $("btn_parse").onclick = async () => {
     await updateReady();
     toast("解析完成：体检与成本预估已更新");
   } catch (e) { $("parse_results").innerHTML = `<div class="hint bad">${esc(e.message)}</div>`; }
+  finally { btn.disabled = false; btn.textContent = old; }
 };
 
 $("btn_sample").onclick = async () => {
@@ -1116,6 +1163,20 @@ function artifactLinks(pid, names) {
       <span class="ai">${ico}</span><span><b>${esc(label)}</b><small>${esc(n)}</small></span></a>`;
   }).join("") + `</div>`;
 }
+/* B17：仅重渲染单个产物（后端复用审核渲染层；题库内容不变、无 token 消耗） */
+async function rerenderArtifact(pid, what) {
+  const label = { qbank: "题库", paper: "押题卷", review: "复习手册", anki: "Anki" }[what] || what;
+  confirmModal(`仅重渲染「${label}」？`, `<p style="margin:0;color:var(--dim)">不会改动题库内容，只重新生成对应产物文件（无 token 消耗）。</p>`,
+    "重渲染", async () => {
+      try {
+        const r = await api("/api/projects/" + encodeURIComponent(pid) + "/rerender", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ what }) });
+        toast("重渲染完成：" + (r.rendered || []).join("、"));
+        showProject(pid);
+      } catch (e) { toast(e.message, false); }
+    }, false);
+}
 const STEPS = [["websearch", "网络检索"], ["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"],
                ["finalizing", "汇总"], ["reviewing", "复习"], ["rendering", "产物"]];
 function stepIdx(stage) {
@@ -1148,8 +1209,9 @@ async function showProject(pid) {
   $("pd_title").textContent = `项目详情 · ${meta.subject}`;
   const quota = (meta.quota || []).map(q =>
     `<span>${esc(q.title ? (q.title.length > 14 ? q.title.slice(0, 14) + "…" : q.title) : q.sid)}：${q.count}题</span>`).join("");
-  const usage = meta.usage ? `<div class="hint" style="margin-top:6px">本次消耗：输入 ${meta.usage.prompt_tokens} + 输出 ${meta.usage.completion_tokens} token
-    ${meta.usage.est_cost_cny != null ? `≈ ¥${meta.usage.est_cost_cny}` : ""}（以官网为准）</div>` : "";
+  const inWan = (meta.usage.prompt_tokens || 0) / 10000, outWan = (meta.usage.completion_tokens || 0) / 10000;
+  const usage = meta.usage ? `<div class="hint" style="margin-top:6px">本次消耗：输入 ${inWan.toFixed(2)} + 输出 ${outWan.toFixed(2)} 万 token`
+    + (meta.usage.est_cost_cny != null ? ` ≈ ¥${meta.usage.est_cost_cny}` : "") + `（以官网为准）</div>` : "";
   // ME-9：Anki 导出按「产物文件是否存在」判断（后端已放开 stage 门禁）——error/取消后已产出的文件同样可下载
   const ankiOk = (meta.artifacts || []).some(n => /\.apkg$/i.test(n) || /^anki_export\.txt$/i.test(n));
   const extra = [];
@@ -1174,6 +1236,12 @@ async function showProject(pid) {
     <div class="hint" style="margin-top:6px">各章节配额（教师重点词频加权）：</div>
     <div class="quota">${quota}</div>
     <div id="pd_arts" class="hint" style="margin-top:8px">${artifactLinks(pid, meta.artifacts)}</div>
+    ${(meta.artifacts || []).some(n => /^qbank\.html$/i.test(n))
+      ? `<div class="hint" style="margin-top:6px">仅重渲染（不重跑管线 · 无 token 消耗）：` +
+        Object.entries([["qbank", "题库"], ["paper", "押题卷"], ["review", "复习手册"], ["anki", "Anki"]])
+          .map(([w, l]) => `<button class="mini-btn" style="padding:2px 9px" onclick="rerenderArtifact('${esc(pid)}','${w}')">${l}</button>`).join(" ")
+        + ` <span class="hint" style="font-size:11px">— 用于只改产物不改题</span></div>`
+      : ""}
     ${usage}
     <div id="pd_assets_box" style="margin-top:12px">
       <div class="hint"><b>图片素材（图/表题）</b>：上传教材插图 / 心电图 / 影像 / 辅检表截图，生成时提示出图题（image_ref 门禁校验，错题可随图查看）；无素材项目零影响。</div>
@@ -1299,25 +1367,31 @@ function startPoll(pid) {
   }, 2500);
 }
 $("btn_run").onclick = async () => {
+  const b = $("btn_run");
+  if (b.dataset.busy === "1") return;   // B19：请求在途防双击（重复 POST → 409/双解析）
   try {
     const pid = currentPid;
-    if ($("btn_run").dataset.running === "1") {
+    if (b.dataset.running === "1") {
       confirmModal("停止生成？",
         "<p>已生成的部分题目与断点会保留；再次「开始生成」将从断点续跑（<b>质检/修复/复习/渲染阶段会重跑</b>）。</p>",
         "停止", async () => {
+          b.dataset.busy = "1";
           try {
             await api("/api/projects/" + pid + "/run", { method: "DELETE" });
             toast("正在停止…（已生成部分保留）");
           } catch (e) { toast(e.message, false); }
+          finally { b.dataset.busy = ""; }
         });
     } else {
-      const resume = $("btn_run").dataset.resume === "1";
+      const resume = b.dataset.resume === "1";
       const go = async () => {
+        b.dataset.busy = "1";
         try {
           await api("/api/projects/" + pid + "/run", { method: "POST" });
           toast("管线已启动：⓪网络检索(可选) → MedGen 出题 → 门禁① → MedQC 质检 → MedFix 修复 → 汇总 → MedReview 复习手册 → 渲染产物");
           startPoll(pid);
         } catch (e) { toast(e.message, false); }
+        finally { b.dataset.busy = ""; }
       };
       if (resume) {
         // B9：重试前说明重跑范围与费用（用户不知情下重跑可能再次消耗 token）

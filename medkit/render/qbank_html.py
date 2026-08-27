@@ -28,6 +28,43 @@ _MEDIA_CSS = """
 """
 
 
+_MAX_EMBED_BYTES = 1_200_000  # D9：单图内嵌上限（≈900KB 原图；base64 后 ~1.6MB）
+
+
+def _image_html(data: bytes, mime: str, ref: str, cap: str, max_edge: int = 1000) -> str:
+    """D9：内嵌图片——超过 _MAX_EMBED_BYTES 时用 PyMuPDF 降采样重编码（JPEG q82，最长边≤max_edge）。
+
+    仍超限则放弃内嵌（返回空字符串，由调用方给占位提示），避免产物页数 MB~数十 MB。
+    loading="lazy" 延迟解码，非首屏图不阻塞渲染。
+    """
+    if len(data) > _MAX_EMBED_BYTES:
+        try:
+            import pymupdf as fitz  # 已有依赖（pdf/docx 解析），仅大图时启用
+
+            pix = None
+            try:
+                doc = fitz.open(stream=data, filetype="png" if mime.endswith("png") else "jpg")
+                page = doc[0]
+                pm = page.get_pixmap(matrix=fitz.Matrix(1, 1))
+                scale = min(1.0, max_edge / max(pm.width, pm.height or 1))
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale)) if scale < 1 else pm
+            except Exception:  # noqa: BLE001  缩放失败 → 原样兜底
+                pix = None
+            if pix is not None:
+                try:
+                    out = pix.tobytes("jpg", jpg_quality=82)
+                except TypeError:
+                    out = pix.tobytes("jpg")
+                if 0 < len(out) < len(data):   # 仅重编码明显变小时采用
+                    data, mime = out, "image/jpeg"
+        except Exception:  # noqa: BLE001  无 PyMuPDF/解码失败 → 保持原图
+            pass
+    if len(data) > _MAX_EMBED_BYTES:
+        return ""   # 超限仍未缩小 → 不内嵌（调用方渲染占位说明）
+    b64 = base64.b64encode(data).decode("ascii")
+    return f'<img src="data:{mime};base64,{b64}" loading="lazy" alt="{html_mod.escape(cap)}">'
+
+
 def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None) -> str:
     """题目的图像（base64 内嵌，单文件可移动）+ 表格（markdown → <table>，安全白名单）。"""
     out: list[str] = []
@@ -41,12 +78,23 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
                 data = Path(p).read_bytes()
                 import mimetypes
                 mime = mimetypes.guess_type(str(p))[0] or "image/png"
-                b64 = base64.b64encode(data).decode("ascii")
-                out.append(f'<figure class="fig"><img src="data:{mime};base64,{b64}" '
-                           f'alt="{html_mod.escape(cap)}"><figcaption>图 {html_mod.escape(ref)}'
-                           + (f" · {html_mod.escape(cap)}" if cap else "") + "</figcaption></figure>")
+                img = _image_html(data, mime, ref, cap)
             except Exception:  # noqa: BLE001  文件缺失/读取失败 → 跳过图（题保留）
-                pass
+                img = ""
+            if img:
+                out.append(f'<figure class="fig">{img}'
+                           f'<figcaption>图 {html_mod.escape(ref)}'
+                           + (f" · {html_mod.escape(cap)}" if cap else "") + "</figcaption></figure>")
+            else:
+                # D9：图过大未能内嵌——保留题面并给可读提示（不回项目也看得懂）
+                kb = 0
+                try:
+                    kb = round(Path(p).stat().st_size / 1024)
+                except Exception:  # noqa: BLE001
+                    pass
+                out.append(f'<p class="hint">⚠️ 本题含图（{ref}'
+                           + (f"，约 {kb}KB" if kb else "")
+                           + "）——体积过大未嵌入本页，请回 MedKit「项目详情 → 图片素材」查看原图。</p>")
     tbl = str(q.get("data_table") or "")
     if tbl.strip():
         try:
@@ -203,17 +251,19 @@ def _html_sub(q: dict[str, Any], show_options: bool = True) -> str:
 
 
 def export_html(questions: list[dict[str, Any]], title: str = "题库",
-                image_index: Optional[dict[str, Any]] = None) -> str:
+                image_index: Optional[dict[str, Any]] = None, pid: str = "") -> str:
     """题库 HTML：案例/选项组按组折叠（S3），单题保持原 <details class=q data-type> 结构。
     v0.7.1：搜索 + 全部题型过滤 + 计数 + 窄屏适配。WP-04：图像（base64）+ 表格渲染。
+    D7：分页按「题目数」计（案例/选项组作为原子跨页保留整组，一页内的题数 ≤50）。
+    D8：筛选记忆按项目（pid）隔离，跨项目不再串台。
     """
-    items = []
+    items: list[tuple[str, int]] = []
     for b in _case_blocks(questions):
         if b["kind"] == "case":
             first = b["items"][0]
             kw = (str(first.get("id", "")) + " " + str(b["stem"]) + " " +
                   " ".join(str(q.get("question", "")) + " " + str(q.get("subtopic", "")) for q in b["items"]))
-            items.append(
+            items.append((
                 f'<details class="q case" data-type="{html_mod.escape(str(first.get("type", "")))}" '
                 f'data-group="case" data-blm="{html_mod.escape(str(first.get("bloom", "")))}" '
                 f'data-kw="{html_mod.escape(kw.lower())}">'
@@ -223,19 +273,21 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 f'{len(b["items"])} 道子题 · 点击展开案例题干</summary>'
                 f'<div class="qb"><p><b>案例题干</b>：{html_mod.escape(str(b["stem"]))}</p>'
                 + render_media(first, image_index)
-                + "".join(_html_sub(q) for q in b["items"]) + '</div></details>')
+                + "".join(_html_sub(q) for q in b["items"]) + '</div></details>',
+                len(b["items"])))
         elif b["kind"] == "option_group":
             shared = "<ul>" + "".join(
                 f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
                 for i, o in enumerate(b["options"])) + "</ul>"
             kw = " ".join(str(q.get("id", "")) + " " + str(q.get("question", "")) + " " + str(q.get("subtopic", ""))
                           for q in b["items"]) + " B1 选项组 共享选项"
-            items.append(
+            items.append((
                 f'<details class="q case" data-type="B1" data-group="og" data-blm="{html_mod.escape(str(b["items"][0].get("bloom", "")))}" data-kw="{html_mod.escape(kw.lower())}">'
                 f'<summary class="qs"><span class="tag">🧩 选项组（B1）</span>'
                 f'（{len(b["items"])} 题共享下列选项）</summary>'
                 f'<div class="qb">{shared}'
-                + "".join(_html_sub(q, show_options=False) for q in b["items"]) + '</div></details>')
+                + "".join(_html_sub(q, show_options=False) for q in b["items"]) + '</div></details>',
+                len(b["items"])))
         else:
             q = b["items"][0]
             opts = "".join(
@@ -243,7 +295,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 for i, o in enumerate(_effective_options(q)))
             kw = (str(q.get("id", "")) + " " + str(q.get("type", "")) + " " + str(q.get("bloom", ""))
                   + " " + str(q.get("subtopic", "")) + " " + str(q.get("question", "")))
-            items.append(
+            items.append((
                 f'<details class="q" data-type="{html_mod.escape(str(q.get("type", "")))}" '
                 f'data-group="single" data-blm="{html_mod.escape(str(q.get("bloom", "")))}" '
                 f'data-kw="{html_mod.escape(kw.lower())}">'
@@ -254,10 +306,27 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 f'<div class="qb">{render_media(q, image_index)}<p><b>{html_mod.escape(str(q.get("subtopic", "")))}</b> · '
                 f'{html_mod.escape(str(q.get("question", "")))}</p><ul>{opts}</ul>'
                 f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
-                f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div></details>')
+                f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div></details>',
+                1))
+    # D7：按题目数分页（每页 ≤50 题；案例/选项组整组归属同一页，不拆散）
+    pages: list[list[str]] = []
+    cur: list[str] = []
+    cur_n = 0
+    for html_, n in items:
+        if cur and cur_n + n > 50:
+            pages.append(cur)
+            cur, cur_n = [], 0
+        cur.append(html_)
+        cur_n += n
+    if cur:
+        pages.append(cur)
+    page_divs = "".join(
+        f'<div class="qpage" data-pg="{i}" style="display:{"block" if i == 0 else "none"}">'
+        + "".join(p) + '</div>' for i, p in enumerate(pages))
+    pid_json = json.dumps(pid or "")
     return _page(title, f"""
 <h1>{html_mod.escape(title)}</h1>
-<p class="meta">共 {len(questions)} 题 · 答案默认隐藏，点击题目展开查看 · <button class="mini" onclick="window.print()">🖨 打印</button> ·
+<p class="meta">共 {len(questions)} 题 · 每页最多 50 题 · 答案默认隐藏，点击题目展开查看 · <button class="mini" onclick="window.print()">🖨 打印</button> ·
 <span id="qcount" role="status" aria-live="polite"></span></p>
 <div class="filters" role="group" aria-label="筛选工具">
   <span role="group" aria-label="按题型过滤">
@@ -280,11 +349,13 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
   <span id="pginfo" role="status"></span>
   <button class="mini" onclick="pg(1)" aria-label="下一页">下一页 ›</button>
 </div>
-{''.join(f'<div class="qpage" data-pg="{i}" style="display:{"block" if i == 0 else "none"}">' + "".join(items[i*50:(i+1)*50]) + '</div>' for i in range(0, (len(items)+49)//50))}
+{page_divs}
 <script>
+const QB_PID={pid_json};
+const QB_KEY="medkitQbFilter-"+(QB_PID||(("f"+location.pathname+"#"+document.title).split("").reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7).toString(36)));
 let FT_T='',FT_B='',FT_Q='';
 const PS=50;
-let PAGES=Math.max(1,Math.ceil(document.querySelectorAll('details.q').length/PS));
+let PAGES=Math.max(1,document.querySelectorAll('.qpage').length);
 let PG=0;
 function renderPg(){{
   document.querySelectorAll('.qpage').forEach(p=>{{p.style.display=(p.dataset.pg==String(PG))?'':'none';}});
@@ -299,7 +370,7 @@ function pg(d){{
   window.scrollTo({{top:0,behavior:'smooth'}});
 }}
 function saveFilter(){{
-  try{{localStorage.setItem('medkitQbFilter',JSON.stringify({{t:FT_T,b:FT_B,q:FT_Q}}));}}catch(e){{}}
+  try{{localStorage.setItem(QB_KEY,JSON.stringify({{t:FT_T,b:FT_B,q:FT_Q}}));}}catch(e){{}}
 }}
 function ft(t,btn){{
   FT_T=t;
@@ -319,7 +390,7 @@ function resetFilter(){{
     if(b.getAttribute('data-t')==='') b.classList.add('on');}});
   const bs=document.getElementById('qbloom'); if(bs) bs.value='';
   const qs=document.getElementById('qsearch'); if(qs) qs.value='';
-  try{{localStorage.removeItem('medkitQbFilter');}}catch(e){{}}
+  try{{localStorage.removeItem(QB_KEY);}}catch(e){{}}
   apply();
 }}
 function apply(){{
@@ -351,9 +422,9 @@ function setCounts(){{
 }}
 setCounts();
 renderPg();
-/* 记忆上次过滤状态（题型/Bloom/关键词），下次打开保持不变 */
+/* 记忆上次过滤状态（题型/Bloom/关键词），下次打开保持不变（按项目隔离，D8） */
 try{{
-  const saved=JSON.parse(localStorage.getItem('medkitQbFilter')||'null');
+  const saved=JSON.parse(localStorage.getItem(QB_KEY)||'null');
   if(saved&&(saved.t||saved.b||saved.q)){{
     FT_T=saved.t||'';FT_B=saved.b||'';FT_Q=saved.q||'';
     document.querySelectorAll('.filters button').forEach(b=>{{
@@ -417,6 +488,7 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
   <span id="timer" style="float:right"></span></p>
 {f'<p class="hint" style="margin:4px 0 0">⚠️ {dropped_n} 题缺选项，已从本卷剔除：{", ".join(html_mod.escape(str(x.get("id") or str(x.get("question", ""))[:20])) for x in no_opt[:12])}{"…" if dropped_n > 12 else ""}（可在「审核台」查看/修复）。</p>' if dropped_n else ''}
 <p class="hint" style="margin:6px 0 0">判分后自动同步错题到学习中心（在 MedKit 内打开时）；下载到本地打开则错题仅存本地。</p>
+<p class="hint" style="margin:2px 0 0">ⓘ 练习自测用：答案内嵌于本页源码（右键查看源码可见），<b>请勿用于正式考试</b>；计时/限时仅为自律工具。</p>
 <div id="quiz"><span class="spin"></span>加载中…</div>
 <script>
 let QUESTIONS = {qs};
@@ -425,7 +497,9 @@ const LETTERS = "ABCDEFGHIJ";
 const TL = {{A1:"A1 单选",A2:"A2 病例",X:"X 多选",B1:"B1 选项组",A3:"A3 案例",A4:"A4 案例"}};
 const PAPER_PID = {pid_json};
 const PAPER_SUBJECT = {subj_json};
-const KEY = "medkit-paper-" + (PAPER_PID || location.pathname.split('/').pop());
+/* D5：无 pid（手工导出）时按「路径+标题」做指纹，避免跨项目同名文件串卷 */
+const ANON_KEY = ("f"+location.pathname+"#"+document.title).split("").reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7).toString(36);
+const KEY = "medkit-paper-" + (PAPER_PID || ANON_KEY);
 const RETRY_KEY = KEY + "-retry";
 const WRONG_POOL = {{}};   // v0.7：判分用错题集，供「同步到错题本」
 let secs = 0;

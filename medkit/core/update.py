@@ -17,10 +17,29 @@ RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 NOTES_LIMIT = 800
 
 
-def _version_tuple(v: str) -> tuple[int, ...]:
+import re as _re
+
+_PRE_RE = _re.compile(r"[-+]?([a-zA-Z]+)[-._]?(\d*)")
+_PRE_RANK = {"dev": 0, "alpha": 1, "beta": 2, "preview": 3, "rc": 4,
+             "test": 4, "v": 5}
+
+
+def _version_parts(v: str) -> tuple[tuple[int, ...], tuple[str, int] | None]:
+    """把版本拆成 (数值部分, 预览后缀)。``0.8.0-rc.1`` → ((0,8,0), ("rc",1))。
+
+    A10：此前首个非数字即截断（0.8.0-rc.1 被折叠成 0.8.0），预览版永不提示。
+    现在后缀参与比较：正式版 > 任何预览版；预览版之间按 dev<alpha<beta<rc 排序。
+    """
     v = v.strip().lstrip("vV")
+    m = _PRE_RE.search(v)
+    if m:
+        nums_str = v[: m.start()]
+        pre: tuple[str, int] | None = (m.group(1).lower(), int(m.group(2) or 0))
+    else:
+        nums_str = v
+        pre = None
     parts: list[int] = []
-    for seg in v.split("."):
+    for seg in nums_str.split("."):
         num = ""
         for ch in seg:
             if ch.isdigit():
@@ -28,15 +47,35 @@ def _version_tuple(v: str) -> tuple[int, ...]:
             else:
                 break
         parts.append(int(num) if num else 0)
-    return tuple(parts) if parts else (0,)
+    return (tuple(parts) if parts else (0,)), pre
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    """纯数值部分（兼容旧调用方/测试）。"""
+    return _version_parts(v)[0]
+
+
+def _pre_rank(pre: tuple[str, int] | None) -> tuple[int, int]:
+    """预览后缀排序键：(-1,0) = 正式版（最高）；否则 (类型序/100, 序号)。"""
+    if pre is None:
+        return (10, 0)
+    return (_PRE_RANK.get(pre[0], 5), pre[1])
 
 
 def is_newer(latest: str, current: str) -> bool:
-    lt, ct = _version_tuple(latest), _version_tuple(current)
+    lt, lp = _version_parts(latest)
+    ct, cp = _version_parts(current)
     n = max(len(lt), len(ct))
     lt += (0,) * (n - len(lt))
     ct += (0,) * (n - len(ct))
-    return lt > ct
+    if lt != ct:
+        return lt > ct
+    return _pre_rank(lp) > _pre_rank(cp)
+
+
+def is_prerelease(v: str) -> bool:
+    """版本是否带预览后缀（alpha/beta/rc/dev/preview…）。"""
+    return _version_parts(v)[1] is not None
 
 
 def check(timeout: float = 8.0) -> dict[str, Any]:
@@ -56,6 +95,7 @@ def check(timeout: float = 8.0) -> dict[str, Any]:
         "current": current,
         "latest": latest or None,
         "has_update": bool(latest) and is_newer(latest, current),
+        "prerelease": bool(latest) and is_prerelease(latest),
         "html_url": data.get("html_url") or RELEASES_PAGE,
         "notes": notes[:NOTES_LIMIT] or None,
         "published_at": data.get("published_at"),
