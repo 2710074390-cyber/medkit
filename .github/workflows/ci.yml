@@ -34,6 +34,33 @@ jobs:
         run: python -m pytest -q -m migration
       - name: Dependency integrity (IMP-10)
         run: pip check
-      # 注：tests/browser（Playwright 浏览器层）是本地闸门，CI 暂不跑——
-      # CI 运行时无 chromium，跑该层会卡死/拖垮整个 job；本地用 `verify.cmd` 覆盖，
-      # 无浏览器环境用 `SKIP_BROWSER=1` 旁路。
+      # 注：tests/browser（Playwright 浏览器层）自 NX-05 起由独立 browser job 承担
+      # （见下）；本 verify job 不再跑浏览器层，避免无 chromium 拖垮矩阵。
+
+  # NX-05（R-5）：browser 层入 CI —— 独立 job（ubuntu + chromium），
+  # 失败不阻塞 verify 矩阵；浏览器二进制用 actions/cache 缓存（命中跳过安装）。
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install deps
+        run: pip install -r requirements.txt -r requirements-dev.txt ruff
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+      - name: Install Playwright chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: python -m playwright install chromium --with-deps
+      - name: Browser tests (NX-05)
+        run: python -m pytest tests/browser -q --timeout=300

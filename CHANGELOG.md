@@ -3,6 +3,9 @@
 本项目所有值得记录的变更都记录在该文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+> **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
+> （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
+
 ## [Unreleased]
 
 ### Added
@@ -21,6 +24,11 @@
 
 - **NX-02**：FTS `fts_tokens` 在 jieba 缺失/词典损坏时不再抛错，回退 bigram 兜底（打包环境健壮性）。
 - **NX-03（R-2 返工）**：ADR-003 契约层闭环——① MedQC 判分 JSON 改走 `validate_or_repair` 硬闭环（校验失败 → 带错误重发 1 次修复 → 仍失败 score=-1 不计分，批次进项目「人工复核清单.md」，聚合平均分跳过 -1）；② MedGen 软校验告警计数落项目 meta（`contract_warnings`），学习中心概览卡在计数 >0 时显示「最近一轮生成有 N 条输出未通过契约校验」（含科目分布，指向质检报告/人工复核清单）。
+
+### Prompts
+
+- **新增 `medkit/prompts/medcards.md`**（NX-04/WP-05）：讲解 → 3~6 张医学记忆卡（value/mnemonic/contrast/concept 四型契约、正反面必填、不臆造红线）；契约模型 `CardDraft/CardDrafts`（`medkit/core/schema.py`），fixtures 新增 `tests/fixtures/llm_cases/medcards.json`。
+- **新增 `medkit/prompts/syllabus_extract.md`**（K3/IMP-13）：官方大纲逐科 one-subject JSON 契约抽取（推理模型 `max_tokens=16000` 关键参数，见 `docs/AGENT_HANDOFF.md` §4）。
 
 ### Changed
 

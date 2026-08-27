@@ -235,20 +235,22 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
     return _page(title, f"""
 <h1>{html_mod.escape(title)}</h1>
 <p class="meta">共 {len(questions)} 题 · 答案默认隐藏，点击题目展开查看 · <button class="mini" onclick="window.print()">🖨 打印</button> ·
-<span id="qcount"></span></p>
-<div class="filters">
+<span id="qcount" role="status" aria-live="polite"></span></p>
+<div class="filters" role="group" aria-label="筛选工具">
+  <span role="group" aria-label="按题型过滤">
   <button data-t="" data-label="全部" class="on" onclick="ft('',this)">全部</button>
   <button data-t="A1" data-label="A1 单选" onclick="ft('A1',this)">A1 单选</button>
   <button data-t="A2" data-label="A2 病例" onclick="ft('A2',this)">A2 病例</button>
   <button data-t="og" data-label="B1 选项组" onclick="ft('og',this)">B1 选项组</button>
   <button data-t="case" data-label="A3·A4 案例" onclick="ft('case',this)">A3·A4 案例</button>
   <button data-t="X" data-label="X 多选" onclick="ft('X',this)">X 多选</button>
+  </span>
   <select id="qbloom" aria-label="按认知层级过滤">
     <option value="">全部层级</option><option value="记忆">记忆</option><option value="理解">理解</option>
     <option value="应用">应用</option><option value="创造">创造</option>
   </select>
-  <input id="qsearch" type="search" placeholder="🔍 搜索题干 / 考点 / 章节…" oninput="ftq(this.value)">
-  <button id="qreset" class="mini" title="清除全部筛选" onclick="resetFilter()">重置</button>
+  <input id="qsearch" type="search" aria-label="搜索题干 / 考点 / 章节" placeholder="🔍 搜索题干 / 考点 / 章节…" oninput="ftq(this.value)">
+  <button id="qreset" class="mini" title="清除全部筛选" aria-label="清除全部筛选" onclick="resetFilter()">重置</button>
 </div>
 {''.join(items)}
 <script>

@@ -173,6 +173,22 @@ def test_paper_html_a11y_and_retry_markers():
     assert "bannerRetry" in h and "重试 ↻" in h, "同步失败提示条应带重试按钮"
 
 
+def test_qbank_toolbar_a11y():
+    """NX-07：题库页筛选工具区可访问性（搜索框/过滤组/结果计数）。"""
+    from medkit.render.qbank_html import export_html
+
+    qs = [{"id": "Q001", "type": "A1", "bloom": "理解", "subtopic": "测试",
+           "question": "题干？", "options": ["a", "b", "c", "d", "e"],
+           "answer": "A", "analysis": "解析"}]
+    h = export_html(qs, "题库")
+    assert 'role="group" aria-label="筛选工具"' in h, "筛选容器应 role=group"
+    assert 'role="group" aria-label="按题型过滤"' in h, "题型 chip 组应 role=group"
+    assert 'aria-label="搜索题干 / 考点 / 章节"' in h, "搜索框应带 aria-label"
+    assert 'id="qcount" role="status" aria-live="polite"' in h, "结果计数应 role=status"
+    assert 'aria-label="清除全部筛选"' in h, "重置按钮应带 aria-label"
+    assert 'aria-label="按认知层级过滤"' in h, "Bloom 下拉应带 aria-label"
+
+
 def test_medfix_merge_keeps_provenance():
     class FakeClient:
         def chat_json(self, messages, **kwargs):

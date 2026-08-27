@@ -47,6 +47,10 @@ python run_medkit.py        # 或双击 start.bat
 > 浏览器测试（Playwright，`verify.cmd` 第 3 步）：`pip install -r requirements-dev.txt` 后需再
 > `playwright install chromium`；无浏览器环境可设 `SKIP_BROWSER=1` 旁路该层。
 
+> **Prompt 版本治理（NX-06）**：凡改动 `medkit/prompts/*.md`，必须同步 ① `tests/fixtures/llm_cases/`
+> 对应样本（如有契约输出）与 ② `CHANGELOG.md` 当版新增「`### Prompts`」小节（列改动与影响）；
+> 二者缺一视为未完成。提示词契约字段以 `prompts/*.md` 为准（见 `medkit/core/schema.py` 头注）。
+
 ## 绿色免安装版（P3）
 
 ```powershell
