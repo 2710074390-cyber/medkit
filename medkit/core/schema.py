@@ -12,6 +12,7 @@
 - MedTutor 判分回合 :class:`TutorTurn`
 - 真题考频归一 :class:`RealexamNorm`
 - 大纲结构化抽取（K3/IMP-13）:class:`SyllabusOutline`
+- 医学记忆卡（WP-05/NX-04）:class:`CardDraft` / :class:`CardDrafts`
 
 字段名与形态一律以实际提示词（medkit/prompts/*.md）与解析代码
 （medkit/agents/*.py、medkit/core/*.py）为准，不臆造。
@@ -40,6 +41,10 @@ __all__ = [
     "OutlineChapter",
     "OutlineSubject",
     "SyllabusOutline",
+    "CARD_KINDS",
+    "CARD_KIND_LABELS",
+    "CardDraft",
+    "CardDrafts",
     "validate_or_repair",
 ]
 
@@ -338,6 +343,73 @@ class SyllabusOutline(BaseModel):
     @model_validator(mode="after")
     def _drop_empty_subjects(self) -> "SyllabusOutline":
         self.subjects = [s for s in self.subjects if s.name and s.chapters]
+        return self
+
+
+# --------------------------------------------------------------------------- CardDraft（WP-05/NX-04 医学记忆卡）
+CARD_KINDS = ("value", "mnemonic", "contrast", "concept")
+CARD_KIND_LABELS = {"value": "数值卡", "mnemonic": "口诀卡", "contrast": "鉴别卡", "concept": "概念卡"}
+
+
+class CardDraft(BaseModel):
+    """MedCards 单张记忆卡（medcards.md 输出；kind ∈ value|mnemonic|contrast|concept）。
+
+    - value：数值/指标/阈值（如 3.25kg、120/80）
+    - mnemonic：口诀/记忆锚点
+    - contrast：鉴别/对比（最多 3 项鉴别点）
+    - concept：概念/机制
+    front 为正面线索（≤500 字），back 为背面答案（≤1200 字）；两者均必填。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    kind: str = "concept"
+    front: str = ""
+    back: str = ""
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _word_kind(cls, v: Any) -> str:
+        v = str(v or "").strip().lower()
+        return v if v in CARD_KINDS else "concept"
+
+    @field_validator("front", "back", mode="before")
+    @classmethod
+    def _word_text(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+    @model_validator(mode="after")
+    def _require_text(self) -> "CardDraft":
+        if not self.front or not self.back:
+            raise ValueError("记忆卡 front/back 均不能为空")
+        if len(self.front) > 500:
+            raise ValueError("front 超过 500 字限制")
+        if len(self.back) > 1200:
+            raise ValueError("back 超过 1200 字限制")
+        return self
+
+
+class CardDrafts(BaseModel):
+    """MedCards 输出根契约（{cards: [...]}；空卡组一律拒绝——调用方走人工复核语义）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    cards: list[CardDraft] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _require_cards(self) -> "CardDrafts":
+        # 按「数值/口诀/鉴别/概念」稳定排序去重（同 front 只保留一张）；上限 10 张（防超发）
+        seen: set[str] = set()
+        order = {k: i for i, k in enumerate(CARD_KINDS)}
+        keep: list[CardDraft] = []
+        for c in sorted(self.cards, key=lambda x: (order.get(x.kind, 0), x.front)):
+            if c.front in seen:
+                continue
+            seen.add(c.front)
+            keep.append(c)
+        self.cards = keep[:10]
+        if not self.cards:
+            raise ValueError("未生成任何有效记忆卡")
         return self
 
 

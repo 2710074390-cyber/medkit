@@ -807,6 +807,7 @@ async function loadExplains() {
           <div class="hint" style="margin-top:6px;font-size:11.5px;line-height:1.9">${e.sources.map(s => (s.kind === "web" ? "🌐" : "📖") + " " + esc(s.title || s.url || "")).join("<br>")}</div></details>` : ""}
         <div class="btns" style="margin-top:10px">
           ${e.kp_name ? `<button class="mini-btn" onclick="learnRecAction('tutor','${esc(e.subject || "")}','${esc(e.kp_name)}')">→ 提问练习</button>` : ""}
+          ${(window.FEATURES && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards('${esc(e.id)}','${esc(e.subject || "")}')">🧠 生成记忆卡</button>` : ""}
           <button class="mini-btn primary" onclick="expRegen('${esc(e.id)}','${esc(e.subject || "")}','${esc(e.kp_name || "")}')">↻ 重新生成</button>
           <button class="mini-btn" onclick="expCopy('${esc(e.id)}',this)">复制</button>
           <button class="mini-btn danger" onclick="expDel('${esc(e.id)}')">删除</button>
@@ -871,6 +872,18 @@ async function expRegen(id, subject, kpName) {
   } catch (e) { toast(e.message, false); loadExplains(); }
 }
 window.expFold = expFold; window.expRegen = expRegen;
+/* WP-05/NX-04：讲解产物 → 医学记忆卡（flag = cards 前端同步隐藏按钮） */
+async function expCards(eid, subject) {
+  try {
+    const r = await api("/api/library/cards/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ explain_id: eid }) });
+    toast(r.added ? `已生成 ${r.added} 张医学记忆卡（复习计划「🧠 医学记忆卡」可见）`
+                  : "记忆卡已存在（幂等，未新增）");
+    if (typeof loadReviewCtx === "function") loadReviewCtx(rvSubject);
+  } catch (e) { toast(e.message, false); }
+}
+window.expCards = expCards;
 async function expDel(id) {
   confirmModal("删除讲解产物", `<p style="margin:0;color:var(--dim)">确定删除这篇讲解吗？删除后不可恢复。</p>`, "删除", async () => {
     try { await api("/api/library/explains/" + id, { method: "DELETE" }); toast("已删除"); loadExplains(); }
@@ -1113,6 +1126,7 @@ async function loadReviewCtx(subject = "") {
     ]);
     fillReviewSubjects(subs);
     renderReview(today);
+    renderMemoryCards();      // WP-05/NX-04：医学记忆卡（FSRS 默认 / SM-2 可切）
   } catch (e) { $("rv_body").innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
 function fillReviewSubjects(resp) {
@@ -1207,6 +1221,56 @@ async function rvDel(cid) {
   } catch (e) { toast(e.message, false); }
 }
 window.loadReviewCtx = loadReviewCtx; window.rvQueueAll = rvQueueAll; window.rvGrade = rvGrade; window.rvDel = rvDel;
+
+/* ---- WP-05/NX-04：医学记忆卡（讲解产物 → 记忆卡；FSRS 默认 / SM-2 可切） ---- */
+async function renderMemoryCards() {
+  const sec = $("mem_area");
+  if (!sec) return;
+  if (!(window.FEATURES && FEATURES.cards)) { sec.innerHTML = ""; return; }
+  try {
+    const r = await api("/api/library/cards?subject=" + encodeURIComponent(rvSubject) + "&due=1");
+    const cards = r.cards || [];
+    const st = r.stats || {};
+    sec.innerHTML = `<div class="cardh" style="margin-top:6px"><h3 style="margin:0">🧠 医学记忆卡</h3>
+      <span class="hint">讲解产物自动沉淀 · 总 ${st.total || 0} / 今日到期 ${st.due || 0}</span></div>`
+      + (cards.length
+        ? cards.map(memCard).join("")
+        : `<div class="empty" style="padding:16px 0"><div class="sub">今日无到期记忆卡<br>到「讲解与学习产物」选中讲解 →「🧠 生成记忆卡」入队（FSRS 默认算法，SM-2 可切）</div></div>`);
+  } catch (e) { sec.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
+}
+function memCard(c) {
+  const grades = [["重来", 0], ["困难", 2], ["良好", 3], ["简单", 5]];
+  return `<div class="rv-card" style="margin-top:10px">
+    <div class="rv-top">${rvChip(c.state)}<span class="tag">${esc(c.kind_label || c.kind || "")}</span>
+      <span class="hint" style="font-size:11px">${esc(c.subject || "未分类")}</span>
+      <button class="rv-x" title="删除记忆卡" onclick="memDel('${esc(c.id)}')">×</button></div>
+    <div class="rv-q">${esc(c.front)}</div>
+    <details style="margin:6px 0"><summary style="font-size:12px;color:var(--info);cursor:pointer">👁 显示答案</summary>
+      <div class="rv-slice" style="margin-top:6px">${esc(c.back)}</div></details>
+    <div class="rv-meta">${esc((c.kp_name || "") + (c.sched ? " · " + c.sched.toUpperCase() : ""))}
+      · 下次 ${esc(String(c.due || "").slice(0, 10))} · 背 ${c.reps || 0} 次 · 忘 ${c.lapses || 0} 次</div>
+    <div class="rv-grades"><span class="hint" style="font-size:11px">自评：</span>${grades.map(([t, q]) =>
+      `<button class="rv-g${q}" onclick="memGrade('${esc(c.id)}',${q})">${t}</button>`).join("")}</div>
+    <div class="rv-legend hint">重来=遗忘 · 困难=回想吃力 · 良好=正常 · 简单=秒答（FSRS 4 级自评，0~5 全档兼容 SM-2）</div>
+  </div>`;
+}
+async function memGrade(cid, q) {
+  try {
+    await api("/api/library/cards/" + encodeURIComponent(cid) + "/grade", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quality: q }) });
+    toast(`已记录自评 ${q}/5，记忆卡已排入下次复习`);
+    loadReviewCtx(rvSubject);
+  } catch (e) { toast(e.message, false); }
+}
+async function memDel(cid) {
+  try {
+    await api("/api/library/cards/" + encodeURIComponent(cid), { method: "DELETE" });
+    toast("已删除记忆卡");
+    loadReviewCtx(rvSubject);
+  } catch (e) { toast(e.message, false); }
+}
+window.renderMemoryCards = renderMemoryCards; window.memGrade = memGrade; window.memDel = memDel;
 
 window.ankiPreview = ankiPreview;
 /* Anki 卡样预览：前 3 张卡正反面（直接复用项目题目数据，零后端改动） */

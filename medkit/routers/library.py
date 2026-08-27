@@ -12,6 +12,8 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from ..agents import medcards
+from ..core import cards as cardlib
 from ..core import config as cfg
 from ..core import dashboard as dash
 from ..core import explain as expl
@@ -552,6 +554,62 @@ def review_grade(body: ReviewGradeBody) -> dict[str, Any]:
 def review_card(cid: str) -> dict[str, Any]:
     if not rev.delete_card(cid):
         raise HTTPException(404, "复习卡片不存在")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- 医学记忆卡（WP-05/NX-04）
+class CardsGenerateBody(BaseModel):
+    explain_id: str = ""
+
+
+class CardsGradeBody(BaseModel):
+    quality: int = 3
+
+
+@router.post("/api/library/cards/generate")
+def cards_generate(body: CardsGenerateBody) -> dict[str, Any]:
+    """讲解产物 → 医学记忆卡（flag(cards) 门禁；CardDrafts 契约抽取 + 幂等入库）。
+
+    每张卡创建时绑定调度算法（FSRS 默认）；LLM 契约失败走 502（global LLMError handler）。
+    """
+    from ._common import require_flag
+
+    require_flag("cards")
+    eid = (body.explain_id or "").strip()
+    if not eid:
+        raise HTTPException(400, "缺少讲解产物 ID")
+    rec = expl.get_explain(eid)
+    if not rec:
+        raise HTTPException(404, "讲解产物不存在")
+    drafts = medcards.generate_cards(medcards.make_client(), rec)   # LLMError → 502
+    if not drafts:
+        raise HTTPException(502, "未能从该讲解生成记忆卡（建议重试或选择更聚焦的知识点）")
+    added = cardlib.create_from_drafts(drafts, rec.get("subject", ""),
+                                       rec.get("kp_name", ""), eid)
+    return {"ok": True, "added": len(added), "cards": added,
+            "total": len(cardlib.list_cards())}
+
+
+@router.get("/api/library/cards")
+def cards_list(subject: str = "", due: int = 0) -> dict[str, Any]:
+    """记忆卡列表（due=1 仅今日到期）；stats 含 total/new/due/review/relearning。"""
+    cs = cardlib.list_cards(subject, due_only=bool(due))
+    return {"cards": cs, "total": len(cs), "stats": cardlib.stats(subject)}
+
+
+@router.post("/api/library/cards/{cid}/grade")
+def cards_grade(cid: str, body: CardsGradeBody) -> dict[str, Any]:
+    """自评 quality(0~5) → 按卡片绑定算法（FSRS/SM-2）推进下次排程。"""
+    card = cardlib.grade_card(cid, max(0, min(int(body.quality), 5)))
+    if card is None:
+        raise HTTPException(404, "记忆卡不存在")
+    return {"ok": True, "card": card}
+
+
+@router.delete("/api/library/cards/{cid}")
+def cards_delete(cid: str) -> dict[str, Any]:
+    if not cardlib.delete_card(cid):
+        raise HTTPException(404, "记忆卡不存在")
     return {"ok": True}
 
 

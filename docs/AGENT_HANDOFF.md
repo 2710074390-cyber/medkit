@@ -11,6 +11,8 @@
 | 2026-08-27 | `74d999b` | NX-02：打包环境 jieba 兜底（fts_tokens 仅 bigram、spec 收集 jieba 数据） |
 | 2026-08-27 | `8b4baf4` | K3/IMP-13：官方大纲文件导入闭环（LLM 契约抽取 → seed）+ 教师重点 v4 后端（+前端官方大纲入口） |
 | 2026-08-27 | 本批 | **大纲标准二选一收尾**：教师重点文件导入前端入口 + 知识点提取（`extract_teacher_kps`）+ 标准切换去「全部」档 + api() Content-Type 修复 + 本交接文档 |
+| 2026-08-27 | `b321215` | NX-03：契约层闭环（MedQC 硬闭环 validate_or_repair + score=-1 人工复核；MedGen 软校验计数落 meta，概览卡可见） |
+| 2026-08-27 | 本批 | **NX-04（WP-05）**：记忆卡工厂（`agents/medcards.py` + `prompts/medcards.md` + `CardDraft` 契约）+ `core/cards.py`（迁移 v5）+ `core/scheduler.py`（py-fsrs 6.3.2 默认 / SM-2 legacy 可切，创建时绑定）· 讲解产物「生成记忆卡」+ 复习计划「🧠 医学记忆卡」面板 · `export_memory_apkg` |
 
 ## 1. 大纲选择机制（v4 · 标准二选一）
 

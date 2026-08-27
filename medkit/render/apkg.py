@@ -15,6 +15,7 @@ from typing import Any
 
 import genanki
 
+from ..core.schema import CARD_KIND_LABELS
 from .qbank_html import LETTERS
 
 TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "A3": "A3 型 · 案例多选",
@@ -113,5 +114,42 @@ def export_apkg(questions: list[dict[str, Any]], subject: str, project_key: str,
         m = models["self"] if str(q.get("type", "")) in SELF_ASSESS_TYPES else models["normal"]
         deck.add_note(genanki.Note(model=m, fields=[fields[f] for f in ("题干", "选项", "答案", "解析", "溯源")],
                                    tags=_note_tags(q)))
+    deck.write_to_file(str(out_path))
+    return out_path
+
+
+# ---------------------------------------------------------------- 医学记忆卡导出（WP-05/NX-04）
+def _memory_model() -> genanki.Model:
+    front = ("<div style='font-size:15px;line-height:1.8'>"
+             "<span style='color:#888;font-size:12px'>【记忆卡 · {{类型}}】</span><br><br>"
+             "{{正面}}</div>")
+    back = ("{{FrontSide}}<hr style='border:none;border-top:1px dashed #ccc'>"
+            "<div style='font-size:14px;line-height:1.8'>{{背面}}<br><br>"
+            "<span style='color:#888;font-size:12px'>📚 知识点：{{知识点}}</span></div>")
+    return genanki.Model(
+        stable_id("MedKit 医学记忆卡"), "MedKit 医学记忆卡",
+        fields=[{"name": f} for f in ("正面", "背面", "类型", "知识点")],
+        templates=[{"name": "记忆卡", "qfmt": front, "afmt": back}],
+        css=(".card{font-family:'Segoe UI','Microsoft YaHei',sans-serif;"
+             "background:#fff;color:#12233d;padding:20px;text-align:left}"),
+    )
+
+
+def export_memory_apkg(cards: list[dict[str, Any]], subject: str, deck_key: str,
+                       out_path: Path) -> Path:
+    """记忆卡 → .apkg（独立「医学记忆卡」牌组；deck_key 稳定 id 防重复导入）。"""
+    out_path = Path(out_path)
+    model = _memory_model()
+    deck = genanki.Deck(stable_id(f"mem-{deck_key}"),
+                        f"MedKit 记忆卡 :: {subject or '未分类'}")
+    for c in sorted(cards, key=lambda x: (str(x.get("kind", "")), str(x.get("front", "")))):
+        deck.add_note(genanki.Note(
+            model=model,
+            fields=[_esc_anki(c.get("front") or ""), _esc_anki(c.get("back") or ""),
+                    _esc_anki(CARD_KIND_LABELS.get(c.get("kind"), c.get("kind") or "concept")),
+                    _esc_anki(c.get("kp_name") or c.get("subject") or "")],
+            tags=[_sanitize_tag(str(c.get("kind") or "concept")),
+                  _sanitize_tag(subject or "未分类")],
+        ))
     deck.write_to_file(str(out_path))
     return out_path

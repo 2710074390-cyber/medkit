@@ -112,7 +112,25 @@ _V4_UP: list[str] = [
 # 全量自动备份（ADR-005 既有机制）。
 _V4_DOWN: list[str] = []
 
-MIGRATIONS: list[int] = [1, 2, 3, 4]  # 版本列表（只增不改）
+# v5（WP-05/NX-04）：cards —— 医学记忆卡（讲解产物 → 记忆卡，FSRS 默认 / SM-2 可切）。
+_V5_UP: list[str] = [
+    """
+    CREATE TABLE IF NOT EXISTS cards (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        subject TEXT, source TEXT, kind TEXT,
+        state TEXT, due TEXT, created_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_cards_subject ON cards(subject)",
+    "CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due)",
+    "CREATE INDEX IF NOT EXISTS idx_cards_source ON cards(source)",
+]
+
+_V5_DOWN: list[str] = [
+    "DROP TABLE IF EXISTS cards",
+]
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -130,6 +148,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 4:
         for stmt in _V4_UP:
+            cur.execute(stmt)
+        return
+    if ver == 5:
+        for stmt in _V5_UP:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")
@@ -150,6 +172,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 4:
         for stmt in _V4_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 5:
+        for stmt in _V5_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

@@ -12,7 +12,7 @@ import pytest
 from medkit.core import db
 
 TABLES = ("mistakes", "knowledge", "explains", "review_cards",
-          "tutor_sessions", "meta", "slices_fts")
+          "tutor_sessions", "meta", "slices_fts", "cards")
 
 
 @pytest.fixture

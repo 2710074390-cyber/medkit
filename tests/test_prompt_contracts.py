@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from medkit.core.schema import FixPatch, QcVerdict, QuestionItem
+from medkit.core.schema import CardDrafts, FixPatch, QcVerdict, QuestionItem
 
 CASE_DIR = Path(__file__).resolve().parent / "fixtures" / "llm_cases"
 
@@ -63,6 +63,28 @@ def test_medfix_patch_contract():
         model = FixPatch.model_validate(fix)
         assert model.id and model.question and model.answer and model.analysis
         assert model.options, "修复题应含完整选项"
+
+
+def test_medcards_cards_contract():
+    # WP-05/NX-04：medcards.json fixture 4 型俱全，过 CardDrafts 契约
+    data = _load("medcards.json")
+    drafts = CardDrafts.model_validate(data)
+    kinds = [c.kind for c in drafts.cards]
+    assert kinds == ["value", "mnemonic", "contrast", "concept"], kinds
+    for c in drafts.cards:
+        assert c.front and c.back, "记忆卡正反面必填"
+
+
+def test_medcards_empty_rejected_and_dedup():
+    # 空卡组 → 契约失败；重复 front → 去重；超 10 张 → 截断
+    with pytest.raises(ValidationError):
+        CardDrafts.model_validate({"cards": []})
+    dup = {"cards": [{"kind": "value", "front": "X", "back": "1"},
+                     {"kind": "mnemonic", "front": "X", "back": "2"}]}
+    d = CardDrafts.model_validate(dup)
+    assert len(d.cards) == 1, "同 front 应去重"
+    many = {"cards": [{"kind": "value", "front": f"F{i}", "back": f"B{i}"} for i in range(12)]}
+    assert len(CardDrafts.model_validate(many).cards) == 10
 
 
 # ---------------------------------------------------------------- 关键不变式

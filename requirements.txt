@@ -8,3 +8,4 @@ python-multipart>=0.0.9
 markdown>=3.5
 genanki==0.13.1
 jieba>=0.42.1   # IMP-06：slices_fts FTS5 预分词（K1 验证；D2/ADR-002）
+fsrs>=6.3.2,<7  # NX-04/WP-05：记忆卡 FSRS 调度（K2 已验证 6.3.2；默认算法，SM-2 legacy 可切）

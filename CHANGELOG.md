@@ -12,6 +12,10 @@
 - **教师重点知识点提取**：`core/syllabus.py::extract_teacher_kps`（条目 → 知识点名：去「重点掌握/考点…」前缀、≤40 字收束、去重保序），随导入响应 `knowledge` 字段返回；设计边界：不写入学习库掌握度状态机（掌握度仅由真实错题/判分事件驱动）。
 - **大纲标准二选一前端收尾**：`syl_std` 移除「全部」档（仅 教师重点/官方大纲 两档）；大纲覆盖视图新增「上传教师重点文件」（PDF/DOCX/MD/TXT）与「上传官方大纲(md/txt)」一键导入入口；`api()` 修复：字符串体自动补 `Content-Type: application/json`（FormData 原样透传）。
 - **Agent 交接文档**：`docs/AGENT_HANDOFF.md`（大纲选择机制、教师重点处理流程、官方大纲抽取链路、陷阱与注意事项，供后续开发者/Agent 接手）。
+- **WP-05 医学记忆卡工厂（NX-04）**：讲解产物 → 3~6 张记忆卡（`CardDraft` 契约：value 数值 / mnemonic 口诀 / contrast 鉴别 / concept 概念；`chat_json(schema=CardDrafts)` 硬校验）→ `core/cards.py` 幂等入库（迁移 v5 `cards` 表；约 max 8 张/篇）。
+- **WP-05 Scheduler 协议 + FSRS**：`core/scheduler.py`——py-fsrs 6.3.2 默认（`enable_fuzzing=False` 可测可解释，quality 0~5 → Again/Hard/Good/Easy），SM-2 legacy 可切（复用 `core/review`）；算法按「创建时」绑定卡片，切换只影响新卡（队列不丢、可回滚）。
+- **记忆卡前端**：学习中心「讲解产物」每篇新增「🧠 生成记忆卡」动作（`flag("cards")` 双端门禁）；「复习计划」新增「🧠 医学记忆卡」面板（今日到期、四档自评：重来/困难/良好/简单）。
+- **记忆卡 Anki 导出**：`render/apkg.py::export_memory_apkg`（独立「MedKit 医学记忆卡」牌组，类型/知识点标签）。
 
 ### Fixed
 
