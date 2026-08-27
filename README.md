@@ -5,7 +5,7 @@
 
 ## 医学生快速上手（拿到安装包开始）
 
-1. **安装**：双击 `MedKit-Setup-0.7.0.exe` → 一路下一步（可选桌面图标）。
+1. **安装**：双击 `MedKit-Setup-0.8.0.exe` → 一路下一步（可选桌面图标）。
    或绿色版：解压 `MedKit` 文件夹到任意位置，双击 `MedKit.exe`，浏览器自动打开（无需安装 Python）。
 2. **首次启动**：会弹出 3 步欢迎向导——软件做什么、怎么拿 API Key、怎么开始，跟完即可。
 3. **连接 AI**（只需一次）：推荐注册 [DeepSeek 开放平台](https://platform.deepseek.com) → 充值 ¥10 →
@@ -82,7 +82,7 @@ medkit/
 └── tests/                      # test_smoke / test_pipeline_offline / test_api（TestClient）
 ```
 
-## 已实现功能（v0.7.0）
+## 已实现功能（v0.8.0）
 
 - **服务商 BYOK**：DeepSeek / 智谱 GLM / 通义千问 / Kimi（月之暗面）预置（卡片带官网注册跳转）+ 自定义 OpenAI 兼容端点；双模型档（下拉选择，获取模型列表后默认选最新，支持手动输入）；测试连接（30s 超时）；**保存配置空 Key = 保留原值**；**Key 落盘 DPAPI 加密**（Windows，ctypes 零依赖；旧明文自动升级）；**多服务商 Key 存档**（切换服务商自动归档旧 Key，切回免重填；「API Key 管理」卡片统一查看掩码/切换/删除，仿 Cherry Studio）
 - **素材解析**：PDF(文本层)/DOCX/MD/TXT/图片；章节切片；教师重点词频配额加权；线程池执行不阻塞
