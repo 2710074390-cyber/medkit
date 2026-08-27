@@ -9,15 +9,25 @@
 - quality<3 视为「忘了」：间隔归 0 → relearning，lapses+1，ease−0.2（下限 1.3）。
 """  # noqa: E501
 
+import itertools
+import threading
 import time
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from . import config as cfg
+from . import db as dbs
 from .fsutil import read_json_list, write_json_atomic
 
 LIBRARY_DIR = cfg.CONFIG_DIR / "library"
 REVIEW_QUEUE_FILE = LIBRARY_DIR / "review_queue.json"
+
+# SQL 模式（S0·方案 §2.3）：medkit.db 存在即行级事务（BEGIN IMMEDIATE 串行读-改-写）。
+DB_FILE = dbs.DB_PATH
+_LOCK = threading.RLock()
+_R_COLS = ("subject", "kp_name", "state", "due", "created_at")
+_SEQ = itertools.count()
 
 # SM-2 参数
 INIT_EASE = 2.5
@@ -37,13 +47,47 @@ def _today() -> date:
     return date.today()
 
 
+def _store_is_sql() -> bool:
+    return DB_FILE.exists()
+
+
 def _load() -> list[dict[str, Any]]:
-    """读复习队列；缺失/损坏 → 空（统一容错）。"""
+    """读复习队列；缺失/损坏 → 空（统一容错）。SQL 模式读表，JSON 模式读文件。"""
+    if _store_is_sql():
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            return dbs.list_rows(cur, "review_cards")
+        finally:
+            cur.close()
     return read_json_list(REVIEW_QUEUE_FILE)
 
 
 def _save(records: list[dict[str, Any]]) -> None:
+    """写复习队列。SQL 模式事务整组替换；JSON 模式复用 fsutil 原子写。"""
+    if _store_is_sql():
+        with dbs.tx(write=True) as cur:
+            dbs.replace_all(cur, "review_cards", records, _R_COLS)
+        return
     write_json_atomic(REVIEW_QUEUE_FILE, records)
+
+
+@contextmanager
+def _store() -> Iterator[dict[str, Any]]:
+    """队列读-改-写视图；退出时按 dirty 写回（SQL 单事务 / JSON RLock+原子写）。"""
+    if _store_is_sql():
+        with dbs.tx(write=True) as cur:
+            st: dict[str, Any] = {"cards": dbs.list_rows(cur, "review_cards"),
+                                  "cur": cur, "dirty": False}
+            yield st
+            if st["dirty"]:
+                dbs.replace_all(cur, "review_cards", st["cards"], _R_COLS)
+        return
+    with _LOCK:
+        st = {"cards": list(_load()), "cur": None, "dirty": False}
+        yield st
+        if st["dirty"]:
+            _save(st["cards"])
 
 
 # ---------------------------------------------------------------- 纯逻辑（可测/可解释）
@@ -95,20 +139,21 @@ def grade_card(card: dict[str, Any], quality: int) -> dict[str, Any]:
 def enqueue(kp_name: str, subject: str = "",
             kp_id: str = "", interval_hint: int = 0) -> dict[str, Any]:
     """把一个知识点卡片入队。已存在（同 kp_id 或同 kp_name）则直接返回既有卡，不入重复。"""
-    cards = _load()
-    for c in cards:
-        if (kp_id and c.get("kp_id") == kp_id) or \
-                (not kp_id and c.get("kp_name") == kp_name):
-            return c
-    cid = f"rev_{int(time.time() * 1000) % 100000000}"
-    card = {
-        "id": cid, "kp_id": kp_id or "", "kp_name": kp_name, "subject": subject,
-        "state": "new", "ease": INIT_EASE, "interval": interval_hint,
-        "due": _today().isoformat(), "reps": 0, "lapses": 0,
-        "review_log": [], "created_at": _now(), "updated_at": _now(),
-    }
-    cards.append(card)
-    _save(cards)
+    with _store() as st:
+        cards = st["cards"]
+        for c in cards:
+            if (kp_id and c.get("kp_id") == kp_id) or \
+                    (not kp_id and c.get("kp_name") == kp_name):
+                return c
+        cid = f"rev_{int(time.time() * 1000)}_{next(_SEQ)}"   # 时间戳+序号：同毫秒/并发不撞 id
+        card = {
+            "id": cid, "kp_id": kp_id or "", "kp_name": kp_name, "subject": subject,
+            "state": "new", "ease": INIT_EASE, "interval": interval_hint,
+            "due": _today().isoformat(), "reps": 0, "lapses": 0,
+            "review_log": [], "created_at": _now(), "updated_at": _now(),
+        }
+        cards.append(card)
+        st["dirty"] = True
     return card
 
 
@@ -148,28 +193,32 @@ def today_cards(subject: str = "") -> list[dict[str, Any]]:
 
 def grade(cid: str, quality: int) -> Optional[dict[str, Any]]:
     """写回一次复习结果：SM-2 推进 → 落盘 → 回写知识点 last_reviewed。"""
-    cards = _load()
-    idx = next((i for i, c in enumerate(cards) if c.get("id") == cid), None)
-    if idx is None:
-        return None
-    cards[idx] = grade_card(cards[idx], quality)
-    _save(cards)
+    with _store() as st:
+        cards = st["cards"]
+        idx = next((i for i, c in enumerate(cards) if c.get("id") == cid), None)
+        if idx is None:
+            return None
+        cards[idx] = grade_card(cards[idx], quality)
+        st["dirty"] = True
+        card = cards[idx]
     try:
         from . import library as lib
-        lib.log_knowledge_event(cards[idx].get("kp_name") or "",
+        lib.log_knowledge_event(card.get("kp_name") or "",
                                 "review",
-                                note=f"{cards[idx].get('subject', '')} / q={int(quality)} / 下次 {cards[idx].get('due')}")
+                                note=f"{card.get('subject', '')} / q={int(quality)} / 下次 {card.get('due')}")
     except Exception:  # noqa: BLE001  知识点不存在/写盘失败不阻塞复习
         pass
-    return cards[idx]
+    return card
 
 
 def delete_card(cid: str) -> bool:
-    cards = _load()
-    remains = [c for c in cards if c.get("id") != cid]
-    if len(remains) == len(cards):
-        return False
-    _save(remains)
+    with _store() as st:
+        cards = st["cards"]
+        remains = [c for c in cards if c.get("id") != cid]
+        if len(remains) == len(cards):
+            return False
+        st["cards"] = remains
+        st["dirty"] = True
     return True
 
 

@@ -9,16 +9,67 @@
 
 import json
 import re
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from . import config as cfg
-from .fsutil import write_json_atomic
-from .library import LIBRARY_DIR, _load, _save
+from . import db as dbs
+from .fsutil import read_json_list, write_json_atomic
+from .library import LIBRARY_DIR
 
 SLICE_INDEX_FILE = LIBRARY_DIR / "slice_index.json"
 EXPLAINS_FILE = LIBRARY_DIR / "explains.json"
+
+# SQL 模式（S0·方案 §2.3）：medkit.db 存在即行级事务（BEGIN IMMEDIATE 串行读-改-写）。
+DB_FILE = dbs.DB_PATH
+_LOCK = threading.RLock()
+_E_COLS = ("subject", "kp_name", "created_at")
+
+
+def _store_is_sql(path: Path) -> bool:
+    return path == EXPLAINS_FILE and DB_FILE.exists()
+
+
+def _load(path: Path) -> list[dict[str, Any]]:
+    """读 JSON 数组；缺失/损坏 → 空。SQL 模式读 explains 表。"""
+    if _store_is_sql(path):
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            return dbs.list_rows(cur, "explains")
+        finally:
+            cur.close()
+    return read_json_list(path)
+
+
+def _save(path: Path, data: list[dict[str, Any]]) -> None:
+    """写 JSON 数组；SQL 模式事务整组替换。"""
+    if _store_is_sql(path):
+        with dbs.tx(write=True) as cur:
+            dbs.replace_all(cur, "explains", data, _E_COLS)
+        return
+    write_json_atomic(path, data)
+
+
+@contextmanager
+def _store() -> Iterator[dict[str, Any]]:
+    """讲解产物读-改-写视图；退出时按 dirty 写回（SQL 单事务 / JSON RLock+原子写）。"""
+    if _store_is_sql(EXPLAINS_FILE):
+        with dbs.tx(write=True) as cur:
+            st: dict[str, Any] = {"recs": dbs.list_rows(cur, "explains"),
+                                  "cur": cur, "dirty": False}
+            yield st
+            if st["dirty"]:
+                dbs.replace_all(cur, "explains", st["recs"], _E_COLS)
+        return
+    with _LOCK:
+        st = {"recs": list(_load(EXPLAINS_FILE)), "cur": None, "dirty": False}
+        yield st
+        if st["dirty"]:
+            _save(EXPLAINS_FILE, st["recs"])
 
 # 讲解注入上限：命中切片/网络素材都裁剪，控成本（对齐出题管线 A6 全文仅注入一次）
 SLICE_INJECT_LIMIT = 2       # ≤2 个命中切片
@@ -156,19 +207,23 @@ def get_explain(eid: str) -> Optional[dict[str, Any]]:
 
 
 def save_explain(rec: dict[str, Any]) -> dict[str, Any]:
-    recs = _load(EXPLAINS_FILE)
-    recs = [r for r in recs if r.get("id") != rec.get("id")]
-    recs.append(rec)
-    _save(EXPLAINS_FILE, recs)
+    with _store() as st:
+        recs = st["recs"]
+        recs = [r for r in recs if r.get("id") != rec.get("id")]
+        recs.append(rec)
+        st["recs"] = recs
+        st["dirty"] = True
     return rec
 
 
 def delete_explain(eid: str) -> bool:
-    recs = _load(EXPLAINS_FILE)
-    new = [r for r in recs if r.get("id") != eid]
-    if len(new) == len(recs):
-        return False
-    _save(EXPLAINS_FILE, new)
+    with _store() as st:
+        recs = st["recs"]
+        new = [r for r in recs if r.get("id") != eid]
+        if len(new) == len(recs):
+            return False
+        st["recs"] = new
+        st["dirty"] = True
     return True
 
 

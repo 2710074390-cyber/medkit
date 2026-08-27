@@ -11,15 +11,25 @@ score<2 视为「有差距」，打断连击并重出同类追问（不立即降
 提问类型五类轮换：解释/应用/对比/预测/追溯。
 """
 
+import itertools
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from . import config as cfg
+from . import db as dbs
 from .fsutil import read_json_list, write_json_atomic
 
 LIBRARY_DIR = cfg.CONFIG_DIR / "library"
 TUTOR_SESSIONS_FILE = LIBRARY_DIR / "tutor_sessions.json"
+
+# SQL 模式（S0·方案 §2.3）：medkit.db 存在即行级事务（BEGIN IMMEDIATE 串行读-改-写）。
+DB_FILE = dbs.DB_PATH
+_LOCK = threading.RLock()
+_T_COLS = ("subject", "kp_name", "state", "updated_at")
+_SEQ = itertools.count()
 
 CONCEPT_STATES = ["weak", "shaky", "solid", "mastered"]
 
@@ -39,13 +49,47 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _store_is_sql() -> bool:
+    return DB_FILE.exists()
+
+
 def _load() -> list[dict[str, Any]]:
-    """读会话列表；缺失/损坏 → 空（统一容错）。"""
+    """读会话列表；缺失/损坏 → 空（统一容错）。SQL 模式读表，JSON 模式读文件。"""
+    if _store_is_sql():
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            return dbs.list_rows(cur, "tutor_sessions")
+        finally:
+            cur.close()
     return read_json_list(TUTOR_SESSIONS_FILE)
 
 
 def _save(records: list[dict[str, Any]]) -> None:
+    """写会话列表。SQL 模式事务整组替换；JSON 模式复用 fsutil 原子写。"""
+    if _store_is_sql():
+        with dbs.tx(write=True) as cur:
+            dbs.replace_all(cur, "tutor_sessions", records, _T_COLS)
+        return
     write_json_atomic(TUTOR_SESSIONS_FILE, records)
+
+
+@contextmanager
+def _store() -> Iterator[dict[str, Any]]:
+    """会话读-改-写视图；退出时按 dirty 写回（SQL 单事务 / JSON RLock+原子写）。"""
+    if _store_is_sql():
+        with dbs.tx(write=True) as cur:
+            st: dict[str, Any] = {"sessions": dbs.list_rows(cur, "tutor_sessions"),
+                                  "cur": cur, "dirty": False}
+            yield st
+            if st["dirty"]:
+                dbs.replace_all(cur, "tutor_sessions", st["sessions"], _T_COLS)
+        return
+    with _LOCK:
+        st = {"sessions": list(_load()), "cur": None, "dirty": False}
+        yield st
+        if st["dirty"]:
+            _save(st["sessions"])
 
 
 # ---------------------------------------------------------------- 纯逻辑（可测/可解释）
@@ -78,38 +122,39 @@ def apply_score(state: str, streak: int, score: int) -> tuple[str, int]:
 # ---------------------------------------------------------------- 会话 CRUD
 def start_session(subject: str, kp_name: str, kp_id: str = "") -> dict[str, Any]:
     """开一个提问会话，初始概念状态取该知识点当前掌握度（无则 weak）。"""
-    sessions = _load()
-    sid = f"tu_{int(time.time() * 1000) % 100000000}"
-    state = "weak"
-    if kp_name:
-        try:
-            from . import library as lib
-            kp = next((k for k in lib.list_knowledge() if k.get("name") == kp_name), None)
-            if kp:
-                state = kp.get("state") or "weak"
-        except Exception:  # noqa: BLE001
-            state = "weak"
-    session = {
-        "id": sid, "subject": subject, "kp_name": kp_name, "kp_id": kp_id or "",
-        "state": state, "streak": 0,
-        "current": {"type": "explain", "text": ""},   # 待学生作答的当前问题
-        "rounds": [],                                  # 已回答的轮次（同一 round=1 起）
-        "created_at": _now(), "updated_at": _now(),
-    }
-    sessions.append(session)
-    _save(sessions)
+    with _store() as st:
+        sessions = st["sessions"]
+        sid = f"tu_{int(time.time() * 1000) % 100000000}_{next(_SEQ)}"   # 时间戳+序号：防同毫秒撞 id
+        state = "weak"
+        if kp_name:
+            try:
+                from . import library as lib
+                kp = next((k for k in lib.list_knowledge() if k.get("name") == kp_name), None)
+                if kp:
+                    state = kp.get("state") or "weak"
+            except Exception:  # noqa: BLE001
+                state = "weak"
+        session = {
+            "id": sid, "subject": subject, "kp_name": kp_name, "kp_id": kp_id or "",
+            "state": state, "streak": 0,
+            "current": {"type": "explain", "text": ""},   # 待学生作答的当前问题
+            "rounds": [],                                  # 已回答的轮次（同一 round=1 起）
+            "created_at": _now(), "updated_at": _now(),
+        }
+        sessions.append(session)
+        st["dirty"] = True
     return session
 
 
 def seed_first(sid: str, qtype: str, question: str) -> Optional[dict[str, Any]]:
     """start 后把第一问写进 session.current（学生尚未作答）。"""
-    sessions = _load()
-    s = next((x for x in sessions if x.get("id") == sid), None)
-    if s is None:
-        return None
-    s["current"] = {"type": qtype, "text": question}
-    s["updated_at"] = _now()
-    _save(sessions)
+    with _store() as st:
+        s = next((x for x in st["sessions"] if x.get("id") == sid), None)
+        if s is None:
+            return None
+        s["current"] = {"type": qtype, "text": question}
+        s["updated_at"] = _now()
+        st["dirty"] = True
     return s
 
 
@@ -119,11 +164,13 @@ def get_session(sid: str) -> Optional[dict[str, Any]]:
 
 def delete_session(sid: str) -> bool:
     """删除一场会话，返回是否命中。"""
-    sessions = _load()
-    remains = [s for s in sessions if s.get("id") != sid]
-    if len(remains) == len(sessions):
-        return False
-    _save(remains)
+    with _store() as st:
+        sessions = st["sessions"]
+        remains = [s for s in sessions if s.get("id") != sid]
+        if len(remains) == len(sessions):
+            return False
+        st["sessions"] = remains
+        st["dirty"] = True
     return True
 
 
@@ -139,26 +186,27 @@ def list_sessions(subject: str = "") -> list[dict[str, Any]]:
 def record_answer(sid: str, user_answer: str, score: int,
                   gap: str, next_question: str) -> Optional[dict[str, Any]]:
     """提交一轮作答：写回 rounds + 推进状态机 + 计算下一问类型。返回更新后的会话。"""
-    sessions = _load()
-    s = next((x for x in sessions if x.get("id") == sid), None)
-    if s is None:
-        return None
-    cur = s.get("current") or {"type": "explain", "text": ""}
-    qtype, qtext = cur.get("type", "explain"), cur.get("text", "")
-    rounds = s.get("rounds") or []
-    if len(rounds) >= MAX_ROUNDS:       # 护栏：超轮次不再继续（防无限滚轮）
-        return s
-    score = max(0, min(int(score), 3))
-    state, streak = apply_score(s.get("state", "weak"), int(s.get("streak", 0)), score)
-    rounds.append({
-        "round": len(rounds) + 1, "type": qtype, "question": qtext,
-        "user_answer": user_answer, "score": score, "gap": gap, "at": _now(),
-    })
-    next_type = next_question_type(qtype, score)
-    s["state"] = state
-    s["streak"] = streak
-    s["rounds"] = rounds
-    s["current"] = {"type": next_type, "text": next_question or ""}
-    s["updated_at"] = _now()
-    _save(sessions)
+    with _store() as st:
+        sessions = st["sessions"]
+        s = next((x for x in sessions if x.get("id") == sid), None)
+        if s is None:
+            return None
+        cur = s.get("current") or {"type": "explain", "text": ""}
+        qtype, qtext = cur.get("type", "explain"), cur.get("text", "")
+        rounds = s.get("rounds") or []
+        if len(rounds) >= MAX_ROUNDS:       # 护栏：超轮次不再继续（防无限滚轮）
+            return s
+        score = max(0, min(int(score), 3))
+        state, streak = apply_score(s.get("state", "weak"), int(s.get("streak", 0)), score)
+        rounds.append({
+            "round": len(rounds) + 1, "type": qtype, "question": qtext,
+            "user_answer": user_answer, "score": score, "gap": gap, "at": _now(),
+        })
+        next_type = next_question_type(qtype, score)
+        s["state"] = state
+        s["streak"] = streak
+        s["rounds"] = rounds
+        s["current"] = {"type": next_type, "text": next_question or ""}
+        s["updated_at"] = _now()
+        st["dirty"] = True
     return s

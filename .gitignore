@@ -15,3 +15,5 @@ projects/
 .pytest_cache/
 *.bak
 .DS_Store
+
+docs/spikes/k4_out/
