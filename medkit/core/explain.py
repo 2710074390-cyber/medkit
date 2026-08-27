@@ -140,6 +140,12 @@ def index_slices() -> dict[str, Any]:
                 })
     for lst in index.values():
         lst.sort(key=lambda x: x["sid"])
+    # IMP-06：FTS5 辅表同步重建（仅 SQL 模式生效；失败不影响 JSON 索引主路径）
+    try:
+        dbs.reindex_slices([{"subject": subj, "text": s["text"], "title": s.get("title") or ""}
+                            for subj, lst in index.items() for s in lst])
+    except Exception:  # noqa: BLE001
+        pass
     out = {"subjects": index, "scanned_at": datetime.now().isoformat(timespec="seconds")}
     write_json_atomic(SLICE_INDEX_FILE, out)
     return out
@@ -165,9 +171,49 @@ def _retrieve_hits(cand: list[dict[str, Any]], sig: str) -> list[dict[str, Any]]
     return [s for _, s in scored]
 
 
+def fts_search(subject: str, query: str, k: int = 5,
+               cand: Optional[list[dict[str, Any]]] = None) -> Optional[list[dict[str, Any]]]:
+    """FTS5+jieba 检索（IMP-06，K1 验证）：按 BM25 返回排序切片；不可用/无命中 → None（调用方回退）。
+
+    cand 提供时用于把 FTS 命中的 text 回映射成完整切片记录（含 pid/sid/title/source/page），
+    返回值与既有 retrieve 的切片 dict 同构。subject 给定时按科目过滤（UNINDEXED 列等值）。
+    """
+    try:
+        if not dbs.DB_PATH.exists():
+            return None
+        expr = dbs.fts_match_expr(query or "")
+        if not expr:
+            return None
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            if subject:
+                rows = cur.execute(
+                    "SELECT text FROM slices_fts WHERE subject=? AND slices_fts MATCH ? "
+                    "ORDER BY bm25(slices_fts, 0.0, 0.2, 1.0) LIMIT ?",
+                    (subject, expr, max(k * 6, 30))).fetchall()
+            else:
+                rows = cur.execute(
+                    "SELECT text FROM slices_fts WHERE slices_fts MATCH ? "
+                    "ORDER BY bm25(slices_fts, 0.0, 0.2, 1.0) LIMIT ?",
+                    (expr, max(k * 6, 30))).fetchall()
+        finally:
+            cur.close()
+    except Exception:  # noqa: BLE001  FTS 未初始化/查询语法异常 → 回退到 bigram top-k
+        return None
+    texts = [r[0] for r in rows if r[0]]
+    if not texts:
+        return None
+    if cand is None:
+        return texts[:max(k, 1)]
+    by_text = {s.get("text", ""): s for s in cand}
+    out = [by_text[t] for t in texts if t in by_text]
+    return out[:max(k, 1)] or None
+
+
 def retrieve(pid_ignore: Optional[list[str]] = None, subject: str = "",
              query: str = "", k: int = SLICE_INJECT_LIMIT) -> list[dict[str, Any]]:
-    """命中检索：优先 subject 且按 bigram 命中排序；返回去掉 _norm 的切片。"""
+    """命中检索（IMP-06 双轨）：FTS5+jieba 优先（SQL 模式），回退 bigram 命中排序；返回去掉 _norm 的切片。"""
     index = _load_index()
     groups = index.get("subjects", {})
     if not groups:
@@ -176,8 +222,10 @@ def retrieve(pid_ignore: Optional[list[str]] = None, subject: str = "",
     if not cand:
         # 科目不匹配 → 全库按关键词兜底
         cand = [s for lst in groups.values() for s in lst]
-    cand = _retrieve_hits(cand, _sig(query))
-    chosen = cand[: max(k, 1)]
+    hits = fts_search(subject, query, max(k, 1), cand)
+    if hits is None:
+        hits = _retrieve_hits(cand, _sig(query))
+    chosen = hits[: max(k, 1)]
     return [{kk: vv for kk, vv in s.items() if kk != "_norm"} for s in chosen]
 
 

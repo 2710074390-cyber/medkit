@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import threading
@@ -355,3 +356,67 @@ def import_from_json() -> dict[str, str]:
                 pass
             result[table] = f"imported {len(rows)}"
     return result
+
+
+# ---------------------------------------------------------------- slices_fts 检索辅表（IMP-06）
+# D2/ADR-002：FTS5 + jieba 预分词列（K1 已验证）。表在 v1 已建（user_version 不变），
+# 本组函数只写数据不迁移；JSON 模式（未建库）reindex 返回 0 → 调用方自动回退 bigram top-k。
+_CJK_SEG = re.compile(r"[\u4e00-\u9fff]{2,}")
+
+
+def fts_tokens(text: str) -> list[str]:
+    """FTS 预分词：jieba 词 + CJK 二元组（小写）。
+
+    二元组兜底保证词典外的词组也能被检索命中（如「心衰」命中「心力衰竭」）；
+    ASCII 统一小写（FTS5 unicode61 检索即小写，这里保持一致避免查询侧拼写漂移）。
+    """
+    import jieba  # noqa: PLC0415 懒加载：JSON 模式（未装/未建库）不拖垮导入
+
+    toks: list[str] = []
+    for t in jieba.cut(text or ""):
+        t = t.strip().lower()
+        if t:
+            toks.append(t)
+    for seg in _CJK_SEG.findall((text or "").lower()):
+        toks.extend(seg[i:i + 2] for i in range(len(seg) - 1))
+    return toks
+
+
+def fts_match_expr(query: str) -> str:
+    """查询串 → FTS5 MATCH 表达式：token 前缀式 OR 召回（去重，单字过滤，≤40 项）。
+
+    前缀式保证「心衰*」能命中 token「心力衰竭」（FTS5 token 前缀匹配）。
+    """
+    toks: list[str] = []
+    for t in fts_tokens(query or ""):
+        if len(t) >= 2 and t not in toks:
+            toks.append(t)
+    return " OR ".join(f'"{t}"*' for t in toks[:40])
+
+
+def reindex_slices(rows: list[dict[str, Any]]) -> int:
+    """重建 slices_fts（FTS5）：rows = [{subject, text, title?}]，写入原文 + 预分词 tokens。
+
+    SQL 模式（medkit.db 已建）全量重建；JSON 模式返回 0。title 并入 tokens 列
+    （标题命中同样可召回），text 列保持与切片索引一致的截断文本（供结果回映射）。
+    """
+    if not DB_PATH.exists():
+        return 0
+    try:
+        import jieba  # noqa: PLC0415, F401 仅探测可用性（fts_tokens 内再 import）
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    with tx(write=True) as cur:
+        cur.execute("DELETE FROM slices_fts")
+        for r in rows:
+            subject = str(r.get("subject") or "未分类")
+            text = str(r.get("text") or "")
+            if not text.strip():
+                continue
+            toks = fts_tokens(f"{r.get('title') or ''} {text}")
+            cur.execute(
+                "INSERT INTO slices_fts (subject, text, tokens) VALUES (?, ?, ?)",
+                (subject, text[:2000], " ".join(toks)))
+            n += 1
+    return n

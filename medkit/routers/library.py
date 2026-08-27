@@ -285,15 +285,20 @@ def explain_slices(subject: str = "", query: str = "", limit: int = 20) -> dict[
         pool = [s for subs in idx.values() for s in subs]
         total = len(pool)
     if query:
-        terms = [t for t in _re.split(r"[\s,，、；;]+", query.strip()) if len(t) >= 2][:6]
-        scored = []
-        for s in pool:
-            hay = (str(s.get("title") or "") + " " + str(s.get("text") or "")).lower()
-            hits = sum(1 for t in terms if t.lower() in hay)
-            if hits:
-                scored.append((hits, s))
-        scored.sort(key=lambda x: -x[0])
-        pool = [s for _, s in scored][:5]
+        # IMP-06：FTS5+jieba 优先（SQL 模式）；不可用/无命中回退标题+正文关键词 top-k
+        fts = expl.fts_search(subject, query, 5, pool)
+        if fts is not None:
+            pool = fts
+        else:
+            terms = [t for t in _re.split(r"[\s,，、；;]+", query.strip()) if len(t) >= 2][:6]
+            scored = []
+            for s in pool:
+                hay = (str(s.get("title") or "") + " " + str(s.get("text") or "")).lower()
+                hits = sum(1 for t in terms if t.lower() in hay)
+                if hits:
+                    scored.append((hits, s))
+            scored.sort(key=lambda x: -x[0])
+            pool = [s for _, s in scored][:5]
     clean = [{k: v for k, v in s.items() if k != "_norm"} for s in pool]
     if subject:
         return {"subject": subject, "count": total, "query": query, "slices": clean}
