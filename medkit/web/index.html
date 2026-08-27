@@ -795,6 +795,15 @@
       .learn-chip.shaky{color:#fbbf24;border-color:#fbbf2433;background:#fbbf2414}
       .learn-chip.solid{color:#34d399;border-color:#34d39933;background:#34d39914}
       .learn-chip.mastered{color:var(--good);border-color:var(--good33);background:var(--good14)}
+      .learn-chip.pending{color:var(--dim);border-color:var(--line);background:transparent}
+      .syl-chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+      .syl-stat{flex:1;min-width:88px;background:var(--card2);border-radius:10px;padding:10px 12px;text-align:center}
+      .syl-stat b{font-size:20px;display:block}
+      .syl-chap{margin:16px 0 6px;font-size:13.5px;font-weight:600;color:var(--text)}
+      .syl-item{display:flex;gap:8px;align-items:flex-start;padding:7px 10px;border-radius:8px;background:var(--card2);margin:4px 0}
+      .syl-item .grow{flex:1;min-width:0}
+      .syl-item .grow b{font-weight:500;word-break:break-all}
+      .syl-item .hint{font-size:11px;margin-top:2px}
       .mk-row{display:flex;gap:12px;padding:10px 2px;border-bottom:1px dashed var(--line);align-items:flex-start}
       .mk-row:last-child{border-bottom:none}
       .mk-row .q{flex:1;color:var(--text)}
@@ -905,6 +914,7 @@
       <button data-lv="explain" role="tab" aria-selected="false"><svg class="ic"><use href="#i-book"></use></svg>讲解产物<span class="nb" id="nb_explain"></span></button>
       <button data-lv="tutor" role="tab" aria-selected="false"><svg class="ic"><use href="#i-learn"></use></svg>提问学习<span class="nb" id="nb_tutor"></span></button>
       <button data-lv="review" role="tab" aria-selected="false"><svg class="ic"><use href="#i-refresh"></use></svg>复习计划<span class="nb" id="nb_review"></span></button>
+      <button data-lv="syllabus" role="tab" aria-selected="false"><svg class="ic"><use href="#i-target"></use></svg>大纲覆盖<span class="nb" id="nb_syllabus"></span></button>
     </nav>
 
     <!-- 视图 1/5：概览（闭环总览 + 薄弱点诊断 + 推荐） -->
@@ -1020,6 +1030,35 @@
       <div class="rv-stats" id="rv_stats"></div>
       <div id="rv_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
     </div>
+    </div>
+
+    <!-- 视图 6/6：大纲覆盖（WP-01 考试锚定：章→考点条目 × 学习库覆盖度） -->
+    <div class="learnview" id="lv-syllabus">
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>大纲覆盖</h2><span class="hint" id="syl_meta"></span></div>
+        <div class="hint" style="margin-bottom:10px">考试锚定：大纲（章 → 考点条目）与你的错题/掌握度实时对齐 —— 回答「这章考点我出过几题、掌握几项、还差什么」。条目可粘贴导入（本地解析零 LLM），缺什么补什么。</div>
+        <div class="row exp-bar" style="flex-wrap:wrap">
+          <div style="flex:1;min-width:150px"><label>科目</label>
+            <select id="syl_subject" onchange="sylRender(this.value)"><option value="">全部科目</option></select>
+          </div>
+          <div style="flex:none;align-self:flex-end">
+            <button class="act" id="btn_syl_seed" onclick="sylEnsure()">导入内置大纲</button>
+            <button class="act gray" onclick="sylPaste()">粘贴导入</button>
+            <button class="act gray" onclick="sylReport()">导出未覆盖报告</button>
+          </div>
+        </div>
+        <div id="syl_stats"></div>
+        <div id="syl_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
+      </div>
+      <div class="card" id="syl_paste_card" style="margin-top:14px;display:none">
+        <div class="cardh"><h2>粘贴大纲解析</h2><span class="hint">章一行（一、xx / 第x章 xx）+ 条目一行（1、xx），先解析预览再确认</span></div>
+        <textarea id="syl_paste_text" rows="5" placeholder="例：&#10;一、绪论&#10;1、生理学的任务和研究手段&#10;2、机体的内环境和稳态&#10;二、细胞的基本功能&#10;1、物质跨细胞膜转运方式"></textarea>
+        <div class="btns" style="margin-top:10px">
+          <button class="act" onclick="sylParse()">解析预览</button>
+          <button class="act gray" onclick="sylParseConfirm()">确认入库（当前科目）</button>
+        </div>
+        <div id="syl_paste_preview"><div class="hint">未解析。</div></div>
+      </div>
     </div>
   </section>
 
@@ -1314,6 +1353,7 @@ function showLearnView(name) {
   document.querySelectorAll("#tab-learn .learnview").forEach(v => {
     v.classList.toggle("show", v.id === "lv-" + name);
   });
+  if (name === "syllabus") sylLoad();
   try { sessionStorage.setItem("medkit-learn-view", name); } catch (e) { /* ignore */ }
 }
 document.querySelectorAll("#learnnav button").forEach(b => {
@@ -1322,7 +1362,7 @@ document.querySelectorAll("#learnnav button").forEach(b => {
 (function initLearnView() {
   let v = null;
   try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
-  const ok = ["overview", "mistakes", "explain", "tutor", "review"].includes(v);
+  const ok = ["overview", "mistakes", "explain", "tutor", "review", "syllabus"].includes(v);
   if (ok) showLearnView(v);
 })();
 /* 侧栏「学习中心」徽章：薄弱 + 需复习 知识点数（>0 显示） */
@@ -1350,6 +1390,99 @@ function updateLearnBadges(d) {
   const m = (d && d.mastery) || {};
   setLearnNavBadge((m.weak || 0) + (m.shaky || 0));
 }
+/* ---- ⑥ 大纲覆盖（WP-01 考试锚定） ---- */
+let SYL_DRAFTS = [];
+let SYL_LOADED = false;
+async function sylLoad() {
+  SYL_LOADED = true;
+  const meta = document.getElementById("syl_meta");
+  try {
+    const st = await api("/api/syllabus/status");
+    const subs = st.subjects || [];
+    const sel = document.getElementById("syl_subject");
+    if (sel && sel.options.length <= 1) {
+      sel.innerHTML = '<option value="">全部科目</option>' + subs
+        .map(s => `<option value="${esc(s.subject)}">${esc(s.subject)}（${s.items} 条目）</option>`).join("");
+    }
+    if (st.seed && st.seed.exam && meta) meta.textContent = `种子：${st.seed.exam}`;
+    sylRender(sel ? sel.value : "");
+  } catch (e) { if (meta) meta.textContent = ""; sylFail("加载失败：" + e.message); }
+}
+function sylFail(msg) {
+  const b = document.getElementById("syl_body");
+  if (b) b.innerHTML = `<div class="hint">${esc(msg)}</div>`;
+}
+async function sylRender(subject) {
+  const body = document.getElementById("syl_body");
+  const stats = document.getElementById("syl_stats");
+  if (!body) return;
+  body.innerHTML = '<div class="hint"><span class="spin"></span>计算覆盖度…</div>';
+  try {
+    const d = await api("/api/syllabus/coverage" + (subject ? "?subject=" + encodeURIComponent(subject) : ""));
+    const t = d.totals || { items: 0, covered: 0, mastered: 0, pending: 0 };
+    const pct = t.items ? Math.round((t.covered + t.mastered) / t.items * 100) : 0;
+    stats.innerHTML = `<div class="syl-chips">
+      <div class="syl-stat"><b>${t.items}</b><div class="hint">总条目</div></div>
+      <div class="syl-stat"><b>${t.covered}</b><div class="hint">已覆盖</div></div>
+      <div class="syl-stat"><b>${t.mastered}</b><div class="hint">已掌握</div></div>
+      <div class="syl-stat"><b>${t.pending}</b><div class="hint">未覆盖</div></div>
+      <div class="syl-stat"><b>${pct}%</b><div class="hint">覆盖率</div></div>
+    </div>`;
+    if (!d.chapters || !d.chapters.length) {
+      body.innerHTML = '<div class="hint">暂无大纲条目 — 点「导入内置大纲」加载教材/真题种子（GoldenSet + 知识库素材），或「粘贴导入」。</div>';
+      return;
+    }
+    body.innerHTML = d.chapters.map(ch => {
+      const items = (ch.items || []).map(it => {
+        const s = it.status === "mastered" ? ["已掌握", "mastered"] :
+                  it.status === "covered" ? ["已覆盖", "solid"] : ["未覆盖", "pending"];
+        return `<div class="syl-item"><span class="learn-chip ${s[1]}">${s[0]}</span>
+          <span class="grow"><b>${esc(it.item)}</b>${it.matched ? `<div class="hint">已匹配：${esc(it.matched)}</div>` : ""}</span></div>`;
+      }).join("");
+      return `<div class="syl-chap">${esc(ch.chapter)} <span class="hint">（覆盖 ${ch.covered + ch.mastered}/${ch.total} · 未覆盖 ${ch.pending}）</span></div>` +
+        (items || '<div class="hint" style="margin-left:10px">（无条目，待粘贴）</div>');
+    }).join("");
+  } catch (e) { sylFail(e.message); }
+}
+async function sylEnsure() {
+  const r = await api("/api/syllabus/ensure", { method: "POST", body: JSON.stringify({ force: false }) });
+  toast(`大纲种子导入：新增 ${r.imported} 条（幂等）`);
+  sylLoad();
+}
+function sylPaste() {
+  document.getElementById("syl_paste_card").style.display = "";
+}
+async function sylParse() {
+  const text = document.getElementById("syl_paste_text").value;
+  const subject = document.getElementById("syl_subject").value || "";
+  const r = await api("/api/syllabus/parse", { method: "POST", body: JSON.stringify({ text, subject }) });
+  SYL_DRAFTS = r.drafts || [];
+  const pv = document.getElementById("syl_paste_preview");
+  if (!SYL_DRAFTS.length) {
+    pv.innerHTML = `<div class="hint">${esc(r.note || "未识别到条目")}</div>`;
+    return;
+  }
+  pv.innerHTML = `<div class="hint">预览 ${SYL_DRAFTS.length} 条：</div>` +
+    SYL_DRAFTS.slice(0, 30).map(d => `<div class="syl-item">
+      <span class="learn-chip pending">${esc(d.subject || "?")}</span>
+      <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span></div>`).join("") +
+    (SYL_DRAFTS.length > 30 ? `<div class="hint">…共 ${SYL_DRAFTS.length} 条（全部入库）</div>` : "");
+}
+async function sylParseConfirm() {
+  if (!SYL_DRAFTS || !SYL_DRAFTS.length) { toast("先解析再确认"); return; }
+  const items = SYL_DRAFTS.map(d => ({ subject: d.subject || "未分类", chapter: d.chapter || "", item: d.item }));
+  const r = await api("/api/syllabus/confirm", { method: "POST", body: JSON.stringify({ items }) });
+  toast(`大纲条目入库：新增 ${r.added} 条`);
+  SYL_DRAFTS = [];
+  document.getElementById("syl_paste_preview").innerHTML = '<div class="hint">已入库。可继续粘贴或点顶部「刷新」。</div>';
+  sylLoad();
+}
+async function sylReport() {
+  const subject = document.getElementById("syl_subject").value || "";
+  const r = await api("/api/syllabus/report" + (subject ? "?subject=" + encodeURIComponent(subject) : ""));
+  downloadText("大纲覆盖报告_" + (subject || "全部") + ".md", r.markdown);
+}
+
 /* 学习中心基础数据缓存：subjects/mastery 30s 内复用，避免多次「加载中」闪烁 */
 let LEARN_CACHE = { subjects: null, mastery: null, t: 0 };
 const LEARN_TTL = 30000;

@@ -146,4 +146,5 @@ medkit/
 - ✅ v0.6：题库与手册站入口 + 邮件反馈 + GitHub Releases 内置更新检查 + 品牌新图标；开源至 [github.com/2710074390-cyber/medkit](https://github.com/2710074390-cyber/medkit)
 - ✅ v0.7：学习闭环 M1~M5（错题本 / 掌握度诊断 / 教材切片讲解(联网补充) / 提问式学习 / SM-2 复习计划）+ 前端全面审查七轮落地（子导航五视图、错题直达讲解/提问、成本预估前置、产物页主题单源、审核台批量编辑）——代码基线已提交，待打包发布
 - ✅ S0 技术底座（v0.8 先行）：`core/db.py`（SQLite + WAL + user_version 迁移 + 升级前备份 + JSON→SQLite 幂等导入，JSON 原文件改名 `*.pre-db-*.bak` 可回滚）；学习库四域模块（library/review/explain/tutor）事务化——外签名零改动、routers 零改动，**并发读-改-写丢失更新根治**（K5 复现：JSON 丢 49/41 次 → SQLite 0 偏差）；SPIKE K1/K2/K4/K5 通过（FTS5+jieba 检索、py-fsrs、图片内嵌基准、并发写）；ADR×5 落 `docs/adr/`；K3（306 大纲 MinerU 抽取）待用户提供 PDF
-- 🔲 后续可选：网络检索更多后端、自备真题引用配额滑杆、v0.8 考试锚定（大纲覆盖 / 真题考频 / 薄弱组卷 / 图表格题，见 `docs/结构化执行方案_2026-08-27.md`）
+- ✅ WP-01 大纲覆盖度引擎（v0.8·考试锚定）：`core/syllabus.py` + 迁移 v2（`syllabus_items`）+ `/api/syllabus/*`（ensure/parse/confirm/coverage/report，parse 本地规则零 LLM、confirm 人工确认门）+ 学习中心第 6 视图「大纲覆盖」（统计卡 + 章树 + 状态 chip + 粘贴导入 + 导出 md）+ medgen 大纲锚定注入（≤800 字）；种子 1291 条/10 科（GoldenSet 真题 + 知识库素材教材元数据构建，GS 真题计数供 WP-02 考频）；pytest 198 全绿
+- 🔲 后续可选：网络检索更多后端、自备真题引用配额滑杆、v0.8 继续（真题考频 WP-02 / 薄弱组卷 WP-03 / 图表格题 WP-04，见 `docs/结构化执行方案_2026-08-27.md`）

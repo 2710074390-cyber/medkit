@@ -63,12 +63,34 @@ _V1_DOWN: list[str] = [
     "DROP TABLE IF EXISTS meta",
 ]
 
-MIGRATIONS: list[int] = [1]  # 版本列表（只增不改）
+# v2（WP-01 大纲覆盖度）：syllabus_items —— 考试锚定条目（kind=chapter 章 或 item 考点）。
+_V2_UP: list[str] = [
+    """
+    CREATE TABLE IF NOT EXISTS syllabus_items (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        subject TEXT, chapter TEXT, kind TEXT,
+        item TEXT, weight REAL, source TEXT, created_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_syll_subject ON syllabus_items(subject)",
+    "CREATE INDEX IF NOT EXISTS idx_syll_chapter ON syllabus_items(chapter)",
+    "CREATE INDEX IF NOT EXISTS idx_syll_kind ON syllabus_items(kind)",
+]
+
+_V2_DOWN: list[str] = [
+    "DROP TABLE IF EXISTS syllabus_items",
+]
+
+MIGRATIONS: list[int] = [1, 2]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
     if ver == 1:
         for stmt in _V1_UP:
+            cur.execute(stmt)
+        return
+    if ver == 2:
+        for stmt in _V2_UP:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")
@@ -77,6 +99,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
 def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
     if ver == 1:
         for stmt in _V1_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 2:
+        for stmt in _V2_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

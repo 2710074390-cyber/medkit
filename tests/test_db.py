@@ -31,12 +31,13 @@ def _tables() -> set[str]:
 
 
 def test_migrate_creates_schema_and_version(iso):
-    assert db.migrate() == 1
-    assert db.user_version() == 1
+    target = db.MIGRATIONS[-1]
+    assert db.migrate() == target
+    assert db.user_version() == target
     assert set(TABLES) <= _tables()
     assert db.enabled()
     # 幂等：重复迁移不报错、版本不变
-    assert db.migrate() == 1
+    assert db.migrate() == target
 
 
 def test_migrate_backs_up_existing_library(iso):
@@ -49,8 +50,9 @@ def test_migrate_backs_up_existing_library(iso):
 
 
 def test_downgrade_rollback(iso):
-    db.migrate()
-    assert db.user_version() == 1
+    target = db.MIGRATIONS[-1]
+    assert db.migrate() == target
+    assert db.user_version() == target
     assert db.downgrade_to(0) == 0
     assert not (_tables() & set(TABLES))
 

@@ -34,6 +34,7 @@ from .routers import projects as r_projects
 from .routers import prompts as r_prompts
 from .routers import review as r_review
 from .routers import search as r_search
+from .routers import syllabus as r_syllabus
 from .routers import update as r_update
 
 APP_VERSION = __version__
@@ -121,6 +122,7 @@ app.include_router(r_pipeline.router)
 app.include_router(r_prompts.router)
 app.include_router(r_presets.router)
 app.include_router(r_search.router)
+app.include_router(r_syllabus.router)
 app.include_router(r_review.router)
 app.include_router(r_update.router)
 

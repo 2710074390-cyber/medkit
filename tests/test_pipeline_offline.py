@@ -157,12 +157,14 @@ def test_resume_from_checkpoint(isolated_cfg, monkeypatch):
 
     def spy(client, subject, exam, slice_, count, ratios, teacher_text,
             ids_start=1, requirements="", knobs=None, bloom=None,
-            web_materials="", web_quota=0, exam_text="", extra_text=""):
+            web_materials="", web_quota=0, exam_text="", extra_text="",
+            syllabus_text=""):
         called.append(str(slice_.get("sid", "")))
         return orig_gen(client, subject, exam, slice_, count, ratios, teacher_text,
                         ids_start=ids_start, requirements=requirements, knobs=knobs,
                         bloom=bloom, web_materials=web_materials, web_quota=web_quota,
-                        exam_text=exam_text, extra_text=extra_text)
+                        exam_text=exam_text, extra_text=extra_text,
+                        syllabus_text=syllabus_text)
 
     monkeypatch.setattr(mg, "generate_slice", spy)
     pid2 = build_project("_resume_test")

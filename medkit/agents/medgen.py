@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BLOOM = {"记忆": 30, "理解": 40, "应用": 25, "创造": 5}
 TEACHER_CHAR_LIMIT = 4000  # 教师重点注入上限（S2：单源常量，管线/orchestrator/trial 共用）
+SYLLABUS_TEXT_LIMIT = 800  # WP-01：大纲锚定条目注入上限
 EXAM_CHAR_LIMIT = 4000    # 自备真题注入上限（v0.5.2：仅风格/考点校准，防照抄）
 EXTRA_CHAR_LIMIT = 4000    # 自备资料注入上限（v0.5.2：教材的补充上下文）
 
@@ -186,7 +187,8 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
                    knobs: Optional[dict[str, str]] = None,
                    bloom: Optional[dict[str, int]] = None,
                    web_materials: str = "", web_quota: int = 0,
-                   exam_text: str = "", extra_text: str = "") -> tuple[list[dict[str, Any]], int]:
+                   exam_text: str = "", extra_text: str = "",
+                   syllabus_text: str = "") -> tuple[list[dict[str, Any]], int]:
     """单切片出题（可能含 ≤2 次补充调用）。返回 (questions, 下一个 id 序号)。
 
     v0.5：占位符一次性替换（防教材文本二次替换注入）；超发题数按配额截断。
@@ -199,6 +201,7 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
         "bloom_ratios": _bloom_ratio_str(bloom),
         "slice_text": slice_.get("text", "")[:8000],
         "teacher_text": teacher_text[:TEACHER_CHAR_LIMIT],
+        "syllabus_text": syllabus_text[:SYLLABUS_TEXT_LIMIT],
     }
     system = render_prompt("medgen.md", **parts)
     system += build_extra_block(requirements, knobs)      # 迭代1/2 注入点

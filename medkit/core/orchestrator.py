@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 from ..agents import medfix, medgen, medqc, medreview
 from ..core import config as cfg
+from ..core import db as dbs
 from ..core import usage
 from ..core import websearch as ws
 from ..core.config import resolve_key
@@ -220,6 +221,16 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     subject = meta.get("subject", "")
     exam = meta.get("exam", "期末")
     toggles = meta.get("toggles", {})
+    # WP-01：大纲锚定注入（有大纲库才参与，零成本兜底；≤800 字）
+    syllabus_text = ""
+    try:
+        from . import syllabus as syl
+        if dbs.enabled() and syl.list_subjects():
+            syllabus_text = syl.chapter_items_text(subject)
+    except Exception:  # noqa: BLE001  大纲引擎故障不阻塞出题
+        syllabus_text = ""
+    if syllabus_text:
+        _log(base, f"📋 大纲锚定注入 {len(syllabus_text)} 字（subtopic 对齐考点条目）")
     ratios = _effective_ratios(meta.get("ratios", {}))
     quota = meta.get("quota", [])
     requirements = meta.get("requirements", "")     # 可玩性 1A
@@ -345,7 +356,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             gen_client, subject, exam, slice_by_sid[sid], cnt, ratios, teacher_text,
             ids_start=start_id, requirements=requirements, knobs=knobs, bloom=bloom,
             web_materials=web_materials_text, web_quota=web_ref_quota,
-            exam_text=exam_text, extra_text=extra_text)
+            exam_text=exam_text, extra_text=extra_text, syllabus_text=syllabus_text)
         for i, q in enumerate(qs):
             q["id"] = f"Q{start_id + i:03d}"
         if len(qs) < cnt:
