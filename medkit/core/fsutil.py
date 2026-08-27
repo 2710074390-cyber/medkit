@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import Any
 
 
+def read_json_list(path: Path) -> list[Any]:
+    """读 JSON 数组；缺失/损坏/非列表 → 回退空列表（统一容错，供各存储模块复用）。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:  # noqa: BLE001  文件缺失/损坏 → 空，不阻塞记录流程
+        return []
+
+
 def write_json_atomic(path: Path, data: Any) -> None:
     """原子写 JSON：唯一临时名 + Windows 共享冲突重试（并发写进度文件）。"""
     path.parent.mkdir(parents=True, exist_ok=True)

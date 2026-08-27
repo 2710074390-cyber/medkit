@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 import medkit  # noqa: E402
 import medkit.main as m  # noqa: E402
 import medkit.state as state  # noqa: E402
+from medkit.agents import render_prompt  # noqa: E402
 from medkit.core.cost import estimate_run  # noqa: E402
 from medkit.logging_setup import setup_logging  # noqa: E402
 
@@ -103,3 +104,17 @@ def test_cost_estimate_endpoint_matches_formula(monkeypatch, tmp_path):
     assert got == {"input_tokens": exp["input_tokens"],
                    "output_tokens": exp["output_tokens"],
                    "total_tokens": exp["total_tokens"]}, "前端成本公式必须与 core.cost 同源"
+
+
+def test_render_prompt_single_pass_no_double_injection():
+    """占位符单源替换：一次遍历，替换值中的字面量不再被二次扫描。"""
+    out = render_prompt("medtutor.md", subject="{kp_name}", kp_name="ABCD")
+    assert "{subject}" not in out, "subject 占位符应被替换"
+    assert "ABCD" in out, "真正的 {kp_name} 应被替换成 ABCD"
+    assert "{kp_name}" in out, "subject 注入的字面量 {kp_name} 不应被二次替换成 ABCD"
+
+
+def test_render_prompt_leaves_unknown_placeholder():
+    """未提供的占位符原样保留（便于调试），不静默置空。"""
+    out = render_prompt("medtutor.md", subject="儿科学")
+    assert out.count("{kp_name}") >= 1, "缺失占位符应原样保留以便发现"

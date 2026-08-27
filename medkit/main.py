@@ -25,6 +25,7 @@ from .core.orchestrator import PipelineError
 from .core.websearch import SearchError
 from .logging_setup import setup_logging
 from .routers import config as r_config
+from .routers import library as r_library
 from .routers import ocr as r_ocr
 from .routers import parse as r_parse
 from .routers import pipeline as r_pipeline
@@ -112,6 +113,7 @@ app.add_exception_handler(PipelineError, lambda _r, e: _err_response(500, e, "PI
 
 # ---------------------------------------------------------------- 路由装配
 app.include_router(r_config.router)
+app.include_router(r_library.router)
 app.include_router(r_ocr.router)
 app.include_router(r_parse.router)
 app.include_router(r_projects.router)

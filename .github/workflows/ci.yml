@@ -7,15 +7,26 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # P2#14：跨平台矩阵 —— Windows 覆盖打包/路径/命令差异，Ubuntu 快速主通道
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # P2#14：依赖缓存，命中则跳过安装，加速多平台重复运行
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
       - name: Install deps
-        run: pip install -r requirements.txt pytest ruff
+        run: pip install -r requirements.txt -r requirements-dev.txt ruff
       - name: Lint
         run: python -m ruff check .
       - name: Test
-        run: python -m pytest -q
+        # --timeout 兜底；CLI 显式传入以便在 pyproject 配置之外可覆盖
+        run: python -m pytest -q --timeout=300

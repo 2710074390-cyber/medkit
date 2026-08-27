@@ -10,11 +10,10 @@ U4：返回题数 < 配额 → 最多补 2 轮。
 """
 
 import logging
-import re
 from typing import Any, Optional
 
 from . import get_client as _get_client
-from . import load_prompt
+from . import render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +21,6 @@ DEFAULT_BLOOM = {"记忆": 30, "理解": 40, "应用": 25, "创造": 5}
 TEACHER_CHAR_LIMIT = 4000  # 教师重点注入上限（S2：单源常量，管线/orchestrator/trial 共用）
 EXAM_CHAR_LIMIT = 4000    # 自备真题注入上限（v0.5.2：仅风格/考点校准，防照抄）
 EXTRA_CHAR_LIMIT = 4000    # 自备资料注入上限（v0.5.2：教材的补充上下文）
-
-# v0.5：一次性替换占位符（旧实现链式 replace，教材文本含 {teacher_text} 等字面量会被二次替换）
-_PLACEHOLDER = re.compile(r"\{(subject|exam|slice_count|ratios|bloom_ratios|slice_text|teacher_text)\}")
 
 # 结构化旋钮 → 预写提示词片段（2A；集中一处便于调优）
 KNOB_FRAGMENTS: dict[str, dict[str, str]] = {
@@ -204,7 +200,7 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
         "slice_text": slice_.get("text", "")[:8000],
         "teacher_text": teacher_text[:TEACHER_CHAR_LIMIT],
     }
-    system = _PLACEHOLDER.sub(lambda m: parts[m.group(1)], load_prompt("medgen.md"))
+    system = render_prompt("medgen.md", **parts)
     system += build_extra_block(requirements, knobs)      # 迭代1/2 注入点
     system += build_web_block(web_materials, web_quota)   # §5.4 参考素材注入点
     system += build_reference_block(exam_text[:EXAM_CHAR_LIMIT],

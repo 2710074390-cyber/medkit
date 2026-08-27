@@ -6,6 +6,7 @@
 """
 
 import html as html_mod
+import json
 from typing import Any
 
 TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "X": "X 型 · 多选",
@@ -133,13 +134,19 @@ def _html_sub(q: dict[str, Any], show_options: bool = True) -> str:
 
 
 def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
-    """题库 HTML：案例/选项组按组折叠（S3），单题保持原 <details class=q data-type> 结构。"""
+    """题库 HTML：案例/选项组按组折叠（S3），单题保持原 <details class=q data-type> 结构。
+    v0.7.1：搜索 + 全部题型过滤 + 计数 + 窄屏适配。
+    """
     items = []
     for b in _case_blocks(questions):
         if b["kind"] == "case":
             first = b["items"][0]
+            kw = (str(first.get("id", "")) + " " + str(b["stem"]) + " " +
+                  " ".join(str(q.get("question", "")) + " " + str(q.get("subtopic", "")) for q in b["items"]))
             items.append(
-                f'<details class="q case" data-type="{html_mod.escape(str(first.get("type", "")))}">'
+                f'<details class="q case" data-type="{html_mod.escape(str(first.get("type", "")))}" '
+                f'data-group="case" data-blm="{html_mod.escape(str(first.get("bloom", "")))}" '
+                f'data-kw="{html_mod.escape(kw.lower())}">'
                 f'<summary class="qs"><span class="tag">📋 案例 '
                 f'{html_mod.escape(str(b["key"][1]))}</span> '
                 f'{html_mod.escape(TYPE_LABELS.get(str(first.get("type", "")), ""))} · '
@@ -150,8 +157,10 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
             shared = "<ul>" + "".join(
                 f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
                 for i, o in enumerate(b["options"])) + "</ul>"
+            kw = " ".join(str(q.get("id", "")) + " " + str(q.get("question", "")) + " " + str(q.get("subtopic", ""))
+                          for q in b["items"]) + " B1 选项组 共享选项"
             items.append(
-                f'<details class="q case" data-type="B1">'
+                f'<details class="q case" data-type="B1" data-group="og" data-blm="{html_mod.escape(str(b["items"][0].get("bloom", "")))}" data-kw="{html_mod.escape(kw.lower())}">'
                 f'<summary class="qs"><span class="tag">🧩 选项组（B1）</span>'
                 f'（{len(b["items"])} 题共享下列选项）</summary>'
                 f'<div class="qb">{shared}'
@@ -161,8 +170,12 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
             opts = "".join(
                 f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
                 for i, o in enumerate(_effective_options(q)))
+            kw = (str(q.get("id", "")) + " " + str(q.get("type", "")) + " " + str(q.get("bloom", ""))
+                  + " " + str(q.get("subtopic", "")) + " " + str(q.get("question", "")))
             items.append(
-                f'<details class="q" data-type="{html_mod.escape(str(q.get("type", "")))}">'
+                f'<details class="q" data-type="{html_mod.escape(str(q.get("type", "")))}" '
+                f'data-group="single" data-blm="{html_mod.escape(str(q.get("bloom", "")))}" '
+                f'data-kw="{html_mod.escape(kw.lower())}">'
                 f'<summary class="qs">'
                 f'<span class="tag">{html_mod.escape(str(q.get("type", "")))}</span> '
                 f'<span class="tag b">{html_mod.escape(str(q.get("bloom", "")))}</span> '
@@ -173,17 +186,88 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
                 f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div></details>')
     return _page(title, f"""
 <h1>{html_mod.escape(title)}</h1>
-<p class="meta">共 {len(questions)} 题 · 答案默认隐藏，点击题目展开查看</p>
+<p class="meta">共 {len(questions)} 题 · 答案默认隐藏，点击题目展开查看 · <button class="mini" onclick="window.print()">🖨 打印</button> ·
+<span id="qcount"></span></p>
 <div class="filters">
-  <button onclick="ft('')" class="on">全部</button>
-  <button onclick="ft('A1')">A1 单选</button>
-  <button onclick="ft('A2')">A2 病例</button>
-  <button onclick="ft('X')">X 多选</button>
+  <button data-t="" data-label="全部" class="on" onclick="ft('',this)">全部</button>
+  <button data-t="A1" data-label="A1 单选" onclick="ft('A1',this)">A1 单选</button>
+  <button data-t="A2" data-label="A2 病例" onclick="ft('A2',this)">A2 病例</button>
+  <button data-t="og" data-label="B1 选项组" onclick="ft('og',this)">B1 选项组</button>
+  <button data-t="case" data-label="A3·A4 案例" onclick="ft('case',this)">A3·A4 案例</button>
+  <button data-t="X" data-label="X 多选" onclick="ft('X',this)">X 多选</button>
+  <select id="qbloom" aria-label="按认知层级过滤">
+    <option value="">全部层级</option><option value="记忆">记忆</option><option value="理解">理解</option>
+    <option value="应用">应用</option><option value="创造">创造</option>
+  </select>
+  <input id="qsearch" type="search" placeholder="🔍 搜索题干 / 考点 / 章节…" oninput="ftq(this.value)">
+  <button id="qreset" class="mini" title="清除全部筛选" onclick="resetFilter()">重置</button>
 </div>
 {''.join(items)}
 <script>
-function ft(t){{document.querySelectorAll('.q').forEach(d=>{{d.style.display=(!t||(d.dataset.type||'')===t)?'':'none'}});
-document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on'));event.target.classList.add('on');}}
+let FT_T='',FT_B='',FT_Q='';
+function saveFilter(){{
+  try{{localStorage.setItem('medkitQbFilter',JSON.stringify({{t:FT_T,b:FT_B,q:FT_Q}}));}}catch(e){{}}
+}}
+function ft(t,btn){{
+  FT_T=t;
+  document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on'));
+  if(btn){{
+    document.querySelectorAll('.filters button').forEach(b=>{{
+      if(b.getAttribute('data-t')===t) b.classList.add('on');
+    }});
+  }}
+  saveFilter(); apply();
+}}
+function ftq(v){{FT_Q=(v||'').toLowerCase().trim();saveFilter();apply();}}
+function ftb(v){{FT_B=(v||'');saveFilter();apply();}}
+function resetFilter(){{
+  FT_T='';FT_B='';FT_Q='';
+  document.querySelectorAll('.filters button').forEach(b=>{{b.classList.remove('on');
+    if(b.getAttribute('data-t')==='') b.classList.add('on');}});
+  const bs=document.getElementById('qbloom'); if(bs) bs.value='';
+  const qs=document.getElementById('qsearch'); if(qs) qs.value='';
+  try{{localStorage.removeItem('medkitQbFilter');}}catch(e){{}}
+  apply();
+}}
+function apply(){{
+  let n=0;
+  document.querySelectorAll('details.q').forEach(d=>{{
+    const okT=!FT_T||(FT_T==='case'&&d.dataset.group==='case')||(FT_T==='og'&&d.dataset.group==='og')||(d.dataset.type||'')===FT_T;
+    const okB=!FT_B||(d.dataset.blm||'')===FT_B;
+    const okQ=!FT_Q||(d.dataset.kw||'').indexOf(FT_Q)>-1;
+    d.style.display=(okT&&okB&&okQ)?'':'none';
+    if(okT&&okB&&okQ) n++;
+  }});
+  const c=document.getElementById('qcount');
+  if(c) c.textContent=(FT_T||FT_B||FT_Q)?('显示 '+n+' / '+document.querySelectorAll('details.q').length+' 题'):'';
+}}
+function setCounts(){{
+  const c={{}};
+  document.querySelectorAll('details.q').forEach(d=>{{
+    const k=d.dataset.group==='case'?'case':d.dataset.group==='og'?'og':(d.dataset.type||'');
+    c[k]=(c[k]||0)+1;
+  }});
+  document.querySelectorAll('.filters button').forEach(b=>{{
+    const k=b.getAttribute('data-t');
+    b.textContent=b.getAttribute('data-label')+(c[k]?(' · '+c[k]):'');
+  }});
+}}
+setCounts();
+/* 记忆上次过滤状态（题型/Bloom/关键词），下次打开保持不变 */
+try{{
+  const saved=JSON.parse(localStorage.getItem('medkitQbFilter')||'null');
+  if(saved&&(saved.t||saved.b||saved.q)){{
+    FT_T=saved.t||'';FT_B=saved.b||'';FT_Q=saved.q||'';
+    document.querySelectorAll('.filters button').forEach(b=>{{
+      if(b.getAttribute('data-t')===FT_T) b.classList.add('on');
+      else b.classList.remove('on');
+    }});
+    const bs=document.getElementById('qbloom'); if(bs) bs.value=FT_B||'';
+    const qs=document.getElementById('qsearch'); if(qs) qs.value=FT_Q||'';
+    apply();
+  }}
+}}catch(e){{}}
+document.getElementById('qbloom').addEventListener('change',function(){{ftb(this.value);}});
 </script>""", extras="qbank")
 
 
@@ -207,14 +291,18 @@ def _questions_json_for_page(questions: list[dict[str, Any]]) -> str:
     return json.dumps(compact, ensure_ascii=False).replace("</", "<\\/")
 
 
-def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷") -> str:
+def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷", *,
+                      pid: str = "", subject: str = "") -> str:
     """交互押题卷（I3 练习化）：
     - X 型 checkbox + 集合判分（A1 修复）
     - localStorage 实时保存作答 + 重开续答 + 答题卡 + 计时器
     - 判分后「错题重练」（localStorage 错题集，可返回全卷）
+    - 判分后「同步错题到学习中心错题本」（v0.7，POST /api/library/mistakes/sync-paper）
     - 所有插值经 esc()（A4 修复）
     """
     qs = _questions_json_for_page(questions)
+    pid_json = json.dumps(pid or "")
+    subj_json = json.dumps(subject or "")
     return _page(title, f"""
 <h1>{html_mod.escape(title)}</h1>
 <p class="meta">共 {len(questions)} 题 · 作答自动保存 · <button class="mini" onclick="window.print()">🖨 打印</button>
@@ -223,10 +311,15 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷")
 <script>
 let QUESTIONS = {qs};
 const ORIG = QUESTIONS.slice();
-const LETTERS = "ABCDEF";
-const KEY = "medkit-paper-" + location.pathname.split('/').pop();
+const LETTERS = "ABCDEFGHIJ";
+const TL = {{A1:"A1 单选",A2:"A2 病例",X:"X 多选",B1:"B1 选项组",A3:"A3 案例",A4:"A4 案例"}};
+const PAPER_PID = {pid_json};
+const PAPER_SUBJECT = {subj_json};
+const KEY = "medkit-paper-" + (PAPER_PID || location.pathname.split('/').pop());
 const RETRY_KEY = KEY + "-retry";
+const WRONG_POOL = {{}};   // v0.7：判分用错题集（按题干去重），供「同步到错题本」
 let secs = 0;
+let judged = false;   // 判分防重入：提交一次后再次点击不重复计分/铺解析
 
 function esc(s){{return String(s??"").replace(/[&<>"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));}}
 function loadState(){{try{{return JSON.parse(localStorage.getItem(KEY)||"null")}}catch(e){{return null}}}}
@@ -254,8 +347,9 @@ function answersEqual(a,b){{
 function render(){{
   const box=document.getElementById('quiz');
   let h='';
-  h+='<div class="sheet"><div class="grid" id="grids"></div>'
-     +'<div class="sheetactions"></div></div>';
+  h+='<div class="hint" id="hisline" style="margin-bottom:8px"></div>'
+     +'<div class="sheet"><div class="grid" id="grids"></div>'
+     +'<span class="asw" id="asw"></span><div class="sheetactions"></div></div>';
   let lastCase='';
   QUESTIONS.forEach((q,i)=>{{
     if(!q.options||!q.options.length) return;
@@ -263,7 +357,7 @@ function render(){{
       h+='<div class="casebar" data-case="'+esc(q.case_id)+'">'+esc(q.case_label)+'</div>';
       lastCase=q.case_label;
     }}
-    h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(q.type)+'</span>'
+    h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(TL[q.type]||q.type)+'</span>'
       +'<span class="tag b">'+esc(q.bloom)+'</span> <b>'+(i+1)+'.</b> '+esc(q.question)+'</p>';
     q.options.forEach((o,j)=>{{
       const t=q.type==="X"?"checkbox":"radio";
@@ -277,6 +371,19 @@ function render(){{
   box.innerHTML=h;
   paintAnswers();
   buildGrid();
+  updateAnswered();
+  showHistory();
+  // 续答归还提示：检测到上次作答（跨会话恢复）→ 提示已恢复 + 可清空重来
+  const st=loadState()||{{}};
+  const savedN=(st.answers&&Object.keys(st.answers).length)||0;
+  if(savedN>0 && !judged){{
+    const note=document.createElement('div');
+    note.id='resume_note';
+    note.className='banner good';
+    note.innerHTML='🔄 已恢复上次作答（'+savedN+' / '+QUESTIONS.length+' 题）· 计时延续 · 想要重来？'
+      +'<button class="mini" style="margin-left:8px" onclick="resetAll()">清空重做</button>';
+    box.insertBefore(note, box.firstChild);
+  }}
 }}
 
 function mark(i){{
@@ -298,7 +405,25 @@ function collectAnswers(){{
   const st=loadState()||{{answers:{{}},marked:null,t0:null}};
   QUESTIONS.forEach((q,i)=>{{ const v=readAnswer(i); if(v) st.answers[i]=v; }});
   if(!st.t0) st.t0=Date.now();
-  saveState(st); buildGrid();
+  saveState(st); buildGrid(); updateAnswered();
+}}
+function updateAnswered(){{
+  const el=document.getElementById('asw'); if(!el) return;
+  const st=loadState()||{{answers:{{}}}};
+  let n=0; QUESTIONS.forEach((q,i)=>{{ if(st.answers&&st.answers[i]) n++; }});
+  el.textContent='已答 '+n+' / '+QUESTIONS.length;
+}}
+function showHistory(){{
+  const el=document.getElementById('hisline'); if(!el) return;
+  try{{
+    const H=JSON.parse(localStorage.getItem(KEY+'-his')||'[]');
+    if(!H.length||judged){{ el.textContent=''; return; }}
+    const pct=h=>Math.round(h.score*100/(h.total||1));
+    let best=H[0]; H.forEach(h=>{{ if(pct(h)>pct(best)) best=h; }});
+    const last=H[0];
+    el.innerHTML='📈 上次 '+last.score+'/'+last.total+'（'+pct(last)+' 分）· 用时 '+fmtT(last.secs||0)
+      +' · 最佳 '+best.score+'/'+best.total+'（'+pct(best)+' 分）· '+esc(last.ts||'');
+  }}catch(e){{ el.textContent=''; }}
 }}
 function buildGrid(){{
   const g=document.getElementById('grids'); if(!g) return;
@@ -306,13 +431,21 @@ function buildGrid(){{
   let h='';
   QUESTIONS.forEach((q,i)=>{{
     const a=st.answers&&st.answers[i];
-    h+='<span class="cell'+(a?' done':'')+(st.marked===i?' mk':'')+'" onclick="jump('+i+')">'+(i+1)+'</span>';
+    const tip='第 '+(i+1)+' 题 · '+(a?'已答':'未答')+(st.marked===i?' · 已标记':'');
+    h+='<span class="cell'+(a?' done':'')+(st.marked===i?' mk':'')+'" title="'+tip+'" onclick="jump('+i+')">'+(i+1)+'</span>';
   }});
   g.innerHTML=h;
 }}
 function jump(i){{document.getElementById('q'+i)?.scrollIntoView({{behavior:'smooth',block:'center'}});}}
 
 function grade(){{
+  if(judged) return;   // 判分防重入
+  // 未答提醒：防漏答（有未答时确认后再判）
+  const st0=loadState()||{{answers:{{}}}};
+  let unanswered=0;
+  QUESTIONS.forEach((q,i)=>{{ if(!(st0.answers&&st0.answers[i])) unanswered++; }});
+  if(unanswered>0 && !confirm('还有 '+unanswered+' 题未作答，确认提交判分？')) return;
+  judged = true;
   collectAnswers();
   let score=0, wrong=[];
   const st=loadState()||{{answers:{{}}}};
@@ -321,29 +454,54 @@ function grade(){{
     const a=(st.answers&&st.answers[i])||"";
     const right=answersEqual(a,q.answer);
     if(right) score++;
-    else wrong.push(i+1);
+    else {{
+      wrong.push(i+1);
+      WRONG_POOL[String(q.question||"").slice(0,40)] = {{
+        id: q.id||"", subject: PAPER_SUBJECT, source:"paper",
+        sid: q.sid||"", question: q.question||"", options: q.options||[],
+        answer: q.answer||"", analysis: q.analysis||"",
+        subtopic: q.subtopic||"", bloom: q.bloom||"", user_answer: a
+      }};
+    }}
     const ck=q.case_id||"";
     if(ck){{ const cs=caseScore[ck]||={{n:0,t:0}}; cs.n++; if(right) cs.t++; caseScore[ck]=cs; }}
   }});
   const total=QUESTIONS.length;
   try{{localStorage.setItem(RETRY_KEY,JSON.stringify(
     {{title:"错题重练",questions:wrong.map(i=>QUESTIONS[i-1]).filter(Boolean)}}));}}catch(e){{}}
+  // 成绩留存：最近 10 次（跨会话），供下次打开展示「上次/最佳」
+  try{{
+    const H=JSON.parse(localStorage.getItem(KEY+'-his')||'[]');
+    H.unshift({{score:score,total:total,secs:secs,
+      ts:new Date().toLocaleString('zh-CN',{{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}})}});
+    localStorage.setItem(KEY+'-his',JSON.stringify(H.slice(0,10)));
+  }}catch(e){{}}
   const caseLines=Object.keys(caseScore)
     .filter(k=>k && caseScore[k].n>1)
     .map(k=>'案例 '+k+'：'+caseScore[k].t+'/'+caseScore[k].n)
     .join(' · ');
   document.getElementById('res').innerHTML=
-    '<div class="score">得分 '+score+'/'+total+'（'+(total?Math.round(score*100/total):0)+' 分）</div>'+
+    '<div class="score">得分 '+score+'/'+total+'（'+(total?Math.round(score*100/total):0)+' 分）· 用时 '+fmtT(secs)+'</div>'+
     (caseLines?'<div class="hint">分组判分：'+esc(caseLines)+'</div>':'')+
     (wrong.length?'<div class="hint bad">错题回顾：'+wrong.join('、')+'（答案见下方解析区）</div>'
                  :'<div class="hint good">全对！</div>')+
     (wrong.length?'<button class="gray" onclick="retryWrong()">只练错题 →</button>':'')+
-    '<button class="gray" onclick="resetAll()">重新作答</button>';
+    (wrong.length?'<button class="gray" onclick="syncWrong()">同步错题到错题本</button>':'')+
+    '<button class="gray" onclick="resetAll()">重新作答</button>'+
+    '<div class="hint">作答已锁定（防止判分后误改）；如需重做请点「重新作答」或「清空重做」。</div>';
+  // 锁定作答：判分后禁用输入，避免改答案与判分结果不一致
+  document.querySelectorAll('#quiz input').forEach(x=>x.disabled=true);
+  document.querySelectorAll('#quiz .q').forEach(d=>d.classList.add('judged'));
   QUESTIONS.forEach((q,i)=>{{
     const a=(st.answers&&st.answers[i])||"";
     const right=answersEqual(a,q.answer);
     const d=document.getElementById('q'+i); if(!d) return;
     if(!right) d.classList.add('wrongq');
+    const qs=d.querySelector('.qs');
+    if(qs&&!qs.querySelector('.chip')){{
+      qs.insertAdjacentHTML('beforeend',
+        right?' <span class="chip yes">✓ 对</span>':' <span class="chip no">✗ 错</span>');
+    }}
     d.querySelectorAll('.opt').forEach(l=>{{
       const v=l.querySelector('input').value;
       const isAns=q.answer.includes(v);
@@ -363,18 +521,48 @@ function grade(){{
 }}
 function retryWrong(){{
   let r=null; try{{r=JSON.parse(localStorage.getItem(RETRY_KEY)||"null");}}catch(e){{r=null;}}
-  if(!r||!r.questions||!r.questions.length){{alert("暂无错题数据：先提交判分后再练错题");return;}}
+  if(!r||!r.questions||!r.questions.length){{banner("暂无错题数据：先提交判分后再练错题",false);return;}}
   QUESTIONS=r.questions.slice();
-  clearState(); document.getElementById('res').innerHTML='';
+  clearState(); judged=false; document.getElementById('res').innerHTML='';
   render();
   document.getElementById('res').innerHTML=
     '<div class="hint good">错题重练：'+QUESTIONS.length+' 题 · '+
     '<button class="mini" onclick="backToAll()">返回全卷</button></div>';
 }}
-function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); render();}}
-function resetAll(){{clearState(); document.getElementById('res').innerHTML=''; render();}}
+function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); judged=false; render();}}
+function resetAll(){{clearState(); judged=false; document.getElementById('res').innerHTML=''; render();}}
+
+/* 内联提示条（取代原生 alert，风格与页面一致） */
+function banner(text,ok){{
+  const box=document.getElementById('quiz');
+  if(!box) return;
+  let b=document.getElementById('banner');
+  if(!b){{
+    b=document.createElement('div'); b.id='banner';
+    box.insertBefore(b, box.firstChild);
+  }}
+  b.className='banner '+(ok?'good':'bad');
+  b.textContent=text;
+  clearTimeout(b._t);
+  b._t=setTimeout(()=>{{ if(b) b.remove(); }}, 6000);
+}}
+
+async function syncWrong(){{
+  const items=Object.values(WRONG_POOL);
+  if(!items.length){{ banner("没有可同步的错题，请先「提交判分」",false); return; }}
+  try{{
+    const r=await fetch("/api/library/mistakes/sync-paper",{{
+      method:"POST", headers:{{"Content-Type":"application/json"}},
+      body:JSON.stringify({{pid:PAPER_PID, questions:items}})
+    }});
+    const j=await r.json().catch(()=>({{}}));
+    if(!r.ok){{ banner("同步失败："+(j.detail||r.status),false); return; }}
+    banner("已同步 "+j.added+" 道错题到「学习中心 → 错题本」（重复题自动去重）",true);
+  }}catch(e){{ banner("同步失败："+e.message,false); }}
+}}
 
 const T0=(loadState()||{{}}).t0||Date.now();
+function fmtT(s){{const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}}
 function tick(){{secs=Math.floor((Date.now()-T0)/1000);
   const m=Math.floor(secs/60), s=secs%60;
   const el=document.getElementById('timer');
@@ -386,69 +574,70 @@ render();
 
 
 def _page(title: str, body: str, extras: str = "") -> str:
+    """产物页外壳：共用主题（pagechrome）+ 各页自身样式。"""
+    from .pagechrome import BASE_CSS, THEME_BTN, THEME_SCRIPT, THEME_VARS
+
+    own_css = """
+main{max-width:860px;margin:0 auto}
+h1{font-size:22px;margin-bottom:6px}
+.meta .mini{margin-left:8px}
+.nofilter{}
+.filters button{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:9px;padding:6px 14px;margin:0 6px 10px 0;cursor:pointer;font-family:inherit}
+.filters button.on{border-color:var(--acc);color:var(--acc)}
+.q{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin-bottom:12px}
+.q.case{border-left:4px solid var(--miss)}
+.qsub{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}
+.casebar{background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.35);border-radius:10px;padding:8px 12px;margin:12px 0 6px;font-size:13px;color:var(--txt)}
+.q.wrongq{border-color:var(--bad)}
+.q.flagged{border-left:4px solid var(--miss)}
+.qs{cursor:pointer;line-height:1.7}
+details.q .qs:hover{color:var(--acc)}
+.qb p,.qb ul{font-size:14px;line-height:1.8;margin:8px 0}
+.qb ul{padding-left:22px}
+.ans{color:var(--good);font-size:13.5px}
+.ana{color:var(--dim);font-size:13px}
+.opt{display:block;padding:8px 12px;margin:6px 0;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:14px}
+.opt:hover{border-color:var(--acc)}
+.opt.right{border-color:var(--good);background:rgba(52,211,153,.12)}
+.opt.wrong{border-color:var(--bad);background:rgba(248,113,113,.12)}
+.opt.miss{border-color:var(--miss);background:rgba(251,191,36,.10)}
+.q.judged .opt{cursor:default}
+.q.judged .opt input{opacity:.85}
+.mark{float:right;font-size:11px}
+.btns{margin:16px 0}
+.act{background:linear-gradient(180deg,rgba(56,189,248,.95),rgba(29,129,186,.95));color:#04101f;border:none;border-radius:10px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+.gray{background:rgba(80,110,150,.25);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px 18px;margin-left:8px;cursor:pointer;font-family:inherit}
+.score{font-size:17px;font-weight:700;color:var(--acc);margin:10px 0}
+.sheet{display:flex;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:10px 14px;margin-bottom:14px;flex-wrap:wrap}
+.grid{display:flex;flex-wrap:wrap;gap:5px;max-width:520px}
+.cell{min-width:30px;text-align:center;border:1px solid var(--line);border-radius:7px;padding:3px 6px;font-size:12px;color:var(--dim);cursor:pointer}
+.cell.done{background:rgba(52,211,153,.16);color:var(--good);border-color:var(--good)}
+.cell.mk{border-color:var(--miss);color:var(--miss)}
+.sheetactions{margin-left:auto}
+/* v0.7.1：搜索框 / 判分徽章 / 已答计数 / 提示条 */
+.filters input[type=search]{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:9px;padding:6px 12px;font-size:13px;font-family:inherit;outline:none;min-width:200px;max-width:100%}
+.filters input[type=search]:focus{border-color:var(--acc)}
+.asw{font-size:12.5px;color:var(--dim);white-space:nowrap}
+.asw b{color:var(--acc);font-variant-numeric:tabular-nums}
+.banner{border-radius:9px;padding:9px 14px;margin:0 0 12px;font-size:13px;animation:bannerin .25s ease}
+.banner.good{background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4);color:var(--good)}
+.banner.bad{background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);color:var(--bad)}
+@keyframes bannerin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@media (max-width:640px){.filters input[type=search]{min-width:100%;margin-top:4px}.sheet{justify-content:center}}
+@media print{.q{background:none;border:1px solid #999;break-inside:avoid}.sheet{display:none}.btns{display:none}.mini{display:none}.banner{display:none}}
+"""
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:,">
 <title>{html_mod.escape(title)} · MedKit</title>
 <style>
-:root{{--bg:#0a1226;--card:rgba(18,32,62,.85);--line:rgba(120,180,255,.18);--txt:#dbeafe;--dim:#8aa4cc;
---good:#34d399;--bad:#f87171;--miss:#fbbf24;--acc:#38bdf8;--bgc1:#12305e;--bgc2:#060d1e}}
-:root[data-theme=light]{{--bg:#f2f6fb;--card:#ffffff;--line:rgba(30,80,140,.22);--txt:#12233d;--dim:#5a6b85;
---good:#0d7a4f;--bad:#b3261e;--miss:#8a5a00;--acc:#0e6fb8;--bgc1:#dbe9f8;--bgc2:#eef4fb}}
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:radial-gradient(900px 500px at 20% -10%,var(--bgc1),transparent 55%),linear-gradient(160deg,var(--bg),var(--bgc2));color:var(--txt);padding:28px}}
-main{{max-width:860px;margin:0 auto}}
-h1{{font-size:22px;margin-bottom:6px}}
-.meta{{color:var(--dim);font-size:12.5px;margin-bottom:14px}}
-.meta .mini{{margin-left:8px}}
-button.mini,.mini{{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit}}
-.nofilter{{}}
-.filters button{{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:9px;padding:6px 14px;margin:0 6px 10px 0;cursor:pointer;font-family:inherit}}
-.filters button.on{{border-color:var(--acc);color:var(--acc)}}
-.q{{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin-bottom:12px}}
-.q.case{{border-left:4px solid var(--miss)}}
-.qsub{{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}}
-.casebar{{background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.35);border-radius:10px;padding:8px 12px;margin:12px 0 6px;font-size:13px;color:var(--txt)}}
-.q.wrongq{{border-color:var(--bad)}}
-.q.flagged{{border-left:4px solid var(--miss)}}
-.qs{{cursor:pointer;line-height:1.7}}
-details.q .qs:hover{{color:var(--acc)}}
-.qb p,.qb ul{{font-size:14px;line-height:1.8;margin:8px 0}}
-.qb ul{{padding-left:22px}}
-.tag{{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11.5px;background:rgba(56,189,248,.14);color:var(--acc);margin-right:6px}}
-.tag.b{{background:rgba(52,211,153,.14);color:var(--good)}}
-.ans{{color:var(--good);font-size:13.5px}}
-.ana{{color:var(--dim);font-size:13px}}
-.opt{{display:block;padding:8px 12px;margin:6px 0;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:14px}}
-.opt:hover{{border-color:var(--acc)}}
-.opt.right{{border-color:var(--good);background:rgba(52,211,153,.12)}}
-.opt.wrong{{border-color:var(--bad);background:rgba(248,113,113,.12)}}
-.opt.miss{{border-color:var(--miss);background:rgba(251,191,36,.10)}}
-.mark{{float:right;font-size:11px}}
-.btns{{margin:16px 0}}
-.act{{background:linear-gradient(180deg,rgba(56,189,248,.95),rgba(29,129,186,.95));color:#04101f;border:none;border-radius:10px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}}
-.gray{{background:rgba(80,110,150,.25);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px 18px;margin-left:8px;cursor:pointer;font-family:inherit}}
-.score{{font-size:17px;font-weight:700;color:var(--acc);margin:10px 0}}
-.sheet{{display:flex;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:10px 14px;margin-bottom:14px;flex-wrap:wrap}}
-.grid{{display:flex;flex-wrap:wrap;gap:5px;max-width:520px}}
-.cell{{min-width:30px;text-align:center;border:1px solid var(--line);border-radius:7px;padding:3px 6px;font-size:12px;color:var(--dim);cursor:pointer}}
-.cell.done{{background:rgba(52,211,153,.16);color:var(--good);border-color:var(--good)}}
-.cell.mk{{border-color:var(--miss);color:var(--miss)}}
-.sheetactions{{margin-left:auto}}
-.hint{{font-size:12.5px;color:var(--dim);margin-top:8px}}
-.hint.good{{color:var(--good)}}
-.hint.bad{{color:var(--bad)}}
-.spin{{display:inline-block;width:12px;height:12px;border:2px solid rgba(56,189,248,.3);border-top-color:var(--acc);border-radius:50%;animation:sp .8s linear infinite}}
-@keyframes sp{{to{{transform:rotate(360deg)}}}}
-@media print{{body{{background:#fff;color:#111}} .q{{background:none;border:1px solid #999;break-inside:avoid}} .sheet{{display:none}} .btns{{display:none}}}}
+{THEME_VARS}
+{BASE_CSS}
+{own_css}
 </style></head><body><main>{body}</main>
-<button class="mini" style="position:fixed;top:12px;right:12px;z-index:9;font-size:14px;padding:4px 12px" onclick="toggleTheme()" title="切换亮/暗主题">🌓</button>
-<script>
-try{{if(localStorage.getItem("medkit-theme")==="light")document.documentElement.dataset.theme="light";}}catch(e){{}}
-function toggleTheme(){{const cur=document.documentElement.dataset.theme==="light"?"dark":"light";
-document.documentElement.dataset.theme=cur;try{{localStorage.setItem("medkit-theme",cur);}}catch(e){{}}}}
-</script>
+{THEME_BTN}
+{THEME_SCRIPT}
 </body></html>"""
 
 
@@ -457,3 +646,4 @@ if __name__ == "__main__":  # pragma: no cover 手动调试
            "question": "下列属于X型？<script>alert(1)</script>", "options": ["A", "B", "C", "D", "E"],
            "answer": "BDE", "analysis": "解析…"}]
     print(export_paper_html(qs)[:500])
+

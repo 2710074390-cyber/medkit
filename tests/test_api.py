@@ -248,7 +248,8 @@ def test_prompts_api_and_shadow_copy():
     r = c.get("/api/prompts")
     assert r.status_code == 200
     ps = r.json()["prompts"]
-    assert len(ps) == 4
+    assert len(ps) == 6
+    assert {p["name"] for p in ps} >= {"medtutor.md", "medexplain.md"}
     med = next(p for p in ps if p["name"] == "medgen.md")
     assert "{slice_text}" in med["placeholders"], "主要占位符应被动态提取"
     assert med["using"] == "builtin"

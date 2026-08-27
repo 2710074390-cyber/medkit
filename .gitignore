@@ -12,3 +12,6 @@ pack/icon_preview.png
 projects/
 *.spec.bak
 .ruff_cache/
+.pytest_cache/
+*.bak
+.DS_Store

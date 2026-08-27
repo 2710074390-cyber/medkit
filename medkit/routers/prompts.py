@@ -14,7 +14,8 @@ from ..core import config as cfg
 router = APIRouter()
 
 PROMPT_ROLES = {"medgen.md": "MedGen · 出题", "medqc.md": "MedQC · 质检",
-                "medfix.md": "MedFix · 修复", "medreview.md": "MedReview · 复习手册"}
+                "medfix.md": "MedFix · 修复", "medreview.md": "MedReview · 复习手册",
+                "medtutor.md": "MedTutor · 苏格拉底提问", "medexplain.md": "MedExplain · 教材讲解"}
 
 
 def _prompt_meta() -> dict[str, Any]:

@@ -427,7 +427,8 @@ def test_case_group_full_chain(isolated_cfg):
     assert md.count("患儿男，3岁") == 1, "MD 案例题干应只出现一次（组标题）"
     assert "🧩 选项组" in md and "支原体" in md
     html = (tmp / "最终产物" / "qbank.html").read_text(encoding="utf-8")
-    assert "案例 C001" in html and html.count("患儿男，3岁") == 1
+    assert "案例 C001" in html
+    assert html.count("<b>案例题干</b>：患儿男，3岁") == 1, "案例题干可见处应只出现一次（折叠）"
     paper = (tmp / "最终产物" / "押题卷.html").read_text(encoding="utf-8")
     assert "casebar" in paper and "分组判分" in paper, "押题卷应分组呈现 + 分组判分"
     # .apkg 产物与案例前缀

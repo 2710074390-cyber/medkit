@@ -61,6 +61,17 @@ def test_delete_preset_rejects_traversal():
             assert e.status_code == 400, (bad, e.status_code)
 
 
+def test_config_load_corrupt_backs_up_before_defaults(monkeypatch, tmp_path):
+    """配置损坏：load 回退默认值，但先把原始文件备份成 .corrupt-*.bak 以抢救 Key。"""
+    conf = tmp_path / "config.json"
+    conf.write_text("{ 这不是合法 JSON !!!", encoding="utf-8")
+    monkeypatch.setattr(cfgmod, "CONFIG_FILE", conf)
+    c = cfgmod.load()
+    assert c["provider"] in ("deepseek",), "损坏配置应回退默认值"
+    baks = list(tmp_path.glob("config.json.corrupt-*.bak"))
+    assert baks, "损坏的原始 config.json 应被备份保留"
+
+
 def test_config_load_deepcopy_no_shared_nested(monkeypatch, tmp_path):
     """嵌套 dict 不应被 load 的 update 污染模块级 DEFAULTS。"""
     monkeypatch.setattr(cfgmod, "CONFIG_FILE", tmp_path / "nonexistent.json")
@@ -118,6 +129,25 @@ def test_fsutil_atomic_write(tmp_path):
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": [3]}
     leftovers = [p.name for p in tmp_path.rglob("*.tmp*")]
     assert not leftovers, f"临时文件未清理：{leftovers}"
+
+
+def test_fsutil_read_json_list_contract(tmp_path):
+    """P2#11：read_json_list 统一容错 —— 缺失/损坏/非列表均回退空，列表原样返回。"""
+    import json as _json
+
+    from medkit.core.fsutil import read_json_list
+
+    missing = tmp_path / "missing.json"
+    assert read_json_list(missing) == [], "缺失文件 → 空列表"
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ 这不是 json", encoding="utf-8")
+    assert read_json_list(bad) == [], "损坏内容 → 空列表"
+    obj = tmp_path / "obj.json"
+    obj.write_text('{"a":1}', encoding="utf-8")
+    assert read_json_list(obj) == [], "非列表 → 空列表"
+    ok = tmp_path / "ok.json"
+    ok.write_text(_json.dumps([{"id": "Q1"}, {"id": "Q2"}], ensure_ascii=False), encoding="utf-8")
+    assert read_json_list(ok) == [{"id": "Q1"}, {"id": "Q2"}], "合法数组 → 原样返回"
 
 
 def test_ocr_cancel_race_keeps_cancelled(monkeypatch, tmp_path):

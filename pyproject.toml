@@ -12,3 +12,6 @@ ignore = ["E501", "W605", "B008", "B904", "E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# P2#14：测试级超时兜底，避免 CI 上偶发挂起拖垮整个 job
+timeout = 300
+timeout_method = "thread"

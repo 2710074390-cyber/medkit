@@ -129,39 +129,123 @@ def sanitize_html(raw: str) -> str:
     return s.text()
 
 
+_TABLE_RE = re.compile(r"<table>.*?</table>", re.S)
+_HEADING_RE = re.compile(r"<h([23])>(.*?)</h\1>", re.S)
+_ENTITY_RE = re.compile(r"&[a-zA-Z]+;|&#\d+;|&#x[0-9a-fA-F]+;")
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _anchor_slug(text_html: str) -> str:
+    """从标题 HTML 提取纯文本，生成可用作 id 的 slug。"""
+    plain = _TAG_RE.sub("", text_html)
+    plain = _ENTITY_RE.sub("-", plain).strip()
+    slug = re.sub(r"\W+", "-", plain).strip("-").lower()
+    return slug or "section"
+
+
+def _augment(body: str) -> str:
+    """渲染后增强：表格包 .tw 滚动容器；标题加锚点 id 并生成目录(<details.toc>)。"""
+    toc: list[tuple[str, str, str]] = []
+    seen: dict[str, int] = {}
+
+    def _uniq(hid: str) -> str:
+        n = seen.get(hid, 0) + 1
+        seen[hid] = n
+        return f"{hid}-{n}" if n > 1 else hid
+
+    def _replace_heading(m: re.Match) -> str:
+        level, inner = m.group(1), m.group(2)
+        hid = _uniq(_anchor_slug(inner))
+        toc.append((level, hid, inner))
+        return f'<h{level} id="{hid}">{inner}</h{level}>'
+
+    if _HEADING_RE.search(body):
+        body = _HEADING_RE.sub(_replace_heading, body)
+        items = "".join(
+            f'<li style="margin-left:{0 if lvl == "2" else 14}px"><a href="#{hid}">{txt}</a></li>'
+            for lvl, hid, txt in toc
+        )
+        toc_block = (f'<details class="toc"><summary>目录（{len(toc)}）</summary>'
+                     f"<nav><ul>{items}</ul></nav></details>")
+        body = toc_block + body
+
+    return _TABLE_RE.sub(lambda m: '<div class="tw">' + m.group(0) + "</div>", body)
+
+
 def review_to_html(md_text: str, title: str = "复习手册") -> str:
     if md_lib is None:
         body = "<pre style='white-space:pre-wrap'>" + html_mod.escape(md_text) + "</pre>"
     else:
         raw = md_lib.markdown(md_text, extensions=["tables", "fenced_code", "nl2br"])
-        body = sanitize_html(raw)
+        body = _augment(sanitize_html(raw))
+    from .pagechrome import BASE_CSS, THEME_BTN, THEME_SCRIPT, THEME_VARS
+
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:,">
 <title>{html_mod.escape(title)} · MedKit</title>
 <style>
-:root{{--bg:#0a1226;--card:rgba(18,32,62,.85);--line:rgba(120,180,255,.18);--txt:#dbeafe;--dim:#8aa4cc;--acc:#38bdf8;--bgc1:#12305e;--bgc2:#060d1e}}
-:root[data-theme=light]{{--bg:#f2f6fb;--card:#ffffff;--line:rgba(30,80,140,.22);--txt:#12233d;--dim:#5a6b85;--acc:#0e6fb8;--bgc1:#dbe9f8;--bgc2:#eef4fb}}
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:radial-gradient(900px 500px at 20% -10%,var(--bgc1),transparent 55%),linear-gradient(160deg,var(--bg),var(--bgc2));color:var(--txt);padding:28px}}
-main{{max-width:820px;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px 34px}}
+{THEME_VARS}
+{BASE_CSS}
+main{{max-width:820px;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px 34px;font-size:var(--fs,14px)}}
 h1{{font-size:22px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:18px}}
-h2{{font-size:17px;color:var(--acc);margin:22px 0 10px}}
-h3{{font-size:15px;margin:16px 0 8px}}
-p,li{{font-size:14px;line-height:1.9}}
+h2,h3,h4{{scroll-margin-top:64px}}
+h2{{font-size:1.25em;color:var(--acc);margin:22px 0 10px}}
+h3{{font-size:1.08em;margin:16px 0 8px}}
+p,li{{font-size:1em;line-height:1.9}}
 ul,ol{{padding-left:24px;margin:8px 0}}
-table{{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}}
+table{{border-collapse:collapse;width:100%;margin:10px 0;font-size:.96em}}
 th,td{{border:1px solid var(--line);padding:7px 10px;text-align:left}}
 th{{background:rgba(56,189,248,.12);color:var(--acc)}}
-code{{background:rgba(125,211,252,.12);padding:1px 6px;border-radius:5px;font-size:13px}}
+.tw{{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:10px 0}}
+.tw table{{margin:0}}
+details.toc{{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:20px;background:rgba(56,189,248,.05);position:sticky;top:8px;z-index:5;backdrop-filter:blur(4px)}}
+details.toc nav ul{{list-style:none;padding-left:0;margin:6px 0 2px}}
+details.toc li{{margin:3px 0}}
+details.toc a{{color:var(--dim);text-decoration:none;font-size:.93em}}
+details.toc a:hover{{color:var(--acc)}}
+code{{background:rgba(125,211,252,.12);padding:1px 6px;border-radius:5px;font-size:.92em}}
 blockquote{{border-left:3px solid var(--acc);padding:6px 14px;margin:10px 0;color:var(--dim)}}
-@media print{{body{{background:#fff;color:#111}} main{{background:none;border:none}}}}
-</style></head><body><main>{body}</main>
-<button class="mini" style="position:fixed;top:12px;right:12px;z-index:9;font-size:14px;padding:4px 12px;background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;cursor:pointer" onclick="toggleTheme()" title="切换亮/暗主题">🌓</button>
+/* v0.7 阅读体验：进度条 / 字号调节 / 回顶部 */
+.rfprog{{position:fixed;top:0;left:0;height:3px;background:var(--acc);width:0;z-index:20;transition:width .15s linear}}
+.rfbar{{position:fixed;top:12px;right:64px;z-index:9;display:flex;gap:5px;align-items:center}}
+.rfbar button{{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:4px 10px;font-size:12.5px;cursor:pointer;font-family:inherit}}
+.rfbar button:hover{{border-color:var(--acc);color:var(--acc)}}
+.rfup{{position:fixed;bottom:18px;right:18px;z-index:9;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
+  background:var(--card);color:var(--txt);font-size:16px;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .2s}}
+.rfup.show{{opacity:1;pointer-events:auto}}
+@media (max-width:640px){{body{{padding:14px}} main{{padding:20px 18px}} .rfbar{{right:56px}}}}
+@media print{{body{{background:#fff;color:#111}} main{{background:none;border:none}} .mini{{display:none}} .tw{{overflow:visible}} .tw table{{width:100%}} .rfprog{{display:none}} .rfbar{{display:none}} .rfup{{display:none}}}}
+</style></head><body>
+<div class="rfprog" id="rfprog"></div>
+<div class="rfbar">
+  <button onclick="rfFont(-1)" title="减小字号">A−</button>
+  <button onclick="rfFont(1)" title="增大字号">A＋</button>
+  <button onclick="rfFont(0)" title="恢复默认字号">默认</button>
+</div>
+<main>{body}</main>
+<button class="rfup" id="rfup" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
+{THEME_BTN}
+{THEME_SCRIPT}
 <script>
-try{{if(localStorage.getItem("medkit-theme")==="light")document.documentElement.dataset.theme="light";}}catch(e){{}}
-function toggleTheme(){{const cur=document.documentElement.dataset.theme==="light"?"dark":"light";
-document.documentElement.dataset.theme=cur;try{{localStorage.setItem("medkit-theme",cur);}}catch(e){{}}}}
+/* 阅读进度 + 回顶部显隐 */
+const prog=document.getElementById('rfprog'), up=document.getElementById('rfup');
+window.addEventListener('scroll',()=>{{
+  const h=document.documentElement;
+  const pct=(h.scrollTop)/(h.scrollHeight-h.clientHeight||1)*100;
+  if(prog) prog.style.width=pct+'%';
+  if(up) up.classList.toggle('show', h.scrollTop>300);
+}},{{passive:true}});
+/* 字号调节：12~20px，本地记忆 */
+function rfFont(d){{
+  let fs=12;
+  try{{fs=parseInt(localStorage.getItem('medkit-rf-font')||'14')||14;}}catch(e){{}}
+  fs=Math.min(20,Math.max(12, fs+(d===0?14-fs:d)));
+  try{{localStorage.setItem('medkit-rf-font',String(fs));}}catch(e){{}}
+  document.querySelector('main').style.setProperty('--fs',fs+'px');
+}}
+try{{const f=parseInt(localStorage.getItem('medkit-rf-font')||'')||0;
+  if(f) document.querySelector('main').style.setProperty('--fs',f+'px');}}catch(e){{}}
 </script>
 </body></html>"""

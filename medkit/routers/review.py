@@ -48,7 +48,8 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
     if toggles.get("paper", True):
         paper_qs = _sample_paper(questions, min(50, len(questions)))
         (out_dir / "押题卷.html").write_text(
-            qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷"), encoding="utf-8")
+            qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
+                                         pid=base.name, subject=subject), encoding="utf-8")
         rendered.append("押题卷.html")
     review_md_path = out_dir / "复习手册.md"
     if review_md_path.exists():

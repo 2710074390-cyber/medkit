@@ -355,6 +355,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         return sid, qs
 
     cancelled_midway = False
+    pending: Exception | None = None
     try:
         if total_slices:
             if PIPELINE_CONCURRENCY <= 1:
@@ -375,7 +376,14 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                             continue
                         futures[ex.submit(gen_one, idx, item, cnt, sid, id_ranges[idx][0])] = sid
                     for fut in as_completed(futures):
-                        sid_r, qs = fut.result()  # PipelineCancelled 会向上抛
+                        try:
+                            sid_r, qs = fut.result()
+                        except PipelineCancelled:
+                            pending = PipelineCancelled()
+                            break              # 取消：先把已完成切片结果尽量落盘
+                        except Exception as e:  # noqa: BLE001
+                            pending = e        # 单切片失败：先收起已完成的别家切片再抛
+                            break
                         with ckpt_lock:
                             done_sids.add(sid_r)
                             result_by_sid[sid_r] = qs
@@ -384,6 +392,24 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                                              [q for v in result_by_sid.values() for q in v])
                         _set_progress(base, "generating", progress_done, total_slices,
                                       f"已完成 {progress_done}/{total_slices} 切片")
+                # 中途退出/取消：把已完成但尚未写入的切片结果一并落 checkpoint，避免续跑重生成白花钱
+                with ckpt_lock:
+                    for fut in futures:
+                        if not fut.done():
+                            continue
+                        try:
+                            sid_r, qs = fut.result()
+                        except Exception:       # noqa: BLE001  已失败切片不回填
+                            continue
+                        if sid_r not in done_sids:
+                            done_sids.add(sid_r)
+                            result_by_sid[sid_r] = qs
+                            progress_done = len(done_sids)
+                    if done_sids:
+                        _save_checkpoint(base, done_sids,
+                                         [q for v in result_by_sid.values() for q in v])
+                if pending is not None:
+                    raise pending
     except PipelineCancelled:
         cancelled_midway = True
     except Exception as e:  # noqa: BLE001
@@ -529,7 +555,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     if toggles.get("paper", True):
         paper_qs = _sample_paper(questions, min(PAPER_DEFAULT, len(questions)))
         (base / "最终产物" / "押题卷.html").write_text(
-            qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷"), encoding="utf-8")
+            qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
+                                         pid=pid, subject=subject), encoding="utf-8")
         rendered.append("押题卷.html")
     if review_md and toggles.get("review", True):
         (base / "最终产物" / "复习手册.html").write_text(

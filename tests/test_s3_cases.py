@@ -99,7 +99,8 @@ def test_export_html_case_fold_and_b1_shared_options():
           B1_MEMBER]
     html = export_html(qs, "题库")
     assert 'class="case"' in html or "案例" in html, "题库 HTML 应按组折叠呈现"
-    assert html.count("患儿男，3岁") == 1, "案例题干只出现一次"
+    assert html.count("<b>案例题干</b>：患儿男，3岁") == 1, "案例题干在 HTML 中应只出现一次（组折叠）"
+    assert 'data-group="case"' in html and "data-kw=" in html, "案例组应带搜索索引（题面不重复可见）"
     assert "支原体" in html and "金黄色葡萄球菌" in html, "B1 共享选项应渲染"
     # Anki 子题卡带案例前缀（扁平卡不丢题干）
     txt = export_anki(qs)

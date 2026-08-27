@@ -101,6 +101,43 @@ def test_paper_localstorage_survives_private_mode():
     assert "try{if(localStorage.getItem" in h and "try{localStorage.setItem" in h
 
 
+def test_review_html_table_scroll_toc_print():
+    """P2#13：表格包 .tw 滚动容器、标题锚点 + 目录、打印样式。"""
+    from medkit.render.review_html import review_to_html
+
+    md_text = ("# 复习手册\n\n"
+               "## 第一单元\n正文与表格：\n\n"
+               "| 知识点 | 掌握度 |\n|---|---|\n| 蛋白质 | 80% |\n\n"
+               "### 子要点\n细节。\n\n"
+               "## 第一单元\n另一节（slug 冲突应去重）。")
+    h = review_to_html(md_text)
+
+    # 1) 表格包进横向滚动容器
+    assert '<div class="tw"><table>' in h, "table 应被包进 .tw 滚动容器"
+
+    # 2) 目录块 + 锚点 id + 去重
+    assert 'class="toc"' in h, "应生成目录块"
+    assert 'summary>目录' in h
+    import re
+    h2_ids = re.findall(r'<h2 id="([^"]+)"', h)
+    assert h2_ids == ["第一单元", "第一单元-2"], f"标题应有锚点 id 且冲突去重：{h2_ids}"
+    assert 'href="#第一单元"' in h and 'href="#第一单元-2"' in h, "目录链接应指向锚点"
+
+    # 3) 打印样式
+    assert "@media print" in h.replace("\n", "").replace(" ", "") or "@media print" in h
+    assert ".tw{overflow:visible}" in h, "打印时应解除表格横滚"
+
+
+def test_review_html_print_hides_theme_btn():
+    """P2#13：打印时隐藏主题切换按钮（.mini）。"""
+    from medkit.render.review_html import review_to_html
+
+    h = review_to_html("# 标题")
+    # @media print 内应隐藏 .mini；同时类名与按钮 class 对应
+    assert ".mini{display:none}" in h
+    assert 'class="mini"' in h
+
+
 def test_index_html_global_error_guards():
     """E：主界面全局兜底 + 切页停轮询 + spinner 用 innerHTML。"""
     idx = (ROOT / "medkit" / "web" / "index.html").read_text(encoding="utf-8")

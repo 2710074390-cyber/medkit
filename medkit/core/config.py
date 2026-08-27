@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -120,8 +121,14 @@ def load() -> dict[str, Any]:
                     cfg[k].update(v)
                 else:
                     cfg[k] = v
-        except Exception:
-            pass  # 配置损坏时回退默认值，不阻塞启动
+        except Exception as e:  # noqa: BLE001  配置损坏：先备份原始文件（抢救 Key），再回退默认值
+            try:
+                bak = CONFIG_FILE.with_name(
+                    f"{CONFIG_FILE.name}.corrupt-{int(time.time())}.bak")
+                bak.write_bytes(CONFIG_FILE.read_bytes())
+                logger.warning("config.json 解析失败，已备份至 %s，回退默认值：%s", bak, e)
+            except Exception:  # noqa: BLE001
+                pass
     # provider 无效（如旧版本 ollama 配置）→ 回退 DeepSeek；base_url/模型随 provider 同步
     prov = get_provider(cfg.get("provider", ""))
     if prov is None:
