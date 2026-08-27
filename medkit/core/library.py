@@ -9,6 +9,7 @@
 """
 
 import itertools
+import json
 import re
 import threading
 import time
@@ -438,6 +439,97 @@ def parse_question_text(text: str) -> dict[str, Any]:
         "answer": answer,
         "analysis": analysis,
     }
+
+
+def _csv_pick(row: dict[str, Any], names: tuple[str, ...]) -> str:
+    """CSV 行按别名列取值（首命中）。"""
+    for n in names:
+        v = (row.get(n) or "").strip()
+        if v:
+            return v
+    return ""
+
+
+def parse_import_text(text: str, fmt: str) -> list[dict[str, Any]]:
+    """批量导入解析（本地规则，零 LLM）：支持 json / csv / md / txt。
+
+    - json：数组；兼容「本题库官方结构」（stem/options[{label,text}]/answer/explanation/topic
+      /module_name）与「错题结构」（question/options[str]/know_tags…），统一归一化后入库；
+    - csv：表头别名（题干/question/stem · 选项/options（"|" 或 "；" 分隔）或 A/B/C/D… 列 ·
+      答案/answer · 解析/analysis · 科目/subject · 章节/chapter · 标签/知识点/know_tags）；
+    - md/txt：按题号/「第N题」/题干行+选项块切分，逐块走 parse_question_text 本地结构化。
+    """
+    rows: list[dict[str, Any]] = []
+    if fmt == "json":
+        try:
+            data = json.loads(text)
+        except Exception:  # noqa: BLE001
+            return []
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            return []
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            opts = r.get("options") or []
+            if isinstance(opts, list):
+                opts = [str(o.get("text") if isinstance(o, dict) else o) for o in opts if o]
+            elif isinstance(opts, str):
+                opts = [x for x in re.split(r"[|；;\n]+", opts) if x.strip()]
+            rows.append({
+                "question": str(r.get("question") or r.get("stem") or "").strip(),
+                "options": opts,
+                "answer": str(r.get("answer") or "").strip(),
+                "analysis": str(r.get("analysis") or r.get("explanation") or "").strip(),
+                "subject": str(r.get("subject") or "").strip(),
+                "chapter": str(r.get("chapter") or "").strip(),
+                "topic": str(r.get("topic") or r.get("module_name") or "").strip(),
+                "know_tags": [str(t).strip() for t in (r.get("know_tags") or []) if str(t).strip()]
+                             or ([str(r.get("module_name") or "").strip()]
+                                 if r.get("module_name") else []),
+            })
+        return [r for r in rows if r["question"]]
+    if fmt == "csv":
+        import csv as _csv
+        import io as _io
+        try:
+            reader = _csv.DictReader(_io.StringIO(text))
+        except Exception:  # noqa: BLE001
+            return []
+        letter_cols = ("A", "B", "C", "D", "E", "F")
+        for row in reader:
+            if not row:
+                continue
+            opts = [row.get(c, "").strip() for c in letter_cols if (row.get(c) or "").strip()]
+            if not opts:
+                raw = _csv_pick(row, ("options", "选项"))
+                opts = [x for x in re.split(r"[|；;\n]+", raw) if x.strip()]
+            tags_raw = _csv_pick(row, ("know_tags", "标签", "知识点", "knowledge_tags"))
+            tags = [t.strip() for t in re.split(r"[|；;、]+", tags_raw) if t.strip()]
+            rows.append({
+                "question": _csv_pick(row, ("question", "题干", "stem")),
+                "options": opts,
+                "answer": _csv_pick(row, ("answer", "答案")),
+                "analysis": _csv_pick(row, ("analysis", "解析", "explanation")),
+                "subject": _csv_pick(row, ("subject", "科目")),
+                "chapter": _csv_pick(row, ("chapter", "章节")),
+                "topic": _csv_pick(row, ("topic", "主题", "知识点")),
+                "know_tags": tags,
+            })
+        return [r for r in rows if r["question"]]
+    # md / txt：按题号切块
+    blocks = re.split(
+        r"(?im)^\s*(?:#{1,4}\s*)?(?:\d+\s*[、.．]|第\s*\d+\s*题|【题\s*\d+\s*】)\s*", text)
+    if len(blocks) < 2:
+        blocks = [text]
+    for b in blocks:
+        b = b.strip()
+        if len(b) < 8:
+            continue
+        parsed = parse_question_text(b)
+        rows.append(parsed)
+    return [r for r in rows if r.get("question")]
 
 
 def _kp_key(rec: dict[str, Any]) -> list[str]:

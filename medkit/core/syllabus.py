@@ -39,8 +39,8 @@ _IT_RE = re.compile(r"^\s*(\d+|[（(][0-9一二三四五六七八九十百零]+[
 
 
 # ---------------------------------------------------------------- 种子（幂等导入）
-def _row_id(subject: str, chapter: str, item: str, kind: str) -> str:
-    return hashlib.sha1(f"{kind}|{subject}|{chapter}|{item}".encode("utf-8")).hexdigest()[:16]
+def _row_id(subject: str, chapter: str, item: str, kind: str, source: str = "seed") -> str:
+    return hashlib.sha1(f"{source}|{kind}|{subject}|{chapter}|{item}".encode("utf-8")).hexdigest()[:16]
 
 
 def ensure_seed(force: bool = False) -> dict[str, Any]:
@@ -62,8 +62,8 @@ def ensure_seed(force: bool = False) -> dict[str, Any]:
                     continue
                 if force or not cur.execute(
                         "SELECT 1 FROM syllabus_items WHERE id=?",
-                        (_row_id(subject, chapter, "", "chapter"),)).fetchone():
-                    rows.append({"id": _row_id(subject, chapter, "", "chapter"),
+                        (_row_id(subject, chapter, "", "chapter", "seed"),)).fetchone():
+                    rows.append({"id": _row_id(subject, chapter, "", "chapter", "seed"),
                                  "subject": subject, "chapter": chapter, "kind": "chapter",
                                  "item": "", "weight": 1.0, "source": "seed"})
                 for it in ch.get("items", []):
@@ -71,8 +71,8 @@ def ensure_seed(force: bool = False) -> dict[str, Any]:
                         continue
                     if force or not cur.execute(
                             "SELECT 1 FROM syllabus_items WHERE id=?",
-                            (_row_id(subject, chapter, it, "item"),)).fetchone():
-                        rows.append({"id": _row_id(subject, chapter, it, "item"),
+                            (_row_id(subject, chapter, it, "item", "seed"),)).fetchone():
+                        rows.append({"id": _row_id(subject, chapter, it, "item", "seed"),
                                      "subject": subject, "chapter": chapter, "kind": "item",
                                      "item": it, "weight": 1.0, "source": "seed"})
         for r in rows:
@@ -127,13 +127,23 @@ def parse_text(text: str, subject: str = "") -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------- 查询与覆盖
-def _rows(subject: str = "") -> list[dict[str, Any]]:
+def _now() -> str:
+    from datetime import datetime
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _rows(subject: str = "", source: str = "all") -> list[dict[str, Any]]:
+    where, params = [], []
+    if subject:
+        where.append("subject = ?")
+        params.append(subject)
+    if source != "all":
+        where.append("source = ?")
+        params.append(source)
+    cond = ("WHERE " + " AND ".join(where)) if where else ""
+    order = "ORDER BY subject, chapter, kind, item"
     with dbs.tx(write=True) as cur:
-        if subject:
-            return dbs.list_rows(cur, "syllabus_items",
-                                 "WHERE subject = ? ORDER BY chapter, kind, item",
-                                 (subject,))
-        return dbs.list_rows(cur, "syllabus_items", "ORDER BY subject, chapter, kind, item")
+        return dbs.list_rows(cur, "syllabus_items", f"{cond} {order}", tuple(params))
 
 
 def chapter_items_text(subject: str = "", limit: int = 800) -> str:
@@ -150,15 +160,100 @@ def chapter_items_text(subject: str = "", limit: int = 800) -> str:
     return "\n".join(lines)[:limit]
 
 
-def list_subjects() -> list[dict[str, Any]]:
-    """有大纲条目的科目清单（含章/条目计数）。"""
+def list_subjects(source: str = "all") -> list[dict[str, Any]]:
+    """有大纲条目的科目清单（含章/条目计数；source 限定 all|seed|teacher）。"""
+    where, params = "", ()
+    if source != "all":
+        where, params = "WHERE source = ?", (source,)
     with dbs.tx(write=True) as cur:
         rows = cur.execute(
             "SELECT subject, COUNT(*) AS n, "
             "SUM(CASE WHEN kind='chapter' THEN 1 ELSE 0 END) AS chapters, "
             "SUM(CASE WHEN kind='item' THEN 1 ELSE 0 END) AS items "
-            "FROM syllabus_items GROUP BY subject ORDER BY subject").fetchall()
+            f"FROM syllabus_items {where} GROUP BY subject ORDER BY subject", params).fetchall()
     return [{"subject": r[0], "total": r[1], "chapters": r[2], "items": r[3]} for r in rows]
+
+
+# ---------------------------------------------------------------- 教师重点为纲（WP-01 扩展）
+_BULLET_RE = re.compile(r"^\s*(?:[▪●■✦◦•\-*#>〕】．.、\d]+|[（(]\d+[）)]|[①②③④⑤⑥⑦⑧⑨⑩]+)\s*")
+
+
+def _teacher_items(text: str, cap: int = 40) -> list[str]:
+    """教师重点切片文本 → 考点条目（行拆分 + 要点符号清洗；≥6 字；去重保序）。"""
+    seen: list[str] = []
+    for line in (text or "").splitlines():
+        line = _BULLET_RE.sub("", line).strip(" \u3000|·-—：:，。；;")
+        if len(line) < 6:
+            continue
+        if line in seen:
+            continue
+        seen.append(line)
+        if len(seen) >= cap:
+            break
+    return seen
+
+
+def _proj_dir() -> Path:
+    from . import config as cfg
+    return Path(cfg.load().get("projects_dir") or (cfg.CONFIG_DIR / "projects"))
+
+
+def sync_teacher() -> dict[str, Any]:
+    """以教师重点为纲：扫描所有项目的 teacher 切片 → 考点条目（source='teacher'）。
+
+    幂等：同 (subject, chapter, item) 二次同步不重复（IDOR 更新）；不再有该项目的条目会保留
+    （学生可随时在视图里订正/删除）。返回统计。
+    """
+    dbs.migrate()
+    root = _proj_dir()
+    stats = {"projects": 0, "slices": 0, "items": 0, "subjects": []}
+    if not root.is_dir():
+        return stats
+    subject_set: set[str] = set()
+    with dbs.tx(write=True) as cur:
+        for proj in sorted(root.iterdir()):
+            if not proj.is_dir():
+                continue
+            meta_path = proj / "meta.json"
+            slices_path = proj / "slices.json"
+            if not slices_path.exists():
+                continue
+            subject = ""
+            if meta_path.exists():
+                try:
+                    subject = (json.loads(meta_path.read_text(encoding="utf-8"))
+                               .get("subject", "") or "").strip()
+                except Exception:  # noqa: BLE001
+                    subject = ""
+            subject = subject or "未分类"
+            try:
+                slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            found = 0
+            for s in slices:
+                if s.get("role") != "teacher":
+                    continue
+                text = (s.get("text") or "").strip()
+                if not text:
+                    continue
+                chapter = (s.get("title") or "").strip() or "教师重点"
+                items = _teacher_items(text)
+                stats["slices"] += 1
+                found += 1
+                for it in items:
+                    rec = {"id": _row_id(subject, chapter, it, "item", "teacher"),
+                           "subject": subject, "chapter": chapter, "kind": "item",
+                           "item": it, "weight": 1.0, "source": "teacher",
+                           "created_at": _now()}
+                    dbs.put_row(cur, "syllabus_items", rec,
+                                ("subject", "chapter", "kind", "item", "weight", "source"))
+                    stats["items"] += 1
+            if found:
+                stats["projects"] += 1
+                subject_set.add(subject)
+    stats["subjects"] = sorted(subject_set)
+    return stats
 
 
 def _kp_pool() -> list[str]:
@@ -205,9 +300,9 @@ def match_status(item: str, pool: list[str]) -> tuple[str, Optional[str]]:
     return "pending", None
 
 
-def coverage(subject: str = "") -> dict[str, Any]:
-    """科目覆盖度报表（树 + 计数）。零 LLM。"""
-    rows = _rows(subject)
+def coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
+    """科目覆盖度报表（树 + 计数）。零 LLM。source 限定 all|seed|teacher。"""
+    rows = _rows(subject, source)
     pool = _kp_pool()
     chapters: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -241,10 +336,11 @@ def coverage(subject: str = "") -> dict[str, Any]:
     }
 
 
-def report_md(subject: str = "") -> str:
+def report_md(subject: str = "", source: str = "all") -> str:
     """未覆盖清单 → markdown（充当「考前清单」）。"""
-    data = coverage(subject)
-    lines = [f"# 大纲覆盖报告 · {data['subject']}", "",
+    data = coverage(subject, source)
+    std = {"all": "全部标准", "seed": "官方大纲", "teacher": "教师重点"}.get(source, source)
+    lines = [f"# 大纲覆盖报告 · {data['subject']}（{std}）", "",
              f"> 共 {data['totals']['items']} 个考点：已覆盖 {data['totals']['covered']} · "
              f"已掌握 {data['totals']['mastered']} · 未覆盖 {data['totals']['pending']}", ""]
     for ch in data["chapters"]:

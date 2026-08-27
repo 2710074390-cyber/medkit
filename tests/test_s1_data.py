@@ -21,18 +21,21 @@ from medkit.core.providers import get_provider  # noqa: E402
 
 def test_zhipu_default_model_and_price_refreshed():
     z = get_provider("zhipu")
-    assert z["default_model"] == "glm-5.3", "智谱默认模型应换代至 glm-5.3"
+    assert z["default_model"] == "glm-5.3", "智谱默认模型应保持最新代际"
     assert z["price"]["input"] == 8.0 and z["price"]["output"] == 28.0, "2026-08 官方价 8/28"
     assert z["price"].get("cache_hit") == 2.0, "缓存命中 2 元/1M"
-    assert "GLM-5.3" in z["note"] and "4.7" in z["note"]
+    # 用户政策（AI 迭代快）：注记不固化代际/版本，改为「以官方最新为准」稳定引导
+    assert "以官方最新为准" in z["note"], "注记应引导以官方最新为准（不写死代际）"
+    assert "GLM-5.3" not in z["note"] and "4.7" not in z["note"], "注记不应固化版本断言"
 
 
 def test_qwen_note_no_stale_claim():
     z = get_provider("qwen")
-    assert "qwen-max 不支持" not in (z["note"] or ""), "过时说法应删除（qwen3-max 已支持联网）"
-    assert "Qwen3.8" in z["note"] or "qwen3-max" in z["note"]
+    assert "qwen-max" not in (z["note"] or "") and "Qwen3.8" not in (z["note"] or ""), \
+        "时效断言应删除（qwen3-max 系列/Qwen3.8 均不写死）"
+    assert "以官方最新为准" in (z["note"] or ""), "注记应引导以官方最新为准"
     bs = next(b for b in ws.BACKENDS if b["id"] == "qwen_tool")
-    assert "qwen-max 不支持" not in bs["note"]
+    assert "qwen-max" not in bs["note"]
 
 
 def test_zhipu_search_default_model_synced():

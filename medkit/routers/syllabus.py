@@ -41,13 +41,22 @@ class SeedBody(BaseModel):
 @router.get("/api/syllabus/status")
 def syllabus_status() -> dict[str, Any]:
     dbs.migrate()
-    return {"seed": syl.seed_info(), "subjects": syl.list_subjects()}
+    return {"seed": syl.seed_info(),
+            "subjects": syl.list_subjects(),
+            "teacher": {"items": sum(s["items"] for s in syl.list_subjects("teacher")),
+                        "subjects": [s["subject"] for s in syl.list_subjects("teacher")]}}
 
 
 @router.post("/api/syllabus/ensure")
 def syllabus_ensure(body: SeedBody) -> dict[str, Any]:
     dbs.migrate()
     return syl.ensure_seed(force=body.force)
+
+
+@router.post("/api/syllabus/sync-teacher")
+def syllabus_sync_teacher() -> dict[str, Any]:
+    """以教师重点为纲：从所有项目扫描 teacher 切片 → 考点条目（幂等）。"""
+    return syl.sync_teacher()
 
 
 # ---------------------------------------------------------------- 粘贴解析（零 LLM）
@@ -76,7 +85,7 @@ def syllabus_confirm(body: ConfirmBody) -> dict[str, Any]:
                             (subject, chapter))
                 replaced += cur.rowcount
         for it in body.items:
-            rec = {"id": syl._row_id(it.subject, it.chapter, it.item, "item"),
+            rec = {"id": syl._row_id(it.subject, it.chapter, it.item, "item", "paste"),
                    "subject": it.subject.strip(), "chapter": it.chapter.strip(),
                    "kind": "item", "item": it.item.strip(),
                    "weight": it.weight, "source": "paste", "created_at": _now()}
@@ -96,18 +105,18 @@ def _now() -> str:
 
 # ---------------------------------------------------------------- 查询与报表
 @router.get("/api/syllabus/tree")
-def syllabus_tree(subject: str = "") -> dict[str, Any]:
+def syllabus_tree(subject: str = "", source: str = "all") -> dict[str, Any]:
     dbs.migrate()
-    return syl.coverage(subject)
+    return syl.coverage(subject, source)
 
 
 @router.get("/api/syllabus/coverage")
-def syllabus_coverage(subject: str = "") -> dict[str, Any]:
+def syllabus_coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
     dbs.migrate()
-    return syl.coverage(subject)
+    return syl.coverage(subject, source)
 
 
 @router.get("/api/syllabus/report")
-def syllabus_report(subject: str = "") -> dict[str, str]:
+def syllabus_report(subject: str = "", source: str = "all") -> dict[str, str]:
     dbs.migrate()
-    return {"markdown": syl.report_md(subject)}
+    return {"markdown": syl.report_md(subject, source)}

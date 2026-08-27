@@ -412,6 +412,10 @@
     padding:0 5px;background:var(--card3);color:var(--dim);display:inline-flex;align-items:center;justify-content:center}
   .learnnav button.on .nb{background:rgba(255,255,255,.22);color:var(--onaccent)}
   .learnnav button .nb.hot{background:var(--bad);color:#fff}
+  .css-pills{display:inline-flex;gap:4px;padding:3px;background:var(--card2);border-radius:9px}
+  .css-pill{padding:5px 12px;border:none;border-radius:7px;background:none;color:var(--dim);cursor:pointer;font-size:12.5px}
+  .css-pill:hover{background:var(--card3);color:var(--text)}
+  .css-pill.on{background:var(--accent);color:var(--onaccent);font-weight:600}
   .learnview{display:none}
   .learnview.show{display:block}
   /* 侧栏徽章（学习中心：薄弱知识点数） */
@@ -956,9 +960,9 @@
         <div class="btns" style="margin-top:12px">
           <button class="act" id="btn_mk_add" onclick="addMistakeRaw()">入库错题</button>
           <button class="act gray" id="btn_mk_ocr" onclick="mkOcrPick()">拍题(图片 OCR)</button>
-          <button class="act gray" id="btn_mk_batch" onclick="mkBatchPick()">批量导入(JSON)</button>
+          <button class="act gray" id="btn_mk_batch" onclick="mkBatchPick()">批量导入(文件)</button>
           <input type="file" id="mk_image" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp" style="display:none" onchange="mkOcrFile(this)">
-          <input type="file" id="mk_json" accept=".json" style="display:none" onchange="mkBatchFile(this)">
+          <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
         </div>
         <h2 style="margin-top:20px">错题本<span class="hint" id="learn_mk_count" style="float:right"></span></h2>
         <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
@@ -1037,6 +1041,14 @@
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>大纲覆盖</h2><span class="hint" id="syl_meta"></span></div>
         <div class="hint" style="margin-bottom:10px">考试锚定：大纲（章 → 考点条目）与你的错题/掌握度实时对齐 —— 回答「这章考点我出过几题、掌握几项、还差什么」。条目可粘贴导入（本地解析零 LLM），缺什么补什么。</div>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap;align-items:center">
+          <div class="css-pills" id="syl_std" role="tablist" aria-label="数据标准">
+            <button class="css-pill on" data-std="teacher" role="tab" aria-selected="true">教师重点（为纲）</button>
+            <button class="css-pill" data-std="seed" role="tab" aria-selected="false">官方大纲</button>
+            <button class="css-pill" data-std="all" role="tab" aria-selected="false">全部</button>
+          </div>
+          <span class="hint" id="syl_std_hint" style="margin-left:10px"></span>
+        </div>
         <div class="row exp-bar" style="flex-wrap:wrap">
           <div style="flex:1;min-width:150px"><label>科目</label>
             <select id="syl_subject" onchange="sylRender(this.value)"><option value="">全部科目</option></select>
@@ -1390,13 +1402,19 @@ function updateLearnBadges(d) {
   const m = (d && d.mastery) || {};
   setLearnNavBadge((m.weak || 0) + (m.shaky || 0));
 }
-/* ---- ⑥ 大纲覆盖（WP-01 考试锚定） ---- */
+/* ---- ⑥ 大纲覆盖（WP-01 考试锚定 · 以教师重点为纲） ---- */
 let SYL_DRAFTS = [];
 let SYL_LOADED = false;
+let SYL_STD = "teacher";   // 数据标准：teacher=教师重点(默认) / official=官方大纲 / all=全部
 async function sylLoad() {
-  SYL_LOADED = true;
   const meta = document.getElementById("syl_meta");
   try {
+    // 首次打开：同步教师重点（扫项目 teacher 切片，幂等）
+    if (!SYL_LOADED) {
+      const sr = await api("/api/syllabus/sync-teacher", { method: "POST" });
+      if (sr.items) toast(`教师重点同步：${sr.items} 条考点（${sr.projects} 个项目）`);
+      SYL_LOADED = true;
+    }
     const st = await api("/api/syllabus/status");
     const subs = st.subjects || [];
     const sel = document.getElementById("syl_subject");
@@ -1405,9 +1423,27 @@ async function sylLoad() {
         .map(s => `<option value="${esc(s.subject)}">${esc(s.subject)}（${s.items} 条目）</option>`).join("");
     }
     if (st.seed && st.seed.exam && meta) meta.textContent = `种子：${st.seed.exam}`;
+    const t = st.teacher || { items: 0, subjects: [] };
+    const hint = document.getElementById("syl_std_hint");
+    if (hint) hint.textContent = t.items
+      ? `（教师重点：${t.items} 条 · ${t.subjects.join("、")}）`
+      : "（暂无教师重点——在「新建课题」上传教师重点后自动同步；也可用「粘贴导入」）";
     sylRender(sel ? sel.value : "");
   } catch (e) { if (meta) meta.textContent = ""; sylFail("加载失败：" + e.message); }
 }
+function sylSetStd(std) {
+  SYL_STD = std;
+  document.querySelectorAll("#syl_std .css-pill").forEach(b => {
+    const on = b.dataset.std === std;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  const sel = document.getElementById("syl_subject");
+  sylRender(sel ? sel.value : "");
+}
+document.querySelectorAll("#syl_std .css-pill").forEach(b => {
+  b.onclick = () => sylSetStd(b.dataset.std);
+});
 function sylFail(msg) {
   const b = document.getElementById("syl_body");
   if (b) b.innerHTML = `<div class="hint">${esc(msg)}</div>`;
@@ -1418,7 +1454,10 @@ async function sylRender(subject) {
   if (!body) return;
   body.innerHTML = '<div class="hint"><span class="spin"></span>计算覆盖度…</div>';
   try {
-    const d = await api("/api/syllabus/coverage" + (subject ? "?subject=" + encodeURIComponent(subject) : ""));
+    const qs = new URLSearchParams();
+    if (subject) qs.set("subject", subject);
+    qs.set("source", SYL_STD);
+    const d = await api("/api/syllabus/coverage?" + qs.toString());
     const t = d.totals || { items: 0, covered: 0, mastered: 0, pending: 0 };
     const pct = t.items ? Math.round((t.covered + t.mastered) / t.items * 100) : 0;
     stats.innerHTML = `<div class="syl-chips">
@@ -1429,7 +1468,10 @@ async function sylRender(subject) {
       <div class="syl-stat"><b>${pct}%</b><div class="hint">覆盖率</div></div>
     </div>`;
     if (!d.chapters || !d.chapters.length) {
-      body.innerHTML = '<div class="hint">暂无大纲条目 — 点「导入内置大纲」加载教材/真题种子（GoldenSet + 知识库素材），或「粘贴导入」。</div>';
+      const stdName = { teacher: "教师重点", seed: "官方大纲", all: "全部标准" }[SYL_STD];
+      body.innerHTML = `<div class="hint">暂无${stdName}条目 — ${SYL_STD === "teacher"
+        ? '在「新建课题」上传教师重点后自动同步；或「粘贴导入」教师重点考点清单。'
+        : SYL_STD === "seed" ? '点「导入内置大纲」加载教材/真题种子，或「粘贴导入」。' : '点「导入内置大纲」或「粘贴导入」。'}</div>`;
       return;
     }
     body.innerHTML = d.chapters.map(ch => {
@@ -1479,7 +1521,10 @@ async function sylParseConfirm() {
 }
 async function sylReport() {
   const subject = document.getElementById("syl_subject").value || "";
-  const r = await api("/api/syllabus/report" + (subject ? "?subject=" + encodeURIComponent(subject) : ""));
+  const qs = new URLSearchParams();
+  if (subject) qs.set("subject", subject);
+  qs.set("source", SYL_STD);
+  const r = await api("/api/syllabus/report?" + qs.toString());
   downloadText("大纲覆盖报告_" + (subject || "全部") + ".md", r.markdown);
 }
 
@@ -1808,14 +1853,25 @@ function mkBatchPick() { $("mk_json").click(); }
 async function mkBatchFile(input) {
   const f = input.files && input.files[0];
   if (!f) return;
+  const name = (f.name || "").toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() : "txt";
   try {
-    let rows = await f.text();
-    rows = JSON.parse(rows);
-    if (!Array.isArray(rows)) throw new Error("需为 JSON 数组");
-    const added = await api("/api/library/mistakes/batch", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rows) });
-    toast(`已批量入库 ${added.added || 0} 道`);
-    loadLibrary();
+    if (ext === "json") {
+      // JSON 历史兼容：直接数组提交（结构与批量接口一致），失败时回退 import-file 表单
+      let rows = JSON.parse(await f.text());
+      if (!Array.isArray(rows)) throw new Error("需为 JSON 数组");
+      const added = await api("/api/library/mistakes/batch", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rows) });
+      toast(`已批量入库 ${added.added || 0} 道`);
+      loadLibrary();
+    } else {
+      // csv / md / txt：统一走本地解析导入（多字段/多格式归一化）
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await api("/api/library/mistakes/import-file", { method: "POST", body: fd });
+      toast(`已导入 ${r.added} 道（解析 ${r.total}，跳过 ${r.skipped}）`);
+      loadLibrary();
+    }
   } catch (e) { toast(`批量导入失败：${e.message}`, false); }
   finally { input.value = ""; }
 }

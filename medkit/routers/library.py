@@ -75,6 +75,30 @@ def batch_mistakes(body: list[MistakeBody]) -> dict[str, Any]:
     return {"ok": True, "added": added}
 
 
+@router.post("/api/library/mistakes/import-file")
+async def import_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    """批量导入文件（本地解析，零 LLM）：.json / .csv / .md / .txt，按扩展名分派。"""
+    name = file.filename or ""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "文件为空")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("gb18030")
+        except UnicodeDecodeError:
+            raise HTTPException(400, "文件编码无法识别（请用 UTF-8）")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "txt"
+    if ext not in ("json", "csv", "md", "txt"):
+        raise HTTPException(400, f"不支持的文件类型 .{ext}（支持 json / csv / md / txt）")
+    rows = lib.parse_import_text(text, ext)
+    if not rows:
+        raise HTTPException(400, "未解析出题目——请检查文件格式（JSON 数组 / CSV 带表头 / 每题带题号与答案）")
+    added = lib.batch_add(rows)
+    return {"ok": True, "added": added, "total": len(rows), "skipped": len(rows) - added, "file": name}
+
+
 @router.post("/api/library/mistakes/sync-paper")
 def sync_paper(body: SyncPaperBody) -> dict[str, Any]:
     pid = body.pid or ""
