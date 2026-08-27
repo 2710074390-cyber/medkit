@@ -102,7 +102,8 @@ def test_concurrent_writes_no_lost_update(iso):
 
 def test_import_idempotent_and_renames(iso):
     db.migrate()
-    recs = [{"id": "m1", "question": "患儿 3 岁发热？"}, {"id": "m2", "question": "第二题"}]
+    recs = [{"id": "m1", "subject": "儿科", "question": "患儿 3 岁发热？"},
+            {"id": "m2", "subject": "儿科", "question": "第二题"}]
     (iso / "mistakes.json").write_text(json.dumps(recs, ensure_ascii=False), encoding="utf-8")
     (iso / "knowledge.json").write_text(
         json.dumps([{"id": "kp1", "name": "肺炎", "score": 0.4}], ensure_ascii=False),
@@ -119,6 +120,9 @@ def test_import_idempotent_and_renames(iso):
     assert len(baks) == 1                          # 导入改名（独立标签，不与迁移备份撞名）
     with db.tx(write=True) as cur:
         assert len(db.list_rows(cur, "mistakes")) == 2
+        # 查询列随导入填充（S1 聚合依赖；data JSON 无损在 row_to_dict）
+        assert [tuple(r) for r in cur.execute("SELECT DISTINCT subject FROM mistakes")] == [("儿科",)]
+        assert db.list_rows(cur, "mistakes")[0]["question"] == "患儿 3 岁发热？"
 
     # meta 标记：即使 JSON 又出现也只跳过一次（幂等）
     (iso / "mistakes.json").write_text(json.dumps(recs, ensure_ascii=False), encoding="utf-8")

@@ -253,17 +253,19 @@ def _json_rows(path: Path) -> list[dict[str, Any]]:
     return [r for r in data if isinstance(r, dict) and r.get("id")]
 
 
-IMPORT_MAP: dict[str, str] = {
-    "mistakes": "mistakes.json",
-    "knowledge": "knowledge.json",
-    "explains": "explains.json",
-    "review_cards": "review_queue.json",
-    "tutor_sessions": "tutor_sessions.json",
+IMPORT_MAP: dict[str, tuple[str, tuple[str, ...]]] = {
+    "mistakes": ("mistakes.json", ("subject", "chapter", "topic", "state",
+                                   "miss_count", "learned", "created_at")),
+    "knowledge": ("knowledge.json", ("name", "subject", "chapter", "state",
+                                     "priority", "score", "attempts", "last_tried")),
+    "explains": ("explains.json", ("subject", "kp_name", "created_at")),
+    "review_cards": ("review_queue.json", ("subject", "kp_name", "state", "due", "created_at")),
+    "tutor_sessions": ("tutor_sessions.json", ("subject", "kp_name", "state", "updated_at")),
 }
 
 
 def import_from_json() -> dict[str, str]:
-    """JSON → SQLite 幂等导入：以 id 为键 INSERT OR REPLACE；成功后原 JSON 改名 .pre-db-<ts>.bak。
+    """JSON → SQLite 幂等导入：以 id 为键；同时填充查询列（put_row）；成功后原 JSON 改名。
 
     返回 {表名: 状态}（"imported n" / "skip(no file)" / "skip(done)" / "skip(empty)"）。
     """
@@ -272,7 +274,7 @@ def import_from_json() -> dict[str, str]:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     result: dict[str, str] = {}
     with tx(write=True) as cur:
-        for table, fname in IMPORT_MAP.items():
+        for table, (fname, cols) in IMPORT_MAP.items():
             path = lib / fname
             if not path.exists():
                 result[table] = "skip(no file)"
@@ -287,10 +289,8 @@ def import_from_json() -> dict[str, str]:
             if not rows:
                 result[table] = "skip(empty)"
                 continue
-            cur.executemany(
-                f"INSERT OR REPLACE INTO {table} (id, data) VALUES (?, ?)",
-                [(r["id"], json.dumps(r, ensure_ascii=False)) for r in rows],
-            )
+            for r in rows:
+                put_row(cur, table, r, cols)
             cur.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
                 (f"imported::{table}", ts),
