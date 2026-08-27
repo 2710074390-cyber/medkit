@@ -378,16 +378,13 @@ def import_from_json() -> dict[str, str]:
             if not path.exists():
                 result[table] = "skip(no file)"
                 continue
-            done = cur.execute(
-                "SELECT value FROM meta WHERE key = ?", (f"imported::{table}",)
-            ).fetchone()
-            if done:
-                result[table] = "skip(done)"
-                continue
             rows = _json_rows(path)
             if not rows:
                 result[table] = "skip(empty)"
                 continue
+            # 幂等性由「导入成功后原 JSON 改名」保证；meta 标记仅作账本。
+            # 若导入后 JSON 又被写入（旧实例/导入源回流）→ 下次调用会按 id 幂等补导，
+            # 避免「JSON 活数据永远进不了 DB」的丢失风险（一次性标记曾导致该问题）。
             for r in rows:
                 put_row(cur, table, r, cols)
             cur.execute(

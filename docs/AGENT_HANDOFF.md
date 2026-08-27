@@ -87,6 +87,11 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
    空态文案（learn.js 的 `stdName`/提示分支）。
 7. **多 Agent 并发**：本仓库曾出现两个会话并发改同一批文件导致互相覆盖/回滚（git clean 会删
    未跟踪文件）。建议：长任务改完**立即提交**；重要产物放跟踪路径；勿用 `git clean`。
+10. **旧实例勿并行（数据分叉）**：JSON→SQLite 双态下，**旧版本实例**可能在 SQL 模式建立后继续
+   往 JSON 写活数据（`mistakes.json` 一度 182 条 vs DB 0 条），`import_from_json` 现已按 id
+   幂等补导兜底（一次性 imported 门禁已移除）。排查学习中心数据缺失时先查
+   `~/.medkit/library/mistakes.json` 与 `medkit.db` 行数是否一致；改存储逻辑后用**新实例**并
+   关闭旧实例，避免双写。
 8. **verify.cmd**：`ruff → pytest → 浏览器(Playwright)`；本地无浏览器/无网时
    `SET SKIP_BROWSER=1` 跳过浏览器层（CI 不含浏览器层，仅本地门）。
 9. **教师重点文件处理**：extract.py 对「扫描件 PDF（无文本层）」直接拒绝（mode='error' 提示先

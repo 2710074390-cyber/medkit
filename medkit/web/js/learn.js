@@ -352,8 +352,19 @@ async function rexReport() {
 /* ---- ⑧ 一键刷薄弱组卷（WP-03） ---- */
 async function gapPaper() {
   if (!FEATURES.gap) { toast("该功能已在服务端禁用", false); return; }
-  const subject = document.getElementById("dash_subject").value || "";
-  if (!subject) { toast("请先在上方选择科目范围", false); return; }
+  const sel = document.getElementById("dash_subject");
+  let subject = sel ? sel.value : "";
+  if (!subject) {
+    // 「全部科目」时自动取第一个可选科目（薄弱组卷必须绑定科目）——不再空报「科目范围」错
+    const first = sel && Array.from(sel.options).find(o => o.value);
+    if (first) {
+      subject = first.value;
+      if (sel) sel.value = subject;
+    } else {
+      toast("暂无可选科目：请先在「错题本」导入错题或确认知识点科目", false);
+      return;
+    }
+  }
   try {
     const r = await api("/api/library/gap-paper", { method: "POST",
       body: JSON.stringify({ subject, question_count: 50, w_freq: 15 }) });

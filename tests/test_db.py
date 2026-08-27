@@ -130,12 +130,24 @@ def test_import_idempotent_and_renames(iso):
         assert [tuple(r) for r in cur.execute("SELECT DISTINCT subject FROM mistakes")] == [("儿科",)]
         assert db.list_rows(cur, "mistakes")[0]["question"] == "患儿 3 岁发热？"
 
-    # meta 标记：即使 JSON 又出现也只跳过一次（幂等）
+    # JSON 导入后又被写入（旧实例/导入源回流）→ 下次调用按 id 幂等补导，
+    # 避免「JSON 活数据永远进不了 DB」的丢失风险（一次性标记曾导致该问题）
     (iso / "mistakes.json").write_text(json.dumps(recs, ensure_ascii=False), encoding="utf-8")
     result2 = db.import_from_json()
-    assert result2["mistakes"] == "skip(done)"
+    assert result2["mistakes"] == "imported 2"
     with db.tx(write=True) as cur:
-        assert len(db.list_rows(cur, "mistakes")) == 2
+        assert len(db.list_rows(cur, "mistakes")) == 2      # id 幂等：不重复
+    assert not (iso / "mistakes.json").exists()             # 补导后再改名
+
+    # 新 id 增量补导
+    (iso / "mistakes.json").write_text(
+        json.dumps(recs + [{"id": "m3", "subject": "儿科", "question": "第三题"}],
+                   ensure_ascii=False), encoding="utf-8")
+    result3 = db.import_from_json()
+    assert result3["mistakes"] == "imported 3"
+    with db.tx(write=True) as cur:
+        rows = db.list_rows(cur, "mistakes")
+        assert len(rows) == 3 and any(r["id"] == "m3" for r in rows)
 
 
 @pytest.mark.migration

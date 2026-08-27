@@ -17,14 +17,37 @@ def _open_overview(page, server_url: str):
     page.wait_for_selector("#tab-learn.show", timeout=15000)
 
 
-def test_gap_paper_no_subject_shows_toast(page, server_url):
-    """科目范围未选时点「一键刷薄弱组卷」→ 提示先选科目范围。"""
+def test_gap_paper_no_subject_autopicks_first(page, server_url):
+    """科目范围未选（全部科目）时点「一键刷薄弱组卷」：
+    A. 无任何可选科目 → 提示「暂无可选科目…」（新文案，不再报「科目范围」错）；
+    B. 有科目 → 自动选中第一个科目并进入组卷流程（不再要求用户先手选）。"""
     _open_overview(page, server_url)
-    # 概览视图默认激活，按钮静态存在
     page.locator("#btn_gap_paper").wait_for(state="visible", timeout=15000)
     page.click("#btn_gap_paper")
-    page.wait_for_selector('#toasts >> text=请先在上方选择科目范围', timeout=15000)
-    assert "请先在上方选择科目范围" in page.locator("#toasts").inner_text()
+    page.wait_for_selector('#toasts >> text=暂无可选科目', timeout=15000)
+
+    # 场景 B：注入一条带科目的错题 → 刷新后科目下拉有选项 → 自动选中
+    page.evaluate(
+        """async () => {
+          await fetch('/api/library/mistakes', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({source: 'manual', subject: '儿科学',
+              chapter: '呼吸', question: '测试错题？',
+              options: ['甲', '乙', '丙', '丁', '戊'], answer: 'A', analysis: '解析'})
+          });
+        }"""
+    )
+    page.reload()
+    page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
+    page.click('button[data-tab="learn"]')
+    page.wait_for_selector("#tab-learn.show", timeout=15000)
+    page.locator("#btn_gap_paper").wait_for(state="visible", timeout=15000)
+    page.click("#btn_gap_paper")
+    page.wait_for_timeout(1500)
+    assert "请先在上方选择科目范围" not in page.locator("#toasts").inner_text()
+    sel_value = page.evaluate("() => document.getElementById('dash_subject').value")
+    assert sel_value == "儿科学", f"应自动选中第一个可选科目，实得 {sel_value!r}"
 
 
 def test_gap_paper_api_empty_subject_soft_fails(page, server_url):
