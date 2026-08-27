@@ -12,5 +12,5 @@
   jieba 0.42.1 对 ~2.9 万字（38 块）分词 0.66s（含 0.6s 首次词典加载；词数 10,930）；
   分 10 块建 FTS5 索引 0.042s —— 1 万字切片远低于 1s 阈值。PyInstaller 复用同一 sqlite3 DLL，随包无风险
   （CI 增加 `pip check` + FTS5 建表冒烟作守门）。
-- 验证：`docs/spikes/`（K1 基准输出见 ADR-001 引用脚本）；`tests/test_db.py` 断言 `slices_fts` 存在。
+- 验证：`docs/archive/spikes/`（K1 基准输出见 ADR-001 引用脚本）；`tests/test_db.py` 断言 `slices_fts` 存在。
 - 回退：bigram + 内存 BM25（现状路径零改动）。

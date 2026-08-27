@@ -64,7 +64,7 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
   → 保序合并；任科失败仅记 `errors`；全败返回 None → 路由回退本地 `parse_text`。
 - **接口**：`POST /api/syllabus/seed/parse-file`（预览）· `seed/import-file`（预览 + `add_seed_items`
   幂等入库 source='seed'）。
-- **核验结论**（`docs/spikes/K3_syllabus_extract.py` + `k3_out/`）：独立解析器真值 402 条 →
+- **核验结论**（`docs/archive/spikes/K3_syllabus_extract.py` + `k3_out/`）：独立解析器真值 402 条 →
   recall 100.0% / precision 96.5% / 章名 66/75 / **10 条抽样 10/10（≥80% 闸门通过）**。
 
 ## 4. 陷阱与注意事项（踩过的坑）
