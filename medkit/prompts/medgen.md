@@ -66,6 +66,10 @@
 ```
 {syllabus_text}
 ```
+- 图像素材（如存在：**至少 1 题**引用其中一张——题干写「如图所示」，image_ref 必须取自下列列表）：
+```
+{image_sections}
+```
 
 ## 输出格式（严格 JSON，禁止任何多余文字）
 
@@ -83,7 +87,9 @@
     "case_order": 1,
     "case_stem": "仅 A3/A4：完整案例题干（每道子题冗余一份）",
     "group_kind": "case | option_group | \"\"",
-    "group": {"options": ["共享选项1", "...", "选项5"]}
+    "group": {"options": ["共享选项1", "...", "选项5"]},
+    "image_ref": "仅图题：素材清单中的 IMGx（且题干含「如图所示」）；无图题 \"\"",
+    "data_table": "仅表题：Markdown 表格字符串（含表头，供渲染 <table>）；无表题 \"\""
   }
 ]}
 ```

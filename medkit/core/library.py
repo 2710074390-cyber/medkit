@@ -205,6 +205,7 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
             "error_reason": str(data.get("error_reason", "") or "").strip(),
             "know_tags": [str(t).strip() for t in (data.get("know_tags") or []) if str(t).strip()],
             "bloom": str(data.get("bloom", "") or "").strip(),
+            "image_ref": str(data.get("image_ref") or "").strip(),
             "miss_count": max(int(data.get("miss_count", 1) or 1), 1),
             "learned": bool(data.get("learned", False)),
             # 出错样本入聚点时的归类快照：按 learned 记 correct/miss（入账当时）。
@@ -266,6 +267,7 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None) 
             "know_tags": [t for t in (q.get("know_tags") or []) if str(t).strip()]
                          or ([str(q.get("subtopic") or "").strip()] if q.get("subtopic") else []),
             "bloom": q.get("bloom") or "",
+            "image_ref": str(q.get("image_ref") or "").strip(),
             "error_reason": str(q.get("error_reason") or "").strip() or "reasoning",
             "correct": False,
         })

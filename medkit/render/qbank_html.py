@@ -5,13 +5,59 @@
 安全（A4，2026-08 审计）：押题卷 JS 所有插值经 esc() 转义；产物页自带明暗主题切换（V1）。
 """
 
+import base64
 import html as html_mod
 import json
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "X": "X 型 · 多选",
                "B1": "B1 型 · 共用选项", "A3": "A3 型 · 案例单选", "A4": "A4 型 · 案例单选"}
 LETTERS = "ABCDEFGHIJ"  # 渲染上限 10 个选项，超出部分由渲染前终检剔除（D2）
+
+
+# ---------------------------------------------------------------- WP-04 图/表渲染
+_MEDIA_CSS = """
+.fig{margin:10px 0;text-align:center;break-inside:avoid}
+.fig img{max-width:100%;max-height:420px;border-radius:10px;border:1px solid var(--line);background:#fff}
+.fig figcaption{font-size:12px;color:var(--dim);margin-top:4px}
+.qb table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px;break-inside:avoid;overflow-x:auto;display:block}
+.qb table th,.qb table td{border:1px solid var(--line);padding:5px 9px;text-align:left}
+.qb table th{background:var(--card2);color:var(--txt);font-weight:600}
+@media print{.fig img{max-height:260px}.qb table{display:table;font-size:11.5px}}
+"""
+
+
+def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None) -> str:
+    """题目的图像（base64 内嵌，单文件可移动）+ 表格（markdown → <table>，安全白名单）。"""
+    out: list[str] = []
+    ref = str(q.get("image_ref") or "")
+    if ref and image_index:
+        info = image_index.get(ref)
+        if info:
+            p = info.get("path") if isinstance(info, dict) else info
+            cap = ((info.get("caption") if isinstance(info, dict) else "") or "")
+            try:
+                data = Path(p).read_bytes()
+                import mimetypes
+                mime = mimetypes.guess_type(str(p))[0] or "image/png"
+                b64 = base64.b64encode(data).decode("ascii")
+                out.append(f'<figure class="fig"><img src="data:{mime};base64,{b64}" '
+                           f'alt="{html_mod.escape(cap)}"><figcaption>图 {html_mod.escape(ref)}'
+                           + (f" · {html_mod.escape(cap)}" if cap else "") + "</figcaption></figure>")
+            except Exception:  # noqa: BLE001  文件缺失/读取失败 → 跳过图（题保留）
+                pass
+    tbl = str(q.get("data_table") or "")
+    if tbl.strip():
+        try:
+            import markdown as _md
+
+            from .review_html import sanitize_html
+
+            out.append(sanitize_html(_md.markdown(tbl, extensions=["tables"])))
+        except Exception:  # noqa: BLE001
+            pass
+    return "".join(out)
 
 
 def _effective_options(q: dict[str, Any]) -> list[str]:
@@ -133,9 +179,10 @@ def _html_sub(q: dict[str, Any], show_options: bool = True) -> str:
             f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div>')
 
 
-def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
+def export_html(questions: list[dict[str, Any]], title: str = "题库",
+                image_index: Optional[dict[str, Any]] = None) -> str:
     """题库 HTML：案例/选项组按组折叠（S3），单题保持原 <details class=q data-type> 结构。
-    v0.7.1：搜索 + 全部题型过滤 + 计数 + 窄屏适配。
+    v0.7.1：搜索 + 全部题型过滤 + 计数 + 窄屏适配。WP-04：图像（base64）+ 表格渲染。
     """
     items = []
     for b in _case_blocks(questions):
@@ -152,6 +199,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
                 f'{html_mod.escape(TYPE_LABELS.get(str(first.get("type", "")), ""))} · '
                 f'{len(b["items"])} 道子题 · 点击展开案例题干</summary>'
                 f'<div class="qb"><p><b>案例题干</b>：{html_mod.escape(str(b["stem"]))}</p>'
+                + render_media(first, image_index)
                 + "".join(_html_sub(q) for q in b["items"]) + '</div></details>')
         elif b["kind"] == "option_group":
             shared = "<ul>" + "".join(
@@ -180,7 +228,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库") -> str:
                 f'<span class="tag">{html_mod.escape(str(q.get("type", "")))}</span> '
                 f'<span class="tag b">{html_mod.escape(str(q.get("bloom", "")))}</span> '
                 f'{html_mod.escape(str(q.get("question", ""))[:60])}…</summary>'
-                f'<div class="qb"><p><b>{html_mod.escape(str(q.get("subtopic", "")))}</b> · '
+                f'<div class="qb">{render_media(q, image_index)}<p><b>{html_mod.escape(str(q.get("subtopic", "")))}</b> · '
                 f'{html_mod.escape(str(q.get("question", "")))}</p><ul>{opts}</ul>'
                 f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
                 f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div></details>')
@@ -271,7 +319,8 @@ document.getElementById('qbloom').addEventListener('change',function(){{ftb(this
 </script>""", extras="qbank")
 
 
-def _questions_json_for_page(questions: list[dict[str, Any]]) -> str:
+def _questions_json_for_page(questions: list[dict[str, Any]],
+                             image_index: Optional[dict[str, Any]] = None) -> str:
     import json
     compact = []
     for q in questions:
@@ -287,12 +336,14 @@ def _questions_json_for_page(questions: list[dict[str, Any]]) -> str:
                         "analysis": q.get("analysis", ""), "case_label": label,
                         "case_id": q.get("case_id", ""),
                         "case_stem": q.get("case_stem", ""),
-                        "case_order": q.get("case_order", 0)})
+                        "case_order": q.get("case_order", 0),
+                        "media": render_media(q, image_index)})
     return json.dumps(compact, ensure_ascii=False).replace("</", "<\\/")
 
 
 def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷", *,
-                      pid: str = "", subject: str = "") -> str:
+                      pid: str = "", subject: str = "",
+                      image_index: Optional[dict[str, Any]] = None) -> str:
     """交互押题卷（I3 练习化）：
     - X 型 checkbox + 集合判分（A1 修复）
     - localStorage 实时保存作答 + 重开续答 + 答题卡 + 计时器
@@ -300,7 +351,7 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
     - 判分后「同步错题到学习中心错题本」（v0.7，POST /api/library/mistakes/sync-paper）
     - 所有插值经 esc()（A4 修复）
     """
-    qs = _questions_json_for_page(questions)
+    qs = _questions_json_for_page(questions, image_index)
     pid_json = json.dumps(pid or "")
     subj_json = json.dumps(subject or "")
     return _page(title, f"""
@@ -357,6 +408,7 @@ function render(){{
       h+='<div class="casebar" data-case="'+esc(q.case_id)+'">'+esc(q.case_label)+'</div>';
       lastCase=q.case_label;
     }}
+    if(q.media) h+=q.media;
     h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(TL[q.type]||q.type)+'</span>'
       +'<span class="tag b">'+esc(q.bloom)+'</span> <b>'+(i+1)+'.</b> '+esc(q.question)+'</p>';
     q.options.forEach((o,j)=>{{
@@ -623,6 +675,7 @@ details.q .qs:hover{color:var(--acc)}
 .banner.good{background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4);color:var(--good)}
 .banner.bad{background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);color:var(--bad)}
 @keyframes bannerin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+""" + _MEDIA_CSS + """
 @media (max-width:640px){.filters input[type=search]{min-width:100%;margin-top:4px}.sheet{justify-content:center}}
 @media print{.q{background:none;border:1px solid #999;break-inside:avoid}.sheet{display:none}.btns{display:none}.mini{display:none}.banner{display:none}}
 """

@@ -231,6 +231,20 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         syllabus_text = ""
     if syllabus_text:
         _log(base, f"📋 大纲锚定注入 {len(syllabus_text)} 字（subtopic 对齐考点条目）")
+    # WP-04：图像素材（图/表题）——清单注入提示词 + 渲染用索引
+    image_sections = ""
+    image_index: dict[str, Any] = {}
+    for _s in slices:
+        if _s.get("role") != "image" or not (_s.get("image") or {}).get("path"):
+            continue
+        _sid = _s.get("sid") or ""
+        if not _sid:
+            continue
+        image_index[_sid] = {"path": base / str(_s["image"]["path"]),
+                             "caption": _s.get("text") or _s.get("title") or ""}
+        image_sections += f"[{_sid}] {_s.get('text') or _s.get('title') or ''}\n"
+    if image_sections:
+        _log(base, f"🖼 图像素材 {len(image_index)} 个注入（鼓励出图题，image_ref 门禁校验）")
     ratios = _effective_ratios(meta.get("ratios", {}))
     quota = meta.get("quota", [])
     requirements = meta.get("requirements", "")     # 可玩性 1A
@@ -356,7 +370,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             gen_client, subject, exam, slice_by_sid[sid], cnt, ratios, teacher_text,
             ids_start=start_id, requirements=requirements, knobs=knobs, bloom=bloom,
             web_materials=web_materials_text, web_quota=web_ref_quota,
-            exam_text=exam_text, extra_text=extra_text, syllabus_text=syllabus_text)
+            exam_text=exam_text, extra_text=extra_text, syllabus_text=syllabus_text,
+            image_sections=image_sections)
         for i, q in enumerate(qs):
             q["id"] = f"Q{start_id + i:03d}"
         if len(qs) < cnt:
@@ -454,7 +469,16 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
     _log(base, f"  出题完成：{len(questions)} 题")
 
-    # ---------------- ② 门禁①（选项/Bloom/溯源/查重 自动修复循环）
+    # ---------------- ② 门禁①（选项/Bloom/溯源/查重/图像引用 自动修复循环）
+    # WP-04：image_ref 必须指向已上传的图片素材；不匹配 → 剔除并记 warning（防悬空图/幻觉图）
+    image_sids = {s.get("sid") for s in slices if s.get("role") == "image" and s.get("image")}
+    dropped_img = [q.get("id") for q in questions
+                   if q.get("image_ref") and image_sids and q.get("image_ref") not in image_sids]
+    if dropped_img:
+        questions = [q for q in questions
+                     if not (q.get("image_ref") and image_sids
+                             and q.get("image_ref") not in image_sids)]
+        _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题（image_ref 不在素材清单）")
     for round_i in range(1, FIX_ROUNDS_GATE + 2):
         _set_stage(base, meta_path, "gate1", f"② 门禁① 第 {round_i} 轮…")
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮")
@@ -559,7 +583,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     _set_stage(base, meta_path, "rendering", "⑥ 渲染产物…")
     _set_progress(base, "rendering", 0, 1, "生成 HTML…")
     qbank_md = qbank_html.export_md(questions, f"{subject} 题库")
-    qbank_html_text = qbank_html.export_html(questions, f"{subject} 题库")
+    qbank_html_text = qbank_html.export_html(questions, f"{subject} 题库",
+                                             image_index=image_index)
     (base / "最终产物" / "qbank.md").write_text(qbank_md, encoding="utf-8")
     (base / "最终产物" / "qbank.html").write_text(qbank_html_text, encoding="utf-8")
     rendered = ["qbank.md", "qbank.html"]
@@ -567,7 +592,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         paper_qs = _sample_paper(questions, min(PAPER_DEFAULT, len(questions)))
         (base / "最终产物" / "押题卷.html").write_text(
             qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
-                                         pid=pid, subject=subject), encoding="utf-8")
+                                         pid=pid, subject=subject,
+                                         image_index=image_index), encoding="utf-8")
         rendered.append("押题卷.html")
     if review_md and toggles.get("review", True):
         (base / "最终产物" / "复习手册.html").write_text(

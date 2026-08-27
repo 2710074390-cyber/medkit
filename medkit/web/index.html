@@ -1854,6 +1854,7 @@ function mkRowHTML(mm) {
   if (mm.source === "paper") meta.push(`<span class="mk-tag" style="color:var(--info);border-color:var(--info)">押题卷</span>`);
   if (mm.data_broken) meta.push(`<span class="mk-tag" style="color:var(--bad);border-color:var(--bad)">数据损坏</span>`);
   const detail = `
+    ${mm.image_ref && mm.source_ref && mm.source_ref.pid ? `<div><b>图</b>：<img src="/api/projects/${esc(mm.source_ref.pid)}/assets/${esc(mm.image_ref)}" style="max-width:320px;max-height:240px;border-radius:8px;border:1px solid var(--line);display:block;margin:6px 0" onerror="this.remove()"></div>` : ""}
     ${(mm.options || []).length ? `<div><b>选项</b>：${mm.options.map((o, i) => `${"ABCDEF"[i] || i + 1}. ${esc(o)}`).join("　")}</div>` : ""}
     ${mm.answer ? `<div class="ans">✓ 答案：${esc(mm.answer)}</div>` : ""}
     ${mm.user_answer ? `<div><b>我的作答</b>：${esc(mm.user_answer)}</div>` : ""}
@@ -3615,8 +3616,16 @@ async function showProject(pid) {
     <div class="quota">${quota}</div>
     <div id="pd_arts" class="hint" style="margin-top:8px">${artifactLinks(pid, meta.artifacts)}</div>
     ${usage}
+    <div class="hint" style="margin-top:12px"><b>图片素材（图/表题）</b>：上传教材插图 / 心电图 / 影像 / 辅检表截图，生成时提示出图题（image_ref 门禁校验，错题可随图查看）；无素材项目零影响。</div>
+    <div id="pd_assets" class="hint">加载中…</div>
+    <div class="row" style="margin-top:6px;flex-wrap:wrap">
+      <input type="text" id="pd_asset_cap" placeholder="图注（如：心电图 · 急性心梗）" style="flex:1;min-width:150px">
+      <button class="act gray" onclick="pdAssetPick()">上传图片</button>
+      <input type="file" id="pd_asset_file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif" style="display:none" onchange="pdAssetUp(this)">
+    </div>
     <pre id="pd_log"></pre>`;
   currentPid = pid;
+  pdAssets();
   stopPoll();
   updateRunBtn(meta.running);
   $("btn_review").style.display = meta.stage === "done" ? "inline-block" : "none";
@@ -3625,6 +3634,40 @@ async function showProject(pid) {
   if (meta.running) startPoll(pid);
   else if (["done", "error", "cancelled"].includes(meta.stage)) loadLog(pid);
 }
+async function pdAssets() {
+  try {
+    const r = await api("/api/projects/" + currentPid + "/assets");
+    const box = $("pd_assets");
+    if (!r.assets || !r.assets.length) { box.innerHTML = "暂无图片素材——上传后生成时可出图/表题。"; return; }
+    box.innerHTML = r.assets.map(a => `<div class="mk-row" style="margin:6px 0">
+      <img src="/api/projects/${esc(currentPid)}/assets/${esc(a.sid)}" alt="${esc(a.caption)}"
+        style="max-width:160px;max-height:110px;border-radius:8px;border:1px solid var(--line);margin-right:10px;vertical-align:middle"
+        onerror="this.style.display='none'">
+      <b>${esc(a.sid)}</b> · ${esc(a.caption)}<span class="hint"> · ${((a.bytes || 0) / 1024).toFixed(0)}KB</span>
+      <button class="act gray" style="padding:3px 9px;font-size:11px;margin-left:8px" onclick="pdAssetDel('${esc(a.sid)}')">删除</button>
+    </div>`).join("");
+  } catch (e) { const box = $("pd_assets"); if (box) box.innerHTML = "素材加载失败：" + esc(e.message); }
+}
+function pdAssetPick() { $("pd_asset_file").click(); }
+async function pdAssetUp(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("caption", $("pd_asset_cap").value || "");
+  try {
+    const r = await api("/api/projects/" + currentPid + "/assets", { method: "POST", body: fd });
+    toast(`已上传素材 ${r.sid}（生成时出图/表题并做 image_ref 门禁）`);
+    pdAssets();
+  } catch (e) { toast(e.message, false); }
+  finally { input.value = ""; }
+}
+async function pdAssetDel(sid) {
+  await api("/api/projects/" + currentPid + "/assets/" + sid, { method: "DELETE" });
+  toast("已删除素材 " + sid);
+  pdAssets();
+}
+
 async function loadLog(pid) {
   try {
     const s = await api("/api/projects/" + pid + "/status");

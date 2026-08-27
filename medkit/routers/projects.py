@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -16,6 +16,10 @@ from ..core import config as cfg
 from ..core.quota import allocate
 from ..state import RUNNING
 from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir
+
+_ALLOW_IMG = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+_IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".webp": "image/webp", ".gif": "image/gif"}
 
 router = APIRouter()
 
@@ -288,3 +292,106 @@ def export_apkg_file(pid: str) -> FileResponse:
         apkg = tmp
     return FileResponse(apkg, media_type="application/octet-stream",
                         filename=apkg.name)
+
+
+# ---------------------------------------------------------------- 图片素材（WP-04 图/表格题）
+def _image_slices(base: Path) -> list[dict[str, Any]]:
+    try:
+        slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    return [s for s in slices if s.get("role") == "image"]
+
+
+def _next_fig_no(base: Path) -> int:
+    asset_dir = base / "assets"
+    if not asset_dir.is_dir():
+        return 1
+    nums = [int(p.stem.replace("fig_", "")) for p in asset_dir.glob("fig_*")
+            if p.stem.replace("fig_", "").isdigit()]
+    return (max(nums) if nums else 0) + 1
+
+
+@router.post("/api/projects/{pid}/assets")
+async def upload_asset(pid: str, file: UploadFile = File(...),
+                       caption: str = Form("")) -> dict[str, Any]:
+    """上传教材图片/表格素材 → assets/fig_N.ext + 追加 image 切片（生成时可出图题）。"""
+    pid = _safe_pid(pid)
+    base = proj_dir(pid)
+    if not base.exists():
+        raise HTTPException(404, "项目不存在")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "文件为空")
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOW_IMG:
+        raise HTTPException(400, f"仅支持图片：{' / '.join(_ALLOW_IMG)}")
+    asset_dir = base / "assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    n = _next_fig_no(base)
+    fname = f"fig_{n}{ext}"
+    (asset_dir / fname).write_bytes(raw)
+    sid = f"IMG{n}"
+    cap = (caption or "").strip() or file.filename or f"图{n}"
+    try:
+        slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        slices = []
+    slices.append({"sid": sid, "role": "image", "title": cap, "text": cap,
+                   "image": {"path": f"assets/{fname}", "name": file.filename or fname,
+                             "caption": cap, "source": "upload"}})
+    (base / "slices.json").write_text(json.dumps(slices, ensure_ascii=False, indent=1),
+                                      encoding="utf-8")
+    return {"ok": True, "sid": sid, "path": f"assets/{fname}",
+            "caption": cap, "name": file.filename or fname}
+
+
+@router.get("/api/projects/{pid}/assets")
+def list_assets(pid: str) -> dict[str, Any]:
+    pid = _safe_pid(pid)
+    base = proj_dir(pid)
+    if not base.exists():
+        raise HTTPException(404, "项目不存在")
+    rows = []
+    for s in _image_slices(base):
+        img = s.get("image") or {}
+        full = base / str(img.get("path") or "")
+        rows.append({"sid": s.get("sid"), "caption": s.get("text") or img.get("caption") or "",
+                     "path": img.get("path") or "",
+                     "bytes": full.stat().st_size if full.exists() else 0})
+    return {"assets": rows}
+
+
+@router.get("/api/projects/{pid}/assets/{sid}")
+def asset_file(pid: str, sid: str) -> FileResponse:
+    """图片文件服务（学习中心错题/产物预览用）。"""
+    pid = _safe_pid(pid)
+    if not re.match(r"^[A-Za-z0-9_\-]+$", sid):
+        raise HTTPException(400, "非法图片标识")
+    base = proj_dir(pid)
+    s = next((x for x in _image_slices(base) if x.get("sid") == sid), None)
+    if not s:
+        raise HTTPException(404, "图片不存在")
+    f = base / str((s.get("image") or {}).get("path") or "")
+    if not f.exists() or f.suffix.lower() not in _ALLOW_IMG:
+        raise HTTPException(404, "图片文件缺失")
+    return FileResponse(f, media_type=_IMG_MIME.get(f.suffix.lower(), "application/octet-stream"))
+
+
+@router.delete("/api/projects/{pid}/assets/{sid}")
+def delete_asset(pid: str, sid: str) -> dict[str, Any]:
+    pid = _safe_pid(pid)
+    base = proj_dir(pid)
+    s = next((x for x in _image_slices(base) if x.get("sid") == sid), None)
+    if not s:
+        raise HTTPException(404, "图片不存在")
+    f = base / str((s.get("image") or {}).get("path") or "")
+    f.unlink(missing_ok=True)
+    try:
+        slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        slices = []
+    (base / "slices.json").write_text(
+        json.dumps([x for x in slices if x.get("sid") != sid], ensure_ascii=False, indent=1),
+        encoding="utf-8")
+    return {"ok": True}
