@@ -110,3 +110,25 @@ def test_router_explain_slices_uses_fts(fts_env):
     r2 = client.get("/api/library/explain/slices",
                     params={"subject": "内科学", "query": "不存在的关键词xyz"})
     assert r2.json()["slices"] == []
+
+
+# ---------------------------------------------------------------- NX-02（R-3）：jieba 缺失兜底（打包缺词典模拟）
+def test_fts_tokens_jieba_unavailable_falls_back(monkeypatch):
+    # 模拟打包环境 jieba 不可用 → 仅 bigram 兜底，绝不抛错
+    import sys
+
+    monkeypatch.setitem(sys.modules, "jieba", None)  # import jieba → ImportError
+    toks = dbs.fts_tokens("急性心力衰竭治疗")
+    assert "心力衰竭" not in toks
+    assert "心力" in toks and "力衰" in toks and "衰竭" in toks
+    expr = dbs.fts_match_expr("心衰")
+    assert expr and '"心衰"*' in expr  # 查询侧同样不抛错
+
+
+def test_retrieve_without_jieba_still_hits(fts_env, monkeypatch):
+    # 查询侧 jieba 缺失 → FTS 退回 bigram 命中，仍召回「心衰概述」
+    import sys
+
+    monkeypatch.setitem(sys.modules, "jieba", None)
+    hits = expl.retrieve(subject="内科学", query="心力衰竭")
+    assert any(h["title"] == "心衰概述" for h in hits)

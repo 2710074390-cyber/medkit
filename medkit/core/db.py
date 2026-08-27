@@ -369,14 +369,18 @@ def fts_tokens(text: str) -> list[str]:
 
     二元组兜底保证词典外的词组也能被检索命中（如「心衰」命中「心力衰竭」）；
     ASCII 统一小写（FTS5 unicode61 检索即小写，这里保持一致避免查询侧拼写漂移）。
+    NX-02（R-3）：jieba 缺失/词典损坏（打包环境常见）→ 仅 bigram 兜底，绝不抛错。
     """
-    import jieba  # noqa: PLC0415 懒加载：JSON 模式（未装/未建库）不拖垮导入
-
     toks: list[str] = []
-    for t in jieba.cut(text or ""):
-        t = t.strip().lower()
-        if t:
-            toks.append(t)
+    try:
+        import jieba  # noqa: PLC0415 懒加载：JSON 模式（未装/未建库）不拖垮导入
+
+        for t in jieba.cut(text or ""):
+            t = t.strip().lower()
+            if t:
+                toks.append(t)
+    except Exception:  # noqa: BLE001  NX-02：jieba 不可用 → 依赖下方 bigram 兜底
+        pass
     for seg in _CJK_SEG.findall((text or "").lower()):
         toks.extend(seg[i:i + 2] for i in range(len(seg) - 1))
     return toks

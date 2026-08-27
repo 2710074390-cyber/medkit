@@ -5,7 +5,7 @@
 产物：dist/MedKit/MedKit.exe（双击启动，自动打开浏览器 http://127.0.0.1:4880）
 """
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # uvicorn 动态导入的模块 + 第三方可执行模块，显式收集
 hiddenimports = [
@@ -18,12 +18,16 @@ hiddenimports = [
     "multipart", "markdown", "docx", "fitz", "openai", "genanki",
 ]
 hiddenimports += collect_submodules("pydantic")
+# NX-02（R-3）：jieba 的 posseg/finalseg 等为运行时动态导入，不显式收集则打包后 ImportError
+hiddenimports += collect_submodules("jieba")
 
 datas = [
     ("medkit/web", "medkit/web"),        # 静态前端（零 CDN）
-    ("medkit/prompts", "medkit/prompts"),  # 四个提示词模板（MedGen/QC/Fix/Review）
+    ("medkit/prompts", "medkit/prompts"),  # 提示词模板（medgen/medqc/medfix/medreview/medexplain/medtutor）
     ("medkit/data", "medkit/data"),      # 示例素材（/api/sample）
 ]
+# NX-02（R-3）：jieba 词典（dict.txt ≈5MB）不随包自动收集——缺词典则 FTS 分词静默退化
+datas += collect_data_files("jieba")
 
 a = Analysis(
     ["run_medkit.py"],
