@@ -139,14 +139,38 @@ def test_review_html_print_hides_theme_btn():
 
 
 def test_index_html_global_error_guards():
-    """E：主界面全局兜底 + 切页停轮询 + spinner 用 innerHTML。"""
-    idx = (ROOT / "medkit" / "web" / "index.html").read_text(encoding="utf-8")
-    assert "window.onerror" in idx, "应有全局脚本异常兜底"
-    assert "unhandledrejection" in idx, "应有异步错误兜底"
-    assert "if (name !== \"proj\")" in idx and "stopPoll()" in idx, "切走项目详情应停止轮询"
-    assert "ocrRunToken++" in idx, "离开页面应终止 OCR 轮询"
-    assert "stageEl.innerHTML = esc(s.stage_label)" in idx, "spinner 应写入 innerHTML（旧 textContent 显示字面文本）"
-    assert "try { localStorage.setItem(\"medkit-theme\"" in idx, "主题写入应容错"
+    """E：主界面全局兜底 + 切页停轮询 + spinner 用 innerHTML。
+
+    IMP-07 前端拆分后这些守卫/逻辑分布在 web/js/*.js（index.html 只留骨架），
+    断言改为「读全 web 目录所有 js/css 后包含」——语义不变（纯搬运）。
+    """
+    web = ROOT / "medkit" / "web"
+    blob = "".join(p.read_text(encoding="utf-8")
+                   for p in web.rglob("*.js")) + \
+           "".join(p.read_text(encoding="utf-8")
+                   for p in web.rglob("*.css")) + \
+           (web / "index.html").read_text(encoding="utf-8")
+    assert "window.onerror" in blob, "应有全局脚本异常兜底"
+    assert "unhandledrejection" in blob, "应有异步错误兜底"
+    assert "if (name !== \"proj\")" in blob and "stopPoll()" in blob, "切走项目详情应停止轮询"
+    assert "ocrRunToken++" in blob, "离开页面应终止 OCR 轮询"
+    assert "stageEl.innerHTML = esc(s.stage_label)" in blob, "spinner 应写入 innerHTML（旧 textContent 显示字面文本）"
+    assert "try { localStorage.setItem(\"medkit-theme\"" in blob, "主题写入应容错"
+
+
+def test_paper_html_a11y_and_retry_markers():
+    """IMP-08/12：押题卷产物 a11y 标记 + 同步失败重试按钮（模块级持续防御）。"""
+    from medkit.render.qbank_html import export_paper_html
+
+    qs = [{"id": "Q001", "type": "X", "bloom": "理解", "subtopic": "测试",
+           "question": "哪些正确？", "options": ["a", "b", "c", "d", "e"],
+           "answer": "BDE", "analysis": "解析"}]
+    h = export_paper_html(qs, "押题卷")
+    assert '<fieldset class="optfs"><legend class="sr">' in h, "选项应包 fieldset/legend"
+    assert 'aria-label="\'+tip+\'"' in h, "答题卡格子应有 aria-label"
+    assert 'role="status" aria-live="polite" tabindex="-1"' in h, "判分结果应角色化"
+    assert "aria-pressed" in h and "aria-label=\"切换亮暗主题\"" in h, "主题按钮应带 aria"
+    assert "bannerRetry" in h and "重试 ↻" in h, "同步失败提示条应带重试按钮"
 
 
 def test_medfix_merge_keeps_provenance():

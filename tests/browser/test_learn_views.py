@@ -76,6 +76,44 @@ def test_learn_views_narrow_no_overflow(page, server_url):
         assert overflow <= 2, f"视图 {name} 横向溢出 {overflow}px（390px 视口）"
 
 
+def test_learn_views_breakpoints_no_overflow(page, server_url):
+    """IMP-11：断点收敛（480/640/860 三档）——四视口下六视图均无横向溢出。"""
+    page.goto(server_url)
+    page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
+    page.click('button[data-tab="learn"]')
+    page.wait_for_selector("#tab-learn.show", timeout=15000)
+    for w, h in ((860, 900), (820, 900), (640, 900), (480, 900)):
+        page.set_viewport_size({"width": w, "height": h})
+        for name in VIEWS:
+            page.click(f'#learnnav button[data-lv="{name}"]')
+            page.locator(f"#lv-{name}").wait_for(state="visible", timeout=15000)
+            overflow = 999
+            for _ in range(6):
+                page.wait_for_timeout(300)
+                overflow = page.evaluate(
+                    "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+                )
+                if overflow <= 2:
+                    break
+            assert overflow <= 2, f"{w}px × 视图 {name} 溢出 {overflow}px"
+
+
+def test_learn_views_shortcut_keys(page, server_url):
+    """IMP-12①：Alt+1..6 直达子导航；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
+    _open_learn(page, server_url)
+    page.keyboard.press("Alt+6")
+    assert page.locator('#learnnav button[data-lv="syllabus"]').get_attribute("aria-selected") == "true"
+    assert page.locator("#lv-syllabus").is_visible()
+    page.keyboard.press("Alt+1")
+    assert page.locator("#lv-overview").is_visible()
+    # ←/→：聚焦当前 pill（overview）→ 右键 → mistakes
+    page.locator('#learnnav button[data-lv="overview"]').focus()
+    page.keyboard.press("ArrowRight")
+    assert page.locator("#lv-mistakes").is_visible(), "→ 应切到错题本"
+    page.keyboard.press("ArrowLeft")
+    assert page.locator("#lv-overview").is_visible(), "← 应切回概览"
+
+
 def test_theme_toggle_flips_data_theme(page, server_url):
     """点击主题按钮：data-theme 在 light/dark 间翻转，且内容仍渲染。"""
     page.goto(server_url)

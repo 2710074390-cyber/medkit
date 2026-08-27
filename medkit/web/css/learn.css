@@ -1,0 +1,118 @@
+      .learn-bar{height:8px;border-radius:5px;background:var(--card3);overflow:hidden;flex:1;min-width:60px}
+      .learn-bar i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--good),#2dd4bf)}
+      .learn-chip{padding:1px 8px;border-radius:999px;font-size:11.5px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+      .learn-chip.weak{color:#f87171;border-color:#f8717133;background:#f8717114}
+      .learn-chip.shaky{color:#fbbf24;border-color:#fbbf2433;background:#fbbf2414}
+      .learn-chip.solid{color:#34d399;border-color:#34d39933;background:#34d39914}
+      .learn-chip.mastered{color:var(--good);border-color:var(--good33);background:var(--good14)}
+      .learn-chip.pending{color:var(--dim);border-color:var(--line);background:transparent}
+      .syl-chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+      .syl-stat{flex:1;min-width:88px;background:var(--card2);border-radius:10px;padding:10px 12px;text-align:center}
+      .syl-stat b{font-size:20px;display:block}
+      .syl-chap{margin:16px 0 6px;font-size:13.5px;font-weight:600;color:var(--text)}
+      .syl-item{display:flex;gap:8px;align-items:flex-start;padding:7px 10px;border-radius:8px;background:var(--card2);margin:4px 0}
+      .syl-item .grow{flex:1;min-width:0}
+      .syl-item .grow b{font-weight:500;word-break:break-all}
+      .syl-item .hint{font-size:11px;margin-top:2px}
+      .mk-row{display:flex;gap:12px;padding:10px 2px;border-bottom:1px dashed var(--line);align-items:flex-start}
+      .mk-row:last-child{border-bottom:none}
+      .mk-row .q{flex:1;color:var(--text)}
+      .mk-row .meta{font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.6}
+      .mk-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+      .mk-actions button{white-space:nowrap}
+      /* ---- M2 掌握度驾驶舱（含状态分布环图 / 指标卡 / 弱项清单） ---- */
+      .dash-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
+      .dash-metric{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:8px 6px;text-align:center;min-width:0}
+      .dash-metric b{display:block;font-size:20px;font-variant-numeric:tabular-nums;line-height:1.2}
+      .dash-metric span{font-size:11px;color:var(--dim)}
+      .dash{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:14px}
+      .dash-legend{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px}
+      .dash-weak{margin-top:14px}
+      .dash-weak h3{font-size:12.5px;color:var(--dim);margin:0 0 6px;font-weight:600}
+      .stack-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;flex:1;min-width:60px;background:var(--card3)}
+      .stack-bar .ok{background:linear-gradient(90deg,var(--good),#2dd4bf)}
+      .stack-bar .miss{background:#f87171}
+      /* ---- 学习闭环总览 ---- */
+      .loop-flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+      .loop-node{flex:1;min-width:96px;text-align:center;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 6px}
+      .loop-node b{display:block;font-size:24px;font-variant-numeric:tabular-nums;color:var(--accent);line-height:1.2}
+      .loop-node span{font-size:11.5px;color:var(--dim)}
+      .loop-node.mastered b{color:var(--good)}
+      .loop-arrow{display:flex;align-items:center;color:var(--dim);padding:0 5px;font-weight:700}
+      .dashmr{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+      .dmr{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+      .dmr .dm-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+      .dmr b{font-size:22px;font-variant-numeric:tabular-nums;line-height:1.1}
+      .dmr em{font-style:normal;color:var(--dim);font-size:11.5px}
+      .dmr .dm-sub{margin-top:4px;font-size:11.5px;color:var(--dim);line-height:1.6}
+      .dmr .dm-sub .bar{display:inline-block;height:6px;border-radius:4px;background:var(--card3);vertical-align:middle;width:120px;overflow:hidden;margin-left:4px}
+      .dmr .dm-sub .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--good),#2dd4bf)}
+      .dmr.acc b{color:var(--accent)} .dmr.warn b{color:#fbbf24} .dmr.good b{color:var(--good)}
+      @media(max-width:640px){.dashmr{grid-template-columns:1fr}.loop-arrow{display:none}.loop-node{min-width:48%}}
+      @media(max-width:640px){.dash-metrics{grid-template-columns:repeat(3,1fr)}.dash{grid-template-columns:1fr}.dash-legend{grid-template-columns:1fr}}
+      .learn-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+      .exp-bar{display:flex;gap:10px;align-items:flex-end}
+      .exp-article{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-top:8px;font-size:13.5px;line-height:1.7;max-height:480px;overflow-y:auto}
+      .exp-article h2,.exp-article h3,.exp-article h4{margin:12px 0 6px;color:var(--text)}
+      .exp-article h2:first-child,.exp-article h3:first-child,.exp-article h4:first-child{margin-top:0}
+      .exp-article p{margin:6px 0}
+      .exp-article ul{margin:4px 0;padding-left:18px}
+      .exp-article li{margin:3px 0}
+      .exp-article code{background:var(--card3);padding:1px 5px;border-radius:4px;font-size:13px}
+      .exp-article blockquote{border-left:3px solid var(--good);padding:4px 12px;margin:8px 0;color:var(--dim);background:var(--card3);border-radius:0 6px 6px 0}
+      @media(max-width:860px){.learn-grid{grid-template-columns:1fr}}
+      /* ---- M4 提问式学习（Socratic MedTutor）---- */
+      .tu-wrap{display:grid;grid-template-columns:250px 1fr;gap:16px;margin-top:10px}
+      .tu-side{display:flex;flex-direction:column;gap:8px;max-height:520px;overflow-y:auto;border-right:1px solid var(--line);padding-right:12px}
+      .tu-item{padding:9px 11px;border:1px solid var(--line);border-radius:9px;cursor:pointer;background:var(--card2);transition:border-color .15s}
+      .tu-item:hover{border-color:var(--info)}
+      .tu-item.active{border-color:var(--good)}
+      .tu-item .ti-name{font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tu-item .ti-meta{font-size:11px;color:var(--dim);margin-top:2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+      .tu-item .ti-x{margin-left:auto;color:var(--bad);background:none;border:none;cursor:pointer;font-size:14px;padding:0 2px}
+      .tu-state{display:flex;gap:6px;margin:8px 0 4px}
+      .tu-state i{flex:1;height:7px;border-radius:4px;background:var(--card2);transition:background .2s}
+      .tu-state i.on{background:currentColor}
+      .tu-legend{display:flex;gap:12px;font-size:11.5px;color:var(--dim);flex-wrap:wrap}
+      .tu-legend b{font-weight:600}
+      .tu-legend .s-weak{color:#f87171}.tu-legend .s-shaky{color:#fbbf24}
+      .tu-legend .s-solid{color:#34d399}.tu-legend .s-mastered{color:var(--good)}
+      .tu-bubbles{max-height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:2px 4px 6px 0}
+      .tu-q,.tu-a,.tu-gap,.tu-next{max-width:88%;padding:9px 12px;border-radius:12px;font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+      .tu-q{background:var(--card2);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+      .tu-a{background:var(--infobg);border:1px solid var(--info);align-self:flex-end;border-bottom-right-radius:4px;color:var(--text)}
+      .tu-a small{display:block;font-size:11px;color:var(--info);margin-bottom:3px}
+      .tu-gap{align-self:center;text-align:center;font-size:12.5px;color:var(--dim);background:var(--card2);border-radius:999px;padding:4px 12px;max-width:96%}
+      .tu-badge{font-size:11px;color:var(--dim);margin-bottom:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+      .tu-badge b{color:var(--info)}
+      .tu-inputbar{display:flex;gap:8px;margin-top:12px;align-items:flex-end}
+      .tu-inputbar textarea{flex:1;min-height:56px}
+      .tu-inputbar button{flex:none}
+      .tu-next{align-self:flex-start;font-weight:600;color:var(--text)}
+      .tu-score{font-weight:700;font-variant-numeric:tabular-nums}
+      @media(max-width:860px){.tu-wrap{grid-template-columns:1fr}.tu-side{border-right:none;max-height:none}}
+      /* ---- M5 复习计划（SM-2 间隔重复）---- */
+      .rv-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+      .rv-stat{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:9px 10px;text-align:center}
+      .rv-stat b{font-size:20px;display:block;font-variant-numeric:tabular-nums}
+      .rv-stat span{font-size:11.5px;color:var(--dim)}
+      .rv-card{border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin-top:8px;background:var(--card2)}
+      .rv-top{display:flex;align-items:center;gap:8px}
+      .rv-x{margin-left:auto;color:var(--bad);background:none;border:none;cursor:pointer;font-size:16px;padding:0 2px}
+      .rv-q{font-size:14px;color:var(--text);font-weight:600;margin-top:6px}
+      .rv-meta{font-size:11.5px;color:var(--dim);margin-top:3px}
+      .rv-grades{display:flex;gap:5px;align-items:center;margin-top:9px;flex-wrap:wrap}
+      .rv-grades button{flex:1;min-width:30px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--card3);color:var(--dim);font-size:12px;cursor:pointer;font-variant-numeric:tabular-nums}
+      .rv-grades button:hover{border-color:var(--info);color:var(--info);background:var(--infobg)}
+      .rv-grades .rv-g0:hover{color:var(--bad);border-color:var(--bad)}
+      .rv-grades .rv-g5:hover{color:var(--good);border-color:var(--good)}
+      .rv-legend{font-size:11px;margin-top:5px}
+      .rv-hint{margin-top:9px;border:1px solid var(--line);border-radius:9px;padding:7px 11px;background:var(--reqbg)}
+      .rv-hint summary{font-size:12.5px;color:var(--info)}
+      details.rex-fold{margin-top:8px;border:1px solid var(--line);border-radius:9px;
+        padding:8px 12px;background:var(--reqbg)}
+      details.rex-fold summary{font-size:12.5px;color:var(--info);cursor:pointer}
+      .rv-hintbody{margin-top:8px}
+      .rv-slice{margin:6px 0;padding:8px 11px;background:var(--card3);border-radius:8px;font-size:12.5px;line-height:1.75}
+      .rv-slice b{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px}
+      @media(max-width:480px){.rv-stats{grid-template-columns:1fr 1fr}}

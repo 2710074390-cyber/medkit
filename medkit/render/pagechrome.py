@@ -20,7 +20,7 @@ BASE_CSS = """\
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:radial-gradient(900px 500px at 20% -10%,var(--bgc1),transparent 55%),linear-gradient(160deg,var(--bg),var(--bgc2));color:var(--txt);padding:28px}
 .meta{color:var(--dim);font-size:12.5px;margin-bottom:14px}
-button.mini,.mini{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit}
+button.mini,.mini,.btn{background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit}  # IMP-11/G-15：产物页 .btn 与 .mini 同语言（纯 CSS 映射）
 .hint{font-size:12.5px;color:var(--dim);margin-top:8px}
 .hint.good{color:var(--good)}
 .hint.bad{color:var(--bad)}
