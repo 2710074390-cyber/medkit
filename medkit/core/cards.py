@@ -197,3 +197,17 @@ def delete_card(cid: str) -> bool:
         st["cards"] = remains
         st["dirty"] = True
     return True
+
+
+def delete_by_source(source: str) -> int:
+    """C6：按来源（讲解产物 id / 生成来源）级联删除记忆卡，返回删除数量。"""
+    if not source:
+        return 0
+    _ensure_schema()
+    with _store() as st:
+        remain = [c for c in st["cards"] if str(c.get("source") or "") != str(source)]
+        n = len(st["cards"]) - len(remain)
+        if n:
+            st["cards"] = remain
+            st["dirty"] = True
+    return n

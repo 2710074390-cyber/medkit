@@ -79,14 +79,17 @@ async function api(path, opts = {}) {
   }
   return j;
 }
-function confirmModal(title, body, okLabel, onOk, danger = true) {
+function confirmModal(title, body, okLabel, onOk, danger = true, onCancel = null) {
   $("md_title").textContent = title;
   $("md_body").innerHTML = body;
   $("md_ok").textContent = okLabel || "确认";
   $("md_ok").className = "act " + (danger ? "danger" : "");
   $("modal_mask").style.display = "flex";
   $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; onOk(); };
-  $("md_cancel").onclick = () => { $("modal_mask").style.display = "none"; };
+  $("md_cancel").onclick = () => {
+    $("modal_mask").style.display = "none";
+    if (typeof onCancel === "function") onCancel();   // C13：取消后回调（如提示已创建的待运行项目）
+  };
   $("md_ok").focus();
 }
 /* 带文本输入的对话框（替代原生 prompt，风格统一） */

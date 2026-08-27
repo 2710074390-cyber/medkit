@@ -115,5 +115,24 @@ def test_apkg_reimport_same_project_no_dup_note_guids():
     c2.close()
 
 
+def test_apkg_b1_group_options_present():
+    """B1 组题（HC-7：options 恒空、共享选项在 group.options）在 .apkg 卡面必须带选项。"""
+    qs = [
+        {"id": "B001", "type": "B1", "bloom": "记忆", "subtopic": "病原", "module": "第五章",
+         "sid": "S005", "question": "上呼吸道感染最常见的病原？", "options": [],
+         "group_kind": "option_group", "group": {"options": ["支原体", "肺炎链球菌", "腺病毒",
+                                                             "呼吸道合胞病毒", "金黄色葡萄球菌"]},
+         "answer": "B", "analysis": "解析【源:切片S005】"},
+    ]
+    p = TMP / "b1.apkg"
+    export_apkg(qs, "儿科学", "B1选项", p)
+    con = _read_anki2(p)
+    rows = con.execute("select flds from notes").fetchall()
+    assert len(rows) == 1
+    flds = rows[0][0]
+    assert "A. 支原体" in flds and "B. 肺炎链球菌" in flds, f"B1 卡应含共享选项，实际：{flds}"
+    con.close()
+
+
 def test_apkg_cleanup():
     shutil.rmtree(TMP, ignore_errors=True)

@@ -146,12 +146,31 @@ def _effective_ratios(ratios: dict[str, int]) -> dict[str, int]:
 
 
 def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
-    """按模块+Bloom 分层取样（组卷）。"""
+    """按模块+Bloom 分层取样（组卷）。
+
+    ME-6：案例组（A3/A4，同 case_id）视为**原子**——子题同进同出，防止子题被拆散
+    后丢共享案例题干上下文；B1 选项组子题相互独立（共享选项随子题自带），可单抽。
+    """
     n = max(10, min(n, len(questions)))
-    by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    # 1) 案例组原子合并为「组块」
+    groups: list[list[dict[str, Any]]] = []
+    gidx: dict[str, int] = {}
     for q in questions:
-        by_key.setdefault((q.get("sid", ""), q.get("bloom", "")), []).append(q)
+        cid = q.get("case_id")
+        if cid and q.get("group_kind") == "case":
+            if cid not in gidx:
+                gidx[cid] = len(groups)
+                groups.append([])
+            groups[gidx[cid]].append(q)
+        else:
+            groups.append([q])
+    # 2) 按首个题目 (sid, bloom) 分桶（组随首题桶）
+    by_key: dict[tuple[str, str], list[list[dict[str, Any]]]] = {}
+    for g in groups:
+        by_key.setdefault((g[0].get("sid", ""), g[0].get("bloom", "")), []).append(g)
     for v in by_key.values():
+        for g in v:
+            random.shuffle(g)
         random.shuffle(v)
     keys = sorted(by_key.keys())
     picked: list[dict[str, Any]] = []
@@ -159,12 +178,34 @@ def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any
     while len(picked) < n and keys:
         for k in keys:
             bucket = by_key[k]
-            if bucket and len(picked) < n:
-                picked.append(bucket.pop(0))
+            # 桶内连续抽取（组为原子）：避免一轮只抽一组导致案例组跨轮被拆散
+            while bucket and len(picked) + len(bucket[0]) <= n:
+                picked.extend(bucket.pop(0))
         i += 1
         if i > 200:
             break
     return picked[:n]
+
+
+def _save_paper_ids(base: Path, paper_qs: list[dict[str, Any]]) -> None:
+    """ME-7：记录押题卷抽样的题目 id —— 审核台「保存并重渲染」据此复用，避免抽样漂移。"""
+    try:
+        (base / "最终产物" / "paper_ids.json").write_text(
+            json.dumps({"ids": [q.get("id") for q in paper_qs]}, ensure_ascii=False),
+            encoding="utf-8")
+    except OSError:  # 写失败不阻断渲染（仅失去防漂移能力）
+        pass
+
+
+def select_paper_stable(saved_ids: list[str], questions: list[dict[str, Any]],
+                        n: int = PAPER_DEFAULT) -> list[dict[str, Any]]:
+    """ME-7：押题卷抽样防漂移——优先复用上次抽样（仍存在于题库的 id），
+    仅当复用结果不足（题库被剔除/重掷导致缺口）时重新抽样补足。"""
+    by_id = {q.get("id"): q for q in questions}
+    picked = [by_id[i] for i in (saved_ids or []) if i in by_id]
+    if len(picked) < min(n, len(questions)):
+        picked = _sample_paper(questions, min(n, len(questions)))
+    return picked
 
 
 def _load_checkpoint(base: Path) -> tuple[set[str], list[dict[str, Any]]]:
@@ -583,6 +624,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
 
     # ---------------- ④ 最终题库落盘
     _set_stage(base, meta_path, "finalizing", "④ 汇总题库…")
+    _set_progress(base, "finalizing", 0, 1, "汇总题库与终检…")
     for i, q in enumerate(questions):
         q.setdefault("id", f"Q{i + 1:03d}")
     # 渲染前终检（D2）：修复轮用尽仍超限/缺字段的题剔除出产物 + 人工复核清单
@@ -624,6 +666,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     rendered = ["qbank.md", "qbank.html"]
     if toggles.get("paper", True):
         paper_qs = _sample_paper(questions, min(PAPER_DEFAULT, len(questions)))
+        _save_paper_ids(base, paper_qs)   # ME-7：审核重渲染时防抽样漂移
         (base / "最终产物" / "押题卷.html").write_text(
             qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
                                          pid=pid, subject=subject,

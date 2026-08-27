@@ -615,9 +615,11 @@ def _drop_knowledge_of_in(st: dict[str, Any], rec: dict[str, Any]) -> None:
         st["dirty"]["knowledge"] = True
 
 
-def get_mastery_view() -> dict[str, Any]:
-    """掌握度驾驶舱：知识点全貌 + 全局统计。"""
+def get_mastery_view(subject: str = "") -> dict[str, Any]:
+    """掌握度驾驶舱：知识点全貌 + 全局统计（C1：可选按科目过滤，供概览顶部与闭环同口径）。"""
     kps = _load(KNOWLEDGE_FILE)
+    if subject:
+        kps = [k for k in kps if k.get("subject") == subject]
     for kp in kps:
         kp.setdefault("score", 0.0)
         kp["state"] = compute_state(kp["score"])
@@ -628,19 +630,21 @@ def get_mastery_view() -> dict[str, Any]:
         "shaky": sum(1 for k in kps if k["state"] == "shaky"),
         "solid": sum(1 for k in kps if k["state"] == "solid"),
         "mastered": sum(1 for k in kps if k["state"] == "mastered"),
-        "total_mistakes": len(list_mistakes()),
+        "total_mistakes": sum(1 for m in list_mistakes()
+                              if not subject or m.get("subject") == subject),
     }
     kps.sort(key=lambda k: k["priority"], reverse=True)
     return {"knowledge": kps, "stats": stats}
 
 
-def recommend(limit: int = 10) -> list[dict[str, Any]]:
+def recommend(limit: int = 10, subject: str = "") -> list[dict[str, Any]]:
     """「接下来重点学什么」：先筛「薄弱或有错」的知识点，再按 priority 降序。
 
     早期实现曾以 `(state=="weak", priority)` 排序，导致 weak 一票否决 shaky——
     即使 shaky 因错过更频繁、掌握分更低也排不上去。改为纯 priority 单键排序。
+    C1：subject 过滤与概览科目范围同口径。
     """
-    view = get_mastery_view()
+    view = get_mastery_view(subject)
     kps = [k for k in view["knowledge"] if k["miss"] > 0 or k["state"] in ("weak", "shaky")]
     kps.sort(key=lambda k: k["priority"], reverse=True)
     return kps[: max(1, int(limit))]

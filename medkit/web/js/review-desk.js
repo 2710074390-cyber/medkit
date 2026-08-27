@@ -175,14 +175,18 @@ function pickProvider(pr) {
   updateWsNote();
 }
 $("btn_test").onclick = async () => {
+  const btn = $("btn_test"); btn.disabled = true;
+  const old = btn.textContent; btn.textContent = "连接中…";
   $("test_result").innerHTML = '<span class="spin"></span>正在连接…';
   try {
     const r = await api("/api/llm/test", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base_url: $("base_url").value.trim(), api_key: $("api_key").value.trim(), model: modelValue("model_gen") }) });
     $("test_result").innerHTML = `<span class="hint ${r.ok ? "good" : "bad"}">${esc(r.msg)}</span>`;
   } catch (e) { $("test_result").innerHTML = `<span class="hint bad">${esc(e.message)}</span>`; }
+  finally { btn.disabled = false; btn.textContent = old; }
 };
 $("btn_models").onclick = async () => {
+  const btn = $("btn_models"); btn.disabled = true;
   $("btn_models").innerHTML = '<span class="spin"></span>获取中…';
   try {
     const r = await api("/api/llm/models", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -198,7 +202,7 @@ $("btn_models").onclick = async () => {
       toast(r.msg || "未能获取模型列表（可「手动输入」）", false);
     }
   } catch (e) { toast(e.message, false); }
-  $("btn_models").textContent = "获取模型列表";
+  finally { btn.disabled = false; btn.textContent = "获取模型列表"; }
 };
 $("btn_save").onclick = async () => {
   try {
@@ -222,12 +226,15 @@ $("btn_save").onclick = async () => {
   } catch (e) { toast(e.message, false); }
 };
 $("btn_mineru_test").onclick = async () => {
+  const btn = $("btn_mineru_test"); btn.disabled = true;
+  const old = btn.textContent; btn.textContent = "测试中…";
   $("mineru_test_result").innerHTML = '<span class="spin"></span>测试 OCR 服务…';
   try {
     const r = await api("/api/mineru/test", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: $("mineru_key").value.trim() }) });
     $("mineru_test_result").innerHTML = `<span class="hint ${r.ok ? "good" : "bad"}">${esc(r.msg)}</span>`;
   } catch (e) { $("mineru_test_result").innerHTML = `<span class="hint bad">${esc(e.message)}</span>`; }
+  finally { btn.disabled = false; btn.textContent = old; }
 };
 
 /* ---- ① 网络检索设置 */
@@ -235,12 +242,15 @@ function syncWsManual() {
   $("ws_manual_wrap").style.display = $("ws_backend").value === "manual" ? "block" : "none";
 }
 $("btn_ws_test").onclick = async () => {
+  const btn = $("btn_ws_test"); btn.disabled = true;
+  const old = btn.textContent; btn.textContent = "测试中…";
   $("ws_test_result").innerHTML = '<span class="spin"></span>测试检索后端…';
   try {
     const r = await api("/api/search/test", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ backend: $("ws_backend").value, api_key: $("ws_key").value.trim() }) });
     $("ws_test_result").innerHTML = `<span class="hint ${r.ok ? "good" : "bad"}">${esc(r.msg)}</span>`;
   } catch (e) { $("ws_test_result").innerHTML = `<span class="hint bad">${esc(e.message)}</span>`; }
+  finally { btn.disabled = false; btn.textContent = old; }
 };
 $("btn_ws_save").onclick = async () => {
   try {
@@ -439,6 +449,14 @@ function bloomSum() {
 ["b_mem", "b_und", "b_app", "b_cre"].forEach(id => $(id).addEventListener("input", bloomSum));
 $("web_quota").addEventListener("input", () => { $("web_quota_val").textContent = $("web_quota").value + "%"; });
 $("requirements").addEventListener("input", () => { $("req_count").textContent = $("requirements").value.length + "/500"; });
+/* B6：题数/配比/Bloom/检索配额变化 → 防抖刷新成本预估与就绪检查（与最终配置一致） */
+let estT = null;
+function scheduleReady() {
+  clearTimeout(estT);
+  estT = setTimeout(() => { if ($("tab-proj") && $("tab-proj").classList.contains("show")) updateReady(); }, 450);
+}
+["target", "r_a1", "r_a2", "r_b1", "r_x", "b_mem", "b_und", "b_app", "b_cre", "web_quota"]
+  .forEach(id => { const el = $(id); if (el) el.addEventListener("input", scheduleReady); });
 
 /* ---- ② 预设（2C） */
 function currentFormPayload() {
@@ -534,6 +552,8 @@ $("f_preset_import").onchange = async () => {
 
 /* ---- ② 素材拖拽 */
 const ROLE_LABEL = { textbook: "教材", teacher: "教师重点", exam: "真题", extra: "资料" };
+/* B1：上传类型白名单与后端 TEXT_SUFFIXES 对齐（.bmp 后端支持但 accept 未列 → 补上；.doc 不支持） */
+const UP_OK_EXT = ["pdf", "docx", "md", "markdown", "txt", "text", "png", "jpg", "jpeg", "webp", "bmp"];
 ["textbook", "teacher", "exam", "extra"].forEach(role => {
   const dz = $("dz_" + role), input = $("f_" + role);
   input.onchange = () => { addFiles(role, [...input.files]); input.value = ""; };
@@ -553,6 +573,11 @@ function addFiles(role, files) {
   const list = state.files[role];
   for (const f of files) {
     if (!f || !f.size) { toast("空文件已忽略", false); continue; }
+    const ext = (f.name || "").split(".").pop().toLowerCase();
+    if (ext && !UP_OK_EXT.includes(ext)) {
+      toast(`「${f.name}」类型不支持（支持 PDF/DOCX/MD/TXT/图片 png·jpg·webp·bmp），已跳过`, false);
+      continue;
+    }
     list.push({ name: f.name, size: f.size, file: f });
   }
   renderDz(role);
@@ -578,14 +603,18 @@ let pres = state.pres;
 async function parseGroup(role) {
   const files = state.files[role].map(f => f.file);
   if (!files.length) return null;
+  // B1：单个超限文件只跳过该文件，不再让整组解析失败
+  const okFiles = [];
   for (const f of files) {
     if (f.size > 200 * 1024 * 1024) {
-      toast(`「${f.name}」超过 200 MB：请按章节拆分成多个文件后再上传`, false);
-      return null;
+      toast(`「${f.name}」超过 200 MB：已跳过，其余文件继续解析（建议按章节拆分后重传）`, false);
+      continue;
     }
+    okFiles.push(f);
   }
+  if (!okFiles.length) return null;
   const fd = new FormData();
-  files.forEach(f => fd.append("files", f));
+  okFiles.forEach(f => fd.append("files", f));
   fd.append("role", role);
   fd.append("ocr", $("t_ocr").checked ? "1" : "0");
   return await api("/api/parse", { method: "POST", body: fd });
@@ -718,7 +747,7 @@ function renderResults(roleLabel, res) {
       const warns = (r.warnings || []).map(w => `<div class="warnline">${esc(w)}</div>`).join("");
       wrap.innerHTML += `<div class="res"><span class="name">${esc(r.name)}</span> · ${r.chars} 字 · ${r.slice_count} 切片 · 估算输入 ≈ ${((r.est_tokens || 0) / 10000).toFixed(1)} 万 token
         ${ocrBadge}${warns}
-        <details><summary>预览切片</summary>${(r.slices || []).slice(0, 12).map(s => `<div><b>[${esc(s.sid)}] ${esc(s.title || "（全文）")}</b><br>${esc(s.preview)}…</div>`).join("<hr>")}</details></div>`;
+        <details><summary>预览切片（${(r.slices || []).length} 条，全部展开）</summary>${(r.slices || []).map(s => `<div><b>[${esc(s.sid)}] ${esc(s.title || "（全文）")}</b><br>${esc(s.preview)}${(s.text || "").length > (s.preview || "").length ? "…" : ""}</div>`).join("<hr>")}</details></div>`;
     } else {
       wrap.innerHTML += `<div class="res" style="border-color:var(--bad)"><span class="name">${esc(r.name)}</span> <span class="hint bad">${esc(r.error)}</span></div>`;
     }
@@ -933,6 +962,11 @@ function fullSlices(res) {
 
 /* ---- 试出一题（迭代1B） */
 $("btn_trial").onclick = async () => {
+  if (!(state.cfg && state.cfg.api_key_masked)) {
+    toast("试出一题需要用 API Key——请先在「① 连接服务商」保存", false);
+    showTab("conn"); $("api_key").focus();
+    return;
+  }
   const slices = fullSlices(pres.textbook);
   if (!slices.length) return toast("请先解析教材（或点「载入示例」）再试出题", false);
   if (!filesCount(pres.teacher)) return toast("请先解析教师重点（必填）", false);
@@ -951,6 +985,7 @@ $("btn_trial").onclick = async () => {
         requirements: $("requirements").value.trim(),
         knobs: collectKnobs(),
         ratios: ratioSum(),
+        bloom: bloomSum(),
         slice_sid: s.sid, slice_title: s.title || "", slice_text: s.text,
         teacher_text: teacherText,
         exam_text: examText, extra_text: extraText,
@@ -1081,12 +1116,12 @@ function artifactLinks(pid, names) {
       <span class="ai">${ico}</span><span><b>${esc(label)}</b><small>${esc(n)}</small></span></a>`;
   }).join("") + `</div>`;
 }
-const STEPS = [["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"],
+const STEPS = [["websearch", "网络检索"], ["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"],
                ["finalizing", "汇总"], ["reviewing", "复习"], ["rendering", "产物"]];
 function stepIdx(stage) {
   if (stage === "done") return STEPS.length;
-  // 可选/终态阶段不给步骤高亮（stage_label 负责显示真实状态，stepper 保持全灰避免误导）
-  if (["websearch", "cancelled", "error", "quota", "parsing"].includes(stage)) return -1;
+  // 终态/未进入阶段不给步骤高亮（stage_label 负责显示真实状态，stepper 保持全灰避免误导）
+  if (["cancelled", "error", "quota", "parsing"].includes(stage)) return -1;
   const i = STEPS.findIndex(s => s[0] === stage);
   return i === -1 ? 0 : i;
 }
@@ -1112,10 +1147,11 @@ async function showProject(pid) {
   $("proj_detail").style.display = "block";
   $("pd_title").textContent = `项目详情 · ${meta.subject}`;
   const quota = (meta.quota || []).map(q =>
-    `<span>${esc(q.title ? q.title.slice(0, 14) : q.sid)}：${q.count}题</span>`).join("");
+    `<span>${esc(q.title ? (q.title.length > 14 ? q.title.slice(0, 14) + "…" : q.title) : q.sid)}：${q.count}题</span>`).join("");
   const usage = meta.usage ? `<div class="hint" style="margin-top:6px">本次消耗：输入 ${meta.usage.prompt_tokens} + 输出 ${meta.usage.completion_tokens} token
     ${meta.usage.est_cost_cny != null ? `≈ ¥${meta.usage.est_cost_cny}` : ""}（以官网为准）</div>` : "";
-  const ankiOk = meta.stage === "done";
+  // ME-9：Anki 导出按「产物文件是否存在」判断（后端已放开 stage 门禁）——error/取消后已产出的文件同样可下载
+  const ankiOk = (meta.artifacts || []).some(n => /\.apkg$/i.test(n) || /^anki_export\.txt$/i.test(n));
   const extra = [];
   if (meta.requirements) extra.push(`附加要求：${esc(meta.requirements).slice(0, 60)}`);
   if (meta.bloom && Object.keys(meta.bloom).length) extra.push(`Bloom：${["记忆","理解","应用","创造"].map(k => (meta.bloom[k] ?? 0) + "%").join("/")}`);
@@ -1123,9 +1159,12 @@ async function showProject(pid) {
   if (meta.image_warning) extra.push(`⚠️ 本轮未产出图题（已有图片素材可重试/加大题量）`);
   if (meta.exam_chars) extra.push(`自备真题 ${meta.exam_chars.toLocaleString()} 字（考点/风格校准，不照抄）`);
   if (meta.extra_chars) extra.push(`补充资料 ${meta.extra_chars.toLocaleString()} 字`);
+  if ((meta.artifacts || []).some(n => /人工复核清单/.test(n))) {
+    extra.push("📋 人工复核清单：被门禁/质检/网络冲突拦截、需人工确认的题与原因（见下方产物卡片）");
+  }
   $("pd_body").innerHTML = `
     <div class="meta hint">${esc(meta.exam)} · 目标 ${meta.target} 题 · 阶段：<span id="pd_stage">${esc(meta.stage_label || meta.stage || "……")}</span><br>
-    产物：${meta.toggles.qbank ? "题库✓" : "题库✗"} ${meta.toggles.paper ? "押题卷✓" : "押题卷✗"} ${meta.toggles.review ? "复习手册✓" : "复习手册✗"}
+    产物开关：${meta.toggles.qbank ? "题库✓" : "题库✗"} ${meta.toggles.paper ? "押题卷✓" : "押题卷✗"} ${meta.toggles.review ? "复习手册✓" : "复习手册✗"}
     ${ankiOk ? `<a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/anki">导出 Anki（.txt）</a>
       <a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/apkg" download>S3 导出 Anki（.apkg）</a>
       <a class="btnart" href="javascript:void(0)" onclick="ankiPreview('${esc(pid)}')" title="导出前先看卡面样式">预览 Anki 卡样</a>
@@ -1149,7 +1188,7 @@ async function showProject(pid) {
   currentPid = pid;
   pdAssets();
   stopPoll();
-  updateRunBtn(meta.running);
+  updateRunBtn(meta.running, meta.stage);
   $("btn_review").style.display = meta.stage === "done" ? "inline-block" : "none";
   $("review_panel").style.display = "none";
   $("proj_detail").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1198,16 +1237,21 @@ async function loadLog(pid) {
   } catch (e) { /* ignore */ }
 }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } pollFails = 0; }
-function updateRunBtn(running) {
+function updateRunBtn(running, stage) {
   const b = $("btn_run");
+  if (!b) return;
   if (running) {
     b.textContent = "⏹ 停止生成（保留断点）";
     b.className = "act danger";
     b.dataset.running = "1";
+    b.dataset.resume = "";
   } else {
-    b.textContent = "开始生成";
+    // B9：error/cancelled 后按钮统一进入「重试生成（从断点）」态（离开再回来也保持）
+    const canResume = stage === "error" || stage === "cancelled";
+    b.textContent = canResume ? "重试生成（从断点）" : "开始生成";
     b.className = "act";
     b.dataset.running = "";
+    b.dataset.resume = canResume ? "1" : "";
   }
 }
 function fmtLogLine(l) {
@@ -1235,14 +1279,13 @@ function startPoll(pid) {
       if (logEl) renderLog(logEl, s.log || []);
       const arts = $("pd_arts");
       if (arts && s.artifacts) arts.innerHTML = "已生成：" + artifactLinks(pid, s.artifacts);
-      updateRunBtn(s.running);
+      updateRunBtn(s.running, s.stage);
       if (!s.running && ["done", "error", "cancelled"].includes(s.stage)) {
         stopPoll();
         if (s.stage === "done") { toast("全部产物生成完成 "); $("btn_review").style.display = "inline-block"; }
         if (s.stage === "cancelled") toast("已取消：题目与断点已保留，可再次「开始生成」续跑", false);
         if (s.stage === "error") {
-          toast("生成出错：详见下方日志；可点「开始生成」从断点重试（质检及之后阶段会重跑）", false);
-          const b = $("btn_run"); if (b) { b.textContent = "重试生成（从断点）"; }
+          toast("生成出错：详见下方日志；可点「重试生成（从断点）」续跑（质检及之后阶段会重跑）", false);
         }
         loadLog(pid);
       }
@@ -1268,9 +1311,20 @@ $("btn_run").onclick = async () => {
           } catch (e) { toast(e.message, false); }
         });
     } else {
-      await api("/api/projects/" + pid + "/run", { method: "POST" });
-      toast("管线已启动：⓪网络检索(可选) → MedGen 出题 → 门禁① → MedQC 质检 → MedFix 修复 → 汇总 → MedReview 复习手册 → 渲染产物");
-      startPoll(pid);
+      const resume = $("btn_run").dataset.resume === "1";
+      const go = async () => {
+        try {
+          await api("/api/projects/" + pid + "/run", { method: "POST" });
+          toast("管线已启动：⓪网络检索(可选) → MedGen 出题 → 门禁① → MedQC 质检 → MedFix 修复 → 汇总 → MedReview 复习手册 → 渲染产物");
+          startPoll(pid);
+        } catch (e) { toast(e.message, false); }
+      };
+      if (resume) {
+        // B9：重试前说明重跑范围与费用（用户不知情下重跑可能再次消耗 token）
+        confirmModal("从断点重试？",
+          "<p>已完成的切片<b>不会</b>重跑；<b>质检/修复/复习/渲染阶段会重跑</b>并产生相应 token 消耗（以实际用量为准）。</p>",
+          "从断点重试", go, false);
+      } else go();
     }
   } catch (e) { toast(e.message, false); }
 };
@@ -1358,6 +1412,18 @@ function applyReviewFilter() {
   const cnt = $("rev_filter_cnt");
   if (cnt) cnt.textContent = `筛选后 ${visible} / ${reviewState.questions.length} 题`;
 }
+/* B10：答案键校验（与后端 R0 口径一致；A1/A2/A3/A4/B1 单字母，X 型≥2 字母且不重复） */
+function answerIssue(type, ans, optCount) {
+  const a = String(ans || "").replace(/[\s,，、]+/g, "").toUpperCase();
+  const letters = "ABCDEFGHIJ".slice(0, Math.max(optCount || 4, 4));
+  if (!a) return "答案键不能为空";
+  if (type === "X") {
+    if (a.length < 2) return "X 型答案至少 2 个字母（当前「" + a + "」）";
+    if (new Set(a).size !== a.length) return "答案键有重复字母";
+  } else if (a.length !== 1) return "单选/案例题答案应为单字母（当前「" + a + "」）";
+  if ([...a].some(c => letters.indexOf(c) < 0)) return "含选项字母范围外字符（选项 A~" + letters.slice(-1) + "）";
+  return "";
+}
 function renderReview(scrollToId = null) {
   const box = $("review_panel");
   const qs = reviewState.questions;
@@ -1383,6 +1449,8 @@ function renderReview(scrollToId = null) {
         <button class="act gray" id="rev_bb_apply" style="padding:8px 12px;font-size:12.5px">应用</button>
         <button class="act gray" id="rev_drop_sel" style="padding:8px 12px;font-size:12.5px;color:#f87171">批量剔除</button>
         <button class="act gray" id="rev_restore_sel" style="padding:8px 12px;font-size:12.5px;color:var(--good)">批量恢复</button>
+        <button class="act gray" id="rev_sel_vis" style="padding:8px 12px;font-size:12.5px">全选可见</button>
+        <button class="act gray" id="rev_sel_inv" style="padding:8px 12px;font-size:12.5px">反选</button>
         <button class="act gray" id="rev_unsel" style="padding:8px 12px;font-size:12.5px">取消选择</button>
       </span>
       <button class="act gray" id="rev_keepall" style="padding:8px 14px;font-size:12.5px">全部保留</button>
@@ -1418,13 +1486,25 @@ function renderReview(scrollToId = null) {
     toast("已全部保留");
   };
   $("rev_dropall").onclick = () => {
-    confirmModal("全部剔除？", `<p style="margin:0;color:var(--dim)">将把<b>全部 ${qs.length} 道题</b>标记为剔除（可逐题恢复后保存）。确定继续？</p>`,
-      "全部剔除", () => {
-        qs.forEach(q => reviewState.drop.add(q.id));
+    const f = reviewState.filter;
+    const filtered = !!(f.type || f.bloom || f.q);
+    // 有筛选时「全部剔除」只作用于当前可见（筛选结果），防误删被隐藏的题
+    const visIds = filtered
+      ? [...document.querySelectorAll(".revq")].filter(d => d.style.display !== "none").map(d => d.dataset.qid)
+      : null;
+    const target = visIds && visIds.length ? visIds : qs.map(q => q.id);
+    confirmModal(filtered ? "剔除筛选结果？" : "全部剔除？",
+      `<p style="margin:0;color:var(--dim)">${filtered
+        ? `将把当前筛选后可见的 <b>${target.length} 道题</b>标记为剔除（共 ${qs.length} 题；可逐题恢复后保存）。确定继续？`
+        : `将把<b>全部 ${qs.length} 道题</b>标记为剔除（可逐题恢复后保存）。确定继续？`}</p>`,
+      "剔除", () => {
+        target.forEach(id => reviewState.drop.add(id));
         reviewState.dirty = true;
         document.querySelectorAll(".revq").forEach(d => {
-          d.classList.add("dropped");
-          d.querySelector("[data-a=drop]").textContent = "↩ 恢复";
+          if (target.includes(d.dataset.qid)) {
+            d.classList.add("dropped");
+            d.querySelector("[data-a=drop]").textContent = "↩ 恢复";
+          }
         });
         updateRevCount(); $("rev_save").disabled = false;
       });
@@ -1479,16 +1559,23 @@ function renderReview(scrollToId = null) {
         <button class="inlineBtn blue revact" data-a="regen">重掷</button>
         <button class="inlineBtn blue revact" data-a="copy" title="复制题面文本到剪贴板">复制</button>
       </div>
-      <div class="qbody" data-f="body">${esc(ed.question ?? q.question)}
+      <div class="qbody" data-f="body">${(q.image_ref || q.data_table)
+        ? `<div class="hint" style="margin:0 0 6px">${q.image_ref ? `🖼 含图：${esc(q.image_ref)}（如图所示）` : ""}${q.data_table ? `<span class="tag">📋 含表格数据</span>` : ""}</div>` : ""}${esc(ed.question ?? q.question)}
         <ul>${opList.map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("</li><li>")}</ul>
         <div class="hint good">✓ 答案：${esc(ed.answer ?? q.answer)} · ${esc((ed.analysis ?? q.analysis) || "")}</div>
       </div>
       <div class="optsrow" data-f="editrow" style="${ed._editOpen ? "" : "display:none"}">
+        <select class="eb" data-e="type" style="max-width:96px" title="题型">
+          <option value="">题型</option>
+          ${["A1","A2","A3","A4","B1","X"].map(t => `<option value="${t}" ${(ed.type ?? q.type) === t ? "selected" : ""}>${t}</option>`).join("")}
+        </select>
+        <input class="eb" data-e="subtopic" placeholder="章节/知识点" value="${esc(ed.subtopic ?? q.subtopic ?? "")}" style="max-width:170px">
         <input class="eb" data-e="question" placeholder="题干" value="${esc(ed.question ?? q.question)}">
         <input class="eb" data-e="analysis" placeholder="解析" value="${esc((ed.analysis ?? q.analysis) || "")}">
         <input class="eb" data-e="answer" placeholder="答案键（如 B / BDE）" value="${esc(ed.answer ?? q.answer)}" style="max-width:120px">
         <input class="eb" data-e="bloom" placeholder="Bloom（记忆/理解/应用/创造）" value="${esc(ed.bloom ?? q.bloom)}" style="max-width:180px">
       </div>
+      <div class="hint bad" data-f="anschk" style="display:none;margin:4px 0"></div>
       <div class="optsrow" data-f="editopts" style="${ed._editOpen ? "" : "display:none"}">
         ${opList.map((o, i) =>
           `<input class="eb" data-e="opt${i}" placeholder="选项${LETTERS[i]}" value="${esc(o)}">`).join("")}
@@ -1519,6 +1606,11 @@ function renderReview(scrollToId = null) {
       copyText(text, d.querySelector("[data-a=copy]"));
     };
     d.querySelector("[data-a=regen]").onclick = async () => {
+      // B12：案例/选项组子题、图/表题重掷会破坏组结构或 image_ref——前端先拦截
+      if (q.group_kind === "case" || q.group_kind === "option_group" || q.case_id || q.image_ref || q.data_table) {
+        toast("该题属于案例/选项组或含图/表：重掷会破坏组结构或图题引用，请用「编辑」修改", false);
+        return;
+      }
       const btn = d.querySelector("[data-a=regen]");
       btn.disabled = true; btn.textContent = "重掷中…";
       try {
@@ -1531,16 +1623,30 @@ function renderReview(scrollToId = null) {
         await openReview(true, q.id);
       } catch (e) { toast(e.message, false); btn.disabled = false; btn.textContent = "重掷"; }
     };
+    /* B10：答案键按题型即时校验（A 型单字母 / X 型≥2 字母且均在选项范围内） */
+    const checkAns = () => {
+      const e = reviewState.edits[q.id] = reviewState.edits[q.id] || {};
+      const t = e.type || q.type || "";
+      const a = e.answer !== undefined ? e.answer : q.answer;
+      const n = e.options ? e.options.length : opList.length;
+      const err = t ? answerIssue(t, a, n) : "";
+      e._answerInvalid = err;
+      const c = d.querySelector('[data-f="anschk"]');
+      if (c) { c.style.display = err ? "" : "none"; c.textContent = err ? "✗ " + err : ""; }
+    };
     d.querySelectorAll("[data-e]").forEach(inp => {
       inp.oninput = () => {
         const e = reviewState.edits[q.id] = reviewState.edits[q.id] || {};
         const k = inp.dataset.e;
         if (k.startsWith("opt")) { e.options = (e.options || optSrc(q, null).slice()); e.options[+k.slice(3)] = inp.value; }
         else e[k] = inp.value;
+        checkAns();
         reviewState.dirty = true;
         $("rev_save").disabled = false;
       };
+      if (inp.tagName === "SELECT") inp.onchange = inp.oninput;
     });
+    checkAns();
     list.appendChild(d);
     });
   });
@@ -1605,8 +1711,33 @@ function renderReview(scrollToId = null) {
     document.querySelectorAll(".revq .revck").forEach(c => { c.checked = false; });
     updBatch();
   };
+  /* B13：全选当前筛选可见项 / 反选（均只作用于可见项，避免误选被筛选隐藏的题） */
+  const visChecks = () => [...document.querySelectorAll(".revq")]
+    .filter(d => d.style.display !== "none").map(d => d.querySelector(".revck")).filter(Boolean);
+  $("rev_sel_vis").onclick = () => {
+    visChecks().forEach(c => { c.checked = true; reviewState.select.add(c.closest(".revq").dataset.qid); });
+    updBatch();
+  };
+  $("rev_sel_inv").onclick = () => {
+    visChecks().forEach(c => {
+      c.checked = !c.checked;
+      const id = c.closest(".revq").dataset.qid;
+      if (c.checked) reviewState.select.add(id); else reviewState.select.delete(id);
+    });
+    updBatch();
+  };
   updBatch();
   $("rev_save").onclick = async () => {
+    // B10：答案键校验未通过的编辑不允许保存（防单选/多选键错乱污染产物与判分）
+    const bad = Object.entries(reviewState.edits)
+      .filter(([k, v]) => v._answerInvalid && !reviewState.drop.has(k));
+    if (bad.length) {
+      const first = bad[0][0];
+      toast(`答案键校验未通过（如 ${first}），请修正后再保存`, false);
+      const el = document.querySelector(`.revq[data-qid="${CSS.escape(first)}"]`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     const keep = qs.map(x => x.id).filter(id => !reviewState.drop.has(id));
     const edits = Object.entries(reviewState.edits).filter(([k, v]) => k !== "drop" && v && Object.keys(v).some(x => !x.startsWith("_")) && !reviewState.drop.has(k))
       .map(([id, v]) => {
@@ -1619,6 +1750,8 @@ function renderReview(scrollToId = null) {
     const btn = $("rev_save");
     btn.disabled = true; btn.textContent = "保存中…";
     try {
+      // B15：明示重渲染范围（题库/押题卷/手册/Anki/.apkg），避免大批量保存时误以为卡死
+      $("rev_filter_cnt").textContent = "正在重渲染 5 项产物（题库 MD/HTML · 押题卷 · 复习手册 · Anki）…";
       await api("/api/projects/" + currentPid + "/questions/review", { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keep: keep, drop: [], edits: edits }) });
@@ -1809,7 +1942,15 @@ function wzRender() {
       <button class="act" id="wz_fin">完成，开始使用</button>`;
     $("wz_back").onclick = () => { wzStep = 1; wzRender(); };
     $("wz_fin").onclick = () => wzDone();
-    const goDemo = () => { wzDone(); showTab("proj"); $("btn_sample").click(); };
+    const goDemo = () => {
+      // ME-1/A1：无 Key 时「载入示例」= 流程必然失败——先定向到连接页，且不关闭向导（保留引导闭环）
+      if (!(state.cfg && state.cfg.api_key_masked)) {
+        toast("试出一题需要用 API Key——请先完成「连接服务商」配置（充值 ¥10 可出多套题）", false);
+        showTab("conn"); $("api_key").focus();
+        return;
+      }
+      wzDone(); showTab("proj"); $("btn_sample").click();
+    };
     const goOwn = () => { wzDone(); showTab("proj"); };
     $("wz_demo").onclick = goDemo;
     $("wz_demo").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goDemo(); } };
@@ -1835,12 +1976,15 @@ ratioSum(); bloomSum();
 /* Ctrl/⌘+1..5 快速切换页签（对标 Linear 键盘导航） */
 const TAB_KEYS = ["", "conn", "proj", "mine", "learn", "prompts"];
 window.addEventListener("keydown", e => {
+  // A6：焦点在输入框/编辑器时不触发页签快捷键（防打字时被切走/吞键）
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   if (!(e.ctrlKey || e.metaKey) || !(e.key >= "1" && e.key <= "5")) return;
-  const t = TAB_KEYS[+e.key];
-  if (!t) return;
+  const tk = TAB_KEYS[+e.key];
+  if (!tk) return;
   e.preventDefault();
-  location.hash = t;
-  showTab(t);
+  location.hash = tk;
+  showTab(tk);
 });
 /* 窄屏适配：窗口尺寸变化（如侧栏折叠）→ 防抖重绘配比条，重新做标签像素级适配 */
 let segResizeT = 0;

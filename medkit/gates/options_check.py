@@ -87,8 +87,8 @@ def check_question(q: dict[str, Any], idx: str) -> list[dict[str, Any]]:
         if NUMBER_NO_UNIT.search(o) and not re.search(r"[0-9]+(?:\.\d+)?[-~～]?\s*[0-9]*\s*[%℃年岁天小时分钟秒kg毫克ml/]", o):
             add("R9", "warn", f"数值疑似缺单位：{o[:30]}")
             break
-    # 答案键存在性
-    answer = str(q.get("answer", "")).upper().replace(" ", "")
+    # 答案键存在性（D19：归一化口径与渲染层 answersEqual 统一——空白/半全角逗号/顿号）
+    answer = re.sub(r"[\s,，、]+", "", str(q.get("answer", ""))).upper()
     if not answer:
         add("R0", "fail", "缺少答案键")
     elif q.get("type") != "X" and len(answer) != 1:

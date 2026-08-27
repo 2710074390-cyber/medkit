@@ -192,7 +192,7 @@ def _project_artifacts(base: Path) -> list[str]:
             if p.is_file() and p.suffix in (".md", ".html", ".json", ".txt", ".apkg") \
                     and p.name not in ("slices.json", "meta.json", "stage.json",
                                        "questions_raw.json", "questions_gate1.json",
-                                       "checkpoint.json"):
+                                       "checkpoint.json", "paper_ids.json"):
                 names.append(p.name)
     return names
 

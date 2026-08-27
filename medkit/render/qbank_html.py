@@ -163,12 +163,18 @@ def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
     """Anki 文本导入：正面=题干+选项，反面=答案+解析；字段间 Tab 分隔，行内换行用 <br>。
 
     S3：案例子题题干带「【案例】题干」前缀（扁平卡不丢组上下文）；B1 用共享选项。
+    D14：图/表题不含媒体——卡面加占位提示，引导回题库.html 查看。
     """
     lines = ["#separator:tab", "#html:true", ""]
     for q in sorted(questions, key=lambda x: str(x.get("id", ""))):
         stem = str(q.get("case_stem") or "")
         question = str(q.get("question") or "")
         front_question = (f"【案例】{stem}<br>" + question) if stem else question
+        media_note = ""
+        if q.get("image_ref"):
+            media_note = "⚠️ 本题含图（如图所示）——图片不在 Anki 卡内，请回 题库.html 查看原图。"
+        elif q.get("data_table"):
+            media_note = "⚠️ 本题含表格数据——表格不在 Anki 卡内，请回 题库.html 查看。"
         front = [f"<b>Q{q.get('id', '')}</b> · {_esc_anki(q.get('type', ''))}型 · {_esc_anki(q.get('bloom', ''))} · "
                  f"{_esc_anki(q.get('subtopic', ''))}",
                  _esc_anki(front_question)]
@@ -176,6 +182,8 @@ def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
             front.append(f"{LETTERS[i]}. {_esc_anki(o)}")
         back = [f"✅ 答案：<b>{_esc_anki(q.get('answer', ''))}</b>",
                 f"💡 {_esc_anki(q.get('analysis', ''))}"]
+        if media_note:
+            back.append(_esc_anki(media_note))
         lines.append("\t".join(["<br>".join(front), "<br>".join(back)]))
     return "\n".join(lines) + "\n"
 
@@ -407,7 +415,8 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
   <input type="number" id="ctMin" value="60" min="5" max="240" style="width:56px;margin-left:4px;padding:1px 4px;font-size:12.5px" title="限时分钟数（到点自动判分）"> 分钟
   <span class="hint" style="font-size:11.5px;margin-left:6px">默认练习计时（不锁定），自行提交判分</span>
   <span id="timer" style="float:right"></span></p>
-{f'<p class="hint" style="margin:4px 0 0">⚠️ {dropped_n} 题缺选项，已从本卷剔除（不参与判分）。</p>' if dropped_n else ''}
+{f'<p class="hint" style="margin:4px 0 0">⚠️ {dropped_n} 题缺选项，已从本卷剔除：{", ".join(html_mod.escape(str(x.get("id") or str(x.get("question", ""))[:20])) for x in no_opt[:12])}{"…" if dropped_n > 12 else ""}（可在「审核台」查看/修复）。</p>' if dropped_n else ''}
+<p class="hint" style="margin:6px 0 0">判分后自动同步错题到学习中心（在 MedKit 内打开时）；下载到本地打开则错题仅存本地。</p>
 <div id="quiz"><span class="spin"></span>加载中…</div>
 <script>
 let QUESTIONS = {qs};
@@ -457,9 +466,10 @@ function render(){{
   let lastCase='';
   QUESTIONS.forEach((q,i)=>{{
     if(!q.options||!q.options.length) return;
-    if(q.case_label && q.case_label!==lastCase){{
+    // 案例 bar：按 case_id 判「首次出现」而非连续相等——子题被拆散（跨页/跨组）时仍保持共享题干可见
+    if(q.case_label && q.case_id && q.case_id!==lastCase){{
       h+='<div class="casebar" data-case="'+esc(q.case_id)+'">'+esc(q.case_label)+'</div>';
-      lastCase=q.case_label;
+      lastCase=q.case_id;
     }}
     if(q.media) h+=q.media;
     h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(TL[q.type]||q.type)+'</span>'
@@ -595,7 +605,7 @@ function grade(){{
     (wrong.length?'<div class="hint bad">错题回顾：'+wrong.join('、')+'（答案见下方解析区）</div>'
                  :'<div class="hint good">全对！</div>')+
     (wrong.length?'<button class="gray" onclick="retryWrong()">只练错题 →</button>':'')+
-    (wrong.length?'<button class="gray" onclick="syncWrong()">同步错题到错题本</button>':'')+
+    (wrong.length?'<button class="gray" onclick="syncWrong(true)">同步错题到错题本</button>':'')+
     '<button class="gray" onclick="resetAll()">重新作答</button>'+
     '<div class="hint">作答已锁定（防止判分后误改）；如需重做请点「重新作答」或「清空重做」。</div>';
   // IMP-08：判分结果对读屏可达（role=status 已声明）+ 滚动并聚焦到结果
@@ -639,14 +649,14 @@ function retryWrong(){{
   let r=null; try{{r=JSON.parse(localStorage.getItem(RETRY_KEY)||"null");}}catch(e){{r=null;}}
   if(!r||!r.questions||!r.questions.length){{banner("暂无错题数据：先提交判分后再练错题",false);return;}}
   QUESTIONS=r.questions.slice();
-  clearState(); judged=false; document.getElementById('res').innerHTML='';
+  clearState(); t0Reset(); judged=false; document.getElementById('res').innerHTML='';
   render();
   document.getElementById('res').innerHTML=
     '<div class="hint good">错题重练：'+QUESTIONS.length+' 题 · '+
     '<button class="mini" onclick="backToAll()">返回全卷</button></div>';
 }}
-function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); judged=false; render();}}
-function resetAll(){{clearState(); judged=false; document.getElementById('res').innerHTML=''; render();}}
+function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); t0Reset(); judged=false; render();}}
+function resetAll(){{clearState(); t0Reset(); judged=false; document.getElementById('res').innerHTML=''; render();}}
 
 /* 内联提示条（取代原生 alert，风格与页面一致） */
 function banner(text,ok){{
@@ -675,7 +685,14 @@ function bannerRetry(text){{
   b._t=setTimeout(()=>{{ if(b) b.remove(); }}, 8000);
 }}
 
-async function syncWrong(){{
+async function syncWrong(manual){{
+  // D3：下载到本地（file://）直开时同步端点必然不可达——给明确离线提示而非失败报错
+  if(location.protocol==='file:'){{
+    banner(manual
+      ? '这是下载版：错题已存本地。在 MedKit 内打开本卷可自动同步到学习中心错题本'
+      : '离线模式：错题已存本地（在 MedKit 内打开可同步错题本）', true);
+    return;
+  }}
   const items=Object.values(WRONG_POOL);
   if(!items.length){{ banner("没有可同步的错题，请先「提交判分」",false); return; }}
   try{{
@@ -689,7 +706,9 @@ async function syncWrong(){{
   }}catch(e){{ bannerRetry("同步失败："+e.message); }}
 }}
 
-const T0=(loadState()||{{}}).t0||Date.now();
+const T0_START=(loadState()||{{}}).t0||Date.now();
+let T0 = T0_START;
+function t0Reset(){{ T0=Date.now(); secs=0; }}
 function fmtT(s){{const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}}
 function ctLimit(){{
   const m=Math.max(5,Math.min(240,parseInt((document.getElementById('ctMin')||{{}}).value||'60',10)||60));

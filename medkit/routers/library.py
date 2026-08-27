@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..agents import medcards
@@ -182,14 +183,15 @@ async def import_image(file: UploadFile = File(...)) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 掌握度 / 推荐（M2）
 @router.get("/api/library/mastery")
-def mastery() -> dict[str, Any]:
-    return lib.get_mastery_view()
+def mastery(subject: str = "") -> dict[str, Any]:
+    """C1：掌握度视图（可选 subject 过滤——概览顶部与闭环总览同口径）。"""
+    return lib.get_mastery_view((subject or "").strip())
 
 
 @router.get("/api/library/recommend")
-def recommend(limit: int = 10) -> dict[str, Any]:
+def recommend(limit: int = 10, subject: str = "") -> dict[str, Any]:
     limit = max(1, min(int(limit), 50))
-    return {"recommend": lib.recommend(limit)}
+    return {"recommend": lib.recommend(limit, (subject or "").strip())}
 
 
 @router.get("/api/library/dashboard")
@@ -383,7 +385,9 @@ def explains_get(eid: str) -> dict[str, Any]:
 def explains_delete(eid: str) -> dict[str, Any]:
     if not expl.delete_explain(eid):
         raise HTTPException(404, "讲解产物不存在")
-    return {"ok": True}
+    # C6：讲解删除 → 级联清理其派生的医学记忆卡（source=讲解 id），避免旧卡残留
+    removed = cardlib.delete_by_source(eid)
+    return {"ok": True, "cards_removed": removed}
 
 
 @router.post("/api/library/explains/export")
@@ -611,6 +615,40 @@ def cards_delete(cid: str) -> dict[str, Any]:
     if not cardlib.delete_card(cid):
         raise HTTPException(404, "记忆卡不存在")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- 医学记忆卡导出（D15）
+@router.get("/api/library/cards/export/txt")
+def cards_export_txt(subject: str = "") -> Any:
+    """记忆卡 → Anki 文本（正面/背面 Tab 分隔 + 类型/知识点标签列）。"""
+    cards = cardlib.list_cards(subject)
+    if not cards:
+        raise HTTPException(404, "暂无记忆卡可导出（先在「讲解与学习产物」生成记忆卡）")
+    from ..render.apkg import CARD_KIND_LABELS, _esc_anki
+
+    lines = ["#separator:tab", "#html:true", ""]
+    for c in sorted(cards, key=lambda x: (str(x.get("kind", "")), str(x.get("front", "")))):
+        row = [_esc_anki(c.get("front") or ""), _esc_anki(c.get("back") or ""),
+               _esc_anki(CARD_KIND_LABELS.get(c.get("kind"), c.get("kind") or "concept")),
+               _esc_anki(c.get("kp_name") or c.get("subject") or "")]
+        lines.append("\t".join(row))
+    return {"ok": True, "filename": f"MedKit记忆卡_{subject or '全部'}.txt",
+            "content": "\n".join(lines) + "\n"}
+
+
+@router.get("/api/library/cards/export/apkg")
+def cards_export_apkg(subject: str = "") -> FileResponse:
+    """记忆卡 → Anki 真包（独立「MedKit 记忆卡」牌组；稳定 id 防重复导入）。"""
+    cards = cardlib.list_cards(subject)
+    if not cards:
+        raise HTTPException(404, "暂无记忆卡可导出（先在「讲解与学习产物」生成记忆卡）")
+    from ..render.apkg import export_memory_apkg
+
+    out_dir = cfg.CONFIG_DIR / "exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"MedKit记忆卡_{subject or '全部'}.apkg"
+    export_memory_apkg(cards, subject or "未分类", subject or "全部", out)
+    return FileResponse(out, media_type="application/octet-stream", filename=out.name)
 
 
 def _new_milli() -> int:

@@ -16,10 +16,10 @@ from typing import Any
 import genanki
 
 from ..core.schema import CARD_KIND_LABELS
-from .qbank_html import LETTERS
+from .qbank_html import LETTERS, _effective_options
 
-TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "A3": "A3 型 · 案例多选",
-               "A4": "A4 型 · 案例多选", "X": "X 型 · 多选", "B1": "B1 型 · 共用选项"}
+TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "A3": "A3 型 · 案例单选",
+               "A4": "A4 型 · 案例单选", "X": "X 型 · 多选", "B1": "B1 型 · 共用选项"}
 SELF_ASSESS_TYPES = {"X"}
 
 
@@ -50,12 +50,18 @@ def _fields(q: dict[str, Any]) -> dict[str, str]:
     stem = str(q.get("case_stem") or "")
     question = str(q.get("question") or "")
     front_question = f"【案例】{stem}<br>" + question if stem else question
+    # B1 组题共享选项在 group.options（自身 options 恒空）——与 anki_export.txt 同口径
     opts = "<br>".join(
         f"{LETTERS[i]}. {_esc_anki(o)}"
-        for i, o in enumerate(q.get("options") or []) if isinstance(o, str))
+        for i, o in enumerate(_effective_options(q)))
+    note = ""
+    if q.get("image_ref"):
+        note = "⚠️ 本题含图（如图所示）——图片不在 Anki 卡内，请回 题库.html 查看原图。"
+    elif q.get("data_table"):
+        note = "⚠️ 本题含表格数据——表格不在 Anki 卡内，请回 题库.html 查看。"
     return {"题干": _esc_anki(front_question), "选项": opts,
             "答案": _esc_anki(q.get("answer") or ""),
-            "解析": _esc_anki(q.get("analysis") or ""),
+            "解析": _esc_anki(q.get("analysis") or "") + (_esc_anki(note) if note else ""),
             "溯源": _esc_anki(_source_note(q))}
 
 

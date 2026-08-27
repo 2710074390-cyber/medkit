@@ -19,25 +19,33 @@ ALLOWED_TAGS = {
     "p", "br", "hr", "b", "strong", "i", "em", "u", "s", "del", "sub", "sup",
     "ul", "ol", "li", "table", "thead", "tbody", "tr", "th", "td", "caption",
     "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "code", "pre",
-    "span", "a", "div",
+    "span", "a", "div", "img",
 }
 ALLOWED_ATTRS = {"a": {"href", "title"}, "code": {"class"}, "pre": {"class"},
-                 "span": {"class"}, "th": {"align"}, "td": {"align"}}
+                 "span": {"class"}, "th": {"align"}, "td": {"align"},
+                 "img": {"src", "alt", "title"}}
 
-# A4（2026-08 补）：href scheme 白名单 — 仅 http/https；其余（javascript: 等）剥成纯文本。
+# A4（2026-08 补）：href scheme 白名单 — 仅 http/https + 页内锚点/同源相对链接；其余（javascript: 等）剥成纯文本。
 # 先剥控制字符：HTML5 URL 解析会去除内嵌空白，'java\nscript:' 也可能被浏览器当作 javascript: 执行。
 _HREF_SCHEMES = ("http", "https")
 _HREF_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def _safe_href(value: str | None) -> str | None:
-    """返回白名单内的 href；否则返回 None（调用方剥成纯文本）。"""
+    """返回白名单内的 href；否则返回 None（调用方剥成纯文本）。
+
+    D10：放行页内锚点（#…）与同源相对路径，仍拒绝 javascript:/data: 与
+    协议相对 URL（//evil.com 会跳外部，scheme 为 "" 但带 network location）。
+    """
     if not value:
         return None
     href = _HREF_CTRL_RE.sub("", value).strip()
     if not href:
         return None
-    if urlsplit(href).scheme.lower() in _HREF_SCHEMES:
+    scheme = urlsplit(href).scheme.lower()
+    if scheme in _HREF_SCHEMES:
+        return href
+    if scheme == "" and not href.startswith("//"):
         return href
     return None
 
@@ -76,6 +84,25 @@ class _Sanitizer(HTMLParser):
             else:  # 非白名单 scheme → 剥成纯文本
                 self._no_link_depth += 1
             return
+        if tag == "img":
+            # D11：医学示意图（http/https/相对 src）放行；强制 alt；其余属性剥除
+            src, alt, title = "", "", ""
+            for k, v in attrs:
+                k = k.lower()
+                if v is None:
+                    continue
+                if k == "src" and _safe_href(v) is not None:
+                    src = _safe_href(v) or ""
+                elif k == "alt":
+                    alt = v
+                elif k == "title":
+                    title = v
+            if src:
+                attr = f' src="{html_mod.escape(src, quote=True)}" alt="{html_mod.escape(alt or "医学示意图", quote=True)}"'
+                if title:
+                    attr += f' title="{html_mod.escape(title, quote=True)}"'
+                self._out.append(f"<img{attr}>")
+            return
         if tag in ALLOWED_TAGS:
             good = [(k, v) for k, v in attrs
                     if k.lower() in ALLOWED_ATTRS.get(tag, set())
@@ -97,6 +124,8 @@ class _Sanitizer(HTMLParser):
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
+        if self._block_until:      # D22：脚本/样式块内不输出任何自闭合标签
+            return
         if tag in ("br", "hr"):
             self._out.append(f"<{tag}>")
         else:

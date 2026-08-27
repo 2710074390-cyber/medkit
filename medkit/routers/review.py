@@ -34,7 +34,7 @@ def project_questions(pid: str) -> dict[str, Any]:
 
 def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any]) -> list[str]:
     """审核后重渲染全部产物（复用渲染层；复习手册若有旧 MD 则重转 HTML）。"""
-    from ..core.orchestrator import _sample_paper
+    from ..core.orchestrator import select_paper_stable
     from ..render import qbank_html, review_html
     subject = meta.get("subject", "")
     toggles = meta.get("toggles", {})
@@ -46,10 +46,25 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
         qbank_html.export_html(questions, f"{subject} 题库"), encoding="utf-8")
     rendered = ["qbank.md", "qbank.html"]
     if toggles.get("paper", True):
-        paper_qs = _sample_paper(questions, min(50, len(questions)))
+        # ME-7：押题卷复用上次抽样的题目 id（仅当题库变化致数量不足时重新抽样）——
+        # 否则审核台只改一题解析也会让押题卷 50 题「换一批」。
+        ids: list[str] = []
+        ids_path = out_dir / "paper_ids.json"
+        if ids_path.exists():
+            try:
+                ids = list(json.loads(ids_path.read_text(encoding="utf-8")).get("ids", []))
+            except Exception:  # noqa: BLE001
+                ids = []
+        paper_qs = select_paper_stable(ids, questions)
         (out_dir / "押题卷.html").write_text(
             qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
                                          pid=base.name, subject=subject), encoding="utf-8")
+        try:
+            ids_path.write_text(
+                json.dumps({"ids": [q.get("id") for q in paper_qs]}, ensure_ascii=False),
+                encoding="utf-8")
+        except OSError:  # noqa: BLE001
+            pass
         rendered.append("押题卷.html")
     review_md_path = out_dir / "复习手册.md"
     if review_md_path.exists():
@@ -78,6 +93,31 @@ class ReviewBody(BaseModel):
     keep: list[str] = []
     drop: list[str] = []
     edits: list[dict[str, Any]] = []
+
+
+def _answer_issue(q: dict[str, Any]) -> str | None:
+    """B10：行内编辑后的答案键/题型合法性校验（R0 口径；答案带空格容忍）。
+
+    返回错误文案或 None。A1/A2/A3/A4/B1 → 单字母；X 型 → ≥2 字母且不重复、
+    字母均在选项范围内（B1 用共享 group.options）。
+    """
+    answer = str(q.get("answer", "")).upper().replace(" ", "")
+    qtype = str(q.get("type", "") or "")
+    if qtype not in options_check.ALLOWED_TYPES:
+        return f"题型非法「{qtype}」"
+    if not answer:
+        return "答案键不能为空"
+    opts = q.get("options") or []
+    if not opts and q.get("group_kind") == "option_group" and isinstance(q.get("group"), dict):
+        opts = (q.get("group") or {}).get("options") or []
+    letters = "ABCDEFGHIJ"[:max(len([o for o in opts if isinstance(o, str)]), 4)]
+    if qtype != "X" and len(answer) != 1:
+        return f"单选/案例题答案应为单字母（当前「{answer}」）"
+    if qtype == "X" and len(answer) < 2:
+        return f"X 型答案至少 2 个字母（当前「{answer}」）"
+    if any(c not in letters for c in answer):
+        return f"含选项字母范围外字符（选项 A~{letters[-1]}）"
+    return None
 
 
 @router.post("/api/projects/{pid}/questions/review")
@@ -110,6 +150,10 @@ def review_questions(pid: str, body: ReviewBody) -> dict[str, Any]:
             # S3/B1：编辑选项时同步 group.options（渲染/聚合与 q.options 同口径）
             if q.get("group_kind") == "option_group" and "options" in e and isinstance(q.get("group"), dict):
                 q["group"]["options"] = e["options"]
+            # B10：编辑后答案键/题型合法性校验（防污染产物与判分）
+            issue = _answer_issue(q)
+            if issue:
+                raise HTTPException(400, f"题目 {qid} 答案键有误：{issue}（请修正或恢复原答案再保存）")
         out.append(q)
     if not out:
         raise HTTPException(400, "保留题数为 0，请至少保留一题")
@@ -153,6 +197,10 @@ def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
     q = next((x for x in questions if x.get("id") == body.id), None)
     if q is None:
         raise HTTPException(404, f"题目 {body.id} 不存在")
+    # B12：案例组/选项组子题与图/表题重掷会破坏组结构或 image_ref 引用——禁止并引导行内编辑
+    if (q.get("group_kind") in ("case", "option_group") or q.get("case_id")
+            or q.get("image_ref") or q.get("data_table")):
+        raise HTTPException(400, "该题属于案例组/选项组或含图/表，重掷会破坏组结构或图题引用；请改用「编辑」修改题干/解析/选项")
     slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
     sid = q.get("sid", "")
     slice_ = next((s for s in slices if s.get("sid") == sid), None)

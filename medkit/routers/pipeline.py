@@ -89,6 +89,7 @@ class TrialBody(BaseModel):
     requirements: str = ""
     knobs: dict[str, str] = {}
     ratios: dict[str, int] = {"A1": 40, "A2": 30, "B1": 20, "X": 10}
+    bloom: dict[str, int] | None = None    # B5：试出与正式管线同口径（空=默认 30/40/25/5）
     slice_sid: str = "TRIAL"
     slice_title: str = ""
     slice_text: str
@@ -115,7 +116,7 @@ def trial(body: TrialBody) -> dict[str, Any]:
             qs, _ = medgen.generate_slice(
                 client, body.subject, body.exam, slice_, 1, body.ratios,
                 body.teacher_text[: _mg.TEACHER_CHAR_LIMIT], requirements=body.requirements[:500],
-                knobs=body.knobs,
+                knobs=body.knobs, bloom=body.bloom or None,
                 exam_text=body.exam_text[: _mg.EXAM_CHAR_LIMIT],
                 extra_text=body.extra_text[: _mg.EXTRA_CHAR_LIMIT])
         except Exception as e:  # noqa: BLE001

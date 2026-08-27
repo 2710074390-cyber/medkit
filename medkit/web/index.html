@@ -8,6 +8,13 @@
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/learn.css">
 <link rel="stylesheet" href="/assets/css/wizard.css">
+<script>/* A9：主题防闪烁——CSS 加载前先按偏好设 data-theme（隐私模式静默回退系统偏好） */
+try {
+  var t = localStorage.getItem("medkit-theme");
+  if (t !== "dark" && t !== "light") t = (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+} catch (e) { document.documentElement.dataset.theme = "dark"; }
+</script>
 </head>
 <body>
 <a class="skip" href="#main">跳到主内容</a>
@@ -165,7 +172,8 @@
             <div><label>A2</label><input type="number" id="r_a2" value="30" min="0" max="100"></div>
             <div><label>B1</label><input type="number" id="r_b1" value="20" min="0" max="100"></div>
             <div><label>X</label><input type="number" id="r_x" value="10" min="0" max="100"></div>
-          </div></div>
+          </div>
+          <div class="hint">B1 真组题（共享选项组）按此配比直达出题；X 型受命题硬约束「≤ 章节题量 10%」（超出将被压低）；A3/A4 案例组题随 A2 配额按需输出，无独立配比。</div></div>
         <div><label>Bloom 认知层级 % <span class="ratioSum" id="bloom_sum">合计 100%</span>
           <button type="button" class="rst" id="btn_reset_bloom" title="恢复默认 记忆 30 / 理解 40 / 应用 25 / 创造 5">重置</button></label>
           <div class="segbar" id="bar_bloom" role="img" aria-label="Bloom 认知层级可视化"></div>
@@ -337,7 +345,7 @@
       <div class="cardh"><h2>学习闭环总览</h2><span class="hint" id="dash_scope"></span></div>
       <div class="row exp-bar" style="flex-wrap:wrap;margin-top:8px">
         <div style="flex:1;min-width:150px"><label>科目范围</label>
-          <select id="dash_subject" onchange="loadDashboard(this.value)"><option value="">全部科目</option></select>
+          <select id="dash_subject" onchange="loadOverview(this.value)"><option value="">全部科目</option></select>
         </div>
         <div style="flex:none;align-self:flex-end">
           <label style="display:block;height:1px;overflow:hidden">.</label>
@@ -377,6 +385,7 @@
           <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
         </div>
         <h2 style="margin-top:20px">错题本<span class="hint" id="learn_mk_count" style="float:right"></span></h2>
+        <label class="chk" style="margin:4px 0 8px"><input type="checkbox" id="mk_filter_unlearned" onchange="renderLibraryCurrent()"> 只看未掌握（隐藏已归档「已掌握」错题）</label>
         <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
     </div>

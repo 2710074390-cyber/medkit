@@ -23,6 +23,9 @@ document.querySelectorAll("#learnnav button").forEach(b => {
 /* IMP-12①：学习中心子导航 Alt+1..6 直达（与主 tab Ctrl+1..5 同风格；flag 隐藏的 pill 自动跳过） */
 const LEARN_ALT_KEYS = ["overview", "mistakes", "explain", "tutor", "review", "syllabus"];
 window.addEventListener("keydown", e => {
+  // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "6")) return;
   const lv = LEARN_ALT_KEYS[+e.key - 1];
   if (!lv) return;
@@ -88,6 +91,13 @@ function updateLearnBadges(d) {
 let SYL_DRAFTS = [];
 let SYL_LOADED = false;
 let SYL_STD = "teacher";   // 大纲标准二选一：teacher=教师重点(默认，即用户自供内容) / seed=官方大纲（内置种子或上传导入）
+/* C16：标准选择恢复（sylSetStd 写入 sessionStorage，此处首读；sylRender/首渲会用 SYL_STD） */
+(function () {
+  try {
+    const s = sessionStorage.getItem("medkit-syl-std");
+    if (s === "teacher" || s === "seed") SYL_STD = s;
+  } catch (e) { /* ignore */ }
+})();
 /* 大纲标准二选一：syl_std pill 仅 teacher / seed 两档（移除历史 all 档，见 AGENT_HANDOFF） */
 async function sylLoad() {
   const meta = document.getElementById("syl_meta");
@@ -117,6 +127,8 @@ async function sylLoad() {
 }
 function sylSetStd(std) {
   SYL_STD = std;
+  /* C16：标准选择持久化（刷新/重开保持） */
+  try { sessionStorage.setItem("medkit-syl-std", std); } catch (e) { /* ignore */ }
   document.querySelectorAll("#syl_std .css-pill").forEach(b => {
     const on = b.dataset.std === std;
     b.classList.toggle("on", on);
@@ -301,8 +313,10 @@ async function sylReport() {
   const qs = new URLSearchParams();
   if (subject) qs.set("subject", subject);
   qs.set("source", SYL_STD);
-  const r = await api("/api/syllabus/report?" + qs.toString());
-  downloadText("大纲覆盖报告_" + (subject || "全部") + ".md", r.markdown);
+  try {
+    const r = await api("/api/syllabus/report?" + qs.toString());
+    downloadText("大纲覆盖报告_" + (subject || "全部") + ".md", r.markdown);
+  } catch (e) { toast(e.message || "导出失败", false); }
 }
 
 /* ---- ⑦ 真题考频（WP-02） ---- */
@@ -311,8 +325,11 @@ function rexSubject() { return document.getElementById("syl_subject")?.value || 
 async function rexAnalyze() {
   const text = document.getElementById("rex_text").value;
   if (!text.trim()) { toast("先粘贴真题文本", false); return; }
-  const r = await api("/api/library/realexams/analyze",
-    { method: "POST", body: JSON.stringify({ text, subject: rexSubject() }) });
+  let r;
+  try {
+    r = await api("/api/library/realexams/analyze",
+      { method: "POST", body: JSON.stringify({ text, subject: rexSubject() }) });
+  } catch (e) { toast(e.message || "分析失败", false); return; }
   REX_DRAFTS = r.drafts || [];
   const box = document.getElementById("rex_drafts");
   if (!REX_DRAFTS.length) {
@@ -347,8 +364,11 @@ async function rexConfirmAll() {
   if (!REX_DRAFTS.length) { toast("先分析"); return; }
   const total = REX_DRAFTS.length;
   const batch = REX_DRAFTS.slice(0, 200);
-  const r = await api("/api/library/realexams/confirm",
-    { method: "POST", body: JSON.stringify({ items: batch }) });
+  let r;
+  try {
+    r = await api("/api/library/realexams/confirm",
+      { method: "POST", body: JSON.stringify({ items: batch }) });
+  } catch (e) { toast(e.message || "确认失败", false); return; }
   if (total > 200) {
     REX_DRAFTS = REX_DRAFTS.slice(200);
     toast(`已确认 ${r.added} 条（单次上限 200 条；剩余 ${REX_DRAFTS.length} 条待确认，请再次点击「确认全部入库」）`);
@@ -365,7 +385,10 @@ async function rexConfirmAll() {
   setTimeout(() => { const h = document.getElementById("rex_heat"); if (h) h.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, 150);
 }
 async function rexHeat() {
-  const r = await api("/api/library/realexams/freq" + (rexSubject() ? "?subject=" + encodeURIComponent(rexSubject()) : ""));
+  let r;
+  try {
+    r = await api("/api/library/realexams/freq" + (rexSubject() ? "?subject=" + encodeURIComponent(rexSubject()) : ""));
+  } catch (e) { toast(e.message || "加载频次失败", false); return; }
   const box = document.getElementById("rex_heat");
   document.getElementById("rex_meta").textContent = `累计命中 ${r.total} 次`;
   if (!r.chapters.length) { box.innerHTML = '<div class="hint">暂无已确认频次。</div>'; return; }
@@ -381,19 +404,33 @@ async function rexFile(input) {
   const f = input.files && input.files[0];
   if (!f) return;
   const fd = new FormData(); fd.append("file", f);
-  const r = await api("/api/library/realexams/analyze-file", { method: "POST", body: fd });
+  let r;
+  try {
+    r = await api("/api/library/realexams/analyze-file", { method: "POST", body: fd });
+  } catch (e) { toast(e.message || "文件解析失败", false); input.value = ""; return; }
   REX_DRAFTS = r.drafts || [];
   document.getElementById("rex_text").value = `（已解析文件 ${f.name}：${r.stats?.sentences ?? 0} 句 · 命中 ${REX_DRAFTS.length} 条）`;
-  const box = document.getElementById("rex_drafts");
-  box.innerHTML = REX_DRAFTS.length ? `<details class="rex-fold" open><summary>草稿确认（${REX_DRAFTS.length} 条）</summary>
-    <div class="hint">文件草稿——核实后确认：</div>
-    ${REX_DRAFTS.slice(0, 30).map(d => `<div class="syl-item"><span class="learn-chip pending">×${d.freq}</span>
-      <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter)}</div></span></div>`).join("")}
-    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
-      <button class="mini-btn" onclick="rexDraftClear()">取消草稿</button></div></details>`
-    : `<div class="hint">文件解析命中 0 条。</div>`;
+  rexFileRender();
   input.value = "";
 }
+/* C21：文件草稿渲染（支持逐条跳过，与粘贴分析一致） */
+function rexFileRender() {
+  const box = document.getElementById("rex_drafts");
+  if (!REX_DRAFTS.length) { box.innerHTML = '<div class="hint">文件解析命中 0 条。</div>'; return; }
+  box.innerHTML = `<details class="rex-fold" open><summary>草稿确认（${REX_DRAFTS.length} 条）</summary>
+    <div class="hint">文件草稿——核实后确认：</div>
+    ${REX_DRAFTS.slice(0, 30).map((d, i) => `<div class="syl-item"><span class="learn-chip pending">×${d.freq}</span>
+      <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter)}</div></span>
+      <button class="act gray mini" data-skip="${i}">跳过</button></div>`).join("")}
+    ${REX_DRAFTS.length > 30 ? `<div class="hint">…共 ${REX_DRAFTS.length} 条（确认全部入库）</div>` : ""}
+    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
+      <button class="mini-btn" onclick="rexDraftClear()">取消草稿</button></div></details>`;
+  box.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => {
+    REX_DRAFTS.splice(+b.dataset.skip, 1);
+    rexFileRender();
+  });
+}
+window.rexFileRender = rexFileRender;
 function rexDraftClear() {
   REX_DRAFTS = [];
   const box = document.getElementById("rex_drafts");
@@ -411,8 +448,10 @@ async function rexItemDel(id) {
 window.rexDraftClear = rexDraftClear; window.rexItemDel = rexItemDel;
 async function rexReport() {
   const qs = rexSubject() ? "?subject=" + encodeURIComponent(rexSubject()) : "";
-  const r = await api("/api/library/realexams/report" + qs);
-  downloadText("真题高频考点_" + (rexSubject() || "全部") + ".md", r.markdown);
+  try {
+    const r = await api("/api/library/realexams/report" + qs);
+    downloadText("真题高频考点_" + (rexSubject() || "全部") + ".md", r.markdown);
+  } catch (e) { toast(e.message || "导出失败", false); }
 }
 
 /* ---- ⑧ 一键刷薄弱组卷（WP-03） ---- */
@@ -426,6 +465,8 @@ async function gapPaper() {
     if (first) {
       subject = first.value;
       if (sel) sel.value = subject;
+      /* C15：隐式选科要明示 */
+      toast(`薄弱组卷需绑定科目——已自动选用「${subject}」`, false);
     } else {
       toast("暂无可选科目：请先在「错题本」导入错题或确认知识点科目", false);
       return;
@@ -446,7 +487,10 @@ async function gapPaper() {
         api("/api/projects/" + r.pid + "/run", { method: "POST" })
           .then(() => { toast("已开始生成「薄弱点专项」卷；进度见下方轮询"); showTab("mine"); })
           .catch(e => toast(e.message, false));
-      }, false);
+      }, false, () => {
+        // C13：取消后项目已创建但未运行——明确告知去向，避免留下「空转项目」疑惑
+        toast("已创建「薄弱组卷」项目（未开始生成）——可到「我的项目」查看并开始或删除", false);
+      });
   } catch (e) { toast(e.message, false); }
 }
 
@@ -547,6 +591,31 @@ function renderMasteryDashboard(kps, stats) {
     + dashChapterWeak(kps);
 }
 // 学习闭环总览（掌握度 + 复习 SM-2 + 提问式 MedTutor）
+/* C1：概览统一加载——顶部诊断/推荐/错题列表与「学习闭环总览」共用同一科目范围，避免口径分裂 */
+async function loadOverview(subject) {
+  subject = subject || "";
+  try {
+    const subs = (await cachedSubjects()).subjects || [];
+    const sel = $("dash_subject");
+    if (sel) {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">全部科目</option>' +
+        subs.slice().sort().map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+      if (cur && subs.includes(cur)) sel.value = cur;
+    }
+    const [d, mk, my, recm] = await Promise.all([
+      api("/api/library/dashboard?subject=" + encodeURIComponent(subject)),
+      api("/api/library/mistakes"),
+      api("/api/library/mastery?subject=" + encodeURIComponent(subject)),
+      api("/api/library/recommend?limit=6&subject=" + encodeURIComponent(subject)),
+    ]);
+    renderDashboard(d);
+    renderLibrary((mk.mistakes || []).filter(m => !subject || m.subject === subject), my, recm.recommend || []);
+  } catch (e) {
+    $("dash_scope").textContent = "汇总失败";
+    $("dash_loop").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+  }
+}
 async function loadDashboard(keepSubject) {
   try {
     const subs = (await cachedSubjects()).subjects || [];
@@ -601,13 +670,7 @@ function renderDashboard(d) {
 async function loadLibrary() {
   invalidateLearnCache();   // 学习中心刷新 = 全量刷新（子视图内交互走 30s 缓存）
   try {
-    const [mk, my, recm] = await Promise.all([
-      api("/api/library/mistakes"),
-      cachedMastery(),
-      api("/api/library/recommend?limit=6"),
-    ]);
-    renderLibrary(mk.mistakes, my, recm.recommend);
-    loadDashboard();                             // 学习闭环总览
+    loadOverview($("dash_subject") ? $("dash_subject").value : "");   // C1：顶部与闭环同口径
     loadExplainCtx(appliedSubject());          // M3：同步刷新科目 / 知识点 / 讲解产物
     loadTutorCtx();                            // M4：同步刷新提问式学习的科目 / 知识点 / 会话
     loadReviewCtx(appliedSubject());           // M5：同步刷新复习计划（SM-2 间隔重复）
@@ -619,11 +682,21 @@ function appliedSubject() {
   const el = $("exp_subject");
   return el && el.value ? el.value : "";
 }
+/* C17：错题本「只看未掌握」筛选——缓存最近一次数据，勾选即重渲染（已掌握=归档标记，可隐藏） */
+let _libCache = { mistakes: [], my: null, recm: [] };
 function renderLibrary(mistakes, my, recm) {
-  const stats = my.stats || {};
+  _libCache = { mistakes: mistakes || [], my: my || null, recm: recm || [] };
+  renderLibraryCurrent();
+}
+function renderLibraryCurrent() {
+  const { mistakes, my, recm } = _libCache;
+  const chk = document.getElementById("mk_filter_unlearned");
+  const onlyUn = !!(chk && chk.checked);
+  const list = onlyUn ? mistakes.filter(m => !m.learned) : mistakes;
+  const stats = (my && my.stats) || {};
   $("learn_stats").innerHTML = `共 <b>${stats.total_knowledge || 0}</b> 个知识点 · 薄弱 <b style="color:#f87171">${stats.weak || 0}</b> · 错题 <b>${stats.total_mistakes || 0}</b>`;
   // 薄弱点诊断 + 待学优先级
-  const kps = my.knowledge || [];
+  const kps = (my && my.knowledge) || [];
   $("learn_kp").innerHTML = kps.length
       ? renderMasteryDashboard(kps, stats)
       : `<div class="hint">还没有知识点。加入错题后，这里会自动按「错题次数 + 距上次失败」给出掌握度。</div>`;
@@ -641,16 +714,20 @@ function renderLibrary(mistakes, my, recm) {
     </div>`).join("") : `<div class="hint">暂无薄弱点，先把错题收进来。</div>`;
 
   // 错题本（增强版：→讲解 / →提问 / 详情展开 / 已掌握 / 删除）
-  $("learn_mk_count").textContent = `${mistakes.length} 道`;
-  if (!mistakes.length) {
+  $("learn_mk_count").textContent = `${list.length} 道`
+    + (onlyUn && list.length !== mistakes.length ? `（未掌握 ${list.length} / ${mistakes.length}）` : "");
+  if (!list.length) {
     $("learn_mk").innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-paper"></use></svg>
-      <div class="sub">错题本还是空的<br>粘贴一道错题入库，或点「拍题(图片 OCR)」「批量导入(JSON)」</div>
+      <div class="sub">${mistakes.length
+        ? `当前筛选下没有错题（已掌握 ${mistakes.length} 道被隐藏）<br>取消勾选「只看未掌握」可查看全部`
+        : `错题本还是空的<br>粘贴一道错题入库，或点「拍题(图片 OCR)」「批量导入(JSON)」`}</div>
     </div>`;
   } else {
-    $("learn_mk").innerHTML = mistakes.map(mm => mkRowHTML(mm)).join("");
+    $("learn_mk").innerHTML = list.map(mm => mkRowHTML(mm)).join("");
   }
 }
+window.renderLibraryCurrent = renderLibraryCurrent;
 const ERR_LABEL = { concept_gap: "概念缺失", confusion: "易混", calculation: "计算失误", misread: "误读题干", reasoning: "推理断链" };
 function mkRowHTML(mm) {
   const meta = [];
@@ -810,16 +887,44 @@ window.mkBatchPick = mkBatchPick;
 
 /* ---- M3：讲解与学习产物（教材切片 + 联网补充 + 产物管理） ---- */
 const LEARN_STATE_ORDER = { weak: 0, shaky: 1, solid: 2, mastered: 3 };
+/* C2：讲解 Markdown 渲染——在标题/列表/引用基础上补 GFM 表格与围栏代码块（医学对比表/数值表可读） */
 function expMd(md) {
   const raw = String(md || "");
   const inline = t => esc(t)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
     .replace(/\*([^*]+)\*/g, "<i>$1</i>");
-  let html = "", inList = false, inQuote = false;
-  for (const rawLine of raw.split("\n")) {
-    const line = rawLine.trim();
+  const cells = t => String(t).split("|").slice(1, -1).map(c => inline(c.trim()));
+  const isTableRow = l => /^\|.*\|$/.test((l || "").trim());
+  const isSepRow = l => /^\|[\s:|-]+\|$/.test((l || "").trim());
+  let html = "", inList = false, inQuote = false, inCode = false;
+  const lines = raw.split("\n");
+  for (let li = 0; li < lines.length; li++) {
+    const line = (lines[li] || "").trim();
+    if (inCode) {
+      if (line.startsWith("```")) { html += "</code></pre>"; inCode = false; }
+      else html += esc(line) + "\n";
+      continue;
+    }
+    if (line.startsWith("```")) {
+      if (inList) { html += "</ul>"; inList = false; }
+      if (inQuote) { html += "</blockquote>"; inQuote = false; }
+      html += "<pre><code>"; inCode = true; continue;
+    }
     if (!line) { if (inList) { html += "</ul>"; inList = false; } if (inQuote) { html += "</blockquote>"; inQuote = false; } continue; }
+    // GFM 表格：表头行 + 紧跟分隔行 → 收集表格块
+    if (isTableRow(line) && li + 1 < lines.length && isSepRow(lines[li + 1])) {
+      if (inList) { html += "</ul>"; inList = false; }
+      if (inQuote) { html += "</blockquote>"; inQuote = false; }
+      html += "<table><thead><tr>" + cells(line).map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+      li++;                                   // 跳过分隔行
+      while (li + 1 < lines.length && isTableRow(lines[li + 1])) {
+        li++;
+        html += "<tr>" + cells(lines[li]).map(c => `<td>${c}</td>`).join("") + "</tr>";
+      }
+      html += "</tbody></table>";
+      continue;
+    }
     if (line.startsWith("### ")) { if (inList) { html += "</ul>"; inList = false; } html += `<h4>${inline(line.slice(4))}</h4>`; continue; }
     if (line.startsWith("## ")) { if (inList) { html += "</ul>"; inList = false; } html += `<h3>${inline(line.slice(3))}</h3>`; continue; }
     if (line.startsWith("# ")) { if (inList) { html += "</ul>"; inList = false; } html += `<h2>${inline(line.slice(2))}</h2>`; continue; }
@@ -831,6 +936,7 @@ function expMd(md) {
   }
   if (inList) html += "</ul>";
   if (inQuote) html += "</blockquote>";
+  if (inCode) html += "</code></pre>";
   return html;
 }
 async function loadExplainCtx(preserveSubject) {
@@ -1155,7 +1261,12 @@ async function tutorSubmit() {
     if (cur) { cur.state = r.session.state; cur.streak = r.session.streak;
       cur.rounds = r.session.rounds; cur.current = r.session.current;
       cur.updated_at = r.session.updated_at; }
-    $("tutor_cost").textContent = `本轮得分 ${r.score}/3` + (r.gap ? ` —— ${r.gap}` : "");
+    // C3：LLM 判分失败返回 retry=true（score<0 不计分）——不渲染负数分数，改为弱提示重答
+    if (r.retry) {
+      $("tutor_cost").textContent = "本轮未完成判分（模型未给分）——请围绕考点再作答一次";
+    } else {
+      $("tutor_cost").textContent = `本轮得分 ${r.score}/3` + (r.gap ? ` —— ${r.gap}` : "");
+    }
     tutorShowConversation();
     invalidateLearnCache();   // 判分回写掌握度 → 失效学习中心缓存，概览到手最新值
   } catch (e) { toast(e.message, false); $("tutor_cost").textContent = ""; }
@@ -1260,6 +1371,23 @@ function rvCard(c) {
   </div>`;
 }
 /* 复习卡「查看提示」：懒加载教材原文切片（零 LLM，纯本地检索） */
+/* C20：切片原文「展开全文」——默认截断保护版面，需完整阅读时一键展开 */
+function rvSliceExpand(btn) {
+  const d = btn.closest(".rv-slice");
+  if (!d || !d.dataset.full) return;
+  const t = d.querySelector(".rv-text");
+  if (t) t.textContent = d.dataset.full;
+  btn.remove();
+}
+window.rvSliceExpand = rvSliceExpand;
+function rvSliceHTML(s, briefLen) {
+  const t = String(s.text || "");
+  const brief = t.slice(0, briefLen);
+  const full = esc(t);
+  return `<div class="rv-slice rv-full" data-full="${full}"><b>${esc(s.title || s.sid || "切片")}</b>`
+    + `<span class="rv-text">${esc(brief)}</span>${t.length > brief.length
+      ? `<button class="mini" style="margin-left:6px" onclick="rvSliceExpand(this)">展开全文</button>` : ""}</div>`;
+}
 async function rvHint(det, kpName, subject) {
   if (!det || det.dataset.loaded === "1" || !det.open) return;
   det.dataset.loaded = "1";
@@ -1272,8 +1400,7 @@ async function rvHint(det, kpName, subject) {
       body.innerHTML = `<div class="hint">教材中未检索到「${esc(kpName)}」相关内容 —— 可到「讲解与学习产物」用联网补充生成。</div>`;
       return;
     }
-    body.innerHTML = sl.map(s =>
-      `<div class="rv-slice"><b>${esc(s.title || s.sid || "切片")}</b>${esc((s.text || "").slice(0, 300))}${(s.text || "").length > 300 ? "…" : ""}</div>`).join("");
+    body.innerHTML = sl.map(s => rvSliceHTML(s, 300)).join("");
   } catch (e) {
     body.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
@@ -1290,8 +1417,7 @@ async function expHint(det, subject, kpName) {
     const r = await api(`/api/library/explain/slices?subject=${encodeURIComponent(subject || "")}&query=${encodeURIComponent(kpName || "")}&limit=5`);
     const sl = r.slices || [];
     if (!sl.length) { body.innerHTML = `<div class="hint">教材中未检索到「${esc(kpName)}」相关内容（可开启联网补充生成）。</div>`; return; }
-    body.innerHTML = sl.map(s =>
-      `<div class="rv-slice"><b>${esc(s.title || s.sid || "切片")}</b><br>${esc((s.text || "").slice(0, 400))}${(s.text || "").length > 400 ? "…" : ""}</div>`).join("");
+    body.innerHTML = sl.map(s => rvSliceHTML(s, 400)).join("");
   } catch (e) { body.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
 window.expHint = expHint;
@@ -1314,11 +1440,13 @@ async function rvQueueAll() {
   } catch (e) { toast(e.message, false); }
 }
 async function rvDel(cid) {
-  try {
-    await api("/api/library/review/" + cid, { method: "DELETE" });
-    toast("已移出复习队列");
-    loadReviewCtx(rvSubject);
-  } catch (e) { toast(e.message, false); }
+  confirmModal("移出复习队列？", `<p style="margin:0;color:var(--dim)">该复习卡将从队列移除（知识点可随时「铺卡」重新入队）。</p>`, "移出", async () => {
+    try {
+      await api("/api/library/review/" + cid, { method: "DELETE" });
+      toast("已移出复习队列");
+      loadReviewCtx(rvSubject);
+    } catch (e) { toast(e.message, false); }
+  }, false);
 }
 window.loadReviewCtx = loadReviewCtx; window.rvQueueAll = rvQueueAll; window.rvGrade = rvGrade; window.rvDel = rvDel;
 
@@ -1332,7 +1460,12 @@ async function renderMemoryCards() {
     const cards = r.cards || [];
     const st = r.stats || {};
     sec.innerHTML = `<div class="cardh" style="margin-top:6px"><h3 style="margin:0">🧠 医学记忆卡</h3>
-      <span class="hint">讲解产物自动沉淀 · 总 ${st.total || 0} / 今日到期 ${st.due || 0}</span></div>`
+      <span class="hint">讲解产物自动沉淀 · 总 ${st.total || 0} / 今日到期 ${st.due || 0}</span>
+      <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button class="act gray mini" style="padding:4px 10px" onclick="memExportApkg()">导出 Anki（.apkg）</button>
+        <button class="act gray mini" style="padding:4px 10px" onclick="memExportTxt()">导出 .txt</button>
+        <button class="act gray mini" style="padding:4px 10px" onclick="ankiHelp()">导入指引</button>
+      </span></div>`
       + (cards.length
         ? cards.map(memCard).join("")
         : `<div class="empty" style="padding:16px 0"><div class="sub">今日无到期记忆卡<br>到「讲解与学习产物」选中讲解 →「🧠 生成记忆卡」入队（FSRS 默认算法，SM-2 可切）</div></div>`);
@@ -1351,7 +1484,7 @@ function memCard(c) {
       · 下次 ${esc(String(c.due || "").slice(0, 10))} · 背 ${c.reps || 0} 次 · 忘 ${c.lapses || 0} 次</div>
     <div class="rv-grades"><span class="hint" style="font-size:11px">自评：</span>${grades.map(([t, q]) =>
       `<button class="rv-g${q}" onclick="memGrade('${esc(c.id)}',${q})">${t}</button>`).join("")}</div>
-    <div class="rv-legend hint">重来=遗忘 · 困难=回想吃力 · 良好=正常 · 简单=秒答（FSRS 4 级自评，0~5 全档兼容 SM-2）</div>
+    <div class="rv-legend hint">重来=遗忘 · 困难=回想吃力 · 良好=正常 · 简单=秒答<br>（FSRS 4 档；与上方复习卡 0~5 六档对照：重来≈0 · 困难≈2 · 良好≈3 · 简单≈5）</div>
   </div>`;
 }
 async function memGrade(cid, q) {
@@ -1364,13 +1497,33 @@ async function memGrade(cid, q) {
   } catch (e) { toast(e.message, false); }
 }
 async function memDel(cid) {
-  try {
-    await api("/api/library/cards/" + encodeURIComponent(cid), { method: "DELETE" });
-    toast("已删除记忆卡");
-    loadReviewCtx(rvSubject);
-  } catch (e) { toast(e.message, false); }
+  confirmModal("删除记忆卡？", `<p style="margin:0;color:var(--dim)">该记忆卡将从队列删除（讲解产物可重新「🧠 生成记忆卡」）。</p>`, "删除", async () => {
+    try {
+      await api("/api/library/cards/" + encodeURIComponent(cid), { method: "DELETE" });
+      toast("已删除记忆卡");
+      loadReviewCtx(rvSubject);
+    } catch (e) { toast(e.message, false); }
+  }, false);
 }
 window.renderMemoryCards = renderMemoryCards; window.memGrade = memGrade; window.memDel = memDel;
+/* D15：记忆卡导出（.apkg 真包 / .txt 文本；空库时给可读提示） */
+async function memExportApkg() {
+  try {
+    const a = document.createElement("a");
+    a.href = "/api/library/cards/export/apkg?subject=" + encodeURIComponent(rvSubject);
+    a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+    toast("已开始导出记忆卡 .apkg（Anki 双击即可导入）");
+  } catch (e) { toast(e.message, false); }
+}
+async function memExportTxt() {
+  try {
+    const r = await api("/api/library/cards/export/txt?subject=" + encodeURIComponent(rvSubject));
+    downloadText(r.filename || "MedKit记忆卡.txt", r.content);
+    toast("已导出记忆卡 .txt（Anki「文件→导入」选择 Tab 分隔）");
+  } catch (e) { toast(e.message, false); }
+}
+window.memExportApkg = memExportApkg; window.memExportTxt = memExportTxt;
 
 window.ankiPreview = ankiPreview;
 /* Anki 卡样预览：前 3 张卡正反面（直接复用项目题目数据，零后端改动） */
