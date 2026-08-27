@@ -20,6 +20,8 @@ hiddenimports = [
 hiddenimports += collect_submodules("pydantic")
 # NX-02（R-3）：jieba 的 posseg/finalseg 等为运行时动态导入，不显式收集则打包后 ImportError
 hiddenimports += collect_submodules("jieba")
+# NX-04（WP-05）：scheduler.py 对 fsrs 为函数级懒导入（静态分析捕不到）——显式收集
+hiddenimports += collect_submodules("fsrs")
 
 datas = [
     ("medkit/web", "medkit/web"),        # 静态前端（零 CDN）
