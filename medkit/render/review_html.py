@@ -8,6 +8,7 @@ A4（2026-08 审计）：markdown 库默认放行原始 HTML（<img onerror> 等
 import html as html_mod
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import urlsplit
 
 try:
@@ -50,12 +51,30 @@ def _safe_href(value: str | None) -> str | None:
     return None
 
 
+def _safe_img_src(value: str | None, out_dir: Path | None) -> str | None:
+    """img src 白名单（C-17）：http(s) 与 data: 原样保留；相对路径仅在
+    输出目录下存在同名文件时保留，否则返回 None（调用方给占位文字）。"""
+    if not value:
+        return None
+    src = _HREF_CTRL_RE.sub("", value).strip()
+    if not src:
+        return None
+    scheme = urlsplit(src).scheme.lower()
+    if scheme in _HREF_SCHEMES or scheme == "data":
+        return src
+    if scheme == "" and not src.startswith("//"):
+        if out_dir is not None and (Path(out_dir) / src).is_file():
+            return src
+    return None
+
+
 class _Sanitizer(HTMLParser):
     """极小化白名单消毒：剥除脚本/事件属性/未知标签；文本转义。"""
 
-    def __init__(self) -> None:
+    def __init__(self, out_dir: Path | None = None) -> None:
         super().__init__(convert_charrefs=True)
         self._out: list[str] = []
+        self._out_dir = out_dir  # C-17：img 相对路径白名单的校验根目录
         self._block_until = ""  # 遇到 script/style 时置位，跳过全部内容
         self._no_link_depth = 0  # href 不合法 → 剥成纯文本（保留文本，不出 <a> 标签）
 
@@ -85,14 +104,21 @@ class _Sanitizer(HTMLParser):
                 self._no_link_depth += 1
             return
         if tag == "img":
-            # D11：医学示意图（http/https/相对 src）放行；强制 alt；其余属性剥除
-            src, alt, title = "", "", ""
+            # D11：医学示意图（http/https/相对 src）放行；强制 alt；其余属性剥除。
+            # C-17：相对路径 src 仅当输出目录下存在同名文件时保留，否则输出占位文字。
+            src, alt, title, rel_missing = "", "", "", ""
             for k, v in attrs:
                 k = k.lower()
                 if v is None:
                     continue
-                if k == "src" and _safe_href(v) is not None:
-                    src = _safe_href(v) or ""
+                if k == "src":
+                    safe = _safe_img_src(v, self._out_dir)
+                    if safe is not None:
+                        src = safe
+                    else:
+                        cand = _HREF_CTRL_RE.sub("", v).strip()
+                        if cand and urlsplit(cand).scheme == "" and not cand.startswith("//"):
+                            rel_missing = cand
                 elif k == "alt":
                     alt = v
                 elif k == "title":
@@ -102,6 +128,8 @@ class _Sanitizer(HTMLParser):
                 if title:
                     attr += f' title="{html_mod.escape(title, quote=True)}"'
                 self._out.append(f"<img{attr}>")
+            elif rel_missing:
+                self._out.append("（图片相对路径未随附已省略：" + html_mod.escape(rel_missing) + "）")
             return
         if tag in ALLOWED_TAGS:
             good = [(k, v) for k, v in attrs
@@ -147,9 +175,12 @@ class _Sanitizer(HTMLParser):
         return "".join(self._out)
 
 
-def sanitize_html(raw: str) -> str:
-    """白名单消毒：保留表格/列表/标题/粗体等结构与文本，剥除可执行内容。"""
-    s = _Sanitizer()
+def sanitize_html(raw: str, out_dir: Path | None = None) -> str:
+    """白名单消毒：保留表格/列表/标题/粗体等结构与文本，剥除可执行内容。
+
+    C-17：out_dir 用于校验 img 相对路径 src 是否随附（存在才保留）。
+    """
+    s = _Sanitizer(out_dir)
     try:
         s.feed(raw or "")
         s.close()
@@ -205,12 +236,13 @@ def _augment(body: str) -> str:
     return _TABLE_RE.sub(lambda m: '<div class="tw">' + m.group(0) + "</div>", body)
 
 
-def review_to_html(md_text: str, title: str = "复习手册") -> str:
+def review_to_html(md_text: str, title: str = "复习手册",
+                   out_dir: Path | None = None) -> str:
     if md_lib is None:
         body = "<pre style='white-space:pre-wrap'>" + html_mod.escape(md_text) + "</pre>"
     else:
         raw = md_lib.markdown(md_text, extensions=["tables", "fenced_code", "nl2br"])
-        body = _augment(sanitize_html(raw))
+        body = _augment(sanitize_html(raw, out_dir))
     from .pagechrome import BASE_CSS, THEME_BTN, THEME_SCRIPT, THEME_VARS
 
     return f"""<!DOCTYPE html>

@@ -118,8 +118,11 @@ def export_apkg(questions: list[dict[str, Any]], subject: str, project_key: str,
     for q in sorted(questions, key=lambda x: str(x.get("id", ""))):
         fields = _fields(q)
         m = models["self"] if str(q.get("type", "")) in SELF_ASSESS_TYPES else models["normal"]
+        # C-05：guid 固定为 项目键+题目 id 的稳定哈希——同项目重导不重复新增
+        # （改题重生成后仍是同一张卡，Anki 更新而非重复导入）
         deck.add_note(genanki.Note(model=m, fields=[fields[f] for f in ("题干", "选项", "答案", "解析", "溯源")],
-                                   tags=_note_tags(q)))
+                                   tags=_note_tags(q),
+                                   guid=genanki.guid_for(str(project_key) + str(q.get("id") or ""))))
     deck.write_to_file(str(out_path))
     return out_path
 
@@ -149,6 +152,8 @@ def export_memory_apkg(cards: list[dict[str, Any]], subject: str, deck_key: str,
     deck = genanki.Deck(stable_id(f"mem-{deck_key}"),
                         f"MedKit 记忆卡 :: {subject or '未分类'}")
     for c in sorted(cards, key=lambda x: (str(x.get("kind", "")), str(x.get("front", "")))):
+        # C-05：记忆卡 guid = 卡 id（无 id 时回退 front+back 哈希）——同库重导不重复
+        _cid = str(c.get("id") or "") or (str(c.get("front") or "") + str(c.get("back") or ""))
         deck.add_note(genanki.Note(
             model=model,
             fields=[_esc_anki(c.get("front") or ""), _esc_anki(c.get("back") or ""),
@@ -156,6 +161,7 @@ def export_memory_apkg(cards: list[dict[str, Any]], subject: str, deck_key: str,
                     _esc_anki(c.get("kp_name") or c.get("subject") or "")],
             tags=[_sanitize_tag(str(c.get("kind") or "concept")),
                   _sanitize_tag(subject or "未分类")],
+            guid=genanki.guid_for(str(deck_key) + _cid),
         ))
     deck.write_to_file(str(out_path))
     return out_path

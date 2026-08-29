@@ -4,6 +4,7 @@
 """
 
 import json
+import re
 import threading
 from typing import Any
 
@@ -14,7 +15,7 @@ from ..agents import medgen
 from ..core import config as cfg
 from ..core import usage as usage_mod
 from ..core.config import resolve_key
-from ..core.fsutil import write_json_atomic
+from ..core.fsutil import safe_filename, write_json_atomic
 from ..gates import options_check
 from ..state import RUNNING
 from ._common import _log_project, _read_meta_checked, _safe_pid, _write_meta_atomic, proj_dir
@@ -59,9 +60,11 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
 
     which（B17「仅重渲染此产物」）：None=全部；"qbank"=题库 md/html；"paper"=押题卷；
     "review"=复习手册 html；"anki"=anki_export.txt + .apkg。
+
+    C-09：渲染前对已有产物文件做字节快照；渲染抛异常时恢复快照、删除渲染中
+    新建的文件，再上抛——磁盘题库/押题卷/Anki 与「已回滚」文案保持一致。
     """
-    from ..core.orchestrator import build_image_index, select_paper_stable
-    from ..render import qbank_html, review_html
+    from ..core.orchestrator import build_image_index
     subject = meta.get("subject", "")
     toggles = meta.get("toggles", {})
     # v0.8.1 真题标注：渲染前补齐 source_type/source_year（老项目产物同样带标签；幂等）
@@ -74,6 +77,36 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
     out_dir.mkdir(exist_ok=True)
     # R3S-02：从 slices.json 重建 image_index（初跑管线传索引，重渲染必须同口径，否则图题全丢图）
     image_index, _ = build_image_index(base)
+    snap: dict[str, bytes] = {}
+    for _p in out_dir.iterdir():
+        if _p.is_file():
+            try:
+                snap[_p.name] = _p.read_bytes()
+            except OSError:  # noqa: BLE001  读快照失败：该文件不纳入回滚面
+                pass
+    try:
+        return _render_project_artifacts(base, questions, meta, which, subject, toggles,
+                                         out_dir, image_index)
+    except Exception:
+        # C-09：回滚产物文件集——恢复快照中的原字节，删除本次渲染新建的文件
+        try:
+            for _p in out_dir.iterdir():
+                if _p.is_file() and _p.name not in snap:
+                    _p.unlink(missing_ok=True)
+            for _name, _data in snap.items():
+                (out_dir / _name).write_bytes(_data)
+        except Exception:  # noqa: BLE001  回滚失败：不吞原始异常
+            pass
+        raise
+
+
+def _render_project_artifacts(base, questions: list[dict[str, Any]], meta: dict[str, Any],
+                              which: str | None, subject: str, toggles: dict[str, Any],
+                              out_dir, image_index) -> list[str]:
+    """_rerender_project 的渲染主体（C-09 快照回滚包裹在调用方）。"""
+    from ..core.orchestrator import select_paper_stable
+    from ..render import qbank_html, review_html
+
     rendered: list[str] = []
     full = which is None
     if full or which == "qbank":
@@ -110,7 +143,8 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
     if (full or which == "review") and review_md_path.exists():
         (out_dir / "复习手册.html").write_text(
             review_html.review_to_html(review_md_path.read_text(encoding="utf-8"),
-                                       f"{subject} 复习手册"), encoding="utf-8")
+                                       f"{subject} 复习手册", out_dir=out_dir),
+            encoding="utf-8")
         rendered.append("复习手册.html")
     if full or which == "anki":
         (out_dir / "anki_export.txt").write_text(
@@ -119,7 +153,7 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
         try:  # S3：审核后同步重生成 .apkg（失败不阻断其余产物）
             from ..render.apkg import export_apkg
 
-            apkg_path = out_dir / f"{subject} 题库.apkg"
+            apkg_path = out_dir / f"{safe_filename(subject)} 题库.apkg"
             export_apkg(questions, subject, base.name, apkg_path)
             rendered.append(apkg_path.name)
         except Exception as e:  # noqa: BLE001
@@ -138,13 +172,41 @@ class ReviewBody(BaseModel):
     edits: list[dict[str, Any]] = []
 
 
+_ANSWER_PUNCT_RE = re.compile(r"[\s,，、;；]+")
+
+
+def _norm_answer(s: Any) -> str:
+    """C-11：答案归一化第三口径——去空格并剥离中英文逗号/顿号/分号（B,D 与 B，D → BD）。"""
+    return _ANSWER_PUNCT_RE.sub("", str(s or "")).upper()
+
+
+def _option_group_key(q: dict[str, Any]) -> Any:
+    """选项组身份键：优先 group.id；无 id 回退选项元组（与渲染层 _case_blocks 同口径）。"""
+    grp = q.get("group") if isinstance(q.get("group"), dict) else {}
+    gid = grp.get("id")
+    return gid if gid is not None else tuple(str(o) for o in (grp.get("options") or []))
+
+
+def _sync_option_group(questions: list[dict[str, Any]], q: dict[str, Any],
+                       new_options: list[Any]) -> None:
+    """R3-11：把新选项写进 group.options 并同步组内所有成员（不再子题各存一套）。"""
+    key = _option_group_key(q)
+    for other in questions:
+        if other.get("group_kind") != "option_group":
+            continue
+        if not isinstance(other.get("group"), dict):
+            continue
+        if _option_group_key(other) == key:
+            other["group"]["options"] = list(new_options)
+
+
 def _answer_issue(q: dict[str, Any]) -> str | None:
-    """B10：行内编辑后的答案键/题型合法性校验（R0 口径；答案带空格容忍）。
+    """B10/C-11：行内编辑后的答案键/题型合法性校验（R0 口径；第三口径归一化容忍）。
 
     返回错误文案或 None。A1/A2/A3/A4/B1 → 单字母；X 型 → ≥2 字母且不重复、
     字母均在选项范围内（B1 用共享 group.options）。
     """
-    answer = str(q.get("answer", "")).upper().replace(" ", "")
+    answer = _norm_answer(q.get("answer", ""))
     qtype = str(q.get("type", "") or "")
     if qtype not in options_check.ALLOWED_TYPES:
         return f"题型非法「{qtype}」"
@@ -199,16 +261,23 @@ def _review_questions_locked(pid: str, body: ReviewBody) -> dict[str, Any]:
             continue
         if qid in edits and edits[qid]:
             e = edits[qid]
+            # R3-15：只校验本批实际改动到 answer/options/type 的题——未改动题即使
+            # 历史非法键也不阻断保存（前端已逐行校验，后端只守「动过的」）
+            touched = any(k in e for k in ("answer", "options", "type"))
             for k in ("question", "options", "answer", "analysis", "bloom", "type", "subtopic"):
                 if k in e:
                     q[k] = e[k]
-            # S3/B1：编辑选项时同步 group.options（渲染/聚合与 q.options 同口径）
+            # R3-11：编辑选项时写 group.options 并同步组内所有成员（渲染/聚合同口径）
             if q.get("group_kind") == "option_group" and "options" in e and isinstance(q.get("group"), dict):
-                q["group"]["options"] = e["options"]
+                _sync_option_group(questions, q, e["options"])
+            # C-11：答案保存为归一化紧凑形式（B,D → BD）
+            if "answer" in e:
+                q["answer"] = _norm_answer(e["answer"])
             # B10：编辑后答案键/题型合法性校验（防污染产物与判分）
-            issue = _answer_issue(q)
-            if issue:
-                raise HTTPException(400, f"题目 {qid} 答案键有误：{issue}（请修正或恢复原答案再保存）")
+            if touched:
+                issue = _answer_issue(q)
+                if issue:
+                    raise HTTPException(400, f"题目 {qid} 答案键有误：{issue}（请修正或恢复原答案再保存）")
         out.append(q)
     if not out:
         raise HTTPException(400, "保留题数为 0，请至少保留一题")
@@ -319,6 +388,14 @@ def _regen_question_locked(pid: str, qid: str) -> dict[str, Any]:
         raise HTTPException(502, "模型未返回有效题目，请重试")
     new_q = new_qs[0]
     new_q["id"] = q["id"]
+    # C-16：重掷返回的新题若带案例组字段 → 剥离为独立题并记录（B12 只拦旧题，这里兜底新题）
+    stripped_fields: list[str] = []
+    for _f in ("case_id", "group_kind", "case_stem", "case_order"):
+        if _f in new_q:
+            del new_q[_f]
+            stripped_fields.append(_f)
+    if stripped_fields:
+        _log_project(base, f"⚠️ 重掷 {qid}：新题含案例组字段（{', '.join(stripped_fields)}），已剥离为独立题，请检查题干是否完整")
     idx = questions.index(q)
     questions[idx] = new_q
     # 与审核保存同策略：备份 → 写 → 重渲染失败回滚
@@ -339,6 +416,9 @@ def _regen_question_locked(pid: str, qid: str) -> dict[str, Any]:
         raise HTTPException(500, f"重掷后重渲染失败，已回滚：{type(e).__name__}（见日志）") from e
     finally:
         bak.unlink(missing_ok=True)
-    return {"ok": True, "question": new_q, "rendered": rendered,
-            "usage": uctx.snapshot(),  # v0.5：重掷独立记账随响应返回
-            "issues": options_check.check_all([new_q])["issues"]}
+    resp: dict[str, Any] = {"ok": True, "question": new_q, "rendered": rendered,
+                          "usage": uctx.snapshot(),  # v0.5：重掷独立记账随响应返回
+                          "issues": options_check.check_all([new_q])["issues"]}
+    if stripped_fields:
+        resp["warning"] = "新题含案例组字段，已剥离为独立题，请检查题干是否完整"
+    return resp

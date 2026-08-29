@@ -1,5 +1,9 @@
 /* ---- ① 服务商 */
 let createToken = "";   // R3-08：建课题意图令牌（双击/双标签幂等；失败保留供重试复用）
+/* R3-16：统一选项字母标签（ABCDEFGHIJ 前 n 位，n 上限 10）——试出/审核台/复制同口径 */
+function letters(n) { return "ABCDEFGHIJ".slice(0, Math.max(0, Math.min(parseInt(n, 10) || 0, 10))); }
+/* C-11：答案归一化第三口径——去空格并剥离中英文逗号/顿号/分号（B,D → BD） */
+function normAnswer(s) { return String(s || "").replace(/[\s,，、;；]+/g, "").toUpperCase(); }
 function modelValue(id) {
   const manual = $(id + "_manual");
   if (manual.style.display !== "none" && manual.value.trim()) return manual.value.trim();
@@ -1078,7 +1082,7 @@ $("btn_trial").onclick = async () => {
         exam_text: examText, extra_text: extraText,
       }) });
     const q = r.question;
-    const LETTERS = "ABCDEF";
+    const L = letters((q.options || []).length);   // R3-16：试出题同样支持 10 选项
     const issues = (r.issues || []).map(i =>
       `<div class="${i.severity === "fail" ? "failline" : "warnline"}">[${esc(i.code)}] ${esc(i.reason)}</div>`).join("");
     box.innerHTML = `
@@ -1086,7 +1090,7 @@ $("btn_trial").onclick = async () => {
         <div style="margin:0 0 8px;padding:6px 10px;border:1px dashed var(--warn);border-radius:8px;font-size:12px;color:var(--warn)">⚠️ ${esc(r.note || "试出题不含网络检索/大纲锚定/图片素材，正式生成风格可能不同")}</div>
         <div class="src">试出题 · ${esc(r.from_slice || "")} · <span class="tag">${esc(q.type || "")}</span><span class="tag">${esc(q.bloom || "")}</span></div>
         <div class="qtext">${esc(q.question)}</div>
-        <div class="opts">${(q.options || []).map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("<br>")}</div>
+        <div class="opts">${(q.options || []).map((o, i) => L[i] + ". " + esc(o)).join("<br>")}</div>
         <details><summary>显示答案</summary>
           <div class="ans">✓ 答案：<b>${esc(q.answer)}</b><br>${esc(q.analysis)}</div>
         </details>
@@ -1188,11 +1192,24 @@ async function loadProjects() {
   box.innerHTML = "";
   r.projects.forEach(p => {
     const d = document.createElement("div");
-    d.className = "proj";
+    d.className = "proj" + (p.meta_missing ? " orphan" : "");
     d.innerHTML = `<b>${esc(p.subject)}</b>
       <span class="stage${p.running ? " running" : ""}">${p.running ? "● 运行中" : esc(p.stage_label || "……")}</span>
-      <div class="meta">${esc(p.exam)} · 目标 ${p.target} 题 · ${(p.created || "").slice(0, 16).replace("T", " ")}</div>`;
-    d.onclick = () => showProject(p.pid);
+      <div class="meta">${p.meta_missing ? "元数据缺失 · 可删除" : ((p.exam || "") + " · 目标 " + (p.target || 0) + " 题 · " + (p.created || "").slice(0, 16).replace("T", " "))}</div>`;
+    d.onclick = () => {
+      if (p.meta_missing) {
+        // R3-20：孤儿项目（meta 缺失）不可进详情 → 直接提供删除入口
+        confirmModal("删除孤儿项目？",
+          "项目目录 <b>" + esc(p.pid) + "</b> 缺少元数据（可能因中断产生），将直接删除整个目录，不可恢复。",
+          "直接删除", async () => {
+            try {
+              await api("/api/projects/" + encodeURIComponent(p.pid), { method: "DELETE" });
+              toast("孤儿项目已删除");
+              loadProjects();
+            } catch (e) { toast(e.message, false); }
+          });
+      } else showProject(p.pid);
+    };
     box.appendChild(d);
   });
 }
@@ -1558,22 +1575,22 @@ function applyReviewFilter() {
   const cnt = $("rev_filter_cnt");
   if (cnt) cnt.textContent = `筛选后 ${visible} / ${reviewState.questions.length} 题`;
 }
-/* B10：答案键校验（与后端 R0 口径一致；A1/A2/A3/A4/B1 单字母，X 型≥2 字母且不重复） */
+/* B10/C-11：答案键校验（与后端 R0 口径一致；先归一化第三口径再判非法键；
+   A1/A2/A3/A4/B1 单字母，X 型≥2 字母且不重复；R3-06：无 4 选项地板，按实际选项数） */
 function answerIssue(type, ans, optCount) {
-  const a = String(ans || "").replace(/[\s,，、]+/g, "").toUpperCase();
-  const letters = "ABCDEFGHIJ".slice(0, Math.max(optCount || 4, 4));
+  const a = normAnswer(ans);
+  const lts = letters(optCount);
   if (!a) return "答案键不能为空";
   if (type === "X") {
     if (a.length < 2) return "X 型答案至少 2 个字母（当前「" + a + "」）";
     if (new Set(a).size !== a.length) return "答案键有重复字母";
   } else if (a.length !== 1) return "单选/案例题答案应为单字母（当前「" + a + "」）";
-  if ([...a].some(c => letters.indexOf(c) < 0)) return "含选项字母范围外字符（选项 A~" + letters.slice(-1) + "）";
+  if ([...a].some(c => lts.indexOf(c) < 0)) return "含选项字母范围外字符（选项 A~" + (lts.slice(-1) || "") + "）";
   return "";
 }
 function renderReview(scrollToId = null) {
   const box = $("review_panel");
   const qs = reviewState.questions;
-  const LETTERS = "ABCDEF";
   const kept = qs.filter(q => !reviewState.drop.has(q.id)).length;
   const BLOOMS = ["", "记忆", "理解", "应用", "创造"];
   box.innerHTML = `<div class="card" style="margin-top:14px">
@@ -1715,7 +1732,7 @@ function renderReview(scrollToId = null) {
       </div>
       <div class="qbody" data-f="body">${(q.image_ref || q.data_table)
         ? `<div class="hint" style="margin:0 0 6px">${q.image_ref ? `🖼 含图：${esc(q.image_ref)}（如图所示）` : ""}${q.data_table ? `<span class="tag">📋 含表格数据</span>` : ""}</div>` : ""}${esc(ed.question ?? q.question)}
-        <ul>${opList.map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("</li><li>")}</ul>
+        <ul>${opList.map((o, i) => `${letters(opList.length)[i]}. ${esc(o)}`).join("</li><li>")}</ul>
         <div class="hint good">✓ 答案：${esc(ed.answer ?? q.answer)} · ${esc((ed.analysis ?? q.analysis) || "")}</div>
       </div>
       <div class="optsrow" data-f="editrow" style="${ed._editOpen ? "" : "display:none"}">
@@ -1731,8 +1748,11 @@ function renderReview(scrollToId = null) {
       </div>
       <div class="hint bad" data-f="anschk" style="display:none;margin:4px 0"></div>
       <div class="optsrow" data-f="editopts" style="${ed._editOpen ? "" : "display:none"}">
-        ${opList.map((o, i) =>
-          `<input class="eb" data-e="opt${i}" placeholder="选项${LETTERS[i]}" value="${esc(o)}">`).join("")}
+        ${q.group_kind === "option_group"
+          ? `<div class="hint" style="margin:0 0 4px">共享选项（本组所有子题共用）——修改会同步整组</div>
+             <input class="eb" data-e="groupoptions" placeholder="每行一个共享选项（所有子题共用）" value="${esc((ed.groupOptions || (q.group && q.group.options) || []).join("\n"))}">`
+          : opList.map((o, i) =>
+              `<input class="eb" data-e="opt${i}" placeholder="选项${letters(opList.length)[i]}" value="${esc(o)}">`).join("")}
       </div>`;
     d.querySelector("[data-a=drop]").onclick = () => {
       const dropBtn = d.querySelector("[data-a=drop]");
@@ -1753,8 +1773,9 @@ function renderReview(scrollToId = null) {
     };
     d.querySelector("[data-a=copy]").onclick = () => {
       const e = reviewState.edits[q.id] || {};
-      const L = "ABCDEF";
-      const opts = (e.options ?? optSrc(q, null)).map((o, i) => `${L[i]}. ${o}`).join("\n");
+      const optsSrc = (e.options ?? optSrc(q, null));
+      const L = letters(optsSrc.length);   // R3-16：复制题面同样按实际选项数
+      const opts = optsSrc.map((o, i) => `${L[i]}. ${o}`).join("\n");
       const text = `[${q.id}] ${q.type} · ${(e.bloom ?? q.bloom) || ""} · ${(e.subtopic ?? q.subtopic) || ""}\n`
         + `${(e.question ?? q.question) || ""}\n${opts}\n答案：${(e.answer ?? q.answer) || ""}\n解析：${(e.analysis ?? q.analysis) || ""}`;
       copyText(text, d.querySelector("[data-a=copy]"));
@@ -1768,9 +1789,9 @@ function renderReview(scrollToId = null) {
       const btn = d.querySelector("[data-a=regen]");
       btn.disabled = true; btn.textContent = "重掷中…";
       try {
-        await api("/api/projects/" + currentPid + "/regen", { method: "POST",
+        const rr = await api("/api/projects/" + currentPid + "/regen", { method: "POST",
           headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: q.id }) });
-        toast(`已重掷 ${q.id}`);
+        toast(rr.warning ? `已重掷 ${q.id} · ${rr.warning}` : `已重掷 ${q.id}`);   // C-16：新题含案例字段 → 提示
         // 保留其它题目的编辑/剔除状态；该题重掷后作废旧编辑
         delete reviewState.edits[q.id];
         reviewState.drop.delete(q.id);
@@ -1792,7 +1813,11 @@ function renderReview(scrollToId = null) {
       inp.oninput = () => {
         const e = reviewState.edits[q.id] = reviewState.edits[q.id] || {};
         const k = inp.dataset.e;
-        if (k.startsWith("opt")) { e.options = (e.options || optSrc(q, null).slice()); e.options[+k.slice(3)] = inp.value; }
+        if (k === "groupoptions") {
+          // R3-11：共享选项入口 → 每行一项，写 group.options（保存时后端同步整组）
+          e.groupOptions = inp.value.split("\n").map(x => x.trim()).filter(Boolean);
+          e.options = e.groupOptions;
+        } else if (k.startsWith("opt")) { e.options = (e.options || optSrc(q, null).slice()); e.options[+k.slice(3)] = inp.value; }
         else e[k] = inp.value;
         checkAns();
         reviewState.dirty = true;
@@ -1893,16 +1918,18 @@ function renderReview(scrollToId = null) {
       return;
     }
     const keep = qs.map(x => x.id).filter(id => !reviewState.drop.has(id));
-    // C-10：保留 0 题 → 后端拒绝保存空题库；前端先拦截并说明（剔除意图不再静默蒸发）
+    // C-10/R3-14：保留 0 题 → 弹确认说明并中止（后端拒绝保存空题库；剔除意图不再静默蒸发）
     if (qs.length && !keep.length) {
-      toast("已剔除全部题目——题库至少保留 1 题（后端拒绝保存空题库）；整卷作废请到「我的项目」删除项目", false);
+      confirmModal("无法保存空题库",
+        "<p>你将剔除全部题目（后端拒绝保存空题库）。<br>请至少保留一题；整卷作废请到「我的项目」删除项目。</p>",
+        "知道了", null, false);
       return;
     }
     const edits = Object.entries(reviewState.edits).filter(([k, v]) => k !== "drop" && v && Object.keys(v).some(x => !x.startsWith("_")) && !reviewState.drop.has(k))
       .map(([id, v]) => {
         const clean = { id };
         ["question", "options", "answer", "analysis", "bloom", "type", "subtopic"].forEach(f => {
-          if (v[f] !== undefined) clean[f] = v[f];
+          if (v[f] !== undefined) clean[f] = (f === "answer" ? normAnswer(v[f]) : v[f]);   // C-11：存紧凑形式 BD
         });
         return clean;
       });

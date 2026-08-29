@@ -5,10 +5,25 @@ v0.5（2026-08 审计）：原 main.py 固定 tmp 名（meta.json.tmp）无重�
 """
 
 import json
+import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+# C-12：Windows/各平台不可用于文件名的字符 → 统一替换为下划线
+_UNSAFE_FS_CHARS = re.compile("[\\\\/:*?\"'<>|\\x00-\\x1f\\x7f]")
+
+
+def safe_filename(s: Any) -> str:
+    """把任意字符串转成安全文件名（C-12，subject 拼文件名统一入口）。
+
+    替换 反斜杠/斜杠/冒号/星号/问号/引号/尖括号/控制字符 为下划线；
+    去首尾空格与点；空结果返回「未命名」。
+    """
+    name = _UNSAFE_FS_CHARS.sub("_", str(s or ""))
+    name = name.strip(" .")
+    return name or "未命名"
 
 
 def read_json_list(path: Path) -> list[Any]:

@@ -807,7 +807,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         rendered.append("押题卷.html")
     if review_md and toggles.get("review", True):
         (base / "最终产物" / "复习手册.html").write_text(
-            review_html.review_to_html(review_md, f"{subject} 复习手册"), encoding="utf-8")
+            review_html.review_to_html(review_md, f"{subject} 复习手册",
+                                       out_dir=base / "最终产物"), encoding="utf-8")
         rendered.append("复习手册.html")
     # Anki 导出（U8，随产物生成，项目目录留档 + 详情页可下载）
     anki_txt = qbank_html.export_anki(questions, f"{subject} 题库")
@@ -817,7 +818,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     try:
         from ..render.apkg import export_apkg
 
-        apkg_path = base / "最终产物" / f"{subject} 题库.apkg"
+        from ..core.fsutil import safe_filename
+        apkg_path = base / "最终产物" / f"{safe_filename(subject)} 题库.apkg"
         export_apkg(questions, subject, pid, apkg_path)
         rendered.append(apkg_path.name)
         _log(base, f"  ✅ .apkg 导出：{apkg_path.name}")

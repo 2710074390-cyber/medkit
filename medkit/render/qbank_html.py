@@ -123,17 +123,23 @@ def _effective_options(q: dict[str, Any]) -> list[str]:
 
 
 def _case_blocks(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """按（案例组 / 选项组 / 单题）有序分组（S3）。返回 [{key, kind, stem, options, items}]。"""
-    ordered = sorted(questions, key=lambda q: (q.get("type", "") or "", str(q.get("id", ""))))
+    """按（案例组 / 选项组 / 单题）有序分组（S3）。返回 [{key, kind, stem, options, items}]。
+
+    C-15：不再按 (type,id) 全库重排——保持原题目顺序（章节序）；选项组分组键优先
+    group.id（两组选项相同但 id 不同 → 不混排），无 id 时回退选项元组。
+    """
     blocks: list[dict[str, Any]] = []
     index: dict[tuple, int] = {}
-    for q in ordered:
+    for q in questions:
         gk = q.get("group_kind")
         key = None
         if gk == "case" and q.get("case_id"):
-            key = ("case", q.get("case_id"))
+            key = ("case", str(q.get("case_id")))
         elif gk == "option_group" and isinstance(q.get("group"), dict):
-            key = ("og", tuple(str(o) for o in (q["group"].get("options") or [])))
+            grp = q["group"]
+            gid = grp.get("id")
+            key = ("og", gid if gid is not None
+                   else tuple(str(o) for o in (grp.get("options") or [])))
         if key is None:
             blocks.append({"key": None, "kind": "single", "stem": "",
                            "options": [], "items": [q]})
@@ -263,18 +269,20 @@ def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
     return "\n".join(lines) + "\n"
 
 
-def _html_sub(q: dict[str, Any], show_options: bool = True) -> str:
-    """案例/选项组内的子题（不折叠，逐题展示）。"""
+def _html_sub(q: dict[str, Any], show_options: bool = True,
+              image_index: Optional[dict[str, Any]] = None) -> str:
+    """案例/选项组内的子题（不折叠，逐题展示）。C-13：子题同样渲染 render_media（与 MD/押题卷同口径）。"""
     opts = ""
     if show_options:
         opts = "<ul>" + "".join(
             f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
             for i, o in enumerate(_effective_options(q))) + "</ul>"
-    return (f'<div class="qsub"><p><b>{html_mod.escape(q.get("id", ""))}</b> · '
-            f'{html_mod.escape(str(q.get("type", "")))} · '
-            f'{html_mod.escape(str(q.get("question", "")))}</p>{opts}'
-            f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
-            f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div>')
+    return ('<div class="qsub">' + render_media(q, image_index)
+            + f'<p><b>{html_mod.escape(q.get("id", ""))}</b> · '
+            + f'{html_mod.escape(str(q.get("type", "")))} · '
+            + f'{html_mod.escape(str(q.get("question", "")))}</p>{opts}'
+            + f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
+            + f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div>')
 
 
 def export_html(questions: list[dict[str, Any]], title: str = "题库",
@@ -305,7 +313,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 f'{len(b["items"])} 道子题 · 点击展开案例题干</summary>'
                 f'<div class="qb"><p><b>案例题干</b>：{html_mod.escape(str(b["stem"]))}</p>'
                 + render_media(first, image_index)
-                + "".join(_html_sub(q) for q in b["items"]) + '</div></details>',
+                + "".join(_html_sub(q, image_index=image_index) for q in b["items"]) + '</div></details>',
                 len(b["items"])))
         elif b["kind"] == "option_group":
             first = b["items"][0]
@@ -391,6 +399,10 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
   <button class="mini" onclick="pg(1)" aria-label="下一页">下一页 ›</button>
 </div>
 {page_divs}
+<style>
+/* C-01：打印输出完整题库——强制展开全部题目（含答案）、隐藏筛选/分页/按钮控件 */
+@media print{{.qpage{{display:block!important}}.filters,.qpager{{display:none!important}}.mini{{display:none!important}}details.q .qb{{display:block!important}}}}
+</style>
 <script>
 const QB_PID={pid_json};
 const QB_KEY="medkitQbFilter-"+(QB_PID||(("f"+location.pathname+"#"+document.title).split("").reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7).toString(36)));
@@ -439,7 +451,9 @@ function resetFilter(){{
 function apply(){{
   let n=0;
   document.querySelectorAll('details.q').forEach(d=>{{
-    const okT=!FT_T||(FT_T==='case'&&d.dataset.group==='case')||(FT_T==='og'&&d.dataset.group==='og')||(d.dataset.type||'')===FT_T;
+    const dt=d.dataset.type||'';
+    // R3-12：og 筛选项命中 data-group=og 或 data-type=B1；case 筛选项命中 data-group=case 或 A3/A4
+    const okT=!FT_T||(FT_T==='case'&&(d.dataset.group==='case'||dt==='A3'||dt==='A4'))||(FT_T==='og'&&(d.dataset.group==='og'||dt==='B1'))||dt===FT_T;
     const okB=!FT_B||(d.dataset.blm||'')===FT_B;
     const okQ=!FT_Q||(d.dataset.kw||'').indexOf(FT_Q)>-1;
     const okY=!FT_Y||(d.dataset.yr||'')===FT_Y;
@@ -466,6 +480,9 @@ function setCounts(){{
 }}
 setCounts();
 renderPg();
+/* C-01：打印前展开全部题目（含答案），打印后还原折叠态 */
+window.addEventListener('beforeprint',()=>{{document.querySelectorAll('details.q').forEach(d=>{{d.dataset.po=String(d.open);d.open=true;}});}});
+window.addEventListener('afterprint',()=>{{document.querySelectorAll('details.q').forEach(d=>{{d.dataset.po=d.dataset.po||'false';d.open=(d.dataset.po==='true');}});}});
 /* 记忆上次过滤状态（题型/Bloom/关键词/年份），下次打开保持不变（按项目隔离，D8） */
 try{{
   const saved=JSON.parse(localStorage.getItem(QB_KEY)||'null');
@@ -525,6 +542,13 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
     no_opt = [q for q in questions if not _effective_options(q)]
     questions = [q for q in questions if _effective_options(q)]
     dropped_n = len(no_opt)
+    # D2：noscript 静态兜底——全部题目题干+答案文本（启用 JS 才能计时/判分）
+    noscript_items = "".join(
+        "<li><b>" + html_mod.escape(str(q.get("id") or "")) + "</b> · "
+        + html_mod.escape(str(q.get("type") or "")) + " · "
+        + html_mod.escape(str(q.get("question") or ""))
+        + "（答案：" + html_mod.escape(str(q.get("answer") or "")) + "）</li>"
+        for q in questions)
     qs = _questions_json_for_page(questions, image_index)
     pid_json = json.dumps(pid or "")
     subj_json = json.dumps(subject or "")
@@ -538,6 +562,12 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
 {f'<p class="hint" style="margin:4px 0 0">⚠️ {dropped_n} 题缺选项，已从本卷剔除：{", ".join(html_mod.escape(str(x.get("id") or str(x.get("question", ""))[:20])) for x in no_opt[:12])}{"…" if dropped_n > 12 else ""}（可在「审核台」查看/修复）。</p>' if dropped_n else ''}
 <p class="hint" style="margin:6px 0 0">判分后自动同步错题到学习中心（在 MedKit 内打开时）；下载到本地打开则错题仅存本地。</p>
 <p class="hint" style="margin:2px 0 0">ⓘ 练习自测用：答案内嵌于本页源码（右键查看源码可见），<b>请勿用于正式考试</b>；计时/限时仅为自律工具。</p>
+<noscript>
+  <div style="border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:12px 0;background:var(--card)">
+    <p>⚠️ 本卷需要启用 JavaScript 才能获得计时/判分/续答功能。以下为全部题目与答案的静态列表（可打印）。</p>
+    <ol>{noscript_items}</ol>
+  </div>
+</noscript>
 <div id="quiz"><span class="spin"></span>加载中…</div>
 <script>
 let QUESTIONS = {qs};
@@ -552,7 +582,7 @@ const KEY = "medkit-paper-" + (PAPER_PID || ANON_KEY);
 const RETRY_KEY = KEY + "-retry";
 const WRONG_POOL = {{}};   // v0.7：判分用错题集，供「同步到错题本」；resetAll/retryWrong 清池（C-18）
 let secs = 0;
-let judged = false;   // 判分防重入：提交一次后再次点击不重复计分/铺解析
+let judged = false;   // 判分防重入：提交一次后再次点击不重复计分/铺解析（R3-13：judged 持久化到 localStorage）
 let showCt = false;   // 限时模式开关（当前页面生命周期内）
 let stInvalidated = false;   // R3S-04：卷面指纹不匹配 → 清档并提示（一次性迁移，不静默套旧答案）
 let autoGrading = false;    // C-08：限时到点自动判分防重入（取消确认后不再每秒弹窗）
@@ -564,7 +594,7 @@ function clearState(){{try{{localStorage.removeItem(KEY);}}catch(e){{}}}}
 /* R3S-04：状态按题目 id 建模（答案/旗标均以 q.id 为键）；卷面指纹 = 全卷 id 序列 */
 const FP = QUESTIONS.map(q=>String(q.id||"")).join(",");
 function qid(i){{ const q=QUESTIONS[i]; return String((q&&q.id)||("Q"+(i+1))); }}
-function freshState(){{ return {{fp:FP, answers:{{}}, marked:[], t0:null}}; }}
+function freshState(){{ return {{fp:FP, answers:{{}}, marked:[], t0:null, judged:false}}; }}
 function getState(){{
   const st=loadState();
   if(!st||st.fp!==FP) return freshState();   // 旧版按下标存（无 fp）或卷面已变 → 不套旧答案
@@ -572,8 +602,9 @@ function getState(){{
   const ids=new Set(QUESTIONS.map(q=>String(q.id||"")));
   Object.keys(st.answers||{{}}).forEach(k=>{{ if(ids.has(k)) answers[k]=st.answers[k]; }});
   const marked=Array.isArray(st.marked)?st.marked.filter(m=>ids.has(m)):[];
-  return {{fp:FP, answers:answers, marked:marked, t0:st.t0||null}};
+  return {{fp:FP, answers:answers, marked:marked, t0:st.t0||null, judged:!!st.judged}};
 }}
+judged = getState().judged;   // R3-13：已判分后重开页面 → judged=true（计时冻结）
 function invalidateIfStale(){{
   const st=loadState();
   if(st && st.fp!==FP){{ stInvalidated=true; clearState(); }}
@@ -632,6 +663,10 @@ function render(){{
   h+='<div class="btns"><button class="act" onclick="grade()">提交判分</button>'
      +'<button class="gray" onclick="resetAll()">清空重做</button></div><div id="res" role="status" aria-live="polite" tabindex="-1"></div>';
   box.innerHTML=h;
+  if(judged){{   // R3-13：重开后已判分 → 锁定作答（与判分当次行为一致）
+    document.querySelectorAll('#quiz input').forEach(x=>x.disabled=true);
+    document.querySelectorAll('#quiz .q').forEach(d=>d.classList.add('judged'));
+  }}
   paintAnswers();
   buildGrid();
   updateAnswered();
@@ -721,6 +756,7 @@ function grade(){{
   if(unanswered>0 && !confirm('还有 '+unanswered+' 题未作答，确认提交判分？')) return;
   judged = true;
   collectAnswers();
+  const stJ=getState(); stJ.judged=true; saveState(stJ);   // R3-13：判分标记持久化（重开冻结计时）
   let score=0, wrong=[];
   const st=getState();
   const caseScore={{}};
@@ -865,7 +901,9 @@ async function syncWrong(manual){{
   }}catch(e){{ bannerRetry("同步失败："+e.message); }}
 }}
 
-const T0_START=(getState()).t0||Date.now();
+const _st0=getState();
+// R3-13：已判分 → T0=Date.now()（不再按首开时间戳累计）；未判分才续接旧 t0
+const T0_START=(_st0.judged?Date.now():(_st0.t0||Date.now()));
 let T0 = T0_START;
 function t0Reset(){{ T0=Date.now(); secs=0; autoGrading=false; }}   // C-08：重做重置自动判分防重入标志
 function fmtT(s){{const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}}
@@ -874,6 +912,7 @@ function ctLimit(){{
   return m*60;
 }}
 function ctToggle(){{
+  if(judged) return;   // R3-13：已判分 → 限时开关无效（计时冻结）
   const el=document.getElementById('ctMode');
   showCt=!!(el&&el.checked);
   if(showCt && secs>=ctLimit()){{ grade(); return; }}
@@ -883,6 +922,7 @@ function tick(){{
   secs=Math.floor((Date.now()-T0)/1000);
   const el=document.getElementById('timer');
   if(!el) return;
+  if(judged){{ el.textContent=fmtT(secs)+'（已判分）'; return; }}   // R3-13：计时冻结、不自动判分
   if(showCt){{
     const left=Math.max(0,ctLimit()-secs);
     el.textContent='⏳ 剩 '+Math.floor(left/60)+':'+(left%60<10?'0':'')+(left%60);

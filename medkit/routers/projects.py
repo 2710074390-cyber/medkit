@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..core import config as cfg
+from ..core.fsutil import safe_filename, write_json_atomic
 from ..core.quota import allocate
 from ..state import CANCELLING, RUNNING
 from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir, require_flag
@@ -34,6 +35,18 @@ _CREATE_LOCK_GUARD = threading.Lock()
 _SUBJECT_LOCKS: dict[str, threading.RLock] = {}
 _TOKEN_PIDS: dict[str, tuple[float, str]] = {}
 _TOKEN_WINDOW = 10.0
+
+# R3-17：图片素材 slices.json 读-改-原子写 整段 per-pid RLock（并发上传/删除不丢切片索引）
+_ASSET_LOCK_GUARD = threading.Lock()
+_ASSET_PID_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _asset_lock(pid: str) -> threading.RLock:
+    with _ASSET_LOCK_GUARD:
+        lock = _ASSET_PID_LOCKS.get(pid)
+        if lock is None:
+            lock = _ASSET_PID_LOCKS[pid] = threading.RLock()
+        return lock
 
 
 def _subject_lock(subject: str) -> threading.RLock:
@@ -185,10 +198,21 @@ def list_projects() -> dict[str, Any]:
                 continue
             meta_path = d / "meta.json"
             if not meta_path.exists():
+                # R3-20：无 meta 的目录 → 孤儿条目（前端可显示可删除，不再永久残留）
+                items.append({"pid": d.name,
+                              "subject": "（元数据缺失）",
+                              "exam": "", "target": 0, "stage": "",
+                              "running": False, "stage_label": "孤儿项目",
+                              "created": "", "meta_missing": True})
                 continue
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  损坏 meta 同样按孤儿处理（可删除）
+                items.append({"pid": d.name,
+                              "subject": "（元数据缺失）",
+                              "exam": "", "target": 0, "stage": "",
+                              "running": False, "stage_label": "孤儿项目",
+                              "created": "", "meta_missing": True})
                 continue
             stage_raw = meta.get("stage", "")
             pkey = meta.get("pid", d.name)
@@ -268,8 +292,11 @@ def delete_project(pid: str) -> dict[str, Any]:
         raise HTTPException(404, "项目不存在")
     if RUNNING.get(pid):
         raise HTTPException(400, "项目正在生成中：请先「停止」后再删除")
-    if (base / "meta.json").exists():
-        shutil.rmtree(base, ignore_errors=True)
+    meta_missing = not (base / "meta.json").exists()
+    shutil.rmtree(base, ignore_errors=True)
+    if meta_missing:
+        # R3-20：base 存在但 meta 缺失 → 无条件删目录，并明确提示
+        return {"ok": True, "msg": "元数据缺失，已直接删除目录"}
     return {"ok": True}
 
 
@@ -329,7 +356,7 @@ def export_apkg_file(pid: str) -> FileResponse:
         from ..render.apkg import export_apkg
 
         questions = json.loads(qs_path.read_text(encoding="utf-8"))
-        tmp = out_dir / f"{meta.get('subject', '题库')} 题库.apkg"
+        tmp = out_dir / f"{safe_filename(meta.get('subject', '题库'))} 题库.apkg"
         export_apkg(questions, meta.get("subject", ""), pid, tmp)
         apkg = tmp
     return FileResponse(apkg, media_type="application/octet-stream",
@@ -369,22 +396,23 @@ async def upload_asset(pid: str, file: UploadFile = File(...),
     ext = Path(file.filename or "").suffix.lower()
     if ext not in _ALLOW_IMG:
         raise HTTPException(400, f"仅支持图片：{' / '.join(_ALLOW_IMG)}")
-    asset_dir = base / "assets"
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    n = _next_fig_no(base)
-    fname = f"fig_{n}{ext}"
-    (asset_dir / fname).write_bytes(raw)
-    sid = f"IMG{n}"
-    cap = (caption or "").strip() or file.filename or f"图{n}"
-    try:
-        slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        slices = []
-    slices.append({"sid": sid, "role": "image", "title": cap, "text": cap,
-                   "image": {"path": f"assets/{fname}", "name": file.filename or fname,
-                             "caption": cap, "source": "upload"}})
-    (base / "slices.json").write_text(json.dumps(slices, ensure_ascii=False, indent=1),
-                                      encoding="utf-8")
+    # R3-17：slices.json 读-改-原子写 整段 per-pid RLock（并发上传两图不丢索引）
+    with _asset_lock(pid):
+        asset_dir = base / "assets"
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        n = _next_fig_no(base)
+        fname = f"fig_{n}{ext}"
+        (asset_dir / fname).write_bytes(raw)
+        sid = f"IMG{n}"
+        cap = (caption or "").strip() or file.filename or f"图{n}"
+        try:
+            slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            slices = []
+        slices.append({"sid": sid, "role": "image", "title": cap, "text": cap,
+                       "image": {"path": f"assets/{fname}", "name": file.filename or fname,
+                                 "caption": cap, "source": "upload"}})
+        write_json_atomic(base / "slices.json", slices)
     return {"ok": True, "sid": sid, "path": f"assets/{fname}",
             "caption": cap, "name": file.filename or fname}
 
@@ -428,16 +456,17 @@ def delete_asset(pid: str, sid: str) -> dict[str, Any]:
     require_flag("image_q")
     pid = _safe_pid(pid)
     base = proj_dir(pid)
-    s = next((x for x in _image_slices(base) if x.get("sid") == sid), None)
-    if not s:
-        raise HTTPException(404, "图片不存在")
-    f = base / str((s.get("image") or {}).get("path") or "")
-    f.unlink(missing_ok=True)
-    try:
-        slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        slices = []
-    (base / "slices.json").write_text(
-        json.dumps([x for x in slices if x.get("sid") != sid], ensure_ascii=False, indent=1),
-        encoding="utf-8")
+    # R3-17：删除同样在 per-pid RLock 内整段读-改-原子写（防并发上传丢切片）
+    with _asset_lock(pid):
+        s = next((x for x in _image_slices(base) if x.get("sid") == sid), None)
+        if not s:
+            raise HTTPException(404, "图片不存在")
+        f = base / str((s.get("image") or {}).get("path") or "")
+        f.unlink(missing_ok=True)
+        try:
+            slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            slices = []
+        write_json_atomic(base / "slices.json",
+                          [x for x in slices if x.get("sid") != sid])
     return {"ok": True}

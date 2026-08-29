@@ -263,31 +263,54 @@ def subjects() -> dict[str, Any]:
 
     v0.8.1：新增 `stats`（每科错题数/知识点数/掌握率/复习卡数与今日到期）——全部本地计算，
     复用 mastery 视图与 review.stats 口径，零 LLM、零新表。
+    R3-19：一次扫描按 subject 聚合（消除逐科目 get_mastery_view + rev.stats 的 N+1），口径不变。
     """
+    from collections import defaultdict
+    from datetime import date as _date
+
+    mistakes = lib.list_mistakes()
+    kps = lib.list_knowledge()
+    explains = expl.list_explains()
+    cards = rev.list_cards()
     seen: set[str] = set()
-    for m in lib.list_mistakes():
+    mis_by: dict[str, int] = defaultdict(int)
+    kp_by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for m in mistakes:
         if m.get("subject"):
             seen.add(m["subject"])
-    for k in lib.list_knowledge():
+        mis_by[m.get("subject") or ""] += 1
+    for k in kps:
         if k.get("subject"):
             seen.add(k["subject"])
-    for e in expl.list_explains():
+        kp_by[k.get("subject") or ""].append(k)
+    for e in explains:
         if e.get("subject"):
             seen.add(e["subject"])
+    cards_by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for c in cards:
+        cards_by[c.get("subject") or ""].append(c)
+    today = _date.today().isoformat()
     names = sorted(seen)
     stats_out = []
     for s in names:
-        mv = lib.get_mastery_view(s)["stats"]
-        rs = rev.stats(s)
-        total = mv["total_knowledge"] or 0
+        subj_kps = kp_by.get(s, [])
+        total = len(subj_kps)
+        solid = mastered = 0
+        for k in subj_kps:
+            st = lib.compute_state(float(k.get("score") or 0.0))
+            if st == "solid":
+                solid += 1
+            elif st == "mastered":
+                mastered += 1
+        subj_cards = cards_by.get(s, []) + cards_by.get("", [])   # rev.list_cards 口径：含未分类卡
         stats_out.append({
             "subject": s,
-            "mistakes": mv["total_mistakes"],
-            "knowledge": mv["total_knowledge"],
-            "mastered_rate": round(100 * (mv["solid"] + mv["mastered"]) / total) if total else 0,
-            "review_total": rs["total"],
-            "review_due": rs["due"],
-            "review_new": rs["new"],
+            "mistakes": mis_by.get(s, 0),
+            "knowledge": total,
+            "mastered_rate": round(100 * (solid + mastered) / total) if total else 0,
+            "review_total": len(subj_cards),
+            "review_due": sum(1 for c in subj_cards if (c.get("due") or "") <= today),
+            "review_new": sum(1 for c in subj_cards if c.get("state") == "new"),
         })
     return {"subjects": names, "stats": stats_out}
 
@@ -746,7 +769,8 @@ def cards_export_txt(subject: str = "") -> Any:
                _esc_anki(CARD_KIND_LABELS.get(c.get("kind"), c.get("kind") or "concept")),
                _esc_anki(c.get("kp_name") or c.get("subject") or "")]
         lines.append("\t".join(row))
-    return {"ok": True, "filename": f"MedKit记忆卡_{subject or '全部'}.txt",
+    from ..core.fsutil import safe_filename
+    return {"ok": True, "filename": f"MedKit记忆卡_{safe_filename(subject or '全部')}.txt",
             "content": "\n".join(lines) + "\n"}
 
 
@@ -760,7 +784,8 @@ def cards_export_apkg(subject: str = "") -> FileResponse:
 
     out_dir = cfg.CONFIG_DIR / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"MedKit记忆卡_{subject or '全部'}.apkg"
+    from ..core.fsutil import safe_filename
+    out = out_dir / f"MedKit记忆卡_{safe_filename(subject or '全部')}.apkg"
     export_memory_apkg(cards, subject or "未分类", subject or "全部", out)
     return FileResponse(out, media_type="application/octet-stream", filename=out.name)
 
