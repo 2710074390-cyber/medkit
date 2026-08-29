@@ -4,6 +4,13 @@ function learnChip(state) {
   const txt = LEARN_STATE[state] || state || "未知";
   return `<span class="learn-chip ${esc(state || "")}">${txt}</span>`;
 }
+/* PRD 6.4.1：解析关键词高亮——医学解析高频关键词加粗标红（先 esc 再替换，安全无注入） */
+const HL_KEYWORDS = ["首选药", "首选", "金标准", "确诊", "禁忌证", "禁忌症", "禁用", "一线", "特效药", "不良反应", "并发症", "鉴别诊断"];
+function hlKw(text) {
+  let s = esc(text);
+  for (const k of HL_KEYWORDS) s = s.split(k).join(`<b class="kw">${k}</b>`);
+  return s;
+}
 /* ---- 学习中心子导航：一屏一任务（概览/错题本/讲解产物/提问学习/复习计划） ---- */
 function showLearnView(name) {
   document.querySelectorAll("#learnnav button").forEach(b => {
@@ -708,8 +715,21 @@ async function loadStudySubjects() {
   try {
     const r = await api("/api/library/subjects");
     const subs = r.subjects || [];
+    const byName = {};
+    (r.stats || []).forEach(s => { byName[s.subject] = s; });
+    const card = (s, st) => `
+      <button class="subj-card${rvSubject === s ? " on" : ""}" onclick="loadReviewCtx('${esc(s)}')" title="只看「${esc(s)}」的到期复习">
+        <div class="subj-name">${esc(s)}</div>
+        <div class="subj-row"><span>今日到期 <b>${st.review_due || 0}</b></span><span>总卡 <b>${st.review_total || 0}</b></span></div>
+        <div class="subj-row"><span>错题 <b>${st.mistakes || 0}</b></span><span>掌握率 <b>${st.mastered_rate || 0}%</b></span></div>
+      </button>`;
+    const allCard = `
+      <button class="subj-card${rvSubject === "" ? " on" : ""}" onclick="loadReviewCtx('')" title="查看全部科目的到期复习">
+        <div class="subj-name">全部科目</div>
+        <div class="subj-row"><span>共 <b>${subs.length}</b> 个科目</span><span>点卡片按科过滤</span></div>
+      </button>`;
     box.innerHTML = subs.length
-      ? subs.map(s => `<button class="chip" onclick="loadReviewCtx('${esc(s)}')" title="只看 ${esc(s)} 的到期复习">${esc(s)}</button>`).join("")
+      ? `<div class="subj-grid">` + allCard + subs.map(s => card(s, byName[s] || {})).join("") + `</div>`
       : `<div class="hint">暂无科目——先在错题本导入错题，或去「题库」生成题目</div>`;
   } catch (e) {
     box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
@@ -781,7 +801,7 @@ function mkRowHTML(mm) {
     ${(mm.options || []).length ? `<div><b>选项</b>：${mm.options.map((o, i) => `${"ABCDEF"[i] || i + 1}. ${esc(o)}`).join("　")}</div>` : ""}
     ${mm.answer ? `<div class="ans">✓ 答案：${esc(mm.answer)}</div>` : ""}
     ${mm.user_answer ? `<div><b>我的作答</b>：${esc(mm.user_answer)}</div>` : ""}
-    ${mm.analysis ? `<div><b>解析</b>：${esc(mm.analysis)}</div>` : ""}`;
+    ${mm.analysis ? `<div><b>解析</b>：${hlKw(mm.analysis)}</div>` : ""}`;
   const kp = (mm.know_tags || [])[0] || mm.topic || "";
   return `<div class="mk-row">
     <div class="mk-main">
@@ -1382,6 +1402,7 @@ function rvChip(state) {
   return `<span class="learn-chip" style="color:${s.c};border-color:${border};background:${bg}">${esc(s.t)}</span>`;
 }
 async function loadReviewCtx(subject = "") {
+  if (rvSubject !== subject) studyDueBase = 0;   // 切换科目 → 重置今日进度基数
   rvSubject = subject;
   try {
     const [today, subs] = await Promise.all([
@@ -1414,6 +1435,7 @@ function renderSmReview(today) {
   ];
   $("rv_stats").innerHTML = strip.map(([k, v, c]) =>
     `<div class="rv-stat"><b style="color:${c}">${v}</b><span>${k}</span></div>`).join("");
+  renderStudyProgress(today);
   const due = today.cards || [];
   if (!due.length) {
     $("rv_body").innerHTML = `<div class="empty">
@@ -1424,23 +1446,82 @@ function renderSmReview(today) {
   }
   $("rv_body").innerHTML = due.map(rvCard).join("");
 }
+/* PRD 3.5：今日进度 X/Y（X=本次会话已评，Y=进入刷题时的今日到期数；零后端改动） */
+let studyDueBase = 0;
+function renderStudyProgress(today) {
+  const el = $("study_progress");
+  if (!el) return;
+  const st = today.stats || {};
+  if (studyDueBase === 0 && (st.due || 0) > 0) studyDueBase = st.due;
+  const total = studyDueBase || (st.due || 0);
+  const done = Math.max(0, total - (st.due || 0));
+  const pct = total ? Math.min(100, Math.round(100 * done / total)) : 0;
+  el.innerHTML = `<div class="sprog">
+    <div class="sprog-label">今日进度 <b>${done}/${total}</b>${total === 0 ? "——今天没有到期卡片，点下方「铺卡」把薄弱点排进来" : ""}</div>
+    <div class="sprog-bar"><i style="width:${pct}%"></i></div>
+  </div>`;
+}
+/* PRD 6.4.2：三按钮评级映射（决策 3：保留 0~5 六档，三按钮做前端映射）。
+   忘=0（懵了）· 糊=2（想岔）· 记=4（想起）；精确档位折叠在「精确自评」里。 */
+const GRADE3_MAP = { forget: 0, fuzzy: 2, got: 4 };
 function rvCard(c) {
   const meta = `间隔 ${c.interval || 0} 天 · 难度 ${(c.ease || 2.5).toFixed(2)} · 背 ${c.reps || 0} 次 · 忘 ${c.lapses || 0} 次`;
   const grades = [0, 1, 2, 3, 4, 5].map(q =>
     `<button class="rv-g${q}" onclick="rvGrade('${esc(c.id)}',${q})" title="质量 ${q}/5 分">${q}</button>`).join("");
-  return `<div class="rv-card">
-    <div class="rv-top">${rvChip(c.state)}<span class="hint" style="font-size:11px">${esc(c.subject || "未分类")}</span>
-      <button class="rv-x" title="移出复习队列" onclick="rvDel('${esc(c.id)}')">×</button></div>
-    <div class="rv-q">${esc(c.kp_name || "(未命名知识点)")}</div>
-    <div class="rv-meta">${esc(meta)}</div>
-    <details class="rv-hint" ontoggle="rvHint(this,'${esc(c.kp_name || "")}','${esc(c.subject || "")}')">
-      <summary>📖 查看提示（教材原文 · 不消耗 AI）</summary>
-      <div class="rv-hintbody"><span class="hint">展开后自动检索教材切片</span></div>
-    </details>
-    <div class="rv-grades"><span class="hint" style="font-size:11px">自评：</span>${grades}</div>
-    <div class="rv-legend hint">0懵了 · 1很困难 · 2想岔 · 3勉强 · 4想起 · 5秒答</div>
+  return `<div class="qcard" data-card="${esc(c.id)}" onclick="qcardFlip(this, event)">
+    <div class="qcard-inner">
+      <div class="qcard-face qfront">
+        <div class="rv-top">${rvChip(c.state)}<span class="hint" style="font-size:11px">${esc(c.subject || "未分类")}</span>
+          <button class="rv-x" title="移出复习队列" onclick="rvDel('${esc(c.id)}')">×</button></div>
+        <div class="rv-q">${esc(c.kp_name || "(未命名知识点)")}</div>
+        <div class="rv-meta">${esc(meta)}</div>
+        <div class="qcard-tip">💡 先在脑中回忆这个知识点，再点卡片翻面看提示</div>
+      </div>
+      <div class="qcard-face qback">
+        <details class="rv-hint" ontoggle="rvHint(this,'${esc(c.kp_name || "")}','${esc(c.subject || "")}')">
+          <summary>📖 展开提示（教材原文 · 不消耗 AI）</summary>
+          <div class="rv-hintbody"><span class="hint">展开后自动检索教材切片</span></div>
+        </details>
+        <div class="grades3">
+          <button class="g3 forget" onclick="rvGrade3('${esc(c.id)}','forget')" title="忘了——按 0/5 排期（快捷键 1）">忘了</button>
+          <button class="g3 fuzzy" onclick="rvGrade3('${esc(c.id)}','fuzzy')" title="模糊——按 2/5 排期（快捷键 2）">模糊</button>
+          <button class="g3 got" onclick="rvGrade3('${esc(c.id)}','got')" title="记住——按 4/5 排期（快捷键 3）">记住</button>
+        </div>
+        <details class="rv-grades-detail"><summary class="hint">精确自评（0~5）</summary>
+          <div class="rv-grades">${grades}</div>
+          <div class="rv-legend hint">0懵了 · 1很困难 · 2想岔 · 3勉强 · 4想起 · 5秒答</div>
+        </details>
+      </div>
+    </div>
   </div>`;
 }
+/* 卡片翻转：点击卡面翻面（按钮/折叠控件点击不触发翻面） */
+function qcardFlip(cardEl, ev) {
+  if (ev && ev.target.closest("button,summary,details,a,input,textarea,select")) return;
+  cardEl.classList.toggle("flipped");
+}
+window.qcardFlip = qcardFlip;
+/* 三按钮评级：播放出卡动效后按映射质量走原 rvGrade 管线 */
+async function rvGrade3(cid, key) {
+  const q = GRADE3_MAP[key];
+  const cardEl = document.querySelector('.qcard[data-card="' + cid + '"]');
+  if (cardEl) { cardEl.classList.add("graded"); setTimeout(() => cardEl.remove(), 260); }
+  await rvGrade(cid, q, { forget: "忘了", fuzzy: "模糊", got: "记住" }[key]);
+}
+window.rvGrade3 = rvGrade3;
+/* 键盘 1/2/3：刷题 tab 下对当前卡（已翻面优先）执行 忘了/模糊/记住；未翻面先自动翻面 */
+window.addEventListener("keydown", e => {
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || !(e.key >= "1" && e.key <= "3")) return;
+  if (!$("tab-study") || !$("tab-study").classList.contains("show")) return;
+  const card = document.querySelector("#rv_body .qcard.flipped") || document.querySelector("#rv_body .qcard")
+            || document.querySelector("#mem_area .qcard.flipped") || document.querySelector("#mem_area .qcard");
+  if (!card) return;
+  e.preventDefault();
+  card.classList.add("flipped");
+  rvGrade3(card.dataset.card, ["forget", "fuzzy", "got"][+e.key - 1]);
+});
 /* 复习卡「查看提示」：懒加载教材原文切片（零 LLM，纯本地检索） */
 /* C20：切片原文「展开全文」——默认截断保护版面，需完整阅读时一键展开 */
 function rvSliceExpand(btn) {
@@ -1454,9 +1535,9 @@ window.rvSliceExpand = rvSliceExpand;
 function rvSliceHTML(s, briefLen) {
   const t = String(s.text || "");
   const brief = t.slice(0, briefLen);
-  const full = esc(t);
+  const full = esc(t);   // 展开全文走纯文本（data-full），关键词高亮仅作用于摘要视图
   return `<div class="rv-slice rv-full" data-full="${full}"><b>${esc(s.title || s.sid || "切片")}</b>`
-    + `<span class="rv-text">${esc(brief)}</span>${t.length > brief.length
+    + `<span class="rv-text">${hlKw(brief)}</span>${t.length > brief.length
       ? `<button class="mini" style="margin-left:6px" onclick="rvSliceExpand(this)">展开全文</button>` : ""}</div>`;
 }
 async function rvHint(det, kpName, subject) {
@@ -1492,14 +1573,15 @@ async function expHint(det, subject, kpName) {
   } catch (e) { body.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
 window.expHint = expHint;
-async function rvGrade(cid, q) {
+async function rvGrade(cid, q, label = null) {
   try {
     await api("/api/library/review/grade", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ card_id: cid, quality: q }),
     });
-    toast(`已记录 ${q}/5 分，卡片已按 SM-2 排入下次复习`);
+    toast(label ? `已记录「${label}」（${q}/5），卡片已按 SM-2 排入下次复习`
+                : `已记录 ${q}/5 分，卡片已按 SM-2 排入下次复习`);
     await Promise.all([loadReviewCtx(rvSubject), loadLibrary()]);
   } catch (e) { toast(e.message, false); }
 }
@@ -1543,28 +1625,51 @@ async function renderMemoryCards() {
         : `<div class="empty" style="padding:16px 0"><div class="sub">今日无到期记忆卡<br>到「讲解与学习产物」选中讲解 →「🧠 生成记忆卡」入队（FSRS 间隔重复算法，自动排出每日复习计划）</div></div>`);
   } catch (e) { sec.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
+/* PRD 6.4.2：记忆卡三按钮映射（FSRS 四档）：忘=重来(0) · 糊=困难(2) · 记=良好(3)；
+   保守映射「记」到良好而非简单，复习间隔略短更稳妥。 */
+const MEM_GRADE3 = { forget: 0, fuzzy: 2, got: 3 };
 function memCard(c) {
   const grades = [["重来", 0], ["困难", 2], ["良好", 3], ["简单", 5]];
-  return `<div class="rv-card" style="margin-top:10px">
-    <div class="rv-top">${rvChip(c.state)}<span class="tag">${esc(c.kind_label || c.kind || "")}</span>
-      <span class="hint" style="font-size:11px">${esc(c.subject || "未分类")}</span>
-      <button class="rv-x" title="删除记忆卡" onclick="memDel('${esc(c.id)}')">×</button></div>
-    <div class="rv-q">${esc(c.front)}</div>
-    <details style="margin:6px 0"><summary style="font-size:12px;color:var(--info);cursor:pointer">👁 显示答案</summary>
-      <div class="rv-slice" style="margin-top:6px">${esc(c.back)}</div></details>
-    <div class="rv-meta">${esc((c.kp_name || "") + (c.sched ? " · " + c.sched.toUpperCase() : ""))}
-      · 下次 ${esc(String(c.due || "").slice(0, 10))} · 背 ${c.reps || 0} 次 · 忘 ${c.lapses || 0} 次</div>
-    <div class="rv-grades"><span class="hint" style="font-size:11px">自评：</span>${grades.map(([t, q]) =>
-      `<button class="rv-g${q}" onclick="memGrade('${esc(c.id)}',${q})">${t}</button>`).join("")}</div>
-    <div class="rv-legend hint">重来=遗忘 · 困难=回想吃力 · 良好=正常 · 简单=秒答<br>（FSRS 4 档；与上方复习卡 0~5 六档对照：重来≈0 · 困难≈2 · 良好≈3 · 简单≈5）</div>
+  return `<div class="qcard memq" data-card="${esc(c.id)}" onclick="qcardFlip(this, event)">
+    <div class="qcard-inner">
+      <div class="qcard-face qfront">
+        <div class="rv-top">${rvChip(c.state)}<span class="tag">${esc(c.kind_label || c.kind || "")}</span>
+          <span class="hint" style="font-size:11px">${esc(c.subject || "未分类")}</span>
+          <button class="rv-x" title="删除记忆卡" onclick="memDel('${esc(c.id)}')">×</button></div>
+        <div class="rv-q">${esc(c.front)}</div>
+        <div class="rv-meta">${esc((c.kp_name || "") + (c.sched ? " · " + c.sched.toUpperCase() : ""))}
+          · 下次 ${esc(String(c.due || "").slice(0, 10))} · 背 ${c.reps || 0} 次 · 忘 ${c.lapses || 0} 次</div>
+        <div class="qcard-tip">💡 先在脑中回忆，再点卡片翻面看答案</div>
+      </div>
+      <div class="qcard-face qback">
+        <div class="rv-slice" style="margin:6px 0">${hlKw(c.back)}</div>
+        <div class="grades3">
+          <button class="g3 forget" onclick="memGrade3('${esc(c.id)}','forget')" title="忘了——重来（快捷键 1）">忘了</button>
+          <button class="g3 fuzzy" onclick="memGrade3('${esc(c.id)}','fuzzy')" title="模糊——困难（快捷键 2）">模糊</button>
+          <button class="g3 got" onclick="memGrade3('${esc(c.id)}','got')" title="记住——良好（快捷键 3）">记住</button>
+        </div>
+        <details class="rv-grades-detail"><summary class="hint">精确自评（FSRS 4 档）</summary>
+          <div class="rv-grades">${grades.map(([t, q]) =>
+            `<button class="rv-g${q}" onclick="memGrade('${esc(c.id)}',${q})">${t}</button>`).join("")}</div>
+          <div class="rv-legend hint">重来=遗忘 · 困难=回想吃力 · 良好=正常 · 简单=秒答（三按钮：忘≈重来0 · 糊≈困难2 · 记≈良好3）</div>
+        </details>
+      </div>
+    </div>
   </div>`;
 }
-async function memGrade(cid, q) {
+async function memGrade3(cid, key) {
+  const cardEl = document.querySelector('.memq[data-card="' + cid + '"]');
+  if (cardEl) { cardEl.classList.add("graded"); setTimeout(() => cardEl.remove(), 260); }
+  await memGrade(cid, MEM_GRADE3[key], { forget: "忘了", fuzzy: "模糊", got: "记住" }[key]);
+}
+window.memGrade3 = memGrade3;
+async function memGrade(cid, q, label = null) {
   try {
     await api("/api/library/cards/" + encodeURIComponent(cid) + "/grade", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ quality: q }) });
-    toast(`已记录自评 ${q}/5，记忆卡已排入下次复习`);
+    toast(label ? `已记录「${label}」（${q}/5），记忆卡已排入下次复习`
+                : `已记录自评 ${q}/5，记忆卡已排入下次复习`);
     loadReviewCtx(rvSubject);
   } catch (e) { toast(e.message, false); }
 }

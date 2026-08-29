@@ -258,7 +258,11 @@ def _resolve_subject_kp(body: ExplainBody) -> tuple[str, str, list[dict[str, Any
 
 @router.get("/api/library/subjects")
 def subjects() -> dict[str, Any]:
-    """已覆盖科目清单：错题 + 知识点 + 讲解产物的并集。"""
+    """已覆盖科目清单（错题 + 知识点 + 讲解产物并集），附每科统计（刷题页科目卡片）。
+
+    v0.8.1：新增 `stats`（每科错题数/知识点数/掌握率/复习卡数与今日到期）——全部本地计算，
+    复用 mastery 视图与 review.stats 口径，零 LLM、零新表。
+    """
     seen: set[str] = set()
     for m in lib.list_mistakes():
         if m.get("subject"):
@@ -269,7 +273,22 @@ def subjects() -> dict[str, Any]:
     for e in expl.list_explains():
         if e.get("subject"):
             seen.add(e["subject"])
-    return {"subjects": sorted(seen)}
+    names = sorted(seen)
+    stats_out = []
+    for s in names:
+        mv = lib.get_mastery_view(s)["stats"]
+        rs = rev.stats(s)
+        total = mv["total_knowledge"] or 0
+        stats_out.append({
+            "subject": s,
+            "mistakes": mv["total_mistakes"],
+            "knowledge": mv["total_knowledge"],
+            "mastered_rate": round(100 * (mv["solid"] + mv["mastered"]) / total) if total else 0,
+            "review_total": rs["total"],
+            "review_due": rs["due"],
+            "review_new": rs["new"],
+        })
+    return {"subjects": names, "stats": stats_out}
 
 
 @router.get("/api/library/explain/slices")

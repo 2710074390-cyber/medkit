@@ -125,3 +125,40 @@
       .act-row b{font-weight:600;white-space:nowrap}
       .act-row .act-note{flex:1;min-width:120px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       @media(max-width:480px){.act-row{font-size:12px}}
+
+/* v0.8.1：卡片翻转刷题（PRD 6.4：翻面看答案 + 三按钮 + 进度条 + 科目卡片） */
+.qcard{perspective:1200px;margin-top:10px;cursor:pointer}
+.qcard-inner{position:relative;width:100%;min-height:200px;transition:transform .3s ease;transform-style:preserve-3d}
+.qcard.flipped .qcard-inner{transform:rotateY(180deg)}
+.qcard-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+  display:flex;flex-direction:column;overflow:auto}
+.qcard-face.qback{transform:rotateY(180deg)}
+.qcard.graded{animation:qcardOut .26s ease forwards}
+@keyframes qcardOut{to{transform:scale(.9);opacity:0}}
+.qcard-tip{margin-top:auto;font-size:11.5px;color:var(--dim);text-align:center;padding-top:12px}
+.grades3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px}
+.g3{border:none;border-radius:10px;padding:12px 6px;font-size:14px;font-weight:700;font-family:inherit;
+  cursor:pointer;color:#fff;transition:transform .1s,filter .1s}
+.g3:active{transform:scale(.94)}
+.g3.forget{background:#ef4444}
+.g3.fuzzy{background:#f59e0b}
+.g3.got{background:#10b981}
+.g3:hover{filter:brightness(1.08)}
+.rv-grades-detail{margin-top:8px}
+.rv-grades-detail summary{font-size:11.5px;color:var(--dim);cursor:pointer}
+.kw{color:var(--bad);font-weight:700}
+.sprog{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.sprog-label{font-size:12.5px;color:var(--dim)}
+.sprog-label b{color:var(--text)}
+.sprog-bar{flex:1;min-width:140px;height:8px;background:var(--card2);border-radius:6px;overflow:hidden}
+.sprog-bar i{display:block;height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:6px;transition:width .3s}
+.subj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.subj-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;
+  text-align:left;cursor:pointer;font-family:inherit;transition:border-color .12s}
+.subj-card:hover{border-color:var(--accent2)}
+.subj-card.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.subj-name{font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.subj-row{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--dim);margin-top:3px}
+.subj-row b{color:var(--text)}

@@ -84,7 +84,8 @@ try {
     </div>
     <div class="card" style="margin-top:14px">
       <div class="cardh"><h2>复习计划（SM-2 间隔重复）</h2><span class="hint" id="rv_total"></span></div>
-      <div class="hint" style="margin-bottom:10px">把薄弱知识点铺成记忆卡片，按间隔重复自动排期。作答后点自评（0~5），SM-2 决定下次复习间隔：越顺面越宽、做错会缩短重来。纯本地、不调 LLM。</div>
+      <div id="study_progress"></div>
+      <div class="hint" style="margin-bottom:10px">卡片式复习：先在脑中回忆 → 点卡翻面看提示 → 底部红黄绿三键自评（快捷键 1/2/3）。SM-2 决定下次复习间隔：越顺面越宽、做错会缩短重来。纯本地、不调 LLM。</div>
       <div class="row exp-bar" style="flex-wrap:wrap">
         <div style="flex:1;min-width:150px"><label>科目筛选</label>
           <select id="rv_subject" onchange="loadReviewCtx(this.value)"><option value="">全部科目</option></select>

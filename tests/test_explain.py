@@ -172,6 +172,12 @@ def test_router_subjects(mock_agents, isolated):
                                           "subject": "儿科学"})
     r = c.get("/api/library/subjects")
     assert r.status_code == 200 and "儿科学" in r.json()["subjects"]
+    # v0.8.1：每科统计随清单返回（刷题页科目卡片数据源，全部本地计算）
+    stats = {s["subject"]: s for s in r.json()["stats"]}
+    assert stats["儿科学"]["mistakes"] == 1
+    assert stats["儿科学"]["knowledge"] == 1
+    assert stats["儿科学"]["mastered_rate"] == 0
+    assert {"review_total", "review_due", "review_new"} <= set(stats["儿科学"])
 
 
 def test_router_explain_end_to_end(mock_agents, isolated):
