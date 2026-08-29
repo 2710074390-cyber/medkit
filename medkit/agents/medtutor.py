@@ -10,6 +10,7 @@
 from typing import Any, Optional
 
 from . import render_prompt
+from .medexplain import _web_digest
 
 
 def needs_client_and_price(subject: str, kp_name: str) -> int:
@@ -18,11 +19,17 @@ def needs_client_and_price(subject: str, kp_name: str) -> int:
 
 
 def start_applying(client: Any, subject: str, kp_name: str, state: str,
-                   qtype: str, slices_text: str = "") -> str:
-    """出第一问：返回问题正文（不判分）。"""
+                   qtype: str, slices_text: str = "",
+                   web_materials: Optional[list[dict[str, Any]]] = None) -> str:
+    """出第一问：返回问题正文（不判分）。
+
+    无原文回退（2026-08-29）：切片检索不到原文时注入说明文案，
+    并结合网络补充素材（如有）与模型医学常识出问。
+    """
     system = _system(subject, kp_name, state, qtype, task="first")
-    body = _materials_body(slices_text, history=None, user_answer="")
-    user = "\n\n".join(["## 素材", body]) if body else "（当前无教材切片，请用通用医学常识引导）"
+    body = _materials_body(slices_text, history=None, user_answer="",
+                           web_materials=web_materials)
+    user = "\n\n".join(["## 素材", body])
     msg = client.chat([{"role": "system", "content": system},
                        {"role": "user", "content": user}], temperature=0.6)
     return (msg or "").strip()
@@ -30,7 +37,8 @@ def start_applying(client: Any, subject: str, kp_name: str, state: str,
 
 def score_answer(client: Any, subject: str, kp_name: str, state: str,
                  qtype: str, question: str, user_answer: str,
-                 slices_text: str = "", history: Optional[list[dict[str, Any]]] = None
+                 slices_text: str = "", history: Optional[list[dict[str, Any]]] = None,
+                 web_materials: Optional[list[dict[str, Any]]] = None
                  ) -> dict[str, Any]:
     """判分本回答并出下一问。返回 {score, gap, next_question, next_type}。
 
@@ -38,7 +46,8 @@ def score_answer(client: Any, subject: str, kp_name: str, state: str,
     避免启发式被套话刷分污染掌握度。
     """
     system = _system(subject, kp_name, state, qtype, task="score")
-    body = _materials_body(slices_text, history, user_answer)
+    body = _materials_body(slices_text, history, user_answer,
+                           web_materials=web_materials)
     user = "\n\n".join(["## 素材", body, f"## 本轮问题（{qtype}）\n{question}",
                         f"## 学生作答\n{user_answer or '（学生未作答）'}"])
     try:
@@ -86,10 +95,21 @@ def _system(subject: str, kp_name: str, state: str, qtype: str, task: str) -> st
 
 def _materials_body(slices_text: str,
                     history: Optional[list[dict[str, Any]]],
-                    user_answer: str) -> str:
+                    user_answer: str,
+                    web_materials: Optional[list[dict[str, Any]]] = None) -> str:
     out: list[str] = []
     if slices_text.strip():
         out.append(f"## 教材切片（供引用的事实来源）\n{slices_text.strip()}")
+    else:
+        # 无原文回退（2026-08-29）：先说明未检索到原文，再注入网络素材 + 模型知识引导
+        web_digest = _web_digest(
+            web_materials or [], 4,
+            header="## 网络检索补充素材（本知识点无教材切片，仅作提问参考；带【网:】引用）")
+        if web_digest:
+            out.append(web_digest)
+        out.append("（说明：本知识点在本地教材切片中未检索到原文；"
+                   + ("请结合上面的网络补充素材与" if web_digest else "请结合")
+                   + "你的医学常识引导提问，具体数值/指南未覆盖时不编造。）")
     if history:
         recent = history[-3:]
         lines = [f"- R{h.get('round')} [{h.get('type','')}] Q: {(h.get('question') or '')[:80]} "

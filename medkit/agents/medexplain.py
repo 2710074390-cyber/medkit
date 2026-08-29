@@ -3,7 +3,8 @@
 输入：知识点名 + 命中教材切片（可选）+ 关联错题（可选）+ 联网补充素材。
 输出规约（结论先行 → 机制 → 鉴别/易混 → 记忆锚点），每段带来源引用：
   【教材·切片标题】 来自切片注入；【网: title | url】来自网络补充——不可混标。
-幻觉控制：仅依据注入的切片/网络素材生成；两者都缺 → 明确提示"教材未覆盖"，不自由发挥。
+无原文回退（2026-08-29）：切片检索不到原文时**先明确说明**「未检索到教材原文」，
+再结合网络补充素材（如有）与模型医学知识输出完整讲解；不得把模型知识标注成【教材】。
 
 网络补充默认开启（use_web=True）：切片覆盖不足时，用已有 web_search 多后端做 ≤1 轮补充检索，
 素材进 system（与切片同通道注入，控成本）。孤立的切片充足时可不联网以省成本。
@@ -39,8 +40,10 @@ def _search_web(query: str, search_fn: Optional[Callable[[str], list[dict[str, A
         return []
 
 
-def _web_digest(materials: list[dict[str, Any]], limit: int) -> str:
-    """网络素材 → 注入文本（带 URL 溯源）。"""
+def _web_digest(materials: list[dict[str, Any]], limit: int,
+                header: str = "## 网络检索补充素材（仅供校准与背景，答案以教材为准；带【网:】引用）"
+                ) -> str:
+    """网络素材 → 注入文本（带 URL 溯源）；header 可按调用方语境替换。"""
     out: list[str] = []
     for m in materials[:limit]:
         title = (m.get("title") or "")[:60]
@@ -52,7 +55,7 @@ def _web_digest(materials: list[dict[str, Any]], limit: int) -> str:
         out.append(line)
     if not out:
         return ""
-    return "## 网络检索补充素材（仅供校准与背景，答案以教材为准；带【网:】引用）\n" + "\n".join(out)
+    return header + "\n" + "\n".join(out)
 
 
 def explain_knowledge(client: Any,
@@ -65,8 +68,11 @@ def explain_knowledge(client: Any,
                       use_web: bool = True) -> dict[str, Any]:
     """生成一篇结构化讲解。
 
-    返回 {content, sources:[{kind:"textbook"|"web", title, url}], via_web, web_materials}
+    返回 {content, sources:[{kind:"textbook"|"web", title, url}], via_web,
+          web_materials, grounded}——grounded=False 表示未命中教材切片原文，
+    内容依据为网络素材与模型知识（前端据此展示「无教材原文」说明）。
     """
+    grounded = bool(slices_text.strip())
     via_web = False
     web_materials = list(web_materials or [])
     # 切片不足 → 联网补充（默认开启）
@@ -89,9 +95,16 @@ def explain_knowledge(client: Any,
         why = (related_mistake.get("error_reason") or "")
         q = (related_mistake.get("question") or "")[:200]
         body.append(f"## 关联错题\n- 题干：{q}\n- 可能错因：{why or '未知'}")
-    if not body:
-        body.append("（本知识点当前没有教材切片，也没有网络补充素材——请明确提示教材未覆盖，"
-                    "并只给出通用性提示，不要捏造具体内容。）")
+    if not grounded:
+        # 无原文回退：先说明，再要求模型结合网络素材（如有）与医学知识输出完整讲解
+        lead = ("（重要说明：本知识点在本地教材切片中未检索到原文"
+                + ("，仅有下面的网络检索补充素材" if web_digest else "，也没有网络补充素材")
+                + "。请先向学生明确说明这一情况，然后结合"
+                + ("网络素材与" if web_digest else "")
+                + "你的医学知识给出尽量完整的结构化讲解；"
+                + "数值/指南条目给出通用公认值并注明“以最新教材/指南为准”，"
+                + "不要标注【教材】，不要谎称内容出自教材。）")
+        body.insert(0, lead)
     user = "\n\n".join(body)
 
     msg = client.chat([{"role": "system", "content": system},
@@ -99,7 +112,7 @@ def explain_knowledge(client: Any,
     content = (msg or "").strip()
     sources = _sources_of(slices_text, web_materials)
     return {"content": content, "sources": sources, "via_web": via_web,
-            "web_materials": web_materials}
+            "web_materials": web_materials, "grounded": grounded}
 
 
 def _sources_of(slices_text: str, web_materials: list[dict[str, Any]]) -> list[dict[str, Any]]:

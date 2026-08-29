@@ -106,6 +106,7 @@ def test_explain_with_slices_uses_textbook(isolated):
     assert any(s["kind"] == "textbook" for s in r["sources"])
     # 切片不足 120 字 → 触发联网补充（无 search_fn → 不联网，via_web=False）
     assert r["via_web"] is False  # search_fn 为 None，联网失败被隔离
+    assert r["grounded"] is True   # 命中切片 → 有原文依据
 
 
 def test_explain_web_supplement_when_slices_short(isolated):
@@ -129,6 +130,30 @@ def test_explain_no_web_when_flag_off(isolated):
     r = mex.explain_knowledge(client, "儿科学", "x", slices_text="",
                               search_fn=search_fn, use_web=False)
     assert r["via_web"] is False
+
+
+def test_explain_no_slices_explains_then_uses_model_knowledge(isolated):
+    """无原文回退：切片/网络都没有 → 注入说明文案 + 要求模型知识输出（grounded=False）。"""
+    client = _FakeClient()
+    r = mex.explain_knowledge(client, "儿科学", "新型考点X", slices_text="",
+                              related_mistake=None, use_web=False)
+    assert r["grounded"] is False
+    inject = client.last_messages[1]["content"]
+    assert "未检索到" in inject          # 先说明：本地教材无原文
+    assert "医学知识" in inject          # 再输出：结合模型知识
+    assert "不要标注【教材】" in inject  # 不谎称出自教材
+
+
+def test_explain_web_only_grounded_false_with_disclosure(isolated):
+    """无原文回退：仅网络素材 → 说明 + 网络素材注入，grounded=False。"""
+    client = _FakeClient()
+    search_fn = lambda q: [{"title": "诊疗指南", "url": "https://g.cn/1",  # noqa: E731
+                            "snippet": "阿莫西林为一线首选"}]
+    r = mex.explain_knowledge(client, "儿科学", "X", slices_text="",
+                              search_fn=search_fn, use_web=True)
+    assert r["grounded"] is False and r["via_web"] is True
+    inject = client.last_messages[1]["content"]
+    assert "未检索到" in inject and "https://g.cn/1" in inject
 
 
 # ---------------------------------------------------------------- 产物 CRUD
@@ -160,9 +185,10 @@ def mock_agents(monkeypatch):
                       use_web=True):
         return {"content": "**结论先行**：首选阿莫西林。（【教材·支气管肺炎】）",
                 "sources": [{"kind": "textbook", "title": "支气管肺炎", "url": ""}],
-                "via_web": False, "web_materials": []}
+                "via_web": False, "web_materials": [], "grounded": True}
     monkeypatch.setattr(mex, "explain_knowledge", _fake_explain)
     monkeypatch.setattr(r_lib, "_explain_client", lambda: _FakeClient())
+    monkeypatch.setattr(r_lib, "_resolve_search_fn", lambda: None)  # 测试离线：不解析真实检索后端
     return None
 
 
@@ -189,6 +215,7 @@ def test_router_explain_end_to_end(mock_agents, isolated):
     assert j["title"] == "支气管肺炎首选治疗"
     assert "结论先行" in j["explain"]["content"]
     assert j["explain"]["subject"] == "儿科学"
+    assert j["explain"]["grounded"] is True   # 命中教材切片 → 有原文依据
     assert any(s["kind"] == "textbook" for s in j["explain"]["sources"])
 
     # 产物已存在 + 按科目过滤
@@ -211,6 +238,17 @@ def test_router_explain_no_kp_raises(mock_agents, isolated):
     c = TestClient(m.app, base_url="http://127.0.0.1")
     assert c.post("/api/library/explain", json={"subject": "儿科学",
                                                 "kp_name": ""}).status_code == 400
+
+
+def test_router_explain_ungrounded_records_flag(mock_agents, isolated):
+    """无原文回退：切片未命中 → 产物记录 grounded=False（前端展示说明用）。"""
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    r = c.post("/api/library/explain", json={
+        "subject": "儿科学", "kp_name": "不存在的知识点xyz", "use_web": True})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["explain"]["grounded"] is False
+    assert j["explain"]["slices_used"] == []
 
 
 def test_router_explain_slices_info(mock_agents, isolated):

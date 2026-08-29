@@ -211,7 +211,8 @@ class ExplainDoc(BaseModel):
 
     medexplain 的 LLM 输出为四段 Markdown（结论先行 / 机制 / 鉴别 / 记忆锚点），
     非 JSON；本模型对其结构化包装 ``explain_knowledge()`` 的返回做契约化
-    （content / sources / via_web / web_materials）。本批次未接线，仅作契约定义。
+    （content / sources / via_web / web_materials / grounded）。本批次未接线，仅作契约定义。
+    grounded=False 表示未命中教材切片原文（无原文回退：网络素材 + 模型知识输出）。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -220,6 +221,7 @@ class ExplainDoc(BaseModel):
     sources: list[ExplainSource] = Field(default_factory=list)
     via_web: bool = False
     web_materials: list[dict[str, Any]] = Field(default_factory=list)
+    grounded: bool = True
 
 
 # --------------------------------------------------------------------------- TutorTurn

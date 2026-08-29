@@ -8,6 +8,28 @@
 
 ## [Unreleased]
 
+### 批次F（2026-08-29，RAG 无原文回退：说明 + 网络 + 模型知识输出）
+
+#### Added
+
+- **讲解无原文回退**：`/api/library/explain` 切片未命中时，注入「说明文案 + 网络补充素材（如有）」并要求模型结合医学知识输出完整讲解（不再要求「仅通用梳理、请补教材」）；产物新增 `grounded` 字段（False = 未命中教材原文），前端讲解卡片/生成结果展示「无教材原文 · 网络+模型知识」标签与说明。
+- **提问无原文回退**：`/api/library/tutor/start|answer` 切片未命中时自动做 ≤1 轮联网补充检索（复用统一后端解析 `_resolve_search_fn`，错误隔离），素材与「未检索到原文」说明一并注入 MedTutor；响应新增 `grounded`/`note`，前端在首问与每轮判分处提示「未命中教材原文，基于网络素材与模型知识」。
+- **复习卡「查看提示」无命中回退**：不再只提示「去讲解产物生成」，改为说明 + 一键「结合网络与模型知识生成提示」按钮（成本预估前置，复用讲解端点，产物同时沉淀到复习手册）。
+- **讲解产物「查看教材切片原文」无命中回退**：说明内容可能基于网络素材与模型知识（指向「来源」清单），引导上传教材后重新生成。
+
+#### Changed
+
+- `medkit/agents/medexplain.py`：`explain_knowledge()` 返回新增 `grounded`；无切片时插入「先说明、再输出」引导段；`_web_digest()` 支持自定义 header（供 MedTutor 复用）。
+- `medkit/agents/medtutor.py`：`start_applying()`/`score_answer()` 新增 `web_materials` 注入（无切片时与说明文案同通道注入）。
+- `medkit/routers/library.py`：抽出 `_resolve_search_fn()`（讲解/提问共用）；`_tutor_grounding()` 替代 `_tutor_slices()`；`ExplainDoc` 契约新增 `grounded`。
+- 旧产物兼容：无 `grounded` 字段的历史讲解按「纯教材/含 web 补充」旧逻辑展示，不报错。
+
+### Prompts
+
+- `medexplain.md`：无教材切片规约由「明说缺乏切片、仅作通用梳理」改为「**先说明**未检索到原文，再结合网络素材（标【网:】）与医学知识输出完整讲解；数值注明以最新指南为准；不得谎称出自教材」；内容护栏同步（不得把模型知识标注成【教材】）。
+- `medtutor.md`：素材说明补充「网络补充素材（无教材切片时）」；引导规约由「切片不足时基于通用医学常识」改为「没有切片时结合网络补充素材（如有）与通用医学常识引导，避免编造具体数值/指南」。
+- llm_cases：medexplain/medtutor 无 JSON 契约 fixture（自由 Markdown / 判分 JSON 由 `TutorTurn` 契约与注入文案单元测试覆盖），无需同步样本。
+
 ### 差距审查批次E（2026-08-29，真题来源标注全链：决策 4 本期交付）
 
 #### Added

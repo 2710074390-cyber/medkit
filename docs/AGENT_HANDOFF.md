@@ -130,5 +130,6 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
 - **批次 C（卡片化刷题）✅**：复习卡/记忆卡 3D 翻转卡 + 三按钮（忘红/糊黄/记绿；映射：SM-2 忘0糊2记4、FSRS 忘0糊2记3）+ 快捷键 1/2/3 + 今日进度条 + 科目卡片（`/api/library/subjects` 增 stats）+ 解析关键词高亮（12 词，`learn.js hlKw`）；浏览器用例 `tests/browser/test_study_quiz.py`。
 - **批次 D（视觉统一）✅**：主色青绿（浅 #2A6B5A / 深 #3aa58c）+ 正文浅色 #2E3440 + 字号四级 21/16/14/12（.ptitle/.card h2/.cardh h2/body/.hint）。
 - **批次 E（真题标注）✅**：迁移 v6 `realexam_freq.year`（幂等升级）+ 段落/句子年份提取 + `QuestionItem.source_type/source_year` + 三处标注接入（orchestrator 写回 / review.py 读取兜底 / 审核前补齐）+ 题库/押题卷/审核台「20XX 真题」标签 + 年份筛选器（题库 localStorage 记忆、审核台下拉）。
+- **批次 F（RAG 无原文回退）**：讲解/提问/复习提示三处检索未命中 → 「先说明 + 联网补充 + 模型知识输出」；`explain_knowledge` 返回 `grounded`、讲解产物存 `grounded`、tutor 响应带 `grounded`/`note`、`_resolve_search_fn()` 统一后端解析、MedTutor 注入 `web_materials`；前端复习卡提示一键「结合网络与模型知识生成提示」（成本前置）、讲解卡片「无教材原文」标签、tutor 首问/判分提示。
 - 待办（后迭代）：每日推送上限/考前加大强度（BE-2）· 速刷手势 · 统计图表 · 离线 SW · 虚拟滚动。
-- 验证：每批 `verify.cmd`（ruff → pytest 321 → 浏览器 13）全绿后立即提交（见 §4 第 7 条多 Agent 并发警示）。
+- 验证：每批 `verify.cmd`（ruff → pytest 单元 → 浏览器）全绿后立即提交（见 §4 第 7 条多 Agent 并发警示）。

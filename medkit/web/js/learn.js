@@ -1042,7 +1042,9 @@ async function loadExplains() {
         <div class="exp-fold" onclick="expFold('${esc(e.id)}')" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <b style="flex:1">${esc(e.kp_name || "")}</b>
           <span class="tag">${esc(e.subject || "未分类")}</span>
-          ${e.via_web ? `<span class="tag" style="color:var(--good)">含web补充</span>` : `<span class="tag">纯教材</span>`}
+          ${e.grounded === false
+            ? `<span class="tag" style="color:var(--warn)">无教材原文 · 网络+模型知识</span>`
+            : (e.via_web ? `<span class="tag" style="color:var(--good)">含web补充</span>` : `<span class="tag">纯教材</span>`)}
           <span class="hint">${esc((e.created_at || "").slice(0, 16).replace("T", " "))}</span>
           <span class="hint">${(e.sources || []).length} 来源</span>
           <span class="mini-btn">展开</span>
@@ -1086,7 +1088,9 @@ async function expGenerate() {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subject, kp_name: opt.value, kp_id: opt.dataset.id || "", use_web: useWeb }) });
     toast("讲解已生成并沉淀到复习手册");
-    const v = r.explain && r.explain.via_web ? "含联网补充" : "基于教材切片";
+    const v = r.explain && r.explain.grounded === false
+      ? "未命中教材原文 · 网络+模型知识生成"
+      : (r.explain && r.explain.via_web ? "含联网补充" : "基于教材切片");
     $("exp_cost").textContent = `已生成：《${r.title}》· ${v}`;
     loadExplains();
     // C12：生成讲解 → 概览诊断/学习闭环同步刷新（受掌握的讲解产物计数变化）
@@ -1322,7 +1326,9 @@ async function tutorStart() {
     tutorState.active = r.session.id;
     await loadTutorSessions();
     toast("已开启一场苏格拉底式对话");
-    $("tutor_cost").textContent = "第一问已就绪，请作答。";
+    $("tutor_cost").textContent = r.grounded === false
+      ? "第一问已就绪（⚠️ 未命中教材原文，基于网络素材与模型知识）——请作答。"
+      : "第一问已就绪，请作答。";
     tutorShowConversation();
   } catch (e) { toast(e.message, false); $("tutor_cost").textContent = ""; }
   finally { btn.textContent = old; btn.disabled = false; tutorState.busy = false; }
@@ -1351,7 +1357,8 @@ async function tutorSubmit() {
     if (r.retry) {
       $("tutor_cost").textContent = "本轮未完成判分（模型未给分）——请围绕考点再作答一次";
     } else {
-      $("tutor_cost").textContent = `本轮得分 ${r.score}/3` + (r.gap ? ` —— ${r.gap}` : "");
+      const note = r.grounded === false ? "（未命中教材原文 · 网络+模型知识）" : "";
+      $("tutor_cost").textContent = `本轮得分 ${r.score}/3${note}` + (r.gap ? ` —— ${r.gap}` : "");
     }
     tutorShowConversation();
     invalidateLearnCache();   // 判分回写掌握度 → 失效学习中心缓存，概览到手最新值
@@ -1549,7 +1556,11 @@ async function rvHint(det, kpName, subject) {
     const r = await api(`/api/library/explain/slices?subject=${encodeURIComponent(subject || "")}&query=${encodeURIComponent(kpName || "")}&limit=5`);
     const sl = r.slices || [];
     if (!sl.length) {
-      body.innerHTML = `<div class="hint">教材中未检索到「${esc(kpName)}」相关内容 —— 可到「讲解与学习产物」用联网补充生成。</div>`;
+      // RAG 无原文回退：先说明未检索到，再提供「网络 + 模型知识」一键生成（成本前置）
+      body.innerHTML = `<div class="hint" style="line-height:1.9">
+        教材中未检索到「${esc(kpName)}」原文。<br>
+        <button class="mini-btn primary" onclick="rvHintGen(this,'${esc(kpName)}','${esc(subject)}')">结合网络与模型知识生成提示</button>
+        <span style="font-size:11px;color:var(--dim)">${estLlmCost(2.2, 0.35)}</span></div>`;
       return;
     }
     body.innerHTML = sl.map(s => rvSliceHTML(s, 300)).join("");
@@ -1558,6 +1569,20 @@ async function rvHint(det, kpName, subject) {
   }
 }
 window.rvHint = rvHint;
+/* 无原文回退：联网检索 + 模型知识生成提示（复用讲解端点，产物同时沉淀到复习手册） */
+async function rvHintGen(btn, kpName, subject) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "生成提示中…";
+  try {
+    const r = await api("/api/library/explain", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subject: subject || "", kp_name: kpName, use_web: true }) });
+    const body = btn.closest(".rv-hintbody");
+    if (body) body.innerHTML =
+      `<div class="hint" style="margin-bottom:8px">未命中教材原文——以下提示由<b>网络检索与模型知识</b>生成（未经教材核实）：</div>`
+      + `<div class="exp-article">${expMd(r.explain.content || "")}</div>`;
+  } catch (e) { toast(e.message, false); btn.textContent = old; btn.disabled = false; }
+}
+window.rvHintGen = rvHintGen;
 /* 讲解产物「查看教材切片原文」：懒加载（复用 explain/slices 端点，零 LLM） */
 async function expHint(det, subject, kpName) {
   if (!det || det.dataset.loaded === "1" || !det.open) return;
@@ -1568,7 +1593,10 @@ async function expHint(det, subject, kpName) {
   try {
     const r = await api(`/api/library/explain/slices?subject=${encodeURIComponent(subject || "")}&query=${encodeURIComponent(kpName || "")}&limit=5`);
     const sl = r.slices || [];
-    if (!sl.length) { body.innerHTML = `<div class="hint">教材中未检索到「${esc(kpName)}」相关内容（可开启联网补充生成）。</div>`; return; }
+    if (!sl.length) {
+      body.innerHTML = `<div class="hint" style="line-height:1.9">教材中未检索到「${esc(kpName)}」原文——该讲解内容可能基于<b>网络素材与模型知识</b>生成（未经教材核实，见上方「来源」）。如需教材溯源，请上传对应教材后「↻ 重新生成」讲解。</div>`;
+      return;
+    }
     body.innerHTML = sl.map(s => rvSliceHTML(s, 400)).join("");
   } catch (e) { body.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }

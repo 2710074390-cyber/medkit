@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient  # noqa: E402
 
 import medkit.agents.medtutor as mt  # noqa: E402
+import medkit.core.explain as expl  # noqa: E402
 import medkit.core.library as lib  # noqa: E402
 import medkit.core.tutor as tut  # noqa: E402
 import medkit.main as m  # noqa: E402
@@ -28,6 +29,13 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(lib, "MISTAKES_FILE", libd / "mistakes.json")
     monkeypatch.setattr(lib, "KNOWLEDGE_FILE", libd / "knowledge.json")
     monkeypatch.setattr(tut, "TUTOR_SESSIONS_FILE", libd / "tutor_sessions.json")
+    # 提问路由会检索教材切片：隔离 explain 的索引/项目根 → 空目录（grounded 确定性为 False）
+    monkeypatch.setattr(expl, "LIBRARY_DIR", libd)
+    monkeypatch.setattr(expl, "SLICE_INDEX_FILE", libd / "slice_index.json")
+    monkeypatch.setattr(expl, "EXPLAINS_FILE", libd / "explains.json")
+    projs = tmp_path / "projects"
+    projs.mkdir()
+    monkeypatch.setattr(expl, "_PROJ_ROOT", projs)
     return tmp_path
 
 
@@ -173,6 +181,38 @@ def test_start_applying_returns_question(isolated):
     assert "阿莫西林" in q or "原因" in q
 
 
+def test_start_applying_no_slices_explains_and_uses_knowledge(isolated):
+    """无原文回退：无切片 → 注入「未检索到原文」说明 + 模型常识引导。"""
+    client = _FakeClient(reply="请谈谈机制")
+    mt.start_applying(client, "儿科学", "新型考点X", "weak", "explain", "")
+    inject = client.last_messages[1]["content"]
+    assert "未检索到" in inject
+    assert "医学常识" in inject
+
+
+def test_start_applying_injects_web_materials_when_no_slices(isolated):
+    """无原文回退：无切片 + 网络素材 → 素材与说明一并注入。"""
+    client = _FakeClient(reply="请谈谈")
+    mats = [{"title": "诊疗指南2024", "url": "https://g.cn/1", "snippet": "阿莫西林首选"}]
+    mt.start_applying(client, "儿科学", "X", "weak", "explain", "", web_materials=mats)
+    inject = client.last_messages[1]["content"]
+    assert "网络检索补充素材" in inject
+    assert "https://g.cn/1" in inject
+    assert "未检索到" in inject
+
+
+def test_score_answer_injects_web_materials(isolated):
+    """无原文回退：判分追问同样注入网络素材与说明。"""
+    client = _FakeClient(json_reply={"score": 2, "gap": "机制要补",
+                                     "next_question": "试解释耐药机制",
+                                     "next_type": "apply"})
+    mats = [{"title": "指南", "url": "https://g.cn/2", "snippet": "s"}]
+    mt.score_answer(client, "儿科学", "X", "weak", "explain", "Q", "答：……",
+                    slices_text="", history=[], web_materials=mats)
+    inject = client.last_messages[1]["content"]
+    assert "网络检索补充素材" in inject and "未检索到" in inject
+
+
 def test_score_answer_parses_json(isolated):
     client = _FakeClient(json_reply={"score": 2, "gap": "机制要补",
                                      "next_question": "试解释耐药机制",
@@ -195,17 +235,18 @@ def test_score_answer_falls_back_to_heuristic(isolated):
 # ---------------------------------------------------------------- 路由（TestClient + mock LLM）
 @pytest.fixture()
 def mock_agents(monkeypatch):
-    def _start(client, subject, kp_name, state, qtype, slices_text=""):
+    def _start(client, subject, kp_name, state, qtype, slices_text="", web_materials=None):
         return "请解释首选阿莫西林的原因"
 
     def _score(client, subject, kp_name, state, qtype, question, user_answer,
-               slices_text="", history=None):
+               slices_text="", history=None, web_materials=None):
         return {"score": 2, "gap": "机制可再补", "next_question": "试解释耐药机制",
                 "next_type": "apply"}
 
     monkeypatch.setattr(mt, "start_applying", _start)
     monkeypatch.setattr(mt, "score_answer", _score)
     monkeypatch.setattr(r_lib, "_tutor_client", lambda: _FakeClient())
+    monkeypatch.setattr(r_lib, "_resolve_search_fn", lambda: None)  # 测试离线：不解析真实检索后端
     return None
 
 
@@ -219,6 +260,9 @@ def test_router_tutor_flow(mock_agents, isolated):
     j = r.json()
     sid = j["session"]["id"]
     assert j["state"] == "weak" and j["question"].startswith("请解释")
+    # 无原文回退：空项目根 → grounded=False + 说明文案（前端提示数据源）
+    assert j["grounded"] is False
+    assert "未在本地教材中检索到原文" in j["note"]
 
     # 会话已建 + 可列出
     lst = c.get("/api/library/tutor/sessions")
@@ -231,6 +275,7 @@ def test_router_tutor_flow(mock_agents, isolated):
     aj = a.json()
     assert aj["score"] == 2 and len(aj["session"]["rounds"]) == 1
     assert aj["next_question"]["type"] == "apply"
+    assert aj["grounded"] is False   # 无原文回退：判分响应同样携带 grounded 标记
 
     # 恢复会话
     got = c.get(f"/api/library/tutor/{sid}")

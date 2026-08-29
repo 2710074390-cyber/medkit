@@ -329,32 +329,45 @@ def explain_slices(subject: str = "", query: str = "", limit: int = 20) -> dict[
     return {"subject": "", "count": total, "query": query, "subjects": counts, "slices": clean}
 
 
+def _resolve_search_fn():
+    """解析当前检索后端 → 可注入的 search_fn；配置缺失/手动模式/异常 → None（纯教材退化）。
+
+    讲解与提问的「无原文回退」共用此解析（错误隔离：后端解析失败不阻断主流程）。
+    """
+    from ..core import websearch as ws
+
+    try:
+        c = cfg.load()
+        backend = ws.resolve_backend((c.get("web_search") or {}).get("backend", "auto"),
+                                     c.get("provider", ""),
+                                     (c.get("web_search") or {}).get("api_key", ""))
+        if backend == "manual":
+            return None
+        key = (c.get("web_search") or {}).get("api_key") or resolve_key(c.get("api_key", ""))
+        model = c.get("model_gen", "")
+        return ws.build_backend_fn(backend, key, model)
+    except Exception:  # noqa: BLE001  后端解析失败 → 纯教材/纯模型知识
+        return None
+
+
 @router.post("/api/library/explain")
 def explain(body: ExplainBody) -> dict[str, Any]:
-    """教材讲解：检索切片(+联网补充默认) → MedExplain 生成 → 存产物 + 回写掌握度。"""
+    """教材讲解：检索切片(+联网补充默认) → MedExplain 生成 → 存产物 + 回写掌握度。
+
+    无原文回退（2026-08-29）：切片未命中 → 先说明 + 联网补充 + 模型知识输出，
+    产物记录 grounded=False 供前端展示「无教材原文」说明。
+    """
     from ..agents.medexplain import explain_knowledge
-    from ..core import websearch as ws
 
     subject, kp_name, related = _resolve_subject_kp(body)
     expl.index_slices()
     hits = expl.retrieve(subject=subject, query=f"{kp_name} {_query_extra(related)}")
     slices_text = expl.slice_text_of(hits)
+    grounded = bool(slices_text.strip())
 
-    # 联网补充（默认开启）：解析当前服务商搜索后端，mock 可注入用该 writer
-    search_fn = None
+    # 联网补充（默认开启）：复用统一后端解析，mock 可注入用该 writer
+    search_fn = _resolve_search_fn() if body.use_web else None
     web_materials: list[dict[str, Any]] = []
-    if body.use_web:
-        try:
-            c = cfg.load()
-            backend = ws.resolve_backend((c.get("web_search") or {}).get("backend", "auto"),
-                                         c.get("provider", ""),
-                                         (c.get("web_search") or {}).get("api_key", ""))
-            if backend != "manual":
-                key = (c.get("web_search") or {}).get("api_key") or resolve_key(c.get("api_key", ""))
-                model = c.get("model_gen", "")
-                search_fn = ws.build_backend_fn(backend, key, model)
-        except Exception:  # noqa: BLE001  后端解析失败 → 纯教材
-            search_fn = None
 
     client = _explain_client()
     result = explain_knowledge(client, subject, kp_name, slices_text,
@@ -376,6 +389,7 @@ def explain(body: ExplainBody) -> dict[str, Any]:
         "created_at": _now_iso(), "content": content,
         "sources": result.get("sources") or [],
         "via_web": bool(result.get("via_web")),
+        "grounded": grounded,
         "web_materials": result.get("web_materials") or [],
         "related_mistake": (related[0].get("id") if related else "") or "",
         "slices_used": [h.get("sid") for h in hits],
@@ -435,10 +449,24 @@ def _tutor_client():
     return _gc("gen")
 
 
-def _tutor_slices(subject: str, kp_name: str) -> str:
+def _tutor_grounding(subject: str, kp_name: str) -> tuple[str, bool, list[dict[str, Any]]]:
+    """提问素材：教材切片检索；无命中 → 联网补充（≤1 检索，错误隔离）返回 (slices_text, grounded, web_materials)。
+
+    无原文回退（2026-08-29）：grounded=False 时检索词与素材进 medtutor 注入，
+    前端收到说明文案（未命中教材原文，问题基于网络素材与模型知识）。
+    """
+    from ..agents.medexplain import _build_web_query, _search_web
+
     expl.index_slices()
     hits = expl.retrieve(subject=subject, query=kp_name)
-    return expl.slice_text_of(hits)
+    slices_text = expl.slice_text_of(hits)
+    grounded = bool(slices_text.strip())
+    web_materials: list[dict[str, Any]] = []
+    if not grounded:
+        search_fn = _resolve_search_fn()
+        if search_fn is not None:
+            web_materials = _search_web(_build_web_query(subject, kp_name, None), search_fn)
+    return slices_text, grounded, web_materials
 
 
 @router.post("/api/library/tutor/start")
@@ -449,16 +477,18 @@ def tutor_start(body: TutorStartBody) -> dict[str, Any]:
     subject, kp_name, _ = _resolve_subject_kp(body)
     client = _tutor_client()
     from ..agents import medtutor as mt
-    slices_text = _tutor_slices(subject, kp_name)
+    slices_text, grounded, web_materials = _tutor_grounding(subject, kp_name)
     session = tut.start_session(subject, kp_name, body.kp_id or "")
     qtype = session["current"]["type"]
     question = mt.start_applying(client, subject, kp_name, session["state"],
-                                 qtype, slices_text)
+                                 qtype, slices_text, web_materials)
     tut.seed_first(session["id"], qtype, question)
     lib.log_knowledge_event(kp_name, "tutor",
-                            note=f"{subject} / start / {qtype}")
+                            note=f"{subject} / start / {qtype} / grounded={grounded}")
     return {"session": session, "question": question, "type": qtype,
-            "state": session["state"], "subject": subject, "kp_name": kp_name}
+            "state": session["state"], "subject": subject, "kp_name": kp_name,
+            "grounded": grounded,
+            "note": "" if grounded else "本知识点未在本地教材中检索到原文——问题由网络素材与模型知识生成（未经教材核实）。"}
 
 
 @router.post("/api/library/tutor/answer")
@@ -475,11 +505,12 @@ def tutor_answer(body: TutorAnswerBody) -> dict[str, Any]:
     subject, kp_name = session.get("subject") or "", session.get("kp_name") or ""
     client = _tutor_client()
     from ..agents import medtutor as mt
-    slices_text = _tutor_slices(subject, kp_name)
+    slices_text, grounded, web_materials = _tutor_grounding(subject, kp_name)
     result = mt.score_answer(client, subject, kp_name, session.get("state", "weak"),
                              cur.get("type", "explain"), cur.get("text", ""),
                              body.user_answer, slices_text,
-                             history=session.get("rounds") or [])
+                             history=session.get("rounds") or [],
+                             web_materials=web_materials)
     score = result["score"]
     gap = result["gap"]
     if score < 0:
@@ -489,6 +520,7 @@ def tutor_answer(body: TutorAnswerBody) -> dict[str, Any]:
         return {
             "session": session, "score": -1, "gap": gap or "回答未能可靠评分，请围绕考点再试一次。",
             "next_question": cur, "state": session.get("state", "weak"), "retry": True,
+            "grounded": grounded,
         }
     updated = tut.record_answer(session["id"], body.user_answer, score, gap,
                                 result["next_question"])
@@ -496,6 +528,7 @@ def tutor_answer(body: TutorAnswerBody) -> dict[str, Any]:
     return {
         "session": updated, "score": score, "gap": gap,
         "next_question": updated["current"], "state": updated["state"],
+        "grounded": grounded,
     }
 
 
