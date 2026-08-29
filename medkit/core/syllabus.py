@@ -518,6 +518,18 @@ def add_teacher_items(drafts: list[dict[str, str]]) -> dict[str, Any]:
             "knowledge": extract_teacher_kps(drafts)}
 
 
+def _parse_teacher_file(path: str | Path, subject: str = "",
+                        chapter_hint: str = "教师重点") -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """教师重点文件 → 文本抽取 + 两档解析（零 LLM）。返回 (parsed, error_note)。"""
+    from .extract import ExtractError, extract_text
+    try:
+        blocks = extract_text(Path(path))
+    except ExtractError as e:
+        return None, str(e)
+    text = "\n".join(b.get("text", "") for b in blocks)
+    return import_teacher_text(text, subject, chapter_hint), None
+
+
 def import_teacher_file(path: str | Path, subject: str = "",
                         chapter_hint: str = "教师重点") -> dict[str, Any]:
     """教师重点文件（PDF 文本层 / DOCX / MD / TXT）→ 自动处理全流程（零 LLM）。
@@ -527,14 +539,10 @@ def import_teacher_file(path: str | Path, subject: str = "",
     返回 ``{mode, subject, added, total, drafts, knowledge, note, error?}``；扫描件 PDF 等
     抽取失败时 mode='error'（不落库，note 携带可读提示）。
     """
-    from .extract import ExtractError, extract_text
-    try:
-        blocks = extract_text(Path(path))
-    except ExtractError as e:
+    parsed, err = _parse_teacher_file(path, subject, chapter_hint)
+    if err is not None:
         return {"mode": "error", "subject": subject, "drafts": [],
-                "added": 0, "total": 0, "knowledge": [], "note": str(e), "error": True}
-    text = "\n".join(b.get("text", "") for b in blocks)
-    parsed = import_teacher_text(text, subject, chapter_hint)
+                "added": 0, "total": 0, "knowledge": [], "note": err, "error": True}
     base: dict[str, Any] = {"mode": parsed["mode"], "subject": parsed["subject"],
                             "drafts": parsed["drafts"], "knowledge": parsed.get("knowledge", []),
                             "note": parsed["note"]}
@@ -547,35 +555,67 @@ def import_teacher_file(path: str | Path, subject: str = "",
     return base
 
 
-def _kp_pool() -> list[str]:
-    """学习库知识点名 + 错题主题/tag（覆盖匹配池）。"""
+def import_teacher_file_preview(path: str | Path, subject: str = "",
+                                chapter_hint: str = "教师重点") -> dict[str, Any]:
+    """教师重点文件 → 仅解析预览（不落库），返回与 import_teacher_file 同构（added=0）。
+
+    R3-25：前端「草稿→确认入库」两段式与粘贴导入同门槛——解析后渲染草稿列表，
+    用户点确认才经 /api/syllabus/confirm 批量入库。
+    """
+    parsed, err = _parse_teacher_file(path, subject, chapter_hint)
+    if err is not None:
+        return {"mode": "error", "subject": subject, "drafts": [],
+                "added": 0, "total": 0, "knowledge": [], "note": err, "error": True}
+    base: dict[str, Any] = {"mode": parsed["mode"], "subject": parsed["subject"],
+                            "drafts": parsed["drafts"], "knowledge": parsed.get("knowledge", []),
+                            "note": parsed["note"]}
+    base["added"] = 0
+    base["total"] = len(parsed["drafts"])
+    base["preview"] = True
+    return base
+
+
+def _kp_pool(knowledge: Optional[list[dict[str, Any]]] = None,
+             mistakes: Optional[list[dict[str, Any]]] = None) -> list[str]:
+    """学习库知识点名 + 错题主题/tag（覆盖匹配池）。
+
+    D-12：接受预加载的知识点/错题列表（coverage 一次加载，循环内复用，不再逐条重载全表）。
+    """
     from . import library as lib
+    if knowledge is None:
+        knowledge = lib.list_knowledge()
+    if mistakes is None:
+        mistakes = lib.list_mistakes()
     names: list[str] = []
-    for k in lib.list_knowledge():
+    for k in knowledge:
         if k.get("name"):
             names.append(str(k["name"]))
         if k.get("topic"):
             names.append(str(k["topic"]))
         names += [str(t) for t in (k.get("slices") or []) if isinstance(t, str)]
-    for m in lib.list_mistakes():
+    for m in mistakes:
         if m.get("topic"):
             names.append(str(m["topic"]))
         names += [str(t) for t in (m.get("know_tags") or []) if isinstance(t, str)]
     return [n for n in names if n.strip()]
 
 
-def match_status(item: str, pool: list[str]) -> tuple[str, Optional[str]]:
+def match_status(item: str, pool: list[str],
+                 knowledge: Optional[list[dict[str, Any]]] = None) -> tuple[str, Optional[str]]:
     """条目 vs 学习库：返回 (status, matched_kp_name)。
 
     mastered：命中知识点名且其状态 ∈ solid|mastered（真正掌握）；
     covered：命中任一名字（知识点/错题主题/tag，含「主题」级命中）；
     pending：未覆盖。
+    D-12：knowledge 可预加载传入（coverage 一次加载、循环内复用，避免每条目重载全表）。
     """
     from . import library as lib
     item_n = re.sub(r"[\s·、/（）()\-——]", "", item or "")
     if not item_n:
         return "pending", None
-    for k in lib.list_knowledge():
+    if knowledge is None:
+        knowledge = lib.list_knowledge()
+    for k in knowledge:
         name = str(k.get("name") or "")
         name_n = re.sub(r"[\s·、/（）()\-——]", "", name)
         if not name_n:
@@ -593,8 +633,12 @@ def match_status(item: str, pool: list[str]) -> tuple[str, Optional[str]]:
 
 def coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
     """科目覆盖度报表（树 + 计数）。零 LLM。source 限定 all|seed|teacher。"""
+    from . import library as lib
     rows = _rows(subject, source)
-    pool = _kp_pool()
+    # D-12：一次加载知识点/错题全表，循环内复用（原实现每条目重载全表）
+    knowledge = lib.list_knowledge()
+    mistakes = lib.list_mistakes()
+    pool = _kp_pool(knowledge, mistakes)
     chapters: dict[str, dict[str, Any]] = {}
     for r in rows:
         ch = chapters.setdefault(r.get("chapter") or "（未分章）", {
@@ -602,7 +646,7 @@ def coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
             "items": [], "total": 0, "covered": 0, "mastered": 0, "pending": 0,
         })
         if r.get("kind") == "item":
-            status, matched = match_status(r.get("item") or "", pool)
+            status, matched = match_status(r.get("item") or "", pool, knowledge)
             entry = {"id": r.get("id"), "item": r.get("item"), "status": status,
                      "matched": matched, "weight": r.get("weight", 1.0)}
             if status == "mastered":

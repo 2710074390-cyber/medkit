@@ -130,7 +130,8 @@ def list_drafts(subject: str = "", confirmed: Optional[bool] = None) -> list[dic
 
 
 def confirm(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """确认/订正：id 存在则更新（可改 chapter/item/freq/confirmed）；新键合并入。"""
+    """确认/订正：同键（id 或 subject+chapter+item）已存在 → 更新并**累加 freq**；
+    新键 → 插入。重复确认合并频次，不覆盖、不删重（与注释/前端承诺一致）。"""
     dbs.migrate()
     added = updated = 0
     with dbs.tx(write=True) as cur:
@@ -140,23 +141,31 @@ def confirm(items: list[dict[str, Any]]) -> dict[str, Any]:
             item = str(it.get("item") or "").strip()
             freq = max(int(it.get("freq") or 1), 1)
             rid = it.get("id") or _row_id(subj, ch, item)
-            exists = cur.execute("SELECT 1 FROM realexam_freq WHERE id=?", (rid,)).fetchone()
-            rec = {"id": rid, "subject": subj, "chapter": ch, "item": item,
-                   "freq": freq, "confirmed": 1 if it.get("confirmed", True) else 0,
-                   "source": it.get("source") or "manual",
-                   "year": str(it.get("year") or "")[:4] or "",
-                   "created_at": _now()}
-            dbs.put_row(cur, "realexam_freq", rec, _RE_COLS)
-            if exists:
+            # D-18：同键重复确认 → 先读旧 freq 再累加写回（不覆盖、不删重）
+            old = cur.execute(
+                "SELECT id, freq, subject, chapter, item FROM realexam_freq "
+                "WHERE id=? OR (subject=? AND chapter=? AND item=?)",
+                (rid, subj, ch, item)).fetchone()
+            if old:
+                old_id, old_freq, old_subj, old_ch, old_item = old
+                rec = {"id": old_id or rid,
+                       "subject": old_subj or subj, "chapter": old_ch or ch,
+                       "item": old_item or item,
+                       "freq": int(old_freq or 0) + freq,
+                       "confirmed": 1 if it.get("confirmed", True) else 0,
+                       "source": it.get("source") or "manual",
+                       "year": str(it.get("year") or "")[:4] or "",
+                       "created_at": _now()}
+                dbs.put_row(cur, "realexam_freq", rec, _RE_COLS)
                 updated += 1
             else:
+                rec = {"id": rid, "subject": subj, "chapter": ch, "item": item,
+                       "freq": freq, "confirmed": 1 if it.get("confirmed", True) else 0,
+                       "source": it.get("source") or "manual",
+                       "year": str(it.get("year") or "")[:4] or "",
+                       "created_at": _now()}
+                dbs.put_row(cur, "realexam_freq", rec, _RE_COLS)
                 added += 1
-                # 同键草稿合并：freq 累加（若已存在同 subject/chapter/item 的行）
-                dup = cur.execute(
-                    "SELECT id FROM realexam_freq WHERE subject=? AND chapter=? AND item=? AND id<>?",
-                    (subj, ch, item, rid)).fetchone()
-                if dup:
-                    cur.execute("DELETE FROM realexam_freq WHERE id=?", (dup[0],))
     return {"added": added, "updated": updated}
 
 
@@ -249,6 +258,17 @@ def analyze_llm(client: Any, text: str, subject: str = "", enabled: bool = False
 
 
 # ---------------------------------------------------------------- 出题来源标注（v0.8.1 · 零 LLM）
+def _item_hits(item: str, hay: str) -> bool:
+    """条目命中规则（D-19）：≥4 字允许子串命中；2-3 字必须词边界命中——
+    前后无字母/数字/汉字（(?<![0-9A-Za-z\u4e00-\u9fff]) 与 (?!...)），
+    避免题干含「感染/贫血」等短词就被误标「真题」。"""
+    if len(item) >= 4:
+        return item in hay
+    return re.search(
+        r"(?<![0-9A-Za-z\u4e00-\u9fff])" + re.escape(item)
+        + r"(?![\u4e00-\u9fff0-9A-Za-z])", hay) is not None
+
+
 def annotate_questions(questions: list[dict[str, Any]], subject: str = "") -> list[dict[str, Any]]:
     """题目来源标注（PRD 6.3.2 真题标记）：题干/章节命中**已确认**考频条目 →
     source_type='真题' + source_year=该条目主导年份（无年份 → 空串）。
@@ -272,7 +292,7 @@ def annotate_questions(questions: list[dict[str, Any]], subject: str = "") -> li
         if not isinstance(q, dict) or q.get("source_type"):
             continue
         hay = f"{q.get('subtopic') or ''} {q.get('question') or ''}"
-        hit = next((it for it in best if it in hay), None)
+        hit = next((it for it in best if _item_hits(it, hay)), None)
         if hit:
             q["source_type"] = "真题"
             q["source_year"] = best[hit][1] or ""

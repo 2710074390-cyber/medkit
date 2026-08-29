@@ -191,6 +191,21 @@ def test_parse_question_text_fallback():
     assert r["answer"] == ""
 
 
+def test_parse_question_text_multi_letter_answer():
+    """D-16：答案支持多字母（BD / B,D / B、D）→ 归一为紧凑大写（BD）；答案后的余文不丢弃。"""
+    r = lib.parse_question_text("题干\n答案：BD\n解析：双药联合。")
+    assert r["answer"] == "BD"
+    assert "双药联合" in r["analysis"]
+
+    r2 = lib.parse_question_text("题干\n答案：B、D\n解析：双药联合。")
+    assert r2["answer"] == "BD"
+    assert "题干" in r2["question"]
+
+    r3 = lib.parse_question_text("题干\n答案：B,D，其余选项排除。\n解析：略")
+    assert r3["answer"] == "BD"
+    assert "其余选项排除" in r3["question"], "答案后的余文应归入题干，勿静默丢弃"
+
+
 # ---------------------------------------------------------------- 掌握度视图 / 推荐
 def test_mastery_view_stats(isolated):
     lib.add_mistake({"question": "a", "know_tags": ["儿科甲"], "learned": False})

@@ -110,17 +110,36 @@ def test_dashboard_mastered_tally(isolated):
 
 
 def test_dashboard_recent_activity(isolated):
-    """C22：近期活动时间线——history 聚合、倒序、科目过滤。"""
+    """C22 + D-25：近期活动时间线——history 聚合、倒序、科目过滤；入库错题事件可见。"""
     _seed(isolated)
     lib.log_knowledge_event("支气管肺炎", "explain", "已生成讲解")
     d = dash.summary("儿科学")
     evs = d["recent"]
     assert evs, "近期活动应有记录"
-    assert {e["event"] for e in evs} >= {"quiz", "explain"}
+    assert {e["event"] for e in evs} >= {"quiz", "explain", "mistake"}
     assert all(e["kp_name"] == "支气管肺炎" for e in evs)
     ts = [e["t"] for e in evs]
     assert ts == sorted(ts, reverse=True)        # 倒序（时间并列时保持写入顺序）
-    assert dash.summary("解剖学")["recent"] == []  # 解剖学无活动 → 空
+    # D-25：解剖学只有一条「入库错题」事件（add_mistake 落库即写），不再为空
+    an = dash.summary("解剖学")["recent"]
+    assert [e["event"] for e in an] == ["mistake"]
+    assert an[0]["kp_name"] == "颅骨"
+
+
+def test_recent_activity_mistake_and_tutor_events(isolated):
+    """D-25：入库错题写「mistake」事件；tutor_start（event='tutor'）在 recent_activity 展示。"""
+    lib.add_mistake({"question": "q", "know_tags": ["支气管肺炎"], "subject": "儿科学"})
+    acts = lib.recent_activity()
+    assert any(a["event"] == "mistake" and a["kp_name"] == "支气管肺炎" for a in acts)
+    labels = {a["event"]: a["label"] for a in acts}
+    assert labels["mistake"] == "入库错题"
+    # tutor_start 事件（routers/library.py 写入 event='tutor'）可被聚合展示
+    lib.log_knowledge_event("支气管肺炎", "tutor", "start")
+    acts2 = lib.recent_activity()
+    evs = [a["event"] for a in acts2]
+    assert "tutor" in evs and "mistake" in evs
+    labels2 = {a["event"]: a["label"] for a in acts2}
+    assert labels2["tutor"] == "提问开始"
 
 
 def test_dashboard_router_endpoint(isolated):

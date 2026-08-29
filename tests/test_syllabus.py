@@ -93,6 +93,21 @@ def test_coverage_pending_covered_mastered(subject_seed):
     assert "肺通气" not in md and "肺结核" in md
 
 
+def test_coverage_loads_knowledge_once(subject_seed, monkeypatch):
+    """D-12：覆盖判定每条目不再重载全表——一次加载缓存到局部变量，循环内复用。"""
+    lib.add_mistake({"question": "肺通气题？", "answer": "A", "options": ["A", "B"],
+                     "subject": "内科学", "chapter": "呼吸系统疾病", "know_tags": ["肺通气"]})
+    calls = {"n": 0}
+    orig = lib.list_knowledge
+    def counting():
+        calls["n"] += 1
+        return orig()
+    monkeypatch.setattr(lib, "list_knowledge", counting)
+    syl.coverage("内科学")
+    # 3 条目场景：原实现每条目 1 次 → 5 次；现在 = 1（一次加载后池与匹配复用）
+    assert calls["n"] == 1, f"应只加载 1 次（循环内复用），实际 {calls['n']}"
+
+
 def test_confirm_upsert_and_replace(subject_seed):
     from medkit.routers.syllabus import ConfirmBody, ConfirmItem
     body = ConfirmBody(items=[ConfirmItem(subject="内科学", chapter="呼吸系统疾病",
@@ -393,3 +408,15 @@ def test_route_teacher_import_file_md():
     assert j["knowledge"] and j["knowledge"][0]["name"] == "肺通气"
     cov = syl.coverage("内科学", "teacher")
     assert cov["totals"]["items"] == 4
+
+    # R3-25：preview=True 只解析不落库（草稿→确认两段式的后端支撑）
+    rp = c.post("/api/syllabus/teacher/import-file",
+                files={"file": ("教师重点2.md",
+                                "一、呼吸系统\n1、肺通气\n2、肺炎\n3、肺结核\n4、呼吸衰竭\n".encode("utf-8"),
+                                "text/markdown")},
+                data={"subject": "内科学", "preview": "1"})
+    assert rp.status_code == 200
+    jp = rp.json()
+    assert jp.get("preview") is True and jp["added"] == 0 and len(jp["drafts"]) == 4
+    cov2 = syl.coverage("内科学", "teacher")
+    assert cov2["totals"]["items"] == 4, "preview 模式不应落库"

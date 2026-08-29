@@ -58,6 +58,32 @@ def test_index_slices_by_subject(isolated):
     assert "_norm" in idx["subjects"]["儿科学"][0]
 
 
+def test_index_slices_cache_hit_no_rescan(isolated, monkeypatch):
+    """D-13：按 (文件, mtime, size) 缓存——命中不重扫不重建 FTS；文件变更自动失效重建。"""
+    calls = {"writes": 0}
+    orig_write = expl.write_json_atomic
+    def counting(path, data):
+        calls["writes"] += 1
+        return orig_write(path, data)
+    monkeypatch.setattr(expl, "write_json_atomic", counting)
+
+    idx1 = expl.index_slices()
+    assert calls["writes"] == 1
+    idx2 = expl.index_slices()
+    assert calls["writes"] == 1, "缓存命中不应重扫/重建（不写索引文件）"
+    assert idx2 is idx1, "缓存命中应返回同一份结果"
+
+    # 文件变更（写入后 mtime/size 变化）→ 自动失效重建
+    p = Path(expl._PROJ_ROOT) / "p1" / "slices.json"
+    extra = json.loads(p.read_text(encoding="utf-8"))
+    extra.append({"sid": "S003", "title": "新增", "role": "textbook",
+                  "text": "新增切片内容。"})
+    p.write_text(json.dumps(extra), encoding="utf-8")
+    idx3 = expl.index_slices()
+    assert calls["writes"] == 2, "文件写入后应触发重建"
+    assert len(idx3["subjects"]["儿科学"]) == 3
+
+
 def test_retrieve_by_subject_and_keyword(isolated):
     expl.index_slices()
     hits = expl.retrieve(subject="儿科学", query="支气管肺炎首选")

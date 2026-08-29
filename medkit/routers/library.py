@@ -573,6 +573,14 @@ def tutor_answer(body: TutorAnswerBody, _guard: None = Depends(_tutor_answer_gua
     cur = session.get("current") or {"type": "explain", "text": ""}
     if not cur.get("text"):
         raise HTTPException(400, "该会话当前没有待回答的问题")
+    # D-20：已达 24 轮上限 → 直接返回提示，不再计分、不调 LLM、不扣费
+    if len(session.get("rounds") or []) >= tut.MAX_ROUNDS:
+        return {
+            "session": session, "score": 0, "gap": "", "next_question": cur,
+            "state": session.get("state", "weak"), "retry": False, "done": True,
+            "note": "已达本轮轮次上限，感谢练习——可另开一场会话继续",
+            "grounded": False,
+        }
     subject, kp_name = session.get("subject") or "", session.get("kp_name") or ""
     client = _tutor_client()
     from ..agents import medtutor as mt

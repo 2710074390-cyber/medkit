@@ -223,6 +223,9 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
             records.append(record)
         st["dirty"]["mistakes"] = True
         _touch_knowledge_in(st, record)
+    # D-25：入库错题事件（ACTIVITY_EVENTS['mistake'] 已有定义但此前无写入方）
+    for name in _kp_key(record):
+        log_knowledge_event(name, "mistake", note=f"错题 {record.get('id')} 入库")
     return record
 
 
@@ -412,19 +415,37 @@ def parse_question_text(text: str) -> dict[str, Any]:
     """把一段错题文本按常见标记拆结构（题干/选项/答案/解析）。非严格、可被用户二次编辑。
 
     支持标记：答案【答案】；解析【解析】；选项行 A./A、/（A）。
-    无法识别时整体放入 question。返回可直接入库的结构（best-effort）。
+    D-16：答案支持多字母（BD / B,D / B、D）→ 归一为紧凑大写（BD）；答案后的余文
+    归入题干（解析前的中间文本），不静默丢弃。无法识别时整体放入 question。
+    返回可直接入库的结构（best-effort）。
     """
     text = (text or "").strip()
-    ans_match = re.search(r"[【\[(]?(?:答案|答|正确答案)[】\])]?\s*[:：]?\s*([A-Ha-h])", text)
-    ana_match = re.search(r"[【\[(]?解析[】\])]?\s*[:：]?(.*)$", text, re.S)
+    ans_re = re.compile(
+        r"[【\[(]?(?:答案|答|正确答案)[】\])]?\s*[:：]?\s*"
+        r"([A-Ha-h](?:[、,，.．/；;、\- ]*[A-Ha-h])*)")
+    ana_re = re.compile(r"[【\[(]?解析[】\])]?\s*[:：]?\s*(.*)$", re.S)
 
-    answer = ans_match.group(1).upper() if ans_match else ""
+    ans_match = ans_re.search(text)
+    ana_match = ana_re.search(text)
+
+    answer = ""
+    if ans_match:
+        answer = re.sub(r"[^A-Ha-h]", "", ans_match.group(1)).upper()
+
     analysis = ana_match.group(1).strip() if ana_match else ""
     body = text
-    if ana_match:
-        body = text[: ana_match.start()].strip()
-    if ans_match:
-        body = body[: ans_match.start()].strip()
+    if ana_match and (not ans_match or ana_match.start() < ans_match.start()):
+        # 解析在答案前（少见）：解析内容取到答案标记前，题干只取解析前
+        if ans_match:
+            analysis = text[ana_match.end(): ans_match.start()].strip()
+        body = text[: ana_match.start()]
+    elif ans_match:
+        # 常规：答案在解析前——只剥掉答案标记本身，答案与解析之间的余文归入题干
+        body = text[: ans_match.start()] + (
+            text[ans_match.end(): ana_match.start()] if ana_match else text[ans_match.end():])
+    elif ana_match:
+        body = text[: ana_match.start()]
+    body = re.sub(r"^[\s。；;、，,．.]+|[\s。；;、，,．.]+$", "", body or "").strip()
 
     lines = body.splitlines()
     options: list[str] = []
@@ -664,6 +685,7 @@ ACTIVITY_EVENTS = {
     "review": "复习打卡",
     "quiz": "提问作答",
     "mistake": "入库错题",
+    "tutor": "提问开始",   # D-25：tutor_start 事件（提问开始）在近期活动中展示
 }
 
 

@@ -99,8 +99,39 @@ def _load_index() -> dict[str, Any]:
     return {"subjects": {}, "scanned_at": None}
 
 
-def index_slices() -> dict[str, Any]:
-    """扫描 ~/.medkit/projects/* 的 meta.subject + textbook 切片，重建按科索引。"""
+# D-13：按 (文件, mtime, size) 做内存缓存——文件写入后 mtime 变化自动失效重建；
+# 命中时不再全量重扫项目目录 + FTS5 重建（讲解/提问/复习「查看提示」每请求都调用）。
+_INDEX_CACHE: dict[str, Any] = {"key": None, "data": None}
+
+
+def _index_cache_key() -> Optional[tuple[tuple[str, int, int], ...]]:
+    """项目切片/元数据文件的 (路径, mtime_ns, size) 快照；无可索引文件 → None。"""
+    root = _proj_root()
+    parts: list[tuple[str, int, int]] = []
+    if root.is_dir():
+        for proj in sorted(root.iterdir(), key=lambda p: p.name):
+            if not proj.is_dir():
+                continue
+            for name in ("slices.json", "meta.json"):
+                f = proj / name
+                if f.exists():
+                    try:
+                        st = f.stat()
+                        parts.append((str(f), st.st_mtime_ns, st.st_size))
+                    except OSError:
+                        pass
+    return tuple(parts) if parts else None
+
+
+def index_slices(force: bool = False) -> dict[str, Any]:
+    """扫描 ~/.medkit/projects/* 的 meta.subject + textbook 切片，重建按科索引。
+
+    D-13：命中 (slices.json, meta.json) 的 mtime 缓存时直接复用，不重扫、不重建 FTS；
+    文件写入后 mtime 变化自动失效重建。
+    """
+    key = _index_cache_key()
+    if not force and _INDEX_CACHE["data"] is not None and _INDEX_CACHE["key"] == key:
+        return _INDEX_CACHE["data"]
     index: dict[str, list[dict[str, Any]]] = {}
     pattern = re.compile(r"[^a-zA-Z0-9\u4e00-\u9fff]")
     root = _proj_root()
@@ -148,6 +179,8 @@ def index_slices() -> dict[str, Any]:
         pass
     out = {"subjects": index, "scanned_at": datetime.now().isoformat(timespec="seconds")}
     write_json_atomic(SLICE_INDEX_FILE, out)
+    _INDEX_CACHE["key"] = key
+    _INDEX_CACHE["data"] = out
     return out
 
 

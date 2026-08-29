@@ -125,11 +125,14 @@ _TEACHER_FILE_MAX = 20 * 1024 * 1024  # 20MB（PDF/DOCX 可能较大；文本格
 
 @router.post("/api/syllabus/teacher/import-file")
 async def syllabus_teacher_import_file(file: UploadFile = File(...),
-                                       subject: str = Form("")) -> dict[str, Any]:
-    """教师重点文件（PDF 文本层 / DOCX / MD / TXT）→ 自动解析入库（零 LLM，幂等）。
+                                       subject: str = Form(""),
+                                       preview: bool = Form(False)) -> dict[str, Any]:
+    """教师重点文件（PDF 文本层 / DOCX / MD / TXT）→ 解析；默认自动入库（零 LLM，幂等）。
 
-    自动完成：文本抽取 → 两档解析（章/条目结构化 ↔ 要点行）→ 结构化整理 → 知识点提取 →
-    落库（source='teacher'）。扫描件 PDF 等抽取失败时 mode='error'（不落库，note 提示 OCR）。
+    R3-25：preview=True 时只解析返回草稿、不落库（前端「草稿→确认」两段式与粘贴同门槛）；
+    默认保持一步入库（向后兼容）。自动完成：文本抽取 → 两档解析（章/条目结构化 ↔ 要点行）
+    → 结构化整理 → 知识点提取 → 落库（source='teacher'）。扫描件 PDF 等抽取失败时
+    mode='error'（不落库，note 提示 OCR）。
     """
     require_flag("syllabus")
     name = (file.filename or "").lower()
@@ -146,6 +149,9 @@ async def syllabus_teacher_import_file(file: UploadFile = File(...),
     try:
         tmp.write(raw)
         tmp.flush()
+        if preview:
+            # R3-25：草稿模式——只解析不落库，确认由前端 /api/syllabus/confirm 完成
+            return syl.import_teacher_file_preview(tmp.name, subject=subject)
         return syl.import_teacher_file(tmp.name, subject=subject)
     finally:
         tmp.close()

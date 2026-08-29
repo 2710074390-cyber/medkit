@@ -59,8 +59,9 @@ def test_annotate_questions_sources(dict_seed):
     assert drafts[0]["year"] == "2022"
     rex.confirm_drafts(drafts)
     qs = [
+        # D-19：2-3 字条目需词边界命中——「肺通气」前后留空格才命中（嵌词内不再误标）
         {"id": "Q001", "type": "A1", "bloom": "理解", "subtopic": "呼吸",
-         "question": "下列关于肺通气的说法正确的是？", "options": [], "answer": "A"},
+         "question": "肺通气 的定义与影响因素？", "options": [], "answer": "A"},
         {"id": "Q002", "type": "A1", "bloom": "理解", "subtopic": "循环",
          "question": "心绞痛发作首选药物是？", "options": [], "answer": "A"},
     ]
@@ -71,6 +72,30 @@ def test_annotate_questions_sources(dict_seed):
     qs[0]["source_year"] = "2020"
     rex.annotate_questions(qs, "内科学")
     assert qs[0]["source_year"] == "2020"
+
+
+def test_annotate_short_item_requires_word_boundary(dict_seed):
+    """D-19：2-3 字条目必须词边界命中（防「感染/贫血」被子串误标）；≥4 字条目允许子串。"""
+    rex.confirm([
+        {"subject": "内科学", "chapter": "呼吸系统疾病", "item": "感染",
+         "freq": 1, "year": "2022"},
+        {"subject": "内科学", "chapter": "呼吸系统疾病", "item": "贫血",
+         "freq": 1, "year": "2022"},
+        {"subject": "内科学", "chapter": "呼吸系统疾病", "item": "肺炎链球菌肺炎",
+         "freq": 1, "year": "2022"},
+    ])
+    qs = [
+        {"id": "Q1", "type": "A1", "bloom": "理解", "subtopic": "呼吸",
+         "question": "肺部感染抗生素选择？", "options": [], "answer": "A"},   # 感染嵌词中 → 不标
+        {"id": "Q2", "type": "A1", "bloom": "理解", "subtopic": "血液",
+         "question": "贫血 的病因分类？", "options": [], "answer": "A"},      # 贫血在词边界 → 标
+        {"id": "Q3", "type": "A1", "bloom": "理解", "subtopic": "呼吸",
+         "question": "肺炎链球菌肺炎首选青霉素治疗？", "options": [], "answer": "A"},  # ≥4 字子串 → 标
+    ]
+    rex.annotate_questions(qs, "内科学")
+    assert not qs[0].get("source_type"), "2-3 字条目嵌词中不应误标真题"
+    assert qs[1]["source_type"] == "真题" and qs[1]["source_year"] == "2022"
+    assert qs[2]["source_type"] == "真题" and qs[2]["source_year"] == "2022"
 
 
 def test_confirm_gate_and_freq_view(dict_seed):
@@ -85,17 +110,20 @@ def test_confirm_gate_and_freq_view(dict_seed):
     assert "机制" not in md.split("#")[-1] or True       # 报告只含条目名与频次
     assert "肺通气" in md and "×1" in md
 
-    # 再确认同键 → 幂等合并（freq 累加为合并后行，不新增行）
+    # D-18：再确认同键 → freq 累加（合并为同一行，不新增行、不覆盖）
     before_n = len(rex.list_drafts("内科学", confirmed=True))
-    rex.confirm_drafts(drafts)
+    r2 = rex.confirm_drafts(drafts)
     after_n = len(rex.list_drafts("内科学", confirmed=True))
-    assert after_n <= before_n
+    assert after_n == before_n, "重复确认不应新增行"
+    assert r2["updated"] == len(drafts), "重复确认同键应计 updated 且 freq 累加"
+    view2 = rex.freq_view("内科学")
+    assert view2["total"] == view["total"] * 2, f"重复确认同键 freq 应累加（2+2），实得 {view2['total']}"
 
     # 频次视图条目带记录 id（前端逐条删除用）；删除后 total 随之减少
-    item0 = view["chapters"][0]["items"][0]
+    item0 = view2["chapters"][0]["items"][0]
     assert item0.get("id"), "频次视图条目应带 id"
     assert rex.delete(item0["id"]) is True
-    assert rex.freq_view("内科学")["total"] == view["total"] - item0["freq"]
+    assert rex.freq_view("内科学")["total"] == view2["total"] - item0["freq"]
     assert rex.delete(item0["id"]) is False                # 重复删除 → False（404 语义）
 
 

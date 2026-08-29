@@ -418,7 +418,7 @@ try {
   <!-- 视图 2/5：错题本（新增/导入 + 列表） -->
   <div class="learnview" id="lv-mistakes">
     <div class="card" style="margin-top:14px">
-      <div class="cardh"><h2>新增错题</h2><span class="hint">拍题 / 粘贴题干选项答案，自动拆成结构化错题并计入掌握度</span></div>
+      <div class="cardh"><h2>新增错题</h2></div>
         <div class="hint" style="margin-bottom:8px">拍题 / 粘贴题干选项答案，自动拆成结构化错题并计入掌握度。</div>
         <textarea id="mk_text" rows="4" placeholder="粘贴错题文本…&#10;例：题干&#10;A. …&#10;B. …&#10;答案：B&#10;解析：…"></textarea>
         <div class="row" style="margin-top:10px">
@@ -432,7 +432,14 @@ try {
           <input type="file" id="mk_image" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp" style="display:none" onchange="mkOcrFile(this)">
           <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
         </div>
-        <h2 style="margin-top:20px">错题本<span class="hint" id="learn_mk_count" style="float:right"></span></h2>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:20px">
+          <h2 style="margin:0">错题本<span class="hint" id="learn_mk_scope" style="margin-left:8px"></span></h2>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
+            <label style="font-size:12px">科目</label>
+            <select id="mk_subject" onchange="mkScopeChange(this.value)"><option value="">全部科目</option></select>
+            <span class="hint" id="learn_mk_count"></span>
+          </span>
+        </div>
         <label class="chk" style="margin:4px 0 8px"><input type="checkbox" id="mk_filter_unlearned" onchange="renderLibraryCurrent()"> 只看未掌握（隐藏已归档「已掌握」错题）</label>
         <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>

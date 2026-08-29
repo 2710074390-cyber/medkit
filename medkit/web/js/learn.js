@@ -131,9 +131,12 @@ async function sylLoad() {
     const st = await api("/api/syllabus/status");
     const subs = st.subjects || [];
     const sel = document.getElementById("syl_subject");
-    if (sel && sel.options.length <= 1) {
+    // R3-26：去掉 options.length<=1 守卫——每次与后端科目集对比增量并入新科目（保留原选中值）
+    if (sel) {
+      const cur = sel.value;
       sel.innerHTML = '<option value="">全部科目</option>' + subs
         .map(s => `<option value="${esc(s.subject)}">${esc(s.subject)}（${s.items} 条目）</option>`).join("");
+      if (cur && subs.some(s => s.subject === cur)) sel.value = cur;
     }
     if (st.seed && st.seed.exam && meta) meta.textContent = `种子：${st.seed.exam}`;
     if (FEATURES.realexams) rexHeat();
@@ -243,7 +246,7 @@ async function sylParseConfirm() {
   if (!SYL_DRAFTS || !SYL_DRAFTS.length) { toast("先解析再确认"); return; }
   const items = SYL_DRAFTS.map(d => ({ subject: d.subject || "未分类", chapter: d.chapter || "", item: d.item }));
   const r = await api("/api/syllabus/confirm", { method: "POST", body: JSON.stringify({ items }) });
-  toast(`大纲条目入库：新增 ${r.added} 条`);
+  toast(`已入库 ${r.added} 条大纲条目`);
   SYL_DRAFTS = [];
   document.getElementById("syl_paste_preview").innerHTML = '<div class="hint">已入库。可继续粘贴或点顶部「刷新」。</div>';
   await sylLoad();   // 等待确认后的刷新完成，避免迟到渲染覆盖后续标准切换
@@ -279,28 +282,34 @@ function sylTeacherPick() {
   document.getElementById("syl_teacher_file").click();
 }
 async function sylTeacherImport() {
-  // 教师重点文件（PDF文本层/DOCX/MD/TXT）→ 自动处理：解析 → 结构化 → 知识点提取 → 幂等入库（source='teacher'）
+  // 教师重点文件（PDF文本层/DOCX/MD/TXT）→ 草稿→确认两段式（R3-25）与粘贴同门槛：
+  // preview=1 只解析不落库，渲染草稿列表（计数 N 条未入库），用户点「确认入库」才批量入库
   const inp = document.getElementById("syl_teacher_file");
   const f = inp.files && inp.files[0];
   inp.value = "";
   if (!f) return;
   const fd = new FormData();
   fd.append("file", f);
+  fd.append("preview", "1");
   const subject = document.getElementById("syl_subject")?.value || "";
   if (subject) fd.append("subject", subject);
   try {
     const r = await api("/api/syllabus/teacher/import-file", { method: "POST", body: fd });
     if (r.mode === "error") { toast(r.note || "文件解析失败", false); return; }
     if (!r.drafts || !r.drafts.length) { toast(r.note || "未识别到条目", false); return; }
-    const kps = (r.knowledge || []).slice(0, 10).map(k => esc(k.name)).join("、");
-    toast(`${r.note || "教师重点导入"} · 入库新增 ${r.added ?? "?"} 条（共 ${r.total ?? r.drafts.length} 条，幂等）`);
     SYL_DRAFTS = r.drafts;
+    // R3-25：展开草稿确认区（与粘贴导入同一预览面板）
+    document.getElementById("syl_paste_card").style.display = "";
+    const kps = (r.knowledge || []).slice(0, 10).map(k => esc(k.name)).join("、");
     document.getElementById("syl_paste_preview").innerHTML =
-      `<div class="hint">教师重点草稿 ${SYL_DRAFTS.length} 条（已入库 source=teacher${r.subject ? ` · 科目：${esc(r.subject)}` : ""}）：</div>` +
+      `<div class="hint">教师重点草稿 ${SYL_DRAFTS.length} 条（未入库${r.subject ? ` · 科目：${esc(r.subject)}` : ""}）——核实后确认：</div>` +
       SYL_DRAFTS.slice(0, 30).map(d => `<div class="syl-item">
         <span class="learn-chip pending">${esc(d.subject || "?")}</span>
         <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span></div>`).join("") +
-      (kps ? `<div class="hint">知识点提取（前 10 条）：${kps}…（共 ${(r.knowledge || []).length} 条）</div>` : "");
+      (SYL_DRAFTS.length > 30 ? `<div class="hint">…共 ${SYL_DRAFTS.length} 条（确认全部入库）</div>` : "") +
+      (kps ? `<div class="hint">知识点提取（前 10 条）：${kps}…（共 ${(r.knowledge || []).length} 条）</div>` : "") +
+      `<div class="btns" style="margin-top:8px"><button class="act" onclick="sylParseConfirm()">确认全部入库</button>
+       <button class="mini-btn" onclick="sylDraftClear()">取消草稿</button></div>`;
   } catch (e) {
     toast(e.message || "导入失败", false);
   }
@@ -631,6 +640,9 @@ async function loadOverview(subject) {
         subs.slice().sort().map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
       if (cur && subs.includes(cur)) sel.value = cur;
     }
+    // R3-22：错题本作用域跟随概览科目过滤（另有独立下拉可切回全部科目）
+    mkSubject = subject;
+    fillMkSubjectSelect();
     const [d, mk, my, recm] = await Promise.all([
       api("/api/library/dashboard?subject=" + encodeURIComponent(subject)),
       api("/api/library/mistakes"),
@@ -638,7 +650,8 @@ async function loadOverview(subject) {
       api("/api/library/recommend?limit=6&subject=" + encodeURIComponent(subject)),
     ]);
     renderDashboard(d);
-    renderLibrary((mk.mistakes || []).filter(m => !subject || m.subject === subject), my, recm.recommend || []);
+    // D-14/R3-22：错题全量进缓存，作用域过滤在渲染层做（错题本可独立切科目）
+    renderLibrary(mk.mistakes || [], my, recm.recommend || []);
   } catch (e) {
     $("dash_scope").textContent = "汇总失败";
     $("dash_loop").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
@@ -647,10 +660,13 @@ async function loadOverview(subject) {
 async function loadDashboard(keepSubject) {
   try {
     const subs = (await cachedSubjects()).subjects || [];
-    $("dash_subject").innerHTML = '<option value="">全部科目</option>' +
+    const sel = $("dash_subject");
+    // D-08：重建下拉前记录原选中值——仍存在则恢复选中，否则回「全部科目」
+    const cur = keepSubject !== undefined ? keepSubject : (sel ? sel.value : "");
+    sel.innerHTML = '<option value="">全部科目</option>' +
       subs.slice().sort().map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
-    if (keepSubject && subs.includes(keepSubject)) $("dash_subject").value = keepSubject;
-    const subject = $("dash_subject").value;
+    if (cur && subs.includes(cur)) sel.value = cur;
+    const subject = sel.value;
     const d = await api("/api/library/dashboard?subject=" + encodeURIComponent(subject));
     renderDashboard(d);
   } catch (e) {
@@ -752,15 +768,21 @@ function appliedSubject() {
 }
 /* C17：错题本「只看未掌握」筛选——缓存最近一次数据，勾选即重渲染（已掌握=归档标记，可隐藏） */
 let _libCache = { mistakes: [], my: null, recm: [] };
+let mkSubject = "";       // R3-22：错题本作用域（跟随概览科目过滤，可独立切回全部科目）
+let mkShowAll = false;     // D-14：错题分块渲染（首屏 100 条 + 「加载全部」按钮）
 function renderLibrary(mistakes, my, recm) {
   _libCache = { mistakes: mistakes || [], my: my || null, recm: recm || [] };
+  mkShowAll = false;       // 新数据到达 → 回到分块首屏
   renderLibraryCurrent();
 }
 function renderLibraryCurrent() {
   const { mistakes, my, recm } = _libCache;
   const chk = document.getElementById("mk_filter_unlearned");
   const onlyUn = !!(chk && chk.checked);
-  const list = onlyUn ? mistakes.filter(m => !m.learned) : mistakes;
+  // R3-22：作用域过滤（概览科目口径 + 错题本独立下拉）；D-14：分块渲染
+  const scoped = mistakes.filter(m => !mkSubject || m.subject === mkSubject);
+  const list = onlyUn ? scoped.filter(m => !m.learned) : scoped;
+  syncMkScope();
   const stats = (my && my.stats) || {};
   $("learn_stats").innerHTML = `共 <b>${stats.total_knowledge || 0}</b> 个知识点 · 薄弱 <b style="color:#f87171">${stats.weak || 0}</b> · 错题 <b>${stats.total_mistakes || 0}</b>`;
   // 薄弱点诊断 + 待学优先级
@@ -782,19 +804,51 @@ function renderLibraryCurrent() {
     </div>`).join("") : `<div class="hint">暂无薄弱点，先把错题收进来。</div>`;
 
   // 错题本（增强版：→讲解 / →提问 / 详情展开 / 已掌握 / 删除）
+  const shown = mkShowAll ? list : list.slice(0, 100);   // D-14：首屏约 100 条
   $("learn_mk_count").textContent = `${list.length} 道`
-    + (onlyUn && list.length !== mistakes.length ? `（未掌握 ${list.length} / ${mistakes.length}）` : "");
+    + (onlyUn && list.length !== scoped.length ? `（未掌握 ${list.length} / ${scoped.length}）` : "");
   if (!list.length) {
     $("learn_mk").innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-paper"></use></svg>
       <div class="sub">${mistakes.length
-        ? `当前筛选下没有错题（已掌握 ${mistakes.length} 道被隐藏）<br>取消勾选「只看未掌握」可查看全部`
+        ? (onlyUn && scoped.length
+          ? `当前筛选下没有错题（已掌握 ${scoped.length} 道被隐藏）<br>取消勾选「只看未掌握」可查看全部`
+          : `「${mkSubject || "全部科目"}」下暂无错题<br>切到其他科目或先入库错题`)
         : `错题本还是空的<br>粘贴一道错题入库，或点「拍题(图片 OCR)」「批量导入(JSON)」`}</div>
     </div>`;
   } else {
-    $("learn_mk").innerHTML = list.map(mm => mkRowHTML(mm)).join("");
+    $("learn_mk").innerHTML = shown.map(mm => mkRowHTML(mm)).join("") +
+      (list.length > shown.length
+        ? `<div class="btns" style="justify-content:center;margin-top:10px"><button class="act gray" onclick="mkShowAllFn()">加载全部（共 ${list.length} 道）</button></div>`
+        : "");
   }
 }
+function mkShowAllFn() { mkShowAll = true; renderLibraryCurrent(); }
+window.mkShowAllFn = mkShowAllFn;
+/* R3-22：错题本科目下拉——选项随科目集刷新，切换与概览过滤联动 */
+function fillMkSubjectSelect() {
+  const sel = $("mk_subject");
+  if (!sel) return;
+  const cur = sel.value || mkSubject || "";
+  const subs = (LEARN_CACHE.subjects && LEARN_CACHE.subjects.subjects) || [];
+  sel.innerHTML = '<option value="">全部科目</option>' +
+    subs.slice().sort().map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  if (cur && subs.includes(cur)) sel.value = cur;
+}
+function mkScopeChange(v) {
+  mkSubject = v || "";
+  syncMkScope();
+  // 与概览过滤联动：按新作用域刷新概览数据（与切换 dash_subject 行为一致）
+  if (typeof loadOverview === "function") { loadOverview(mkSubject); return; }
+  renderLibraryCurrent();
+}
+function syncMkScope() {
+  const scope = $("learn_mk_scope");
+  if (scope) scope.textContent = mkSubject ? "科目：" + mkSubject : "";
+  const dash = $("dash_subject");
+  if (dash && dash.value !== mkSubject) dash.value = mkSubject;
+}
+window.mkScopeChange = mkScopeChange;
 window.renderLibraryCurrent = renderLibraryCurrent;
 const ERR_LABEL = { concept_gap: "概念缺失", confusion: "易混", calculation: "计算失误", misread: "误读题干", reasoning: "推理断链" };
 function mkRowHTML(mm) {
@@ -860,7 +914,7 @@ async function learnRecAction(btnOrKind, subject, kpName) {
     } else if (kind === "tutor") {
       showLearnView("tutor");
       if (subject && $("tu_subject")) $("tu_subject").value = subject;
-      await loadTutorCtx();
+      await loadTutorCtx(subject);   // R3-23：重建下拉后保留原科目
       if (![...$("tu_kp").options].some(o => o.value === kpName)) {
         const o = document.createElement("option");
         o.value = o.textContent = kpName; o.dataset.subject = subject || "";
@@ -895,7 +949,9 @@ async function mkLearn(id, learned) {
     await api(`/api/library/mistakes/${id}/learn`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ learned: learned }) });
-    toast(learned ? "已标记为已掌握（仅归档标记；掌握度仍由真实作答驱动）" : "已取消已掌握标记"); loadLibrary();
+    // R3-27：明确告知「仅归档标记」——同名复习卡/记忆卡仍在到期队列，不静默删卡
+    toast(learned ? "已标记为已掌握：仅归档标记。同名复习卡/记忆卡仍在到期队列，可到复习计划移出"
+                  : "已取消已掌握标记"); loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
 async function mkDel(id) {
@@ -1078,7 +1134,7 @@ async function loadExplains() {
           <div class="rv-hintbody exp-slices" id="exps_${esc(e.id)}"><span class="hint">展开后自动检索教材切片…</span></div></details>` : ""}
         <div class="btns" style="margin-top:10px">
           ${e.kp_name ? `<button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(e.subject || "")}" data-name="${esc(e.kp_name)}">→ 提问练习</button>` : ""}
-          ${(window.FEATURES && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards('${esc(e.id)}','${esc(e.subject || "")}')">🧠 生成记忆卡</button>` : ""}
+          ${(window.FEATURES && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards(this)" data-eid="${esc(e.id)}" data-subject="${esc(e.subject || "")}">🧠 生成记忆卡</button>` : ""}
           <button class="mini-btn primary" onclick="expRegen(this)" data-id="${esc(e.id)}" data-subject="${esc(e.subject || "")}" data-kp="${esc(e.kp_name || "")}">↻ 重新生成</button>
           <button class="mini-btn" onclick="expCopy('${esc(e.id)}',this)">复制</button>
           <button class="mini-btn danger" onclick="expDel('${esc(e.id)}')">删除</button>
@@ -1156,8 +1212,17 @@ async function expRegen(btnOrId, subject, kpName) {
     }, false);
 }
 window.expFold = expFold; window.expRegen = expRegen;
-/* WP-05/NX-04：讲解产物 → 医学记忆卡（flag = cards 前端同步隐藏按钮） */
-async function expCards(eid, subject) {
+/* WP-05/NX-04：讲解产物 → 医学记忆卡（flag = cards 前端同步隐藏按钮）
+   D-21：busy 禁用防连点（与 gradeBusy 同风格）——生成期间按钮禁用，避免重复调用 */
+const expCardsBusy = new Set();
+async function expCards(btnOrEid, subject) {
+  let eid = btnOrEid, btn = null;
+  if (btnOrEid && typeof btnOrEid === "object" && btnOrEid.dataset) {
+    btn = btnOrEid; eid = btn.dataset.eid || ""; subject = btn.dataset.subject || "";
+  }
+  if (!eid || expCardsBusy.has(eid)) return;
+  expCardsBusy.add(eid);
+  if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
   try {
     const r = await api("/api/library/cards/generate", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1171,6 +1236,10 @@ async function expCards(eid, subject) {
       toast(`记忆卡科目「${subject}」——复习过滤已切到该科目查看`, false);
     }
   } catch (e) { toast(e.message, false); }
+  finally {
+    expCardsBusy.delete(eid);
+    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = "🧠 生成记忆卡"; }
+  }
 }
 window.expCards = expCards;
 async function expDel(id) {
@@ -1232,12 +1301,15 @@ function tutorRowCore(extra = "") {
   const chip = rec ? tutorChip(rec.state) : "";
   return { subj, rec, lv, chip };
 }
-async function loadTutorCtx() {
+async function loadTutorCtx(preserveSubject) {
   try {
     const [subj, my] = await Promise.all([cachedSubjects(), cachedMastery()]);
     const subs = (subj.subjects || []).sort();
     $("tu_subject").innerHTML = '<option value="">全部科目</option>' +
       subs.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+    // R3-23：与 loadExplainCtx 同口径——重建下拉后保留原科目（quick-action「→ 提问」不再重置）
+    const keep = preserveSubject && subs.includes(preserveSubject) ? preserveSubject : "";
+    if (keep) $("tu_subject").value = keep;
     await fillTutorKp($("tu_subject").value);
   } catch (e) { /* 局部失败不阻塞 */ }
   loadTutorSessions();
@@ -1394,14 +1466,20 @@ async function tutorSubmit() {
     if (cur) { cur.state = r.session.state; cur.streak = r.session.streak;
       cur.rounds = r.session.rounds; cur.current = r.session.current;
       cur.updated_at = r.session.updated_at; }
+    // D-26：重渲染前保存用户刚输入的作答，retry 时渲染后回填（允许在原答案上修改）
+    const prevAnswer = $("tu_answer") ? $("tu_answer").value : "";
     // C3：LLM 判分失败返回 retry=true（score<0 不计分）——不渲染负数分数，改为弱提示重答
-    if (r.retry) {
+    if (r.done) {
+      // D-20：已达轮次上限（后端不调 LLM 直接返回提示）
+      $("tutor_cost").textContent = r.note || "已达本轮轮次上限，感谢练习——可另开一场会话继续";
+    } else if (r.retry) {
       $("tutor_cost").textContent = "本轮未完成判分（模型未给分）——请围绕考点再作答一次";
     } else {
       const note = r.grounded === false ? "（未命中教材原文 · 网络+模型知识）" : "";
       $("tutor_cost").textContent = `本轮得分 ${r.score}/3${note}` + (r.gap ? ` —— ${r.gap}` : "");
     }
     tutorShowConversation();
+    if (r.retry && prevAnswer) { const nt = $("tu_answer"); if (nt) nt.value = prevAnswer; }
     invalidateLearnCache();   // 判分回写掌握度 → 失效学习中心缓存，概览到手最新值
     // C12：提问判分后概览诊断同步刷新（掌握度/优先级可能已变化）
     refreshOverviewIfAny();
@@ -1450,7 +1528,9 @@ function rvChip(state) {
   return `<span class="learn-chip" style="color:${s.c};border-color:${border};background:${bg}">${esc(s.t)}</span>`;
 }
 async function loadReviewCtx(subject = "") {
-  if (rvSubject !== subject) studyDueBase = 0;   // 切换科目 → 重置今日进度基数
+  // 切换科目 或 跨天（D-11）→ 重置今日进度基数（杜绝「今日进度 70/100」凭空显示）
+  if (rvSubject !== subject) studyDueBase = 0;
+  studyDueResetIfStale();
   rvSubject = subject;
   try {
     const [today, subs] = await Promise.all([
@@ -1463,12 +1543,15 @@ async function loadReviewCtx(subject = "") {
   } catch (e) { $("rv_body").innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
 function fillReviewSubjects(resp) {
+  // D-28：每次进入复习视图都刷新科目选项（新增科目可过滤），刷新后保留原选中值
   const sel = $("rv_subject");
-  if (!sel || sel.dataset.inited) return;
+  if (!sel) return;
+  const cur = sel.value;
   const subs = resp.subjects || [];
   sel.innerHTML = `<option value="">全部科目</option>` + subs.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
-  sel.dataset.inited = "1";
-  sel.value = rvSubject;
+  if (cur && subs.includes(cur)) sel.value = cur;
+  else if (rvSubject && subs.includes(rvSubject)) sel.value = rvSubject;
+  else sel.value = "";
 }
 /* v0.8.1：更名 renderSmReview——原 renderReview 与 review-desk.js 的审核台渲染器
    全局重名（经典脚本共享作用域），后者后加载覆盖前者，导致复习卡列表静默不渲染。 */
@@ -1496,9 +1579,15 @@ function renderSmReview(today) {
 }
 /* PRD 3.5：今日进度 X/Y（X=本次会话已评，Y=进入刷题时的今日到期数；零后端改动） */
 let studyDueBase = 0;
+let studyDueDate = "";   // D-11：跨天重置「今日进度」基数（杜绝隔天凭空显示 70/100）
+function studyDueResetIfStale() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (studyDueDate !== todayStr) { studyDueBase = 0; studyDueDate = todayStr; }
+}
 function renderStudyProgress(today) {
   const el = $("study_progress");
   if (!el) return;
+  studyDueResetIfStale();   // D-11：日期变化也重置基数
   const st = today.stats || {};
   if (studyDueBase === 0 && (st.due || 0) > 0) studyDueBase = st.due;
   const total = studyDueBase || (st.due || 0);
@@ -1557,7 +1646,8 @@ async function rvGrade3(cid, key) {
   await rvGrade(cid, q, { forget: "忘了", fuzzy: "模糊", got: "记住" }[key]);
 }
 window.rvGrade3 = rvGrade3;
-/* 键盘 1/2/3：刷题 tab 下对当前卡（已翻面优先）执行 忘了/模糊/记住；未翻面先自动翻面 */
+/* 键盘 1/2/3：刷题 tab 下对当前卡（已翻面优先）执行 忘了/模糊/记住。
+   D-10：未翻面卡仅翻面不评分——避免误触给首卡打 0 分（污染排期+掌握度）。 */
 window.addEventListener("keydown", e => {
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
@@ -1567,7 +1657,10 @@ window.addEventListener("keydown", e => {
             || document.querySelector("#mem_area .qcard.flipped") || document.querySelector("#mem_area .qcard");
   if (!card) return;
   e.preventDefault();
-  card.classList.add("flipped");
+  if (!card.classList.contains("flipped")) {
+    card.classList.add("flipped");   // 未翻面：只翻面，不评分
+    return;
+  }
   rvGrade3(card.dataset.card, ["forget", "fuzzy", "got"][+e.key - 1]);
 });
 /* 复习卡「查看提示」：懒加载教材原文切片（零 LLM，纯本地检索） */
@@ -1702,7 +1795,7 @@ async function renderMemoryCards() {
       <span class="hint">讲解产物自动沉淀 · 总 ${st.total || 0} / 今日到期 ${st.due || 0}</span>
       <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <button class="act gray mini" style="padding:4px 10px" onclick="expCardsHint()">+ 生成记忆卡</button>
-        <button class="act gray mini" style="padding:4px 10px" onclick="memExportApkg()">导出 Anki（.apkg）</button>
+        <button class="act gray mini" style="padding:4px 10px" onclick="memExportApkg(this)">导出 Anki（.apkg）</button>
         <button class="act gray mini" style="padding:4px 10px" onclick="memExportTxt()">导出 .txt</button>
         <button class="act gray mini" style="padding:4px 10px" onclick="ankiHelp()">导入指引</button>
       </span></div>`
@@ -1782,15 +1875,33 @@ function expCardsHint() {
   toast("选中一条讲解产物 → 点「🧠 生成记忆卡」即可入队", false);
 }
 window.expCardsHint = expCardsHint;
-/* D15：记忆卡导出（.apkg 真包 / .txt 文本；空库时给可读提示） */
-async function memExportApkg() {
+/* D15：记忆卡导出（.apkg 真包 / .txt 文本；空库时给可读提示）
+   R3-24：导出前查 st.total（0 张直接提示）；请求期按钮禁用；fetch+blob 捕获错误；成功后提示张数 */
+async function memExportApkg(btn) {
   try {
+    if (btn) { btn.disabled = true; btn.textContent = "导出中…"; }
+    const qs = rvSubject ? "?subject=" + encodeURIComponent(rvSubject) : "";
+    const st = await api("/api/library/cards" + qs);
+    const total = (st.stats && st.stats.total) || (st.cards || []).length;
+    if (!total) { toast("暂无记忆卡可导出（先在「讲解与学习产物」生成记忆卡）", false); return; }
+    const resp = await fetch("/api/library/cards/export/apkg" + qs);
+    if (!resp.ok) {
+      let msg = "导出失败（HTTP " + resp.status + "）";
+      try { const j = await resp.json(); if (j.detail) msg = String(j.detail); } catch (err) { /* ignore */ }
+      throw new Error(msg);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = "/api/library/cards/export/apkg?subject=" + encodeURIComponent(rvSubject);
-    a.download = "";
+    a.href = url;
+    const cd = resp.headers.get("content-disposition") || "";
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+    a.download = m ? decodeURIComponent(m[1]) : "MedKit记忆卡.apkg";
     document.body.appendChild(a); a.click(); a.remove();
-    toast("已开始导出记忆卡 .apkg（Anki 双击即可导入）");
+    setTimeout(() => URL.revokeObjectURL(url), 500);
+    toast(`已导出 ${total} 张记忆卡 .apkg（Anki 双击即可导入）`);
   } catch (e) { toast(e.message, false); }
+  finally { if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = "导出 Anki（.apkg）"; } }
 }
 async function memExportTxt() {
   try {

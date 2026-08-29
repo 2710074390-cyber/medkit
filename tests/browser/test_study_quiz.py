@@ -79,8 +79,8 @@ def test_study_card_flip_and_three_buttons(page, server_url):
     )
 
 
-def test_study_keyboard_shortcut_grades_card(page, server_url):
-    """快捷键 3（记住）对当前卡自评：未翻面自动翻面并出卡。"""
+def test_study_keyboard_shortcut_flips_then_grades(page, server_url):
+    """D-10：快捷键 1/2/3 未翻面仅翻面不评分；已翻面才评分（防误触给首卡打 0 分）。"""
     _open_study(page, server_url)
     assert _seed_mistake(page, "内科学", "心力衰竭") == 200
     assert _queue_all(page, "内科学") >= 1
@@ -89,6 +89,14 @@ def test_study_keyboard_shortcut_grades_card(page, server_url):
 
     card = page.locator("#rv_body .qcard")
     card.wait_for(state="visible", timeout=15000)
+    # 未翻面 → 按 3 只翻面，不评分（卡仍在队列）
+    page.keyboard.press("3")
+    page.wait_for_function(
+        "() => document.querySelector('#rv_body .qcard')?.classList.contains('flipped')",
+        timeout=15000,
+    )
+    assert page.locator("#rv_body .qcard").count() == 1, "未翻面按快捷键只翻面不评分"
+    # 已翻面 → 再按 3 → 评分并出队
     page.keyboard.press("3")
     page.wait_for_selector("#rv_body .empty", timeout=15000)
     assert page.locator("#toasts .toast.bad").count() == 0, "快捷键自评不应报错"

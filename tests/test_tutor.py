@@ -285,6 +285,34 @@ def test_router_tutor_flow(mock_agents, isolated):
     assert kp["attempts"] >= 1
 
 
+def test_router_tutor_cap_returns_without_llm(mock_agents, isolated, monkeypatch):
+    """D-20：达 24 轮上限 → 路由直接返回提示，不再调 LLM 判分（不计分、不扣费）。"""
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    s = tut.start_session("儿科学", "支气管肺炎首选治疗")
+    tut.seed_first(s["id"], "explain", "Q1")
+    data = tut._load()
+    for x in data:
+        if x["id"] == s["id"]:
+            x["rounds"] = [{"round": i, "type": "explain", "question": f"Q{i}",
+                            "user_answer": "答", "score": 2, "gap": "", "at": "2026-08-27T10:00:00"}
+                           for i in range(1, tut.MAX_ROUNDS + 1)]
+            x["current"] = {"type": "apply", "text": "Q25"}
+    tut._save(data)
+    calls = {"n": 0}
+    orig = mt.score_answer
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return orig(*a, **kw)
+    monkeypatch.setattr(mt, "score_answer", counting)
+    r = c.post("/api/library/tutor/answer", json={"session_id": s["id"], "user_answer": "答"})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert calls["n"] == 0, "达上限不应触发 LLM 调用"
+    assert j.get("done") is True
+    assert "轮次上限" in j.get("note", "")
+    assert len(j["session"]["rounds"]) == tut.MAX_ROUNDS
+
+
 def test_router_tutor_bad_session(mock_agents, isolated):
     c = TestClient(m.app, base_url="http://127.0.0.1")
     assert c.post("/api/library/tutor/answer",
