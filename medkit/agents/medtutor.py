@@ -10,7 +10,6 @@
 from typing import Any, Optional
 
 from ..core.llm import LLMError
-
 from . import render_prompt
 from .medexplain import _web_digest
 

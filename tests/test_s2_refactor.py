@@ -29,6 +29,39 @@ def test_version_single_source():
     assert f'"{medkit.__version__}"' in iss, "pack/version.iss 应与 __version__ 一致"
 
 
+def test_run_medkit_console_utf8_prevents_gbk_crash(monkeypatch):
+    """打包版（cmd 默认 GBK codepage）print emoji 曾抛 UnicodeEncodeError 致入口崩溃。
+    回归：_console_utf8 必须把 stdout/stderr 重配为 UTF-8 + errors=replace。"""
+    import io
+
+    import run_medkit as entry
+
+    # 前提：GBK 严格流写 emoji 必崩（这正是不重配时打包版崩溃的原因）
+    strict = io.TextIOWrapper(io.BytesIO(), encoding="gbk")
+    try:
+        strict.write("⚠️")
+    except UnicodeEncodeError:
+        pass
+    else:
+        raise AssertionError("前提不成立：GBK 严格流写 emoji 应抛 UnicodeEncodeError")
+
+    class _Out:
+        def __init__(self):
+            self.calls = []
+
+        def reconfigure(self, **kw):
+            self.calls.append(kw)
+
+    out, err = _Out(), _Out()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    entry._console_utf8()
+    assert out.calls and err.calls, "_console_utf8 应重配 stdout/stderr"
+    for calls in (out.calls, err.calls):
+        assert calls[0].get("encoding") == "utf-8"
+        assert calls[0].get("errors") == "replace"
+
+
 def _iter_paths(routes):
     """枚举路由路径。fastapi<0.141 平铺拷贝子路由；≥0.141 include_router 追加
     _IncludedRouter 组合代理（无 path，经 original_router 委托匹配），需递归下钻。"""

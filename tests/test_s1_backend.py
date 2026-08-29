@@ -125,8 +125,8 @@ def test_review_rejects_answer_outside_option_range(monkeypatch, tmp_path):
     import json as _json
 
     _isolate_cfg(monkeypatch, tmp_path)
-    from medkit.routers._common import _write_meta_atomic, proj_dir
     import medkit.render.apkg as apkg_mod
+    from medkit.routers._common import _write_meta_atomic, proj_dir
     monkeypatch.setattr(apkg_mod, "export_apkg", lambda *a, **k: None)
 
     pid = "review_letters"
@@ -162,8 +162,8 @@ def test_review_concurrent_edits_no_lost_update(monkeypatch, tmp_path):
     import threading as _th
 
     _isolate_cfg(monkeypatch, tmp_path)
-    from medkit.routers._common import _write_meta_atomic, proj_dir
     import medkit.render.apkg as apkg_mod
+    from medkit.routers._common import _write_meta_atomic, proj_dir
     monkeypatch.setattr(apkg_mod, "export_apkg", lambda *a, **k: None)
 
     pid = "review_lock"

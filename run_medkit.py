@@ -9,6 +9,7 @@ S5（2026-08 审计）：启动前 socket 探测 4880~4889，端口被占时自�
 import errno
 import os
 import socket
+import sys
 
 import uvicorn
 
@@ -67,7 +68,20 @@ def _acquire_instance_lock() -> object | None:
         return object()
 
 
+def _console_utf8() -> None:
+    """GBK 控制台（Windows cmd 默认 codepage 936）print 含 emoji/生僻字会抛
+    UnicodeEncodeError（打包版提示路径实测崩溃）。启动即把 stdout/stderr 重配为
+    UTF-8 + errors=replace——提示永不因编码崩溃（乱码容错）。"""
+    for _s in (sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            try:
+                _s.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001  重配失败不阻塞启动
+                pass
+
+
 if __name__ == "__main__":
+    _console_utf8()
     # 单实例：防止重复双击起第二个进程共享 ~/.medkit 数据（并发写风险）
     inst_lock = _acquire_instance_lock()
     if inst_lock is None:

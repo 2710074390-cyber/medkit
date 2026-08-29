@@ -18,9 +18,8 @@ sys.path.insert(0, str(ROOT))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-import medkit.main as m  # noqa: E402
 import medkit.core.config as cfgmod  # noqa: E402
-from medkit.core import fsutil  # noqa: E402
+import medkit.main as m  # noqa: E402
 from medkit.core import realexams as rex_mod  # noqa: E402
 from medkit.core.fsutil import safe_filename  # noqa: E402
 from medkit.render import qbank_html as qh  # noqa: E402
@@ -84,6 +83,7 @@ def _read_note_guids(apkg_path: Path) -> list[str]:
 
 def test_c05_apkg_note_guid_stable_and_keyed(tmp_path):
     import genanki
+
     from medkit.render.apkg import export_apkg, export_memory_apkg
 
     qs = [{"id": "Q001", "type": "A1", "bloom": "记忆", "subtopic": "s",
