@@ -147,13 +147,14 @@ def _effective_ratios(ratios: dict[str, int]) -> dict[str, int]:
     return {k: v for k, v in dict(ratios).items() if v > 0}
 
 
-def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
-    """按模块+Bloom 分层取样（组卷）。
+def _sample_paper_exact(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
+    """按模块+Bloom 分层取样（组卷），精确取样 n 个（不做最小 10 的抬升）。
 
     ME-6：案例组（A3/A4，同 case_id）视为**原子**——子题同进同出，防止子题被拆散
     后丢共享案例题干上下文；B1 选项组子题相互独立（共享选项随子题自带），可单抽。
+    B26：补足抽样（N-len(reused)）需要精确数量，不能用抬升后的 _sample_paper。
     """
-    n = max(10, min(n, len(questions)))
+    n = min(n, len(questions))
     # 1) 案例组原子合并为「组块」
     groups: list[list[dict[str, Any]]] = []
     gidx: dict[str, int] = {}
@@ -189,6 +190,11 @@ def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any
     return picked[:n]
 
 
+def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
+    """组卷入口：保底至少 10 题（押题卷页数体验），再走精确分层取样。"""
+    return _sample_paper_exact(questions, max(10, n))
+
+
 def _save_paper_ids(base: Path, paper_qs: list[dict[str, Any]]) -> None:
     """ME-7：记录押题卷抽样的题目 id —— 审核台「保存并重渲染」据此复用，避免抽样漂移。"""
     try:
@@ -199,14 +205,30 @@ def _save_paper_ids(base: Path, paper_qs: list[dict[str, Any]]) -> None:
         pass
 
 
+def _gate_image_refs(questions: list[dict[str, Any]],
+                     image_sids: set[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """B28：image_ref 门禁——任何 image_ref 不在 image_sids 中都剔除并返回被剔除 id。
+    不再要求 image_sids 非空：未传图项目的幻觉 image_ref 同样被拦截（防伪图题零提示）。"""
+    dropped = [q.get("id") for q in questions
+               if q.get("image_ref") and q.get("image_ref") not in image_sids]
+    kept = [q for q in questions
+            if not (q.get("image_ref") and q.get("image_ref") not in image_sids)]
+    return kept, dropped
+
+
 def select_paper_stable(saved_ids: list[str], questions: list[dict[str, Any]],
                         n: int = PAPER_DEFAULT) -> list[dict[str, Any]]:
-    """ME-7：押题卷抽样防漂移——优先复用上次抽样（仍存在于题库的 id），
-    仅当复用结果不足（题库被剔除/重掷导致缺口）时重新抽样补足。"""
+    """ME-7：押题卷抽样防漂移——优先复用上次抽样（仍存在于题库的 id）。
+    B26：复用不足时不再整卷重抽——保留已复用题 + 从剩余池补足（抽样 N-len(reused) 追加），
+    剔除/重掷场景下已复用题的顺序与成员不被洗牌。"""
     by_id = {q.get("id"): q for q in questions}
     picked = [by_id[i] for i in (saved_ids or []) if i in by_id]
-    if len(picked) < min(n, len(questions)):
-        picked = _sample_paper(questions, min(n, len(questions)))
+    need = min(n, len(questions))
+    if len(picked) < need:
+        picked_ids = {q.get("id") for q in picked}
+        remaining = [q for q in questions if q.get("id") not in picked_ids]
+        if remaining:
+            picked = picked + _sample_paper_exact(remaining, need - len(picked))
     return picked
 
 
@@ -252,6 +274,36 @@ def build_image_index(base: Path,
                              "caption": _s.get("text") or _s.get("title") or ""}
         image_sections += f"[{_sid}] {_s.get('text') or _s.get('title') or ''}\n"
     return image_index, image_sections
+
+
+def _review_slice_digest(slices: list[dict[str, Any]], per_slice: int = 1200,
+                         budget: int = 6000) -> str:
+    """B32：复习手册教材侧预算按切片顺序轮转分配（每切片每轮至多 per_slice 字，直到预算耗尽）。
+    每轮先按「剩余预算 ÷ 还有文字的切片数」给本轮均摊份额（上限 per_slice），再按切片顺序取用——
+    切片多时每片都能分到预算，不再「前约 5 切片各 1200 字截到 6000」，保证后面章节也进入手册。"""
+    if not slices:
+        return ""
+    texts = [str(s.get("text") or "") for s in slices]
+    out: list[str] = []
+    left = budget
+    while left > 0:
+        active = [i for i, t in enumerate(texts) if t]
+        if not active:
+            break
+        share = max(1, left // len(active)) if len(active) > 1 else left
+        share = min(share, per_slice)
+        progressed = False
+        for i in active:
+            if left <= 0:
+                break
+            take = min(share, len(texts[i]), left)
+            out.append(f"【{slices[i].get('title','')}】\n{texts[i][:take]}")
+            texts[i] = texts[i][take:]
+            left -= take
+            progressed = True
+        if not progressed:
+            break
+    return "\n\n".join(out)
 
 
 def _cancel_out(base: Path, meta_path: Path, done_sids: set[str],
@@ -597,15 +649,13 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                    f"（软校验告警，不影响门禁兜底；已记入 meta contract_warnings）")
 
     # ---------------- ② 门禁①（选项/Bloom/溯源/查重/图像引用 自动修复循环）
-    # WP-04：image_ref 必须指向已上传的图片素材；不匹配 → 剔除并记 warning（防悬空图/幻觉图）
+    # WP-04+B28：image_ref 必须指向已上传的图片素材；任何不匹配都剔除并记 warning
+    # （不再要求 image_sids 非空——未传图项目的幻觉 image_ref 同样拦截，防伪图题零提示）
     image_sids = {s.get("sid") for s in slices if s.get("role") == "image" and s.get("image")}
-    dropped_img = [q.get("id") for q in questions
-                   if q.get("image_ref") and image_sids and q.get("image_ref") not in image_sids]
+    questions, dropped_img = _gate_image_refs(questions, image_sids)
     if dropped_img:
-        questions = [q for q in questions
-                     if not (q.get("image_ref") and image_sids
-                             and q.get("image_ref") not in image_sids)]
-        _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题（image_ref 不在素材清单）")
+        _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题"
+             f"（image_ref 不在素材清单：{'、'.join(str(x) for x in dropped_img[:5])}）")
     for round_i in range(1, FIX_ROUNDS_GATE + 2):
         if cancel.is_set():   # B24：门禁循环轮次间可取消
             return _cancel_out(base, meta_path, done_sids, questions)
@@ -733,7 +783,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             return _cancel_out(base, meta_path, done_sids, questions)
         review_md = medreview.generate_review(
             rev_client, subject, exam, questions, teacher_text,
-            "\n\n".join(f"【{s.get('title','')}】\n{s.get('text','')[:1200]}" for s in textbook_slices))
+            _review_slice_digest(textbook_slices))   # B32：6000 预算按切片顺序轮转分配，后面章节也进手册
         (base / "最终产物" / "复习手册.md").write_text(review_md, encoding="utf-8")
 
     # ---------------- ⑥ 渲染产物

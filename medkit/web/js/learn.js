@@ -32,7 +32,8 @@ const LEARN_ALT_KEYS = ["overview", "mistakes", "explain", "tutor", "syllabus"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）
   const t = e.target;
-  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  // A-新15：焦点守卫纳入 SELECT（下拉聚焦时不触发子视图快捷键，防误切/吞键）
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
   if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "5")) return;
   const lv = LEARN_ALT_KEYS[+e.key - 1];
   if (!lv) return;
@@ -1821,6 +1822,7 @@ async function ankiPreview(pid) {
       <div class="ankifaces">${cards}</div>`;
     $("md_ok").textContent = "知道了";
     $("md_ok").className = "act";
+    modalOnCancel = null;   // A-新14：信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
     $("modal_mask").style.display = "flex";
     $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
   } catch (e) { toast(e.message, false); }
@@ -1841,6 +1843,7 @@ function ankiHelp() {
     </div>`;
   $("md_ok").textContent = "知道了";
   $("md_ok").className = "act";
+  modalOnCancel = null;   // A-新14：信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
   $("modal_mask").style.display = "flex";
   $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
 }

@@ -169,7 +169,7 @@ try {
     <div><label>博查 API Key（后端为「博查」或「DeepSeek(需外部)」时）</label>
       <input type="password" id="ws_key" placeholder="留空 = 保留已保存的 Key"></div>
   </div>
-  <div class="switch"><input type="checkbox" id="t_web" checked><label for="t_web">开启网络检索（默认关；本卡开关随「保存检索设置」生效）</label></div>
+  <div class="switch"><input type="checkbox" id="t_web"><label for="t_web">开启网络检索（默认关；本卡开关随「保存检索设置」生效）</label></div>
       <div id="ws_manual_wrap" style="display:none">
         <label>手动粘贴素材（每行一条：标题 URL 或任意文本；≤20000 字）</label>
         <textarea id="ws_manual" rows="3" placeholder="例：儿科学第X章 真题  https://example.com/..."></textarea>
@@ -301,7 +301,7 @@ try {
             <button class="inlineBtn blue" onclick="pickFiles('textbook')">选择文件</button>
             <button class="inlineBtn" id="dzc_textbook" style="display:none">清空</button>
           </div>
-          <input type="file" id="f_textbook" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+          <input type="file" id="f_textbook" multiple accept=".pdf,.docx,.md,.markdown,.txt,.text,.png,.jpg,.jpeg,.webp,.bmp,image/*" style="display:none">
         </div>
         <div class="fbox dz" id="dz_teacher">
           <b>教师重点（必填）</b><span class="hint">课堂重点/复习提纲，作为考点锚定；支持拖拽</span>
@@ -310,7 +310,7 @@ try {
             <button class="inlineBtn blue" onclick="pickFiles('teacher')">选择文件</button>
             <button class="inlineBtn" id="dzc_teacher" style="display:none">清空</button>
           </div>
-          <input type="file" id="f_teacher" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+          <input type="file" id="f_teacher" multiple accept=".pdf,.docx,.md,.markdown,.txt,.text,.png,.jpg,.jpeg,.webp,.bmp,image/*" style="display:none">
         </div>
       </div>
       <div style="margin-top:12px">
@@ -326,7 +326,7 @@ try {
               <button class="inlineBtn blue" onclick="pickFiles('exam')">选择文件</button>
               <button class="inlineBtn" id="dzc_exam" style="display:none">清空</button>
             </div>
-            <input type="file" id="f_exam" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+            <input type="file" id="f_exam" multiple accept=".pdf,.docx,.md,.markdown,.txt,.text,.png,.jpg,.jpeg,.webp,.bmp,image/*" style="display:none">
           </div>
           <div class="fbox dz" id="dz_extra">
             <b>补充资料（可选）</b><span class="hint">课件/笔记/考纲等，补充出题细节与解析；支持拖拽</span>
@@ -335,7 +335,7 @@ try {
               <button class="inlineBtn blue" onclick="pickFiles('extra')">选择文件</button>
               <button class="inlineBtn" id="dzc_extra" style="display:none">清空</button>
             </div>
-            <input type="file" id="f_extra" multiple accept=".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,image/*" style="display:none">
+            <input type="file" id="f_extra" multiple accept=".pdf,.docx,.md,.markdown,.txt,.text,.png,.jpg,.jpeg,.webp,.bmp,image/*" style="display:none">
           </div>
         </div>
       </div>

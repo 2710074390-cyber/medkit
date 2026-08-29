@@ -148,9 +148,12 @@ def _trial_locked(c: dict[str, Any], body: TrialBody) -> dict[str, Any]:
         raise HTTPException(502, "模型未返回有效题目，请重试或检查模型配置")
     issues = options_check.check_all(qs)["issues"]
     issues += trace_check.check_trace(qs, {body.slice_sid})["issues"]
+    # B35：试出题不含网络检索/大纲锚定/图片素材——响应补 note 字段，前端试出卡片顶部展示说明条
     return {"question": qs[0], "issues": issues,
             "from_slice": f"{body.slice_sid} · {body.slice_title}",
-            "usage": uctx.snapshot()}
+            "usage": uctx.snapshot(),
+            "note": "试出题仅基于所选切片与教师重点/真题/资料文本，不含网络检索、大纲锚定与图片素材；"
+                    "正式生成会注入这些内容，题目风格与篇幅可能不同。"}
 
 
 # ---------------------------------------------------------------- 成本预估（单源公式）

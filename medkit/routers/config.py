@@ -57,6 +57,9 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
     prov = get_provider(body.provider)
     if prov is None:
         raise HTTPException(400, "未知服务商: " + body.provider)
+    # A-新22：自定义端点 base_url 留空不允许保存（调用时才报错为时已晚）
+    if body.provider == "custom" and not (body.base_url or "").strip():
+        raise HTTPException(400, "自定义端点必须填写接口地址（base_url）")
     saved = cfg.load()
     pkeys = dict(saved.get("provider_keys", {}) or {})
     old_provider = saved.get("provider", "")
@@ -105,7 +108,10 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
         "provider_keys": pkeys,
         "features": saved.get("features", {}),   # IMP-02：前端 PUT 不改 features 节，原样保留
     }
-    cfg.save(new_cfg)
+    try:
+        cfg.save(new_cfg)
+    except OSError as e:  # A-新20：磁盘满/只读等保存失败 → 500 中文提示（不再裸 500 traceback）
+        raise HTTPException(500, f"配置保存失败（磁盘满或只读？）：{e}") from e
     v = cfg.public_view(new_cfg)
     v["key_encrypted"] = str(new_cfg.get("api_key", "")).startswith(cfg._DPAPI_PREFIX)
     return v
@@ -164,7 +170,8 @@ class TestBody(BaseModel):
 def llm_test(body: TestBody) -> dict[str, Any]:
     key = body.api_key or resolve_key(cfg.load().get("api_key", ""))
     try:
-        client = LLMClient(body.base_url, key, body.model, timeout=30)
+        # A-新21：测试连接 timeout 降到约 8s、retries 1（最长 ~16s），避免 90s+ 假卡死
+        client = LLMClient(body.base_url, key, body.model, timeout=8, max_retries=1)
         ok, msg = client.test()
         return {"ok": ok, "msg": msg}
     except Exception as e:  # noqa: BLE001

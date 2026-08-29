@@ -6,8 +6,10 @@ usage 按次上下文隔离（run·trial·regen 不串账）/ review·regen 运�
 
 import sys
 import threading
+import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -377,8 +379,11 @@ def test_ocr_cancel_race_keeps_cancelled(monkeypatch, tmp_path):
             return "agent"
 
     from medkit.core import mineru as mineru_mod
+    from medkit.routers import ocr as ocr_mod
 
     monkeypatch.setattr(mineru_mod, "MinerUClient", lambda key: FakeMinerU(key))
+    # B34：隔离 OCR_JOB_DIR，避免持久化落盘污染真实 ~/.medkit/ocr
+    monkeypatch.setattr(ocr_mod, "OCR_JOB_DIR", tmp_path / "ocr")
     job = {"id": "ocr_race", "name": "x.pdf", "role": "textbook", "state": "queued",
            "msg": "", "result": None, "cancel": threading.Event()}
     m.OCR_JOBS[job["id"]] = job
@@ -411,3 +416,79 @@ def test_create_project_same_second_not_merged(monkeypatch, tmp_path):
     p1, p2 = r1.json()["pid"], r2.json()["pid"]
     assert p1 != p2, "同秒同名项目 pid 应唯一（不得静默合并）"
     assert (Path(saved["projects_dir"]) / p1).is_dir() and (Path(saved["projects_dir"]) / p2).is_dir()
+
+
+def test_ocr_jobs_persist_across_restart(monkeypatch, tmp_path):
+    """B34：任务记录持久化到 OCR_JOB_DIR/jobs.json，重启（清空内存）后仍可恢复；
+    启动时清理无记录的孤儿 tmp 文件。"""
+    from medkit.routers import ocr as ocr_mod
+
+    jobdir = tmp_path / "ocr"
+    monkeypatch.setattr(ocr_mod, "OCR_JOB_DIR", jobdir)
+    try:
+        ocr_mod.OCR_JOBS.clear()
+        ocr_mod.OCR_JOBS["persist1"] = {"id": "persist1", "name": "a.pdf",
+            "role": "textbook", "state": "running", "msg": "识别中…",
+            "result": None, "created": time.time(), "cancel": threading.Event()}
+        ocr_mod.OCR_JOBS["persist2"] = {"id": "persist2", "name": "b.pdf",
+            "role": "exam", "state": "done", "msg": "完成",
+            "result": {"name": "b.pdf", "text": "# md"},
+            "created": time.time(), "cancel": threading.Event()}
+        ocr_mod._save_jobs_to_disk()
+        assert (jobdir / "jobs.json").exists()
+        (jobdir / "orphan.pdf").write_bytes(b"orphan")   # 无任务记录的孤儿 tmp
+
+        # 模拟重启：清空内存 → 从磁盘恢复 + 清理孤儿
+        ocr_mod.OCR_JOBS.clear()
+        ocr_mod.restore_ocr_persistence()
+
+        assert set(ocr_mod.OCR_JOBS) >= {"persist1", "persist2"}, "重启后任务记录应仍在"
+        assert ocr_mod.OCR_JOBS["persist1"]["state"] == "running"
+        assert ocr_mod.OCR_JOBS["persist2"]["result"]["text"] == "# md"
+        assert isinstance(ocr_mod.OCR_JOBS["persist1"]["cancel"], threading.Event), \
+            "恢复的任务应重建 cancel Event"
+        assert not (jobdir / "orphan.pdf").exists(), "无记录的孤儿 tmp 应被清理"
+    finally:
+        ocr_mod.OCR_JOBS.clear()
+
+
+def test_mineru_upload_skipped_when_cancelled(monkeypatch, tmp_path):
+    """B34：上传 PUT 前检查 cancel——cancel 置位时不再发起大文件上传。"""
+    from medkit.core import mineru as mineru_mod
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"code": 0, "data": {"batch_id": "b1",
+                                        "file_urls": ["https://mineru.test/up"],
+                                        "extract_result": [{"state": "done"}]}}
+
+    puts = []
+
+    class FakeClient:
+        def __init__(self, **kw):
+            self.kw = kw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, *a, **k):
+            return FakeResp()
+
+        def put(self, *a, **k):
+            puts.append(1)
+            return FakeResp()
+
+    monkeypatch.setattr(mineru_mod.httpx, "Client", lambda **kw: FakeClient(**kw))
+    ev = threading.Event()
+    ev.set()
+    p = tmp_path / "a.pdf"
+    p.write_bytes(b"%PDF-1.4 fake")
+    client = mineru_mod.MinerUClient(api_key="tok")
+    with pytest.raises(mineru_mod.MinerUError, match="已取消"):
+        client._extract_v4(p, cancel=ev)
+    assert not puts, "cancel 置位时不应发出 PUT 上传"

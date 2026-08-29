@@ -79,16 +79,20 @@ async function api(path, opts = {}) {
   }
   return j;
 }
+/* A-新14（含 D-22）：ESC 关闭 confirmModal 必须触发 onCancel 回调（无 onCancel 时才直接关闭） */
+let modalOnCancel = null;
 function confirmModal(title, body, okLabel, onOk, danger = true, onCancel = null) {
   $("md_title").textContent = title;
   $("md_body").innerHTML = body;
   $("md_ok").textContent = okLabel || "确认";
   $("md_ok").className = "act " + (danger ? "danger" : "");
   $("modal_mask").style.display = "flex";
-  $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; onOk(); };
+  modalOnCancel = onCancel;
+  $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; modalOnCancel = null; onOk(); };
   $("md_cancel").onclick = () => {
     $("modal_mask").style.display = "none";
-    if (typeof onCancel === "function") onCancel();   // C13：取消后回调（如提示已创建的待运行项目）
+    const cb = modalOnCancel; modalOnCancel = null;
+    if (typeof cb === "function") cb();   // C13：取消后回调（如提示已创建的待运行项目）
   };
   $("md_ok").focus();
 }
@@ -111,11 +115,16 @@ function askModal(title, label, placeholder, onOk) {
   };
   $("md_ok").onclick = submit;
   input.onkeydown = e => { if (e.key === "Enter") submit(); };
+  modalOnCancel = null;   // A-新14：askModal 不携带取消回调，防止 ESC 触发上一个 confirmModal 的残留 onCancel
 }
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    if ($("modal_mask").style.display === "flex") $("modal_mask").style.display = "none";
-    else if ($("wizard_mask").style.display === "flex") wzClose();
+    if ($("modal_mask").style.display === "flex") {
+      $("modal_mask").style.display = "none";
+      // A-新14（含 D-22）：ESC 关闭必须触发 onCancel 回调（无 onCancel 时才直接关闭）
+      const cb = modalOnCancel; modalOnCancel = null;
+      if (typeof cb === "function") cb();
+    } else if ($("wizard_mask").style.display === "flex") wzClose();
   }
 });
 $("md_cancel").onclick = () => { $("modal_mask").style.display = "none"; };
@@ -162,6 +171,34 @@ function fallbackCopy(text, done) {
   try { document.execCommand("copy"); done(); } catch (e) { toast("复制失败，请手动选择邮箱复制", false); }
   ta.remove();
 }
+/* A-新6：带可点击「复制」按钮的 toast（clipboard 失败 → 降级 mailto）——反馈弹窗已关闭后仍可复制邮箱 */
+function toastWithCopy(msg, copyValue) {
+  const box = $("toasts");
+  const t = document.createElement("div");
+  t.className = "toast bad";
+  const span = document.createElement("span");
+  span.textContent = msg;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "复制";
+  btn.style.cssText = "margin-left:8px;padding:2px 10px;border:1px solid currentColor;border-radius:6px;background:none;color:inherit;font:inherit;font-size:12px;cursor:pointer";
+  btn.onclick = ev => {
+    ev.stopPropagation();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(copyValue)
+        .then(() => { btn.textContent = "已复制"; })
+        .catch(() => { location.href = "mailto:" + copyValue; toast("未获剪贴板权限，已为你打开写邮件", false); });
+    } else {
+      location.href = "mailto:" + copyValue;
+    }
+  };
+  t.appendChild(span); t.appendChild(btn);
+  t.title = "点击关闭";
+  t.onclick = () => t.remove();
+  box.appendChild(t);
+  while (box.children.length > 4) box.removeChild(box.firstChild);
+  setTimeout(() => { t.remove(); }, 6000);
+}
 
 function openFeedback() {
   $("md_title").textContent = "反馈与建议";
@@ -177,14 +214,15 @@ function openFeedback() {
   $("md_ok").textContent = "写邮件";
   $("md_ok").className = "act";
   $("modal_mask").style.display = "flex";
+  modalOnCancel = null;   // A-新14：普通信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
   $("fb_copy").onclick = () => copyText(FEEDBACK_MAIL, $("fb_copy"));
   $("md_ok").onclick = () => {
     $("modal_mask").style.display = "none";
     const subject = `MedKit ${ver} 反馈`;
     const body = `版本：${ver || "未知"}\n系统：${navigator.platform || "未知"}\n时间：${new Date().toLocaleString("zh-CN")}\n\n（请在此描述你遇到的问题或功能建议）`;
     location.href = `mailto:${FEEDBACK_MAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    // A11：邮件客户端可能未安装/静默无反应——给出复制手动发送的兜底提示
-    toast("如未弹出邮件客户端：请点「复制」把邮箱发到微信/备忘录，再手动发送", false);
+    // A11+A-新6：邮件客户端可能未安装/静默无反应——弹窗已关闭，toast 内提供可点击「复制」按钮兜底（clipboard 失败降级 mailto）
+    toastWithCopy("如未弹出邮件客户端：请点「复制」把邮箱发到微信/备忘录，再手动发送", FEEDBACK_MAIL);
   };
 }
 
@@ -216,6 +254,7 @@ function showUpdateModal(r) {
   $("md_body").innerHTML = html;
   $("md_ok").className = "act";
   $("modal_mask").style.display = "flex";
+  modalOnCancel = null;   // A-新14：普通信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
   const url = r.html_url || "https://github.com/2710074390-cyber/medkit/releases/latest";
   $("md_ok").onclick = () => {
     $("modal_mask").style.display = "none";
@@ -246,6 +285,7 @@ async function checkUpdate(silent = false) {
     $("md_ok").textContent = "知道了";
     $("md_ok").className = "act";
     $("modal_mask").style.display = "flex";
+    modalOnCancel = null;   // A-新14：普通信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
     $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
   }
   try {
@@ -261,6 +301,7 @@ async function checkUpdate(silent = false) {
 }
 
 /* ---- 导航 + hash 路由 */
+let shownTab = null;   // A-新7：记录当前已展示 tab——hashchange 与 showTab 双入口去重（防双倍请求）
 function showTab(name) {
   if (typeof window.reviewDirtyGuard === "function" && !window.reviewDirtyGuard()) {
     // 审核台有未保存修改：回滚 hash 到当前 tab，不切换
@@ -278,6 +319,7 @@ function showTab(name) {
   });
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
   $("tab-" + name).classList.add("show");
+  shownTab = name;   // A-新7：hashchange 目标与当前一致时跳过（见下方 hashchange 监听）
   if (name !== "bank") {            // v0.5：切走题库（项目详情） → 停止进度轮询与 OCR 轮询
     stopPoll();
     ocrRunToken++;
@@ -308,7 +350,8 @@ if (document.readyState === "loading") {
 }
 window.addEventListener("hashchange", () => {
   const h = (location.hash || "").replace("#", "");
-  if (["start", "study", "bank", "learn", "mine"].includes(h)) showTab(h);
+  // A-新7：hash=…; showTab(…) 双入口会让 hashchange 再触发一次 → 目标与当前已展示 tab 一致时跳过（防双倍请求）
+  if (["start", "study", "bank", "learn", "mine"].includes(h) && h !== shownTab) showTab(h);
 });
 
 /* ---- ① 开始（仪表盘 · PRD 6.1）：今日任务 + 开始学习 + 考试倒计时 + 最近项目 ---- */

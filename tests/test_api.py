@@ -317,6 +317,70 @@ def test_search_test_manual():
     assert r.status_code == 200 and "未配置博查" in r.json()["msg"]
 
 
+def test_config_custom_provider_requires_base_url():
+    """A-新22：自定义端点 base_url 留空 → 400 中文提示，不允许保存。"""
+    c = make_client()
+    _install_isolated_cfg()
+    r = c.put("/api/config", json={
+        "provider": "custom", "base_url": "", "api_key": "sk-custom",
+        "model_gen": "some-model", "model_qc": "some-model",
+        "web_search_enabled": False, "web_search_api_key": "",
+        "mineru_api_key": "", "mineru_auto_ocr": True,
+    })
+    assert r.status_code == 400, r.text
+    assert "base_url" in r.json()["detail"], r.text
+    # 填写后正常保存
+    r2 = c.put("/api/config", json={
+        "provider": "custom", "base_url": "https://custom.example.com/v1",
+        "api_key": "sk-custom", "model_gen": "some-model", "model_qc": "some-model",
+        "web_search_enabled": False, "web_search_api_key": "",
+        "mineru_api_key": "", "mineru_auto_ocr": True,
+    })
+    assert r2.status_code == 200, r2.text
+
+
+def test_config_save_oserror_returns_500_chinese(monkeypatch):
+    """A-新20：cfg.save 抛 OSError（磁盘满/只读）→ 500 中文提示而非裸 500。"""
+    c = make_client()
+    _install_isolated_cfg()
+    monkeypatch.setattr(m.cfg, "save", lambda _c: (_ for _ in ()).throw(OSError("disk full")))
+    r = c.put("/api/config", json={
+        "provider": "deepseek", "base_url": "https://api.deepseek.com",
+        "api_key": "sk-x", "model_gen": "deepseek-chat", "model_qc": "deepseek-chat",
+        "web_search_enabled": False, "web_search_api_key": "",
+        "mineru_api_key": "", "mineru_auto_ocr": True,
+    })
+    assert r.status_code == 500, r.text
+    assert "配置保存失败" in r.json()["detail"], r.text
+
+
+def test_llm_test_short_timeout_and_chinese_error(monkeypatch):
+    """A-新21：测试连接用 timeout=8 / max_retries=1（避免 90s 假卡死），失败给中文原因。"""
+    from medkit.core.llm import LLMClient
+
+    # 失败原因映射（不发起网络）
+    assert "超时" in LLMClient._test_error_hint(Exception("Request timed out after 30s"))
+    assert "Key" in LLMClient._test_error_hint(Exception("401 invalid api key"))
+    assert "Base URL" in LLMClient._test_error_hint(Exception("Connection error: getaddrinfo failed"))
+    assert "连接失败" in LLMClient._test_error_hint(Exception("something else"))
+
+    captured = {}
+
+    class FakeLLM:
+        def __init__(self, base_url, api_key, model, timeout=300.0, max_retries=2):
+            captured["timeout"] = timeout
+            captured["max_retries"] = max_retries
+
+        def test(self):
+            return False, "连接失败：xxx"
+
+    monkeypatch.setattr("medkit.routers.config.LLMClient", FakeLLM)
+    c = make_client()
+    r = c.post("/api/llm/test", json={"base_url": "https://x", "api_key": "sk-x", "model": "m"})
+    assert r.status_code == 200, r.text
+    assert captured["timeout"] == 8 and captured["max_retries"] == 1, captured
+
+
 def test_search_backends_2026():
     """2026-08 官方信息核查回归：DeepSeek 自带联网搜索 + 默认模型换代。"""
     c = make_client()

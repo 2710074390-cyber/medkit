@@ -41,9 +41,13 @@ class MinerUError(Exception):
 
 class MinerUClient:
     def __init__(self, api_key: str = "", timeout: float = 120.0,
-                 poll_interval: float = 5.0):
+                 poll_interval: float = 5.0,
+                 upload_timeout: float = 300.0, poll_timeout: float = 60.0):
+        """B34：上传与轮询分开 timeout——上传 300s（大文件）、轮询 60s（查询很轻）。"""
         self.api_key = (api_key or "").strip()
         self.timeout = timeout
+        self.upload_timeout = upload_timeout
+        self.poll_timeout = poll_timeout
         self.poll_interval = poll_interval
 
     # ------------------------------------------------------------ 公共
@@ -110,7 +114,7 @@ class MinerUClient:
     # ------------------------------------------------------------ 精准 v4
     def _extract_v4(self, p: Path, progress: Optional[Callable[[str], None]] = None,
                     cancel: Optional[Any] = None) -> str:
-        with httpx.Client(timeout=self.timeout) as c:
+        with httpx.Client(timeout=self.upload_timeout) as c:
             r = c.post(
                 f"{BASE}/v4/file-urls/batch",
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -122,10 +126,14 @@ class MinerUClient:
             batch_id = body["data"]["batch_id"]
             upload_url = body["data"]["file_urls"][0]
 
-            up = c.put(upload_url, content=p.read_bytes())
+            # B34：上传 PUT 前检查 cancel（取消后不再发起大文件上传）
+            if cancel is not None and cancel.is_set():
+                raise MinerUError("任务已取消")
+            up = c.put(upload_url, content=p.read_bytes(), timeout=self.upload_timeout)
             if up.status_code not in (200, 201):
                 raise MinerUError(f"文件上传失败（HTTP {up.status_code}）")
 
+        with httpx.Client(timeout=self.poll_timeout) as c:
             result = self._poll(
                 lambda: self._json_or(
                     c.get(f"{BASE}/v4/extract-results/batch/{batch_id}",
@@ -138,6 +146,8 @@ class MinerUClient:
             zip_url = result.get("full_zip_url")
             if not zip_url:
                 raise MinerUError("解析完成但缺少结果下载地址")
+
+        with httpx.Client(timeout=self.upload_timeout) as c:
             zr = c.get(zip_url)
             if zr.status_code != 200:
                 raise MinerUError(f"结果下载失败（HTTP {zr.status_code}）")
@@ -155,7 +165,7 @@ class MinerUClient:
     # ------------------------------------------------------------ Agent v1
     def _extract_agent(self, p: Path, progress: Optional[Callable[[str], None]] = None,
                        cancel: Optional[Any] = None) -> str:
-        with httpx.Client(timeout=self.timeout) as c:
+        with httpx.Client(timeout=self.upload_timeout) as c:
             r = c.post(f"{BASE}/v1/agent/parse/file",
                        json={"file_name": p.name, "language": "ch",
                              "enable_table": True, "is_ocr": True, "enable_formula": True})
@@ -163,10 +173,16 @@ class MinerUClient:
             if body.get("code") != 0:
                 raise MinerUError(f"创建任务失败：{body.get('msg')}")
             task_id = body["data"]["task_id"]
-            up = c.put(body["data"]["file_url"], content=p.read_bytes())
+
+            # B34：上传 PUT 前检查 cancel（取消后不再发起大文件上传）
+            if cancel is not None and cancel.is_set():
+                raise MinerUError("任务已取消")
+            up = c.put(body["data"]["file_url"], content=p.read_bytes(),
+                       timeout=self.upload_timeout)
             if up.status_code not in (200, 201):
                 raise MinerUError(f"文件上传失败（HTTP {up.status_code}）")
 
+        with httpx.Client(timeout=self.poll_timeout) as c:
             data = self._poll(
                 lambda: self._json_or(c.get(f"{BASE}/v1/agent/parse/{task_id}"),
                                       "查询任务失败"),
@@ -179,6 +195,8 @@ class MinerUClient:
             md_url = data.get("markdown_url")
             if not md_url:
                 raise MinerUError("解析完成但缺少 Markdown 链接")
+
+        with httpx.Client(timeout=self.upload_timeout) as c:
             mdr = c.get(md_url)
             if mdr.status_code != 200:
                 raise MinerUError(f"结果下载失败（HTTP {mdr.status_code}）")

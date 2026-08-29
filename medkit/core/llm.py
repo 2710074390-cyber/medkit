@@ -148,6 +148,24 @@ class LLMClient:
                 raise LLMError(f"获取模型列表失败：{e}") from e
             return []
 
+    @staticmethod
+    def _test_error_hint(e: Exception) -> str:
+        """A-新21：把 openai 英文原串映射为可操作的中文原因（Key/地址/网络/超时）。"""
+        m = str(e)
+        low = m.lower()
+        if any(k in low for k in ("timeout", "timed out", "read timed out")):
+            return "连接失败：请求超时（约 8 秒无响应）——请检查 Base URL 是否可达、网络是否正常"
+        if any(k in low for k in ("401", "403", "authentication", "invalid api key",
+                                  "api key", "authorization", "unauthorized")):
+            return "连接失败：API Key 无效或未授权——请检查 Key 是否正确、是否已充值/开通"
+        if any(k in low for k in ("404", "not found", "no such host", "getaddrinfo",
+                                  "name resolution", "dns")):
+            return "连接失败：地址不存在或无法解析——请检查 Base URL（需 http(s):// 开头）"
+        if any(k in low for k in ("connect", "connection", "refused", "network",
+                                  "remote", "ssl")):
+            return "连接失败：无法连接到服务端——请检查 Base URL 与网络"
+        return f"连接失败：{m}"
+
     def test(self) -> tuple[bool, str]:
         """测试连接：能拿到模型应答即成功（不校验应答内容，避免误报）。"""
         t0 = time.time()
@@ -158,4 +176,5 @@ class LLMClient:
                 return True, f"连接成功（{time.time() - t0:.1f}s，模型正常应答）"
             return False, "连接成功但模型返回为空"
         except LLMError as e:
-            return False, f"连接失败：{e}"
+            # A-新21：失败返回中文原因（如 连接失败：请检查 Base URL/Key/网络），不再抛英文原串
+            return False, self._test_error_hint(e)

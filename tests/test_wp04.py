@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 
 from medkit.agents.medgen import _parse_questions
+from medkit.core.orchestrator import _gate_image_refs  # noqa: E402
 from medkit.render import qbank_html as qb
 
 PNG = base64.b64decode(
@@ -25,6 +26,25 @@ def test_render_media_image_base64(tmp_path):
                             {"IMG1": {"path": str(p), "caption": "心电图"}})
     assert "data:image/png;base64," in html_
     assert "<figure" in html_ and "心电图" in html_
+
+
+def test_gate_image_refs_drops_hallucinated_without_images():
+    """B28：未传图项目（image_sids 为空）的幻觉 image_ref 也要剔除并返回 id——不再放行。"""
+    qs = [
+        {"id": "Q1", "image_ref": "IMG1", "question": "q"},
+        {"id": "Q2", "image_ref": "", "question": "q"},
+        {"id": "Q3", "question": "q"},
+    ]
+    kept, dropped = _gate_image_refs(qs, set())
+    assert dropped == ["Q1"], f"幻觉 image_ref 应被剔除：{dropped}"
+    assert [q["id"] for q in kept] == ["Q2", "Q3"]
+
+
+def test_gate_image_refs_keeps_valid_refs():
+    """B28：有素材时，指向素材清单的 image_ref 放行，不匹配的仍剔除。"""
+    qs = [{"id": "Q1", "image_ref": "IMG1"}, {"id": "Q2", "image_ref": "IMG9"}]
+    kept, dropped = _gate_image_refs(qs, {"IMG1"})
+    assert dropped == ["Q2"] and [q["id"] for q in kept] == ["Q1"]
 
 
 def test_render_media_missing_or_empty_ref_graceful(tmp_path):

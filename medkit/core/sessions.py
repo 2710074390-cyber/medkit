@@ -48,7 +48,9 @@ def save_session(name: str, role: str, slices: list[dict[str, Any]],
 
 def list_sessions() -> list[dict[str, Any]]:
     out = []
-    for p in sorted(_dir().glob("*.json"), reverse=True):
+    # B30：按 mtime 倒序（最近优先），不再按 uuid 文件名随机排序
+    for p in sorted(_dir().glob("*.json"),
+                    key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
             out.append({"id": d.get("id", p.stem), "name": d.get("name", ""),

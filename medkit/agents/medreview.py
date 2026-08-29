@@ -30,7 +30,9 @@ def generate_review(client: Any, subject: str, exam: str,
             f"科目：{subject}\n适用考试：{exam}\n\n"
             f"## 修复后题库（知识盘点用）\n{_compact_questions(questions, limit)}\n\n"
             f"## 教师重点\n{teacher_text[:3000]}\n\n"
-            f"## 教材章节切片（关键段落）\n{slice_texts[:6000]}\n\n"
+            # B32：6000 字预算已由调用方（orchestrator._review_slice_digest）按切片顺序轮转分配，
+            # 此处不再「截前 6000 字」（否则只剩最前几章）——直接使用预算内文本。
+            f"## 教材章节切片（关键段落）\n{slice_texts}\n\n"
             f"请按提示词结构输出完整复习手册 Markdown。")},
     ], temperature=0.4)
 

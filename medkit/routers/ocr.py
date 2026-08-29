@@ -1,6 +1,7 @@
 """routers：MinerU OCR（任务制：start / 轮询 / 取消 / 测试）。"""
 
 import asyncio
+import json
 import threading
 import time
 import uuid
@@ -32,6 +33,61 @@ def mineru_test(body: MineruTestBody) -> dict[str, Any]:
     return {"ok": ok, "msg": msg, "mode": client.mode()}
 
 
+def _jobs_file() -> Path:
+    return OCR_JOB_DIR / "jobs.json"
+
+
+def _save_jobs_to_disk() -> None:
+    """B34：任务记录持久化到磁盘（OCR_JOB_DIR/jobs.json），重启后仍在。
+    调用方需已持有 OCR_LOCK（或保证无并发写）；cancel Event 不可序列化，落盘时剔除。"""
+    try:
+        OCR_JOB_DIR.mkdir(parents=True, exist_ok=True)
+        snapshot = {k: {kk: vv for kk, vv in j.items() if kk != "cancel"}
+                    for k, j in OCR_JOBS.items()}
+        tmp = _jobs_file().with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(_jobs_file())
+    except Exception:  # noqa: BLE001  落盘失败不阻断 OCR 主流程（下次启动仅丢失本次记录）
+        pass
+
+
+def _restore_jobs_from_disk() -> None:
+    """B34：启动时把 jobs.json 中的任务记录恢复进内存（重建 cancel Event）。"""
+    try:
+        if not _jobs_file().exists():
+            return
+        data = json.loads(_jobs_file().read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001  损坏的 jobs.json 忽略（不阻断启动）
+        data = {}
+    with OCR_LOCK:
+        for jid, j in data.items():
+            if not isinstance(j, dict):
+                continue
+            j["cancel"] = threading.Event()
+            OCR_JOBS[jid] = j
+
+
+def _cleanup_orphan_tmp() -> None:
+    """B34：启动时清理无任务记录的孤儿 tmp 文件（重启后仍在但无记录的残留上传）。"""
+    try:
+        if not OCR_JOB_DIR.exists():
+            return
+        known = {j.get("id") for j in OCR_JOBS.values()}
+        for p in OCR_JOB_DIR.iterdir():
+            if p.name in ("jobs.json",) or p.name.endswith(".json.tmp"):
+                continue
+            if p.is_file() and p.stem not in known:
+                p.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001  清理失败不阻断启动
+        pass
+
+
+def restore_ocr_persistence() -> None:
+    """B34：启动入口——恢复任务记录 + 清理孤儿 tmp（main.py lifespan 调用）。"""
+    _restore_jobs_from_disk()
+    _cleanup_orphan_tmp()
+
+
 def _ocr_job_set(job_id: str, state: str | None = None, msg: str | None = None) -> None:
     with OCR_LOCK:
         job = OCR_JOBS.get(job_id)
@@ -40,6 +96,7 @@ def _ocr_job_set(job_id: str, state: str | None = None, msg: str | None = None) 
                 job["state"] = state
             if msg is not None:
                 job["msg"] = msg
+        _save_jobs_to_disk()   # B34：状态变更即持久化（重启后任务仍在）
 
 
 def _ocr_job_cleanup() -> None:
@@ -102,6 +159,7 @@ async def ocr_start(file: UploadFile = File(...),
            "cancel": threading.Event()}
     with OCR_LOCK:
         OCR_JOBS[jid] = job
+        _save_jobs_to_disk()   # B34：新任务即落盘（重启后仍在）
     threading.Thread(target=_run_ocr_job, args=(job, tmp_path, file.filename, suffix),
                      daemon=True).start()
     return {"job_id": jid, "state": "queued"}

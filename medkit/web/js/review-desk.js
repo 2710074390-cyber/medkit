@@ -14,7 +14,11 @@ function fillModelSelect(selId, models, saved, hintId) {
   let value = saved || "";
   if (list.length) {
     list.forEach(m => sel.append(new Option(m, m)));
-    value = (saved && list.includes(saved)) ? saved : list[0];
+    if (saved && !list.includes(saved)) {
+      // A-新5：已保存模型不在新列表 → 作为附加 option（标注已保存）追加并保持选中，不得替换为 list[0]
+      sel.append(new Option(`${saved}（已保存）`, saved));
+    }
+    value = saved || list[0];
   } else if (value) {
     sel.append(new Option(`${value}（已保存，待获取列表）`, value));
   } else {
@@ -193,7 +197,9 @@ function doPickProvider(pr) {
   baseUrlDirty = false;
   scheduleReady();   // R3-10：切换服务商 → 价格口径变化，刷新成本预估
   if (pr.default_model) {
-    fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
+    // A-新4：切服务商不得静默覆盖手填模型名——model_gen 已有非空值时保留，仅空值时填默认模型
+    const gen = modelValue("model_gen");
+    if (!gen) fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
     const qc = modelValue("model_qc");
     if (!qc || qc === "deepseek-v4-flash" || qc === "glm-5.3" || qc === "qwen-plus" || qc === "deepseek-chat") {
       fillModelSelect("model_qc", [], pr.default_model, "");
@@ -298,10 +304,22 @@ $("btn_ws_test").onclick = async () => {
   finally { btn.disabled = false; btn.textContent = old; }
 };
 $("btn_ws_save").onclick = async () => {
+  // A-新3：检索设置保存补齐 base_url 预校验（与「保存配置」同口径；自定义端点必填非空）
+  const baseUrl = $("base_url").value.trim();
+  if (!validBaseUrl(baseUrl)) {
+    toast("接口地址格式不对（需 http:// 或 https:// 开头，或留空用默认地址）", false);
+    $("base_url").classList.add("err"); $("base_url").focus();
+    return;
+  }
+  if (state.provider === "custom" && !baseUrl) {
+    toast("自定义端点必须填写接口地址（base_url）", false);
+    $("base_url").classList.add("err"); $("base_url").focus();
+    return;
+  }
   try {
     const body = {
       provider: state.provider || "deepseek",
-      base_url: $("base_url").value.trim(),
+      base_url: baseUrl,
       api_key: $("api_key").value.trim(),
       model_gen: modelValue("model_gen"),
       model_qc: modelValue("model_qc"),
@@ -315,6 +333,7 @@ $("btn_ws_save").onclick = async () => {
     // 后端单独走 config 的 web_search.backend 字段：PUT 不覆盖 backend，直接透传当前选择
     state.cfg = got;
     toast("网络检索设置已保存（默认关；项目内还需开启「网络检索」开关并设定引用配额）");
+    if ($("api_key")) $("api_key").value = "";   // A-新3：保存成功后清空 api_key 输入框
     loadConfig();
   } catch (e) { toast(e.message, false); }
 };
@@ -655,24 +674,33 @@ async function parseGroup(role) {
   if (!files.length) return null;
   // B1：单个超限文件只跳过该文件，不再让整组解析失败
   const okFiles = [];
+  const skipped = [];
   for (const f of files) {
     if (f.size > 200 * 1024 * 1024) {
       toast(`「${f.name}」超过 200 MB：已跳过，其余文件继续解析（建议按章节拆分后重传）`, false);
+      skipped.push(f);
       continue;
     }
     okFiles.push(f);
   }
-  if (!okFiles.length) return null;
-  const fd = new FormData();
-  okFiles.forEach(f => fd.append("files", f));
-  fd.append("role", role);
-  fd.append("ocr", $("t_ocr").checked ? "1" : "0");
-  return await api("/api/parse", { method: "POST", body: fd });
+  let res = { results: [] };
+  if (okFiles.length) {
+    const fd = new FormData();
+    okFiles.forEach(f => fd.append("files", f));
+    fd.append("role", role);
+    fd.append("ocr", $("t_ocr").checked ? "1" : "0");
+    res = await api("/api/parse", { method: "POST", body: fd });
+  }
+  // B29：跳过的超大文件在解析结果里可见（error 行）；同时返回过滤后的文件列表，OCR 对位不再错行
+  skipped.forEach(f => res.results.push({ name: f.name, error: "超过 200 MB 已跳过（建议按章节拆分后重传）" }));
+  res.files = okFiles;
+  return res;
 }
 
 async function runOcrJobs(group, role) {
   const myToken = ++ocrRunToken;   // v0.5：离开页面（自增 token）→ 轮询循环终止
-  const files = state.files[role].map(f => f.file);
+  // B29：与 parseGroup 共用同一份过滤后文件列表（跳过超大文件的列表），OCR 对位不再错行
+  const files = (group.files && group.files.length) ? group.files : state.files[role].map(f => f.file);
   const jobs = [];
   group.results.forEach((r, i) => {
     if (r.ocr_needed && $("t_ocr").checked && files[i]) {
@@ -817,7 +845,7 @@ async function estimateCost() {
                              chars_teacher: resTotalChars(pres.teacher) || 0,
                              n_slices: nSlices, n_questions: nQ }) });
     return { inp: r.input_tokens, out: r.output_tokens, tot: r.total_tokens };
-  } catch (e) { return { inp: 0, out: 0, tot: 0 }; }
+  } catch (e) { return null; }   // A-新8：接口失败 → null，调用方显示「预估不可用（点击重试）」而非 ≈0.0
 }
 async function updateReady() {
   const tb = pres.textbook, tc = pres.teacher, ex = pres.exam, xt = pres.extra;
@@ -826,6 +854,10 @@ async function updateReady() {
   let estLine = "解析后此处显示成本预估";
   if (resTotalChars(tb) || resTotalChars(tc)) {
     const est = await estimateCost();
+    if (!est) {
+      // A-新8：成本预估接口失败 → 明确「预估不可用（点击重试）」，不得显示误导性的 ≈0.0/¥0.00
+      estLine = `预估不可用（<a href="javascript:void(0)" onclick="updateReady()" style="text-decoration:underline">点击重试</a>）`;
+    } else {
     const prov = (state.providers || []).find(p => p.id === state.provider);
     const price = prov && prov.price;
     const cny = price ? (est.inp / 1e6 * (price.input || 0) + est.out / 1e6 * (price.output || 0)) : null;
@@ -835,6 +867,7 @@ async function updateReady() {
       + `（${prov ? prov.name : "当前服务商"} ${esc(model)} 参考价，以官网为准）`
       + (warns.length ? " · 有 " + warns.length + " 条体检提示" : "")
       + ($("t_web").checked ? " · ＋网络检索 ≈ 3 轮 × 3~5 次查询（费用以所选后端官网为准）" : "");
+    }
   }
   $("ready_list").innerHTML = `
     <div class="ready">
@@ -1050,6 +1083,7 @@ $("btn_trial").onclick = async () => {
       `<div class="${i.severity === "fail" ? "failline" : "warnline"}">[${esc(i.code)}] ${esc(i.reason)}</div>`).join("");
     box.innerHTML = `
       <div class="trialq">
+        <div style="margin:0 0 8px;padding:6px 10px;border:1px dashed var(--warn);border-radius:8px;font-size:12px;color:var(--warn)">⚠️ ${esc(r.note || "试出题不含网络检索/大纲锚定/图片素材，正式生成风格可能不同")}</div>
         <div class="src">试出题 · ${esc(r.from_slice || "")} · <span class="tag">${esc(q.type || "")}</span><span class="tag">${esc(q.bloom || "")}</span></div>
         <div class="qtext">${esc(q.question)}</div>
         <div class="opts">${(q.options || []).map((o, i) => `${LETTERS[i]}. ${esc(o)}`).join("<br>")}</div>
@@ -1122,6 +1156,14 @@ $("btn_create").onclick = async () => {
     const r = await api("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     createToken = "";   // 成功即重置：下一次创建是新的意图
     toast("课题已创建：" + r.pid + "（已打开项目详情）");
+    // A-新13：创建成功后清空表单（subject 等）、已选文件列表与解析结果，避免第二门课带错素材
+    $("subject").value = "";
+    ["textbook", "teacher", "exam", "extra"].forEach(role => { state.files[role] = []; renderDz(role); });
+    pres = { textbook: null, teacher: null, exam: null, extra: null, sample: false };
+    state.pres = pres;
+    $("parse_results").innerHTML = "";
+    $("ocr_progress").innerHTML = "";
+    $("trial_box").innerHTML = "";
     location.hash = "bank";
     showTab("bank");
     showProject(r.pid);
@@ -1875,7 +1917,11 @@ function renderReview(scrollToId = null) {
       toast("已保存并重渲染全部产物");
       await openReview();
       await showProject(currentPid);
-    } catch (e) { toast(e.message, false); btn.disabled = false; btn.textContent = "保存并重渲染"; }
+    } catch (e) {
+      toast(e.message, false);
+      btn.disabled = false; btn.textContent = "保存并重渲染";
+      applyReviewFilter();   // B33：失败后还原「正在重渲染…」状态文案（恢复筛选计数）
+    }
   };
   applyReviewFilter();
   if (scrollToId) {
@@ -2021,7 +2067,7 @@ function wzRender() {
       <div class="hint" style="line-height:1.9">把你的<b>教材 + 老师划的重点</b>交给 AI，本地生成一套全新的复习资料。
       所有素材只保存在你自己的电脑上，AI 调用使用你自己的 API Key（约 ¥1~5/套，费用透明可见）。</div>
       <div class="wgrid">
-        <div class="wcard"><svg class="ic"><use href="#i-bank"></use></svg><b>全新题库</b><span>按你的教材章节出题<br>A1/A2/X 型 + 案例组题</span></div>
+        <div class="wcard"><svg class="ic"><use href="#i-bank"></use></svg><b>全新题库</b><span>按你的教材章节出题<br>A1/A2/X 型 + 图表题</span></div>
         <div class="wcard"><svg class="ic"><use href="#i-paper"></use></svg><b>交互押题卷</b><span>计时答题 · 自动判分<br>错题重练 · 可打印</span></div>
         <div class="wcard"><svg class="ic"><use href="#i-learn"></use></svg><b>复习手册</b><span>考点速记 / 易混淆<br>临床路径 / 数值速查</span></div>
         <div class="wcard"><svg class="ic"><use href="#i-target"></use></svg><b>学习中心</b><span>错题沉淀 · 掌握度诊断<br>教材讲解 · 提问式复习</span></div>
@@ -2097,7 +2143,8 @@ const TAB_KEYS = ["", "start", "study", "bank", "learn", "mine"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发页签快捷键（防打字时被切走/吞键）
   const t = e.target;
-  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  // A-新15：焦点守卫纳入 SELECT（下拉聚焦时不触发页签快捷键，防误切/吞键）
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
   if (!(e.ctrlKey || e.metaKey) || !(e.key >= "1" && e.key <= "5")) return;
   const tk = TAB_KEYS[+e.key];
   if (!tk) return;

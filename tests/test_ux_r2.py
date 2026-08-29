@@ -10,7 +10,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from medkit.core.orchestrator import _sample_paper, select_paper_stable  # noqa: E402
+from medkit.core.orchestrator import (  # noqa: E402
+    _review_slice_digest,
+    _sample_paper,
+    select_paper_stable,
+)
 from medkit.routers.review import _answer_issue  # noqa: E402
 
 
@@ -104,3 +108,39 @@ def test_select_paper_stable_reuses_saved_ids():
     # saved_ids 有幽灵 id → 忽略
     picked2 = select_paper_stable(["GHOST"], qs)
     assert len(picked2) == 50
+
+
+def test_select_paper_stable_topup_keeps_reused_order():
+    """B26：复用不足时保留已复用题 + 从剩余池补足（抽样 N-len(reused) 追加）——
+    剔除后重抽不得洗牌已复用题的成员与顺序（旧实现整卷重抽会漂移）。"""
+    qs = [_mk(f"Q{i:03d}", "A1", sid=f"S{i:03d}", bloom="记忆") for i in range(1, 61)]
+    first = _sample_paper(qs, 50)
+    ids = [q["id"] for q in first]
+    alive = [q for q in qs if q["id"] not in ids[:10]]   # 剔除前 10 题 → 复用 40，需补 10
+    picked = select_paper_stable(ids, alive)
+    assert len(picked) == 50, f"应补足到 50，实得 {len(picked)}"
+    got = [q["id"] for q in picked]
+    # 已复用的 40 题必须原样保留且顺序不变（补足只能追加，不能洗牌）
+    assert got[:40] == ids[10:], f"已复用题被洗牌：{got[:40]}"
+    # 补足部分来自剩余池且不重复
+    assert len(set(got)) == 50, f"补足出现重复：{len(set(got))}"
+    assert set(got[40:]) <= {q["id"] for q in alive} - set(ids[10:])
+
+
+# ---------------------------------------------------------------- B32 手册切片预算轮转
+def test_review_slice_digest_covers_all_chapters():
+    """B32：6000 预算按切片轮转分配——切片多于预算/1200 时，后面章节也能进入手册。"""
+    slices = [{"title": f"第{i + 1}章", "text": "甲乙丙丁戊己庚辛壬癸" * 400}  # 每章 4000 字
+              for i in range(8)]
+    out = _review_slice_digest(slices, per_slice=1200, budget=6000)
+    for i in range(8):
+        assert f"第{i + 1}章" in out, f"第{i + 1}章未进入手册（预算应轮转覆盖全部切片）"
+    # 正文总量受预算约束（标题与分隔开销很小）
+    assert len(out) < 6000 + 200, f"正文超出预算：{len(out)}"
+
+    # 每切片单轮至多 1200：3 切片 × 3000 字、预算 6000 → 每片先 1200 再 800，全部覆盖
+    slices3 = [{"title": f"第{i + 1}章", "text": "甲乙丙丁" * 750} for i in range(3)]
+    out3 = _review_slice_digest(slices3, per_slice=1200, budget=6000)
+    for i in range(3):
+        assert f"第{i + 1}章" in out3
+    assert len(out3) < 6000 + 200

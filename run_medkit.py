@@ -6,6 +6,7 @@ S5（2026-08 审计）：启动前 socket 探测 4880~4889，端口被占时自�
 打包说明：PyInstaller 需要直接 import app 对象（而非字符串导入），
 保证 medkit.main 及其依赖被静态分析捕获。
 """
+import errno
 import os
 import socket
 
@@ -70,8 +71,9 @@ if __name__ == "__main__":
     # 单实例：防止重复双击起第二个进程共享 ~/.medkit 数据（并发写风险）
     inst_lock = _acquire_instance_lock()
     if inst_lock is None:
-        print("⚠️ MedKit 已在运行（单实例锁 ~/.medkit/app.lock）。")
-        print("   请切换到已打开的 MedKit 窗口；若确认没有实例，请删除该锁文件后重试。")
+        print("⚠️ MedKit 已在运行（检测到单实例锁 ~/.medkit/app.lock）。")
+        # A-新12：锁随进程退出自动释放，提示不再误导用户去手动删锁文件
+        print("   请切换到已打开的 MedKit 窗口；锁会随该进程退出自动释放（无需手动删除）。")
         try:
             input("按回车键退出…")
         except EOFError:
@@ -88,5 +90,24 @@ if __name__ == "__main__":
         except EOFError:
             pass
         raise SystemExit(1)
-    print(f"MedKit v{__version__} · 服务地址 http://127.0.0.1:{port}  （端口被占自动回退 4881-4889；关闭此窗口即退出）")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+
+    # A-新11：pick_port 探测-绑定存在 TOCTOU——绑定失败（地址占用）时重新 pick_port 并重试启动（最多 3 次）
+    for attempt in range(1, 4):
+        try:
+            print(f"MedKit v{__version__} · 服务地址 http://127.0.0.1:{port}  （端口被占自动回退 4881-4889；关闭此窗口即退出）")
+            uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+            break
+        except OSError as e:
+            if getattr(e, "errno", None) != errno.EADDRINUSE:
+                raise
+            print(f"⚠️ 端口 {port} 在启动瞬间被占用（探测与绑定竞态），重新探测端口后重试（第 {attempt}/3 次）…")
+            port = pick_port()
+            os.environ["MEDKIT_PORT"] = str(port)
+    else:
+        print("⚠️ 连续 3 次启动均遇到端口占用，无法启动。")
+        print("   请关闭占用的程序（或任务管理器结束相关进程）后重试。")
+        try:
+            input("按回车键退出…")
+        except EOFError:
+            pass
+        raise SystemExit(1)

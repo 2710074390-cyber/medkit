@@ -11,6 +11,8 @@
 import logging
 import os
 import threading
+import time
+import urllib.request
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -69,16 +71,33 @@ async def _lifespan(_app: FastAPI):
         setup_logging()
     except Exception:  # noqa: BLE001  日志失败不阻塞启动
         pass
+    # B34：启动时恢复 OCR 任务记录（jobs.json）并清理无记录的孤儿 tmp 文件
+    try:
+        from .routers.ocr import restore_ocr_persistence
+        restore_ocr_persistence()
+    except Exception:  # noqa: BLE001  持久化恢复失败不阻塞启动
+        pass
     if os.environ.get("MEDKIT_NO_BROWSER") != "1":
         port = _local_port()
 
         def _open() -> None:
             try:
+                # A-新19：浏览器打开前轮询等待服务监听（HTTP GET 重试，上限约 15s），不再固定 Timer(0.6)
+                deadline = time.time() + 15
+                while time.time() < deadline:
+                    try:
+                        with urllib.request.urlopen(
+                                f"http://127.0.0.1:{port}/api/health", timeout=1) as resp:
+                            if resp.status == 200:
+                                break
+                    except Exception:  # noqa: BLE001  服务未就绪 → 继续轮询
+                        pass
+                    time.sleep(0.3)
                 webbrowser.open(f"http://127.0.0.1:{port}")
             except Exception as e:  # noqa: BLE001
                 # 审查（2026-08）：打开失败不再静默——打印可访问地址到控制台
                 print(f"⚠️ 未能自动打开浏览器（{e}），请手动访问 http://127.0.0.1:{port}")
-        threading.Timer(0.6, _open).start()
+        threading.Thread(target=_open, daemon=True).start()
     yield
     # shutdown：无全局资源需清理（线程均为 daemon；文件写均原子）
 

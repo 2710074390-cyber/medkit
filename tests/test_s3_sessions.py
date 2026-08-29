@@ -3,7 +3,9 @@
 会话 CRUD（隔离目录）/ 跨项目复用会话创建课题 / 多教材合并出题 quota 跨 session 加权。
 """
 
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -105,3 +107,20 @@ def test_multi_textbook_merge_quota(iso):
     quotalist = r.json()["quota"]
     assert sum(q["count"] for q in quotalist) == 30
     assert len(quotalist) >= 3, "跨 session 的章节都应获得配额（按章加权）"
+
+
+def test_session_list_ordered_by_mtime(iso):
+    """B30：素材会话按 mtime 倒序（最近优先），不再按 uuid 文件名随机排序。"""
+    c = _client()
+    ids = []
+    for i in range(3):
+        r = c.post("/api/sessions", json={"name": f"会话{i}", "role": "textbook",
+                                           "slices": SLICES_A})
+        ids.append(r.json()["id"])
+    sess_dir = cfgmod.CONFIG_DIR / "sessions"
+    base = time.time()
+    for i, sid in enumerate(ids):
+        f = sess_dir / f"{sid}.json"
+        os.utime(f, (base + i * 10, base + i * 10))   # 显式递增 mtime，排除文件系统秒级精度
+    lst = c.get("/api/sessions").json()["sessions"]
+    assert [x["id"] for x in lst] == ids[::-1], f"应最近优先：{lst}"

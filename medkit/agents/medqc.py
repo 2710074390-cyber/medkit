@@ -22,6 +22,9 @@ def _question_payload(q: dict[str, Any], source_text: str) -> dict[str, Any]:
         "id": q.get("id", ""), "type": q.get("type", ""), "bloom": q.get("bloom", ""),
         "question": q.get("question", ""), "options": q.get("options", []),
         "answer": q.get("answer", ""), "analysis": q.get("analysis", ""),
+        # B31：QC payload 补 image_ref/data_table/case_stem——质检对图题/案例组不再视而不见
+        "image_ref": q.get("image_ref", ""), "data_table": q.get("data_table", ""),
+        "case_stem": q.get("case_stem", ""),
         "source_slice": source_text[:1500],
     }
 

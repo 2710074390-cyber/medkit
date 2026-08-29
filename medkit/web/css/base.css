@@ -360,8 +360,9 @@
     .sidelogo .logoicon{display:block;margin:0 auto;width:20px;height:20px;color:var(--text)}
     aside.side nav button{justify-content:center;padding:12px 0}
     aside.side nav button span{display:none}
-    .sidefoot .v{display:none}
-    .sidefoot{justify-content:center}
+    /* A-新9：窄屏不再隐藏版本号（否则更新红点与「点击左下角版本号」toast 指向失效）——全宽度可见 */
+    .sidefoot{justify-content:center;flex-wrap:wrap}
+    .sidefoot .v{width:100%;text-align:center;margin-left:0;display:inline-block}
     main{padding:0 16px 40px}
   }
   @media (prefers-reduced-motion: reduce){
