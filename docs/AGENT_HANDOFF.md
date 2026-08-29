@@ -123,16 +123,12 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
    渲染标签 + 筛选器（无标注题显示「未标注」）。
 5. **交接文档归档入库**（已做，本目录 `docs/archive/product/`）。
 
-### 执行批次（后续接手者按序推进）
+### 执行批次（2026-08-29 已全部落地，提交 `e1332a3`→`f510b9f`→`49fa1df`→`950875d`→`c912df7`）
 
-- **批次 A（止血收尾）**：H-1 hash 直达脚本时序（已修）· H-2 声明序（已修）· H-3 后端全局
-  异常兜底（已修，`main.py` `_unhandled_exception`）——含浏览器回归用例 `test_hash_direct_navigation_initializes_tab`。
-- **批次 B（导航重组）**：功能分级表（P0 刷题/生成、P1 学习中心、P2 设置高级）→ 学习中心
-  内部导航重组 → 科目分类卡片（SubjectCard：题目数+掌握率，数据已有）。
-- **批次 C（卡片化刷题）**：QuestionCard 3D 翻转（≤300ms）→ 底部三按钮（红 #EF4444 忘 / 黄
-  #F59E0B 糊 / 绿 #10B981 记，映射 0/1、2、3/4/5；快捷键 1/2/3）→ 解析关键词高亮（配置化）→ 顶部进度 X/Y。
-- **批次 D（仪表盘 + 视觉）**：首页仪表盘（今日待复习/新题/完成数 + 「开始学习」主按钮 +
-  考试倒计时）→ 主色青绿 #2A6B5A 全量替换 → 字号收敛 4 级（21/16/14/12）。
-- **批次 E（真题标注）**：迁移加年份维度 → realexams 年份提取 → 契约可选字段 →
-  渲染标签 → 筛选器（年份/题型，localStorage 记忆）。
-- 验证：每批 `verify.cmd`（ruff → pytest → 浏览器）全绿后立即提交（见 §4 第 7 条多 Agent 并发警示）。
+- **批次 A（止血收尾）✅**：H-1 hash 直达脚本时序（initTab 推迟 DOMContentLoaded + 主 Tab 选择器收窄 `[data-tab]`）· H-2 声明序 · H-3 后端全局异常兜底（`main.py` `_unhandled_exception`，INTERNAL_ERROR）——浏览器回归用例 `test_hash_direct_navigation_initializes_tab`。
+- **批次 B（导航重组）✅**：5 Tab IA（开始/刷题/题库/学习中心/我的）+ 开始仪表盘（今日任务四卡 + 开始学习大按钮 + 考试倒计时 localStorage `medkit-exam-date` + 最近项目）+ P2 收纳进「我的」；**修复 renderReview 全局重名**（学习中心复习卡列表自 `2b572d1` 起静默不渲染的潜伏 P0）；设计文档 `docs/design/2026-08-29-ia-restructure.md`。
+- **批次 C（卡片化刷题）✅**：复习卡/记忆卡 3D 翻转卡 + 三按钮（忘红/糊黄/记绿；映射：SM-2 忘0糊2记4、FSRS 忘0糊2记3）+ 快捷键 1/2/3 + 今日进度条 + 科目卡片（`/api/library/subjects` 增 stats）+ 解析关键词高亮（12 词，`learn.js hlKw`）；浏览器用例 `tests/browser/test_study_quiz.py`。
+- **批次 D（视觉统一）✅**：主色青绿（浅 #2A6B5A / 深 #3aa58c）+ 正文浅色 #2E3440 + 字号四级 21/16/14/12（.ptitle/.card h2/.cardh h2/body/.hint）。
+- **批次 E（真题标注）✅**：迁移 v6 `realexam_freq.year`（幂等升级）+ 段落/句子年份提取 + `QuestionItem.source_type/source_year` + 三处标注接入（orchestrator 写回 / review.py 读取兜底 / 审核前补齐）+ 题库/押题卷/审核台「20XX 真题」标签 + 年份筛选器（题库 localStorage 记忆、审核台下拉）。
+- 待办（后迭代）：每日推送上限/考前加大强度（BE-2）· 速刷手势 · 统计图表 · 离线 SW · 虚拟滚动。
+- 验证：每批 `verify.cmd`（ruff → pytest 321 → 浏览器 13）全绿后立即提交（见 §4 第 7 条多 Agent 并发警示）。
