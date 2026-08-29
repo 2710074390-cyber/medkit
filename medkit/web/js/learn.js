@@ -20,13 +20,13 @@ function showLearnView(name) {
 document.querySelectorAll("#learnnav button").forEach(b => {
   b.onclick = () => showLearnView(b.dataset.lv);
 });
-/* IMP-12①：学习中心子导航 Alt+1..6 直达（与主 tab Ctrl+1..5 同风格；flag 隐藏的 pill 自动跳过） */
-const LEARN_ALT_KEYS = ["overview", "mistakes", "explain", "tutor", "review", "syllabus"];
+/* IMP-12①：学习中心子导航 Alt+1..5 直达（v0.8.1：复习计划迁入「刷题」，5 视图） */
+const LEARN_ALT_KEYS = ["overview", "mistakes", "explain", "tutor", "syllabus"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "6")) return;
+  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "5")) return;
   const lv = LEARN_ALT_KEYS[+e.key - 1];
   if (!lv) return;
   const pill = document.querySelector('#learnnav button[data-lv="' + lv + '"]');
@@ -54,21 +54,25 @@ window.addEventListener("keydown", e => {
 (function initLearnView() {
   let v = null;
   try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
-  const ok = ["overview", "mistakes", "explain", "tutor", "review", "syllabus"].includes(v);
+  if (v === "review") v = "overview";   // v0.8.1：复习计划已迁入「刷题」tab，旧记忆重定向概览
+  const ok = ["overview", "mistakes", "explain", "tutor", "syllabus"].includes(v);
   if (ok) showLearnView(v);
 })();
-/* 侧栏「学习中心」徽章：真实待办 = 今日到期复习卡 + 进行中提问会话（>0 显示） */
-function setLearnNavBadge(n, detail) {
-  const b = document.querySelector('button[data-tab="learn"]');
+/* 侧栏待办徽章（v0.8.1 拆分）：刷题 tab = 今日到期复习；学习中心 tab = 进行中提问 */
+function setNavTabBadge(tab, n, title) {
+  const b = document.querySelector('button[data-tab="' + tab + '"]');
   if (!b) return;
   let d = b.querySelector(".navbadge");
   if (n > 0) {
     if (!d) { d = document.createElement("span"); d.className = "navbadge"; b.appendChild(d); }
     d.textContent = n > 99 ? "99+" : String(n);
-    d.title = detail
-      ? `待办 ${n} 项：今日到期复习 ${detail.due} · 进行中提问 ${detail.tutor} → 去学习中心`
-      : `待办 ${n} 项 → 去学习中心`;
+    d.title = title || (`待办 ${n} 项 → 去「${tab === "study" ? "刷题" : "学习中心"}」`);
   } else if (d) d.remove();
+}
+function setLearnNavBadge(n, detail) {
+  /* 参数 n 保留兼容（旧调用点）；实际徽章按 detail 拆分 */
+  setNavTabBadge("study", detail.due || 0, `今日到期复习 ${detail.due || 0} 张 → 去刷题`);
+  setNavTabBadge("learn", detail.tutor || 0, `进行中提问 ${detail.tutor || 0} 场 → 去学习中心`);
 }
 /* 子导航计数徽章（闭环数据回填） */
 function updateLearnBadges(d) {
@@ -688,9 +692,27 @@ async function loadLibrary() {
     loadOverview($("dash_subject") ? $("dash_subject").value : "");   // C1：顶部与闭环同口径
     loadExplainCtx(appliedSubject());          // M3：同步刷新科目 / 知识点 / 讲解产物
     loadTutorCtx();                            // M4：同步刷新提问式学习的科目 / 知识点 / 会话
-    loadReviewCtx(appliedSubject());           // M5：同步刷新复习计划（SM-2 间隔重复）
+    // v0.8.1：复习计划（loadReviewCtx）已迁入「刷题」tab，由 loadStudy 触发
   } catch (e) {
     $("learn_kp").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+  }
+}
+/* ---- ② 刷题 tab（v0.8.1）：科目卡片 + 今日到期复习（SM-2 复习卡 + FSRS 记忆卡） ---- */
+function loadStudy() {
+  loadReviewCtx(rvSubject || "");
+  loadStudySubjects();
+}
+async function loadStudySubjects() {
+  const box = $("study_subjects");
+  if (!box) return;
+  try {
+    const r = await api("/api/library/subjects");
+    const subs = r.subjects || [];
+    box.innerHTML = subs.length
+      ? subs.map(s => `<button class="chip" onclick="loadReviewCtx('${esc(s)}')" title="只看 ${esc(s)} 的到期复习">${esc(s)}</button>`).join("")
+      : `<div class="hint">暂无科目——先在错题本导入错题，或去「题库」生成题目</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
 }
 function appliedSubject() {
@@ -1367,7 +1389,7 @@ async function loadReviewCtx(subject = "") {
       cachedSubjects(),
     ]);
     fillReviewSubjects(subs);
-    renderReview(today);
+    renderSmReview(today);
     renderMemoryCards();      // WP-05/NX-04：医学记忆卡（FSRS 默认 / SM-2 可切）
   } catch (e) { $("rv_body").innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
@@ -1379,7 +1401,9 @@ function fillReviewSubjects(resp) {
   sel.dataset.inited = "1";
   sel.value = rvSubject;
 }
-function renderReview(today) {
+/* v0.8.1：更名 renderSmReview——原 renderReview 与 review-desk.js 的审核台渲染器
+   全局重名（经典脚本共享作用域），后者后加载覆盖前者，导致复习卡列表静默不渲染。 */
+function renderSmReview(today) {
   const st = today.stats || {};
   $("rv_total").textContent = `今日到期 ${st.due || 0} · 总卡 ${st.total || 0}`;
   const strip = [

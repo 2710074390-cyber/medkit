@@ -278,14 +278,16 @@ function showTab(name) {
   });
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
   $("tab-" + name).classList.add("show");
-  if (name !== "proj") {           // v0.5：切走项目详情 → 停止进度轮询与 OCR 轮询
+  if (name !== "bank") {            // v0.5：切走题库（项目详情） → 停止进度轮询与 OCR 轮询
     stopPoll();
     ocrRunToken++;
   }
-  if (name === "mine") loadProjects();
-  if (name === "prompts") loadPrompts();
+  /* v0.8.1：5 Tab 分发（开始/刷题/题库/学习中心/我的） */
+  if (name === "start") loadStart();
+  if (name === "study") loadStudy();
+  if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); }   // 面板从隐藏变可见 → 重测配比条标签适配
   if (name === "learn") loadLibrary();
-  if (name === "proj") { ratioSum(); bloomSum(); }   // 面板从隐藏变可见 → 重测配比条标签适配
+  if (name === "mine") loadPrompts();
 }
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   location.hash = b.dataset.tab;
@@ -296,7 +298,8 @@ document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () =>
    脚本执行完毕（DOMContentLoaded），否则 ReferenceError → tab 面板已切但内容空屏。 */
 function initTab() {
   const h = (location.hash || "").replace("#", "");
-  if (["conn", "proj", "mine", "learn", "prompts"].includes(h)) showTab(h);
+  if (["start", "study", "bank", "learn", "mine"].includes(h)) showTab(h);
+  else loadStart();   // 无 hash → 默认落地「开始」仪表盘（此时各脚本已就绪）
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initTab);
@@ -305,5 +308,77 @@ if (document.readyState === "loading") {
 }
 window.addEventListener("hashchange", () => {
   const h = (location.hash || "").replace("#", "");
-  if (["conn", "proj", "mine", "learn", "prompts"].includes(h)) showTab(h);
+  if (["start", "study", "bank", "learn", "mine"].includes(h)) showTab(h);
 });
+
+/* ---- ① 开始（仪表盘 · PRD 6.1）：今日任务 + 开始学习 + 考试倒计时 + 最近项目 ---- */
+async function loadStart() {
+  const box = $("start_body");
+  if (!box) return;
+  try {
+    const [d, projs] = await Promise.all([
+      api("/api/library/dashboard"),
+      api("/api/projects").catch(() => ({ projects: [] })),
+    ]);
+    const rv = d.review || {};
+    const my = d.mastery || {};
+    const recent = (projs.projects || []).slice(0, 3);
+    box.innerHTML = `
+      <div class="start-stats">
+        <div class="start-stat"><b>${rv.due || 0}</b><span>今日待复习</span></div>
+        <div class="start-stat"><b>${rv.new || 0}</b><span>新卡待学</span></div>
+        <div class="start-stat"><b>${rv.done || 0}</b><span>已完成（总卡 ${rv.total || 0}）</span></div>
+        <div class="start-stat"><b>${my.mastered_rate || 0}%</b><span>掌握率（${my.total_knowledge || 0} 知识点）</span></div>
+      </div>
+      <button class="big-start" onclick="showTab('study')">开始学习 →</button>
+      <p class="hint" style="text-align:center;margin:8px 0 4px">先清掉今日到期，再去「题库」生成新题</p>
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>考试倒计时</h2><span class="hint">可设期末 / 考研日期</span></div>
+        <div id="exam_box"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>最近项目</h2><span class="hint">点击进入项目详情</span></div>
+        ${recent.length ? recent.map(p => `
+          <button class="start-proj" onclick="openRecentProject('${esc(p.pid)}')">
+            <span class="proj-stage">${esc(p.stage_label)}</span>
+            <span class="proj-name">${esc(p.subject || "未命名课题")} · ${esc(p.exam || "未设考试")}${p.target ? " · " + p.target + " 题" : ""}</span>
+            ${p.running ? '<span class="spin"></span>' : ""}
+          </button>`).join("")
+        : `<div class="hint">还没有课题——去「题库」上传教材，AI 帮你生成题库</div>`}
+      </div>`;
+    renderExamCountdown();
+    /* 侧栏待办徽章：今日到期复习 → 刷题；进行中提问 → 学习中心（learn.js 实现） */
+    if (typeof setLearnNavBadge === "function") {
+      setLearnNavBadge((rv.due || 0) + ((d.tutor && d.tutor.in_progress) || 0),
+                       { due: rv.due || 0, tutor: (d.tutor && d.tutor.in_progress) || 0 });
+    }
+  } catch (e) {
+    box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+  }
+}
+function renderExamCountdown() {
+  const box = $("exam_box");
+  if (!box) return;
+  let d = "";
+  try { d = localStorage.getItem("medkit-exam-date") || ""; } catch (e) { /* ignore */ }
+  const input = `<input type="date" id="exam_date_input" value="${d}" onchange="setExamDate(this.value)" title="设置考试日期">`;
+  if (!d) {
+    box.innerHTML = `<div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <span class="hint">还没有设置考试日期：</span>${input}</div>`;
+    return;
+  }
+  const target = new Date(d + "T23:59:59");
+  const diff = Math.ceil((target - new Date()) / 86400000);
+  const txt = diff >= 0 ? `距考试还有 <b>${diff}</b> 天` : `考试已过 <b>${-diff}</b> 天`;
+  box.innerHTML = `<div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">
+    <span style="font-size:14px">${txt}</span>${input}
+    <span class="hint">考前 3 天起提示加大复习强度</span></div>`;
+}
+function setExamDate(v) {
+  try { localStorage.setItem("medkit-exam-date", v || ""); } catch (e) { /* ignore */ }
+  renderExamCountdown();
+  toast(v ? "已设置考试日期（首页倒计时生效）" : "已清除考试日期");
+}
+window.setExamDate = setExamDate;
+function openRecentProject(pid) { showTab("bank"); showProject(pid); }
+window.openRecentProject = openRecentProject;

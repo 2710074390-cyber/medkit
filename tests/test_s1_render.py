@@ -152,7 +152,7 @@ def test_index_html_global_error_guards():
            (web / "index.html").read_text(encoding="utf-8")
     assert "window.onerror" in blob, "应有全局脚本异常兜底"
     assert "unhandledrejection" in blob, "应有异步错误兜底"
-    assert "if (name !== \"proj\")" in blob and "stopPoll()" in blob, "切走项目详情应停止轮询"
+    assert "if (name !== \"bank\")" in blob and "stopPoll()" in blob, "切走题库（项目详情）应停止轮询"
     assert "ocrRunToken++" in blob, "离开页面应终止 OCR 轮询"
     assert "stageEl.innerHTML = esc(s.stage_label)" in blob, "spinner 应写入 innerHTML（旧 textContent 显示字面文本）"
     assert "try { localStorage.setItem(\"medkit-theme\"" in blob, "主题写入应容错"

@@ -1,19 +1,20 @@
-"""IMP-05：学习中心六视图 + 主题 + 窄屏浏览器用例（Playwright，零 LLM）。
+"""IMP-05：学习中心五视图 + 主题 + 窄屏浏览器用例（Playwright，零 LLM）。
 
 覆盖：
-- 六视图（概览 / 错题本 / 讲解产物 / 提问学习 / 复习计划 / 大纲覆盖）切换：点击子导航，
+- 五视图（概览 / 错题本 / 讲解产物 / 提问学习 / 大纲覆盖）切换：点击子导航，
   断言对应视图被激活（aria-selected 翻转 + 视图获得 .show 激活态）；
 - 刷新记忆上次视图（sessionStorage 保留 medkit-learn-view）；
-- 390×844 窄屏：六个视图均无横向溢出（documentElement.scrollWidth 不超视口 + 容忍）；
+- 390×844 窄屏：五个视图均无横向溢出（documentElement.scrollWidth 不超视口 + 容忍）；
 - 明暗主题切换：data-theme 属性翻转（light<->dark）且页面内容仍渲染。
 
-注：历史缺陷（lv-explain 缺失闭合致 tutor/review/syllabus 视图被嵌套隐藏）已在
+注：v0.8.1 起「复习计划」视图迁入主「刷题」tab，学习中心为五视图；
+历史缺陷（lv-explain 缺失闭合致 tutor/review/syllabus 视图被嵌套隐藏）已在
 commit 7555b77 修复；本文件同时断言 aria-selected 与可见性双重口径。
 """
 
 from __future__ import annotations
 
-VIEWS = ["overview", "mistakes", "explain", "tutor", "review", "syllabus"]
+VIEWS = ["overview", "mistakes", "explain", "tutor", "syllabus"]
 
 
 def _open_learn(page, server_url: str):
@@ -97,9 +98,9 @@ def test_learn_views_breakpoints_no_overflow(page, server_url):
 
 
 def test_learn_views_shortcut_keys(page, server_url):
-    """IMP-12①：Alt+1..6 直达子导航；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
+    """IMP-12①：Alt+1..5 直达子导航（v0.8.1 五视图）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
     _open_learn(page, server_url)
-    page.keyboard.press("Alt+6")
+    page.keyboard.press("Alt+5")
     assert page.locator('#learnnav button[data-lv="syllabus"]').get_attribute("aria-selected") == "true"
     assert page.locator("#lv-syllabus").is_visible()
     page.keyboard.press("Alt+1")
@@ -129,12 +130,17 @@ def test_theme_toggle_flips_data_theme(page, server_url):
 def test_hash_direct_navigation_initializes_tab(page, server_url):
     """H-1 回归：带 hash 直达 URL 时 tab 内容必须初始化（initTab 推迟到 DOMContentLoaded）。
 
-    直达 #learn：学习中心概览由 loadLibrary 渲染（learn.js 后于 app.js 加载）；
-    直达 #mine：项目列表由 loadProjects 渲染（review-desk.js 最后加载）。
-    修复前 initTab 在脚本加载完成前调用 showTab → stopPoll/loadLibrary 未定义 →
-    ReferenceError（内容空屏 + 「脚本异常」toast）。
+    v0.8.1 五 Tab（start/study/bank/learn/mine）逐个直达，断言各 tab 的内容加载器
+    均执行（占位文案被替换）且无「脚本异常」toast。修复前 initTab 在脚本加载完成前
+    调用 showTab → stopPoll/loadLibrary 未定义 → ReferenceError（内容空屏 + 错误 toast）。
     """
-    cases = (("learn", "#dash_loop", "汇总中"), ("mine", "#proj_list", "加载中"))
+    cases = (
+        ("start", "#start_body", "加载中"),
+        ("study", "#rv_body", "加载中"),
+        ("bank", "#proj_list", "加载中"),
+        ("learn", "#dash_loop", "汇总中"),
+        ("mine", "#prompt_list", "加载中"),
+    )
     for tab, container, placeholder in cases:
         page.goto(f"{server_url}/#{tab}")
         page.wait_for_selector(f"#tab-{tab}.show", timeout=15000)

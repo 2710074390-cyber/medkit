@@ -463,3 +463,23 @@
     .dash-metrics{grid-template-columns:repeat(2,1fr)}
     .rv-grades button{min-width:26px}
   }
+  /* v0.8.1：开始仪表盘 + 我的/题库 tab 分区标题 */
+  h2.subh{display:flex;align-items:center;gap:8px;margin:22px 0 6px;font-size:15px;font-weight:600;color:var(--text)}
+  h2.subh .ic{width:16px;height:16px;color:var(--accent2)}
+  .start-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:6px}
+  .start-stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 10px;text-align:center}
+  .start-stat b{display:block;font-size:24px;font-weight:700;color:var(--text);line-height:1.2}
+  .start-stat span{display:block;margin-top:4px;font-size:12px;color:var(--dim)}
+  .big-start{display:block;width:min(360px,100%);margin:18px auto 0;padding:16px 24px;border:none;border-radius:14px;
+    background:var(--accent);color:var(--onaccent);font-size:17px;font-weight:700;font-family:inherit;cursor:pointer;
+    transition:transform .12s,filter .12s}
+  .big-start:hover{filter:brightness(1.08)}
+  .big-start:active{transform:scale(.97)}
+  .start-proj{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;
+    border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-top:8px;cursor:pointer;font-family:inherit}
+  .start-proj:hover{border-color:var(--accent2)}
+  .start-proj .proj-stage{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:1px 7px;white-space:nowrap}
+  .start-proj .proj-name{flex:1;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  @media (max-width:640px){.start-stats{grid-template-columns:repeat(2,1fr)}}
+  #exam_date_input{border:1px solid var(--line);background:var(--card2);color:var(--text);
+    border-radius:8px;padding:5px 8px;font-size:12.5px;font-family:inherit}

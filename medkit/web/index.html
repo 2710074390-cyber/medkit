@@ -43,11 +43,11 @@ try {
   </div>
   <nav aria-label="主导航">
     <div role="tablist" aria-label="主导航" class="tabs">
-      <button data-tab="conn" class="active" role="tab" aria-selected="true" aria-controls="tab-conn" title="连接服务商（Ctrl+1）"><svg class="ic"><use href="#i-conn"></use></svg><span>连接服务商</span></button>
-      <button data-tab="proj" role="tab" aria-selected="false" aria-controls="tab-proj" title="新建课题（Ctrl+2）"><svg class="ic"><use href="#i-proj"></use></svg><span>新建课题</span></button>
-      <button data-tab="mine" role="tab" aria-selected="false" aria-controls="tab-mine" title="我的项目（Ctrl+3）"><svg class="ic"><use href="#i-mine"></use></svg><span>我的项目</span></button>
+      <button data-tab="start" class="active" role="tab" aria-selected="true" aria-controls="tab-start" title="开始（Ctrl+1）"><svg class="ic"><use href="#i-target"></use></svg><span>开始</span></button>
+      <button data-tab="study" role="tab" aria-selected="false" aria-controls="tab-study" title="刷题（Ctrl+2）"><svg class="ic"><use href="#i-refresh"></use></svg><span>刷题</span></button>
+      <button data-tab="bank" role="tab" aria-selected="false" aria-controls="tab-bank" title="题库（Ctrl+3）"><svg class="ic"><use href="#i-bank"></use></svg><span>题库</span></button>
       <button data-tab="learn" role="tab" aria-selected="false" aria-controls="tab-learn" title="学习中心（Ctrl+4）"><svg class="ic"><use href="#i-learn"></use></svg><span>学习中心</span></button>
-      <button data-tab="prompts" role="tab" aria-selected="false" aria-controls="tab-prompts" title="提示词与规则（Ctrl+5）"><svg class="ic"><use href="#i-doc"></use></svg><span>提示词与规则</span></button>
+      <button data-tab="mine" role="tab" aria-selected="false" aria-controls="tab-mine" title="我的（Ctrl+5）"><svg class="ic"><use href="#i-mine"></use></svg><span>我的</span></button>
     </div>
     <div class="navsep" role="separator"></div>
     <a class="navext" href="https://med-review-site.pages.dev/#reviews" target="_blank" rel="noopener"
@@ -67,9 +67,44 @@ try {
   </div>
 </aside>
 <main id="main" tabindex="-1">
-  <!-- 连接服务商 -->
-  <section id="tab-conn" class="panel show">
-    <h1 class="ptitle"><svg class="ic"><use href="#i-conn"></use></svg>连接服务商</h1>
+  <!-- ① 开始（仪表盘） -->
+  <section id="tab-start" class="panel show">
+    <h1 class="ptitle"><svg class="ic"><use href="#i-target"></use></svg>开始</h1>
+    <p class="psub">今天该复习什么、该生成什么——一眼清楚，点一下就开始</p>
+    <div id="start_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
+  </section>
+
+  <!-- ② 刷题（卡片式：今日到期复习卡 + 记忆卡 + 科目卡片） -->
+  <section id="tab-study" class="panel">
+    <h1 class="ptitle"><svg class="ic"><use href="#i-refresh"></use></svg>刷题</h1>
+    <p class="psub">今日到期 · 卡片式复习：正面看题干、翻转看答案，红黄绿三键自评</p>
+    <div class="card" style="margin-top:14px">
+      <div class="cardh"><h2>科目</h2><span class="hint">按科目看题目数与掌握率，点卡片过滤</span></div>
+      <div id="study_subjects"><div class="hint"><span class="spin"></span>加载中…</div></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="cardh"><h2>复习计划（SM-2 间隔重复）</h2><span class="hint" id="rv_total"></span></div>
+      <div class="hint" style="margin-bottom:10px">把薄弱知识点铺成记忆卡片，按间隔重复自动排期。作答后点自评（0~5），SM-2 决定下次复习间隔：越顺面越宽、做错会缩短重来。纯本地、不调 LLM。</div>
+      <div class="row exp-bar" style="flex-wrap:wrap">
+        <div style="flex:1;min-width:150px"><label>科目筛选</label>
+          <select id="rv_subject" onchange="loadReviewCtx(this.value)"><option value="">全部科目</option></select>
+        </div>
+        <div style="flex:none;align-self:flex-end">
+          <label style="display:block;height:1px;overflow:hidden">.</label>
+          <button class="act" onclick="rvQueueAll()">铺卡（薄弱点全部入队）</button>
+        </div>
+      </div>
+      <div class="rv-stats" id="rv_stats"></div>
+      <div id="rv_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
+      <div id="mem_area" style="margin-top:18px"></div>
+    </div>
+  </section>
+
+  <!-- ⑤ 我的（设置：服务商 + 提示词 + 数据管理） -->
+  <section id="tab-mine" class="panel">
+    <h1 class="ptitle"><svg class="ic"><use href="#i-mine"></use></svg>我的</h1>
+    <p class="psub">服务商 / 提示词 / 数据管理——配置一次，平时不用管</p>
+    <h2 class="subh"><svg class="ic"><use href="#i-conn"></use></svg>连接服务商</h2>
     <p class="psub">教材 + 教师重点 → 全新题库 / 押题卷 / 复习手册 · 本地生成 · 仅使用你自己的 API Key</p>
     <div class="card">
       <h2>选择服务商（API 由你自己提供）</h2>
@@ -144,12 +179,29 @@ try {
       </div>
       <div class="hint" id="ws_test_result"></div>
     </div>
+    <h2 class="subh"><svg class="ic"><use href="#i-doc"></use></svg>提示词与规则</h2>
+    <p class="psub">查看出题管线使用的全部提示词与门禁规则，可编辑影子副本</p>
+    <div class="card">
+      <h2>提示词查看 / 编辑（影子副本机制）</h2>
+      <div class="hint">内置提示词打包在安装目录（只读）；编辑将保存为 <b>~/.medkit/prompts/</b> 影子副本并优先生效（不改内置，升级不覆盖）；
+      保存会校验占位符完整性；「恢复默认」随时回滚。<b>改完建议先「试出一题」验证效果。</b></div>
+      <div id="prompt_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
+      <h2 style="margin-top:22px">门禁规则速览（题目为什么会被改）</h2>
+      <div class="hint" style="line-height:2">
+        <b>R1</b> 选项数必须 5 个 · <b>R7/R8</b> 截断残留 / 以连接词结尾 · <b>R12</b> 无意义括号后缀 ·
+        <b>R13</b> 选项长度上限（>20 字）与失衡（>1.5×） · <b>R9</b> 临床数值必须带单位 ·
+        <b>R0</b> 答案键完整 · <b>D16</b> Bloom 层级合法 + 分布达标（默认 30/40/25/5，可自定义） ·
+        <b>F2</b> 每题必须含 <code>[源:切片SXXX]</code> 溯源 · <b>DUP</b> 题干 n-gram 相似度 &gt;0.8 会被改写<br>
+        <b>MedQC</b>（LLM-as-judge）：D11 干扰项合理性 / D16 层级 / D17 同质性 / D18 词重复线索 / D19 收敛 / F1 事实 / F2 溯源 —— 任一 fail 触发定向修复。
+      </div>
+    </div>
   </section>
 
-  <!-- ② 新建课题 -->
-  <section id="tab-proj" class="panel">
-    <h1 class="ptitle"><svg class="ic"><use href="#i-proj"></use></svg>新建课题</h1>
+  <!-- ③ 题库（新建课题 + 项目列表/详情） -->
+  <section id="tab-bank" class="panel">
+    <h1 class="ptitle"><svg class="ic"><use href="#i-bank"></use></svg>题库</h1>
     <p class="psub">上传教材与教师重点，配置出题参数，一键生成题库</p>
+    <h2 class="subh">新建课题</h2>
     <div class="card">
       <h2>课题参数</h2>
       <div class="row">
@@ -300,14 +352,10 @@ try {
       <div id="ready_list"></div>
       <div id="parse_results"></div>
     </div>
-  </section>
 
-  <!-- ③ 我的项目 -->
-  <section id="tab-mine" class="panel">
-    <h1 class="ptitle"><svg class="ic"><use href="#i-mine"></use></svg>我的项目</h1>
+    <h2 class="subh">项目列表</h2>
     <p class="psub">管理已创建的课题 · 产物存于本机 ~/.medkit/projects/</p>
     <div class="card">
-      <h2>项目列表</h2>
       <div id="proj_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
     </div>
     <div class="card" id="proj_detail" style="display:none">
@@ -325,16 +373,15 @@ try {
   <!-- ④ 学习中心（v0.7 M1/M2：错题本 + 掌握度诊断） -->
   <section id="tab-learn" class="panel">
     <h1 class="ptitle"><svg class="ic"><use href="#i-learn"></use></svg>学习中心</h1>
-    <p class="psub">错题沉淀 → 掌握度诊断 → 待学优先级 → 教材讲解 → 提问式学习 → 复习计划 · 数据存于本机 ~/.medkit/library/</p>
+    <p class="psub">错题沉淀 → 掌握度诊断 → 待学优先级 → 教材讲解 → 提问式学习 · 数据存于本机 ~/.medkit/library/</p>
 
-    <!-- v0.7 子导航：一屏一任务（概览/错题本/讲解产物/提问学习/复习计划） -->
+    <!-- v0.8.1 子导航：一屏一任务（概览/错题本/讲解产物/提问学习/大纲覆盖；复习计划已迁入「刷题」） -->
     <nav class="learnnav" id="learnnav" role="tablist" aria-label="学习中心分栏">
       <button data-lv="overview" class="on" role="tab" aria-selected="true" title="概览（Alt+1）"><svg class="ic"><use href="#i-target"></use></svg>概览<span class="nb" id="nb_overview"></span></button>
       <button data-lv="mistakes" role="tab" aria-selected="false" title="错题本（Alt+2）"><svg class="ic"><use href="#i-paper"></use></svg>错题本<span class="nb" id="nb_mistakes"></span></button>
       <button data-lv="explain" role="tab" aria-selected="false" title="讲解产物（Alt+3）"><svg class="ic"><use href="#i-book"></use></svg>讲解产物<span class="nb" id="nb_explain"></span></button>
       <button data-lv="tutor" role="tab" aria-selected="false" title="提问学习（Alt+4）"><svg class="ic"><use href="#i-learn"></use></svg>提问学习<span class="nb" id="nb_tutor"></span></button>
-      <button data-lv="review" role="tab" aria-selected="false" title="复习计划（Alt+5）"><svg class="ic"><use href="#i-refresh"></use></svg>复习计划<span class="nb" id="nb_review"></span></button>
-      <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲覆盖（Alt+6）"><svg class="ic"><use href="#i-target"></use></svg>大纲覆盖<span class="nb" id="nb_syllabus"></span></button>
+      <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲覆盖（Alt+5）"><svg class="ic"><use href="#i-target"></use></svg>大纲覆盖<span class="nb" id="nb_syllabus"></span></button>
     </nav>
 
     <!-- 视图 1/5：概览（闭环总览 + 薄弱点诊断 + 推荐） -->
@@ -439,27 +486,7 @@ try {
     </div>
     </div>
 
-    <!-- 视图 5/5：复习计划（SM-2 间隔重复） -->
-    <div class="learnview" id="lv-review">
-    <div class="card" style="margin-top:14px">
-      <div class="cardh"><h2>复习计划（SM-2 间隔重复）</h2><span class="hint" id="rv_total"></span></div>
-      <div class="hint" style="margin-bottom:10px">把薄弱知识点铺成记忆卡片，按间隔重复自动排期。作答后点自评（0~5），SM-2 决定下次复习间隔：越顺面越宽、做错会缩短重来。纯本地、不调 LLM。</div>
-      <div class="row exp-bar" style="flex-wrap:wrap">
-        <div style="flex:1;min-width:150px"><label>科目筛选</label>
-          <select id="rv_subject" onchange="loadReviewCtx(this.value)"><option value="">全部科目</option></select>
-        </div>
-        <div style="flex:none;align-self:flex-end">
-          <label style="display:block;height:1px;overflow:hidden">.</label>
-          <button class="act" onclick="rvQueueAll()">铺卡（薄弱点全部入队）</button>
-        </div>
-      </div>
-      <div class="rv-stats" id="rv_stats"></div>
-      <div id="rv_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
-      <div id="mem_area" style="margin-top:18px"></div>
-    </div>
-    </div>
-
-    <!-- 视图 6/6：大纲覆盖（WP-01 考试锚定：章→考点条目 × 学习库覆盖度） -->
+    <!-- 视图 5/5：大纲覆盖（WP-01 考试锚定：章→考点条目 × 学习库覆盖度） -->
     <div class="learnview" id="lv-syllabus">
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>大纲覆盖</h2><span class="hint" id="syl_meta"></span></div>
@@ -510,26 +537,6 @@ try {
         <div id="rex_drafts"><div class="hint">未分析。</div></div>
         <h3 style="margin-top:18px;font-size:13.5px;color:var(--text)">确认后热力表（章节 × 频次）</h3>
         <div id="rex_heat"><div class="hint">暂无已确认频次。</div></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ⑤ 提示词与规则 -->
-  <section id="tab-prompts" class="panel">
-    <h1 class="ptitle"><svg class="ic"><use href="#i-doc"></use></svg>提示词与规则</h1>
-    <p class="psub">查看出题管线使用的全部提示词与门禁规则，可编辑影子副本</p>
-    <div class="card">
-      <h2>提示词查看 / 编辑（影子副本机制）</h2>
-      <div class="hint">内置提示词打包在安装目录（只读）；编辑将保存为 <b>~/.medkit/prompts/</b> 影子副本并优先生效（不改内置，升级不覆盖）；
-      保存会校验占位符完整性；「恢复默认」随时回滚。<b>改完建议先「试出一题」验证效果。</b></div>
-      <div id="prompt_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
-      <h2 style="margin-top:22px">门禁规则速览（题目为什么会被改）</h2>
-      <div class="hint" style="line-height:2">
-        <b>R1</b> 选项数必须 5 个 · <b>R7/R8</b> 截断残留 / 以连接词结尾 · <b>R12</b> 无意义括号后缀 ·
-        <b>R13</b> 选项长度上限（>20 字）与失衡（>1.5×） · <b>R9</b> 临床数值必须带单位 ·
-        <b>R0</b> 答案键完整 · <b>D16</b> Bloom 层级合法 + 分布达标（默认 30/40/25/5，可自定义） ·
-        <b>F2</b> 每题必须含 <code>[源:切片SXXX]</code> 溯源 · <b>DUP</b> 题干 n-gram 相似度 &gt;0.8 会被改写<br>
-        <b>MedQC</b>（LLM-as-judge）：D11 干扰项合理性 / D16 层级 / D17 同质性 / D18 词重复线索 / D19 收敛 / F1 事实 / F2 溯源 —— 任一 fail 触发定向修复。
       </div>
     </div>
   </section>

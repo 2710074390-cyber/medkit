@@ -496,7 +496,7 @@ $("requirements").addEventListener("input", () => { $("req_count").textContent =
 let estT = null;
 function scheduleReady() {
   clearTimeout(estT);
-  estT = setTimeout(() => { if ($("tab-proj") && $("tab-proj").classList.contains("show")) updateReady(); }, 450);
+  estT = setTimeout(() => { if ($("tab-bank") && $("tab-bank").classList.contains("show")) updateReady(); }, 450);
 }
 ["target", "r_a1", "r_a2", "r_b1", "r_x", "b_mem", "b_und", "b_app", "b_cre", "web_quota"]
   .forEach(id => { const el = $(id); if (el) el.addEventListener("input", scheduleReady); });
@@ -1010,8 +1010,8 @@ function fullSlices(res) {
 /* ---- 试出一题（迭代1B） */
 $("btn_trial").onclick = async () => {
   if (!(state.cfg && state.cfg.api_key_masked)) {
-    toast("试出一题需要用 API Key——请先在「① 连接服务商」保存", false);
-    showTab("conn"); $("api_key").focus();
+    toast("试出一题需要用 API Key——请先在「我的 → 连接服务商」保存", false);
+    showTab("mine"); $("api_key").focus();
     return;
   }
   const slices = fullSlices(pres.textbook);
@@ -1110,9 +1110,10 @@ $("btn_create").onclick = async () => {
       web_manual_text: $("ws_manual").value,
     };
     const r = await api("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    toast("课题已创建：" + r.pid);
-    location.hash = "mine";
-    showTab("mine");
+    toast("课题已创建：" + r.pid + "（已打开项目详情）");
+    location.hash = "bank";
+    showTab("bank");
+    showProject(r.pid);
   } catch (e) { toast(e.message, false); }
   $("btn_create").disabled = false; $("btn_create").textContent = "创建课题 →";
 };
@@ -1127,7 +1128,7 @@ async function loadProjects() {
     box.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-mine"></use></svg>
       <div class="sub">还没有项目 · 上传教材与教师重点，生成你的第一套题库</div>
-      <button class="act" onclick="location.hash='proj';showTab('proj')">去「新建课题」→</button>
+      <button class="act" onclick="document.getElementById('tab-bank').scrollIntoView()">去上方「新建课题」↑</button>
     </div>`;
     return;
   }
@@ -1928,7 +1929,7 @@ async function savePrompt(name) {
     toast("已保存影子副本（生效中）");
     loadPrompts();
     confirmModal("先试出一题验证效果？", "提示词已改——建议在「新建课题」点「试出一题」验证效果，防止改坏。",
-      "去试出题", () => { location.hash = "proj"; showTab("proj"); }, false);
+      "去试出题", () => { location.hash = "bank"; showTab("bank"); }, false);
   } catch (e) { toast(e.message, false); }
 }
 async function restorePrompt(name) {
@@ -1990,7 +1991,7 @@ function wzRender() {
     const provs = (state.providers || []).filter(p => p.register_url);
     body.innerHTML = `
       <div class="hint" style="line-height:1.9">出题需要一个大模型「API Key」——相当于你和 AI 服务商之间的<b>充值卡</b>。
-      推荐注册 <b>DeepSeek</b>（便宜，充值 ¥10 可出多套题）：点官网注册 → 充值 → 复制 Key，回到本软件「连接服务商」粘贴保存即可。</div>
+      推荐注册 <b>DeepSeek</b>（便宜，充值 ¥10 可出多套题）：点官网注册 → 充值 → 复制 Key，回到本软件「我的 → 连接服务商」粘贴保存即可。</div>
       ${provs.map(p => `<div class="wprov"><svg class="ic" style="width:20px;height:20px;color:var(--accent);flex:none"><use href="#i-key"></use></svg>
         <b>${esc(p.name)}</b><span>${esc(p.note || "")}</span>
         <a class="provlink" href="${esc(p.register_url)}" target="_blank" rel="noopener">官网注册 ↗</a></div>`).join("")}
@@ -1999,7 +2000,7 @@ function wzRender() {
       <button class="act" id="wz_next">我已拿到 Key（去配置）</button>
       <button class="act gray" id="wz_later">稍后配置，先看看</button>`;
     $("wz_back").onclick = () => { wzStep = 0; wzRender(); };
-    $("wz_next").onclick = () => { wzDone(); showTab("conn"); $("api_key").focus(); };
+    $("wz_next").onclick = () => { wzDone(); showTab("mine"); $("api_key").focus(); };
     $("wz_later").onclick = () => { wzStep = 2; wzRender(); };
   } else {
     body.innerHTML = `
@@ -2019,13 +2020,13 @@ function wzRender() {
     const goDemo = () => {
       // ME-1/A1：无 Key 时「载入示例」= 流程必然失败——先定向到连接页，且不关闭向导（保留引导闭环）
       if (!(state.cfg && state.cfg.api_key_masked)) {
-        toast("试出一题需要用 API Key——请先完成「连接服务商」配置（充值 ¥10 可出多套题）", false);
-        showTab("conn"); $("api_key").focus();
+        toast("试出一题需要用 API Key——请先完成「我的 → 连接服务商」配置（充值 ¥10 可出多套题）", false);
+        showTab("mine"); $("api_key").focus();
         return;
       }
-      wzDone(); showTab("proj"); $("btn_sample").click();
+      wzDone(); showTab("bank"); $("btn_sample").click();
     };
-    const goOwn = () => { wzDone(); showTab("proj"); };
+    const goOwn = () => { wzDone(); showTab("bank"); };
     $("wz_demo").onclick = goDemo;
     $("wz_demo").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goDemo(); } };
     $("wz_own").onclick = goOwn;
@@ -2047,8 +2048,8 @@ $("wizard_mask").addEventListener("click", e => { if (e.target.id === "wizard_ma
 
 /* ---- init */
 ratioSum(); bloomSum();
-/* Ctrl/⌘+1..5 快速切换页签（对标 Linear 键盘导航） */
-const TAB_KEYS = ["", "conn", "proj", "mine", "learn", "prompts"];
+/* Ctrl/⌘+1..5 快速切换页签（v0.8.1：开始/刷题/题库/学习中心/我的） */
+const TAB_KEYS = ["", "start", "study", "bank", "learn", "mine"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发页签快捷键（防打字时被切走/吞键）
   const t = e.target;
@@ -2065,7 +2066,7 @@ let segResizeT = 0;
 window.addEventListener("resize", () => {
   clearTimeout(segResizeT);
   segResizeT = setTimeout(() => {
-    if ($("tab-proj").classList.contains("show")) { ratioSum(); bloomSum(); }
+    if ($("tab-bank").classList.contains("show")) { ratioSum(); bloomSum(); }
   }, 120);
 });
 $("req_count").textContent = "0/500";
