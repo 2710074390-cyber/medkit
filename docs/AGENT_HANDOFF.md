@@ -8,7 +8,7 @@
 
 | 日期 | commit | 变更 |
 | - | - | - |
-| 2026-08-29 | 本批 | **PRD/交接配置入库 + 差距审查**：`docs/reviews/gap-audit-prd-2026-08-29.md`（现状 vs PRD/交接配置全量对照 + 断点清单 H-1/H-2/H-3）；两份交接文档归档 `docs/archive/product/`；产品方向 5 项决策已拍板（见 §6）；批次 A 修复：H-1 脚本时序（initTab 推迟 DOMContentLoaded）/ H-2 声明序 / H-3 后端全局异常兜底 + 浏览器 hash 直达回归用例 |
+| 2026-08-29 | 本批 | **PRD/交接配置入库 + 差距审查**：`docs/archive/reviews/2026-08-29/gap-audit-prd-2026-08-29.md`（现状 vs PRD/交接配置全量对照 + 断点清单 H-1/H-2/H-3）；两份交接文档归档 `docs/archive/product/`；产品方向 5 项决策已拍板（见 §6）；批次 A 修复：H-1 脚本时序（initTab 推迟 DOMContentLoaded）/ H-2 声明序 / H-3 后端全局异常兜底 + 浏览器 hash 直达回归用例 |
 | 2026-08-27 | `74d999b` | NX-02：打包环境 jieba 兜底（fts_tokens 仅 bigram、spec 收集 jieba 数据） |
 | 2026-08-27 | `8b4baf4` | K3/IMP-13：官方大纲文件导入闭环（LLM 契约抽取 → seed）+ 教师重点 v4 后端（+前端官方大纲入口） |
 | 2026-08-27 | 本批 | **大纲标准二选一收尾**：教师重点文件导入前端入口 + 知识点提取（`extract_teacher_kps`）+ 标准切换去「全部」档 + api() Content-Type 修复 + 本交接文档 |
@@ -109,7 +109,7 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
 
 > 来源：`docs/archive/product/medkit-agent-handover-2026-08-29.json`（执行阶段 PHASE-1~5 / API 契约 /
 > 风险）+ `docs/archive/product/medkit-prd-v1.0.md`（PRD：仪表盘/4Tab/卡翻/三按钮/双场景/视觉规范）。
-> 全量差距对照见 `docs/reviews/gap-audit-prd-2026-08-29.md`。
+> 全量差距对照见 `docs/archive/reviews/2026-08-29/gap-audit-prd-2026-08-29.md`。
 
 1. **产品形态 = 桌面形态下的卡片刷题**（不转移动端范式）：保留现有侧栏与桌面广度，
    以「卡片翻转 + 底部三按钮」补齐刷题沉浸感；不做底部 Tab/手势优先的全屏移动化。
@@ -126,7 +126,7 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
 ### 执行批次（2026-08-29 已全部落地，提交 `e1332a3`→`f510b9f`→`49fa1df`→`950875d`→`c912df7`）
 
 - **批次 A（止血收尾）✅**：H-1 hash 直达脚本时序（initTab 推迟 DOMContentLoaded + 主 Tab 选择器收窄 `[data-tab]`）· H-2 声明序 · H-3 后端全局异常兜底（`main.py` `_unhandled_exception`，INTERNAL_ERROR）——浏览器回归用例 `test_hash_direct_navigation_initializes_tab`。
-- **批次 B（导航重组）✅**：5 Tab IA（开始/刷题/题库/学习中心/我的）+ 开始仪表盘（今日任务四卡 + 开始学习大按钮 + 考试倒计时 localStorage `medkit-exam-date` + 最近项目）+ P2 收纳进「我的」；**修复 renderReview 全局重名**（学习中心复习卡列表自 `2b572d1` 起静默不渲染的潜伏 P0）；设计文档 `docs/design/2026-08-29-ia-restructure.md`。
+- **批次 B（导航重组）✅**：5 Tab IA（开始/刷题/题库/学习中心/我的）+ 开始仪表盘（今日任务四卡 + 开始学习大按钮 + 考试倒计时 localStorage `medkit-exam-date` + 最近项目）+ P2 收纳进「我的」；**修复 renderReview 全局重名**（学习中心复习卡列表自 `2b572d1` 起静默不渲染的潜伏 P0）；设计文档 `docs/archive/design-specs/2026-08-29-ia-restructure.md`。
 - **批次 C（卡片化刷题）✅**：复习卡/记忆卡 3D 翻转卡 + 三按钮（忘红/糊黄/记绿；映射：SM-2 忘0糊2记4、FSRS 忘0糊2记3）+ 快捷键 1/2/3 + 今日进度条 + 科目卡片（`/api/library/subjects` 增 stats）+ 解析关键词高亮（12 词，`learn.js hlKw`）；浏览器用例 `tests/browser/test_study_quiz.py`。
 - **批次 D（视觉统一）✅**：主色青绿（浅 #2A6B5A / 深 #3aa58c）+ 正文浅色 #2E3440 + 字号四级 21/16/14/12（.ptitle/.card h2/.cardh h2/body/.hint）。
 - **批次 E（真题标注）✅**：迁移 v6 `realexam_freq.year`（幂等升级）+ 段落/句子年份提取 + `QuestionItem.source_type/source_year` + 三处标注接入（orchestrator 写回 / review.py 读取兜底 / 审核前补齐）+ 题库/押题卷/审核台「20XX 真题」标签 + 年份筛选器（题库 localStorage 记忆、审核台下拉）。

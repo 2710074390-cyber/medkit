@@ -16,6 +16,11 @@ projects/
 *.bak
 .DS_Store
 
+.vscode/
+.idea/
+htmlcov/
+*.log
+
 docs/spikes/k4_out/
 
 .workbuddy-ai/
