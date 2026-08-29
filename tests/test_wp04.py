@@ -28,7 +28,9 @@ def test_render_media_image_base64(tmp_path):
 
 
 def test_render_media_missing_or_empty_ref_graceful(tmp_path):
-    assert qb.render_media({"image_ref": "IMG9"}, {"IMG1": {"path": str(tmp_path / "x")}}) == ""
+    # R3S-02：有 image_ref 但索引缺图 → 明确占位（不再静默消失）；空 ref 仍输出空
+    out = qb.render_media({"image_ref": "IMG9"}, {"IMG1": {"path": str(tmp_path / "x")}})
+    assert "图片索引缺失" in out and "IMG9" in out
     assert qb.render_media({"image_ref": ""}, {"IMG1": {"path": str(tmp_path / "x")}}) == ""
 
 

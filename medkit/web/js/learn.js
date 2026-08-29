@@ -577,14 +577,14 @@ function dashWeakRows(kps) {
         ${learnChip(k.state)}
         <span class="hint" style="font-size:11px;white-space:nowrap">优先 ${Math.round((k.priority || 0) * 100)}</span>
         <span style="display:flex;gap:4px;flex:none">
-          <button class="mini-btn primary" style="padding:2px 8px" onclick="learnRecAction('explain','${esc(k.subject || "")}','${esc(k.name)}')">讲解</button>
-          <button class="mini-btn" style="padding:2px 8px" onclick="learnRecAction('tutor','${esc(k.subject || "")}','${esc(k.name)}')">提问</button>
+          <button class="mini-btn primary" style="padding:2px 8px" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(k.subject || "")}" data-name="${esc(k.name)}">讲解</button>
+          <button class="mini-btn" style="padding:2px 8px" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(k.subject || "")}" data-name="${esc(k.name)}">提问</button>
         </span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:5px">
         <div class="stack-bar"><i class="ok" style="width:${cs}%"></i><i class="miss" style="width:${ms}%"></i></div>
         <span class="hint" style="font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums">对 ${c}/${tot}</span>
-        <button class="mini-btn" style="padding:2px 8px;margin-left:auto" onclick="learnRecAction('queue','${esc(k.subject || "")}','${esc(k.name)}')">铺卡</button>
+        <button class="mini-btn" style="padding:2px 8px;margin-left:auto" onclick="learnRecAction(this)" data-kind="queue" data-subject="${esc(k.subject || "")}" data-name="${esc(k.name)}">铺卡</button>
       </div>
     </div>`;
   }).join("");
@@ -764,9 +764,9 @@ function renderLibraryCurrent() {
       ${learnChip(r.state)}
       <span class="hint" style="font-size:11.5px;white-space:nowrap">优先度 ${Math.round((r.priority || 0) * 100)}</span>
       <span style="display:flex;gap:5px">
-        <button class="mini-btn primary" onclick="learnRecAction('explain','${esc(r.subject || "")}','${esc(r.name)}')">→ 讲解</button>
-        <button class="mini-btn" onclick="learnRecAction('tutor','${esc(r.subject || "")}','${esc(r.name)}')">→ 提问</button>
-        <button class="mini-btn" onclick="learnRecAction('queue','${esc(r.subject || "")}','${esc(r.name)}')">铺卡</button>
+        <button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(r.subject || "")}" data-name="${esc(r.name)}">→ 讲解</button>
+        <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(r.subject || "")}" data-name="${esc(r.name)}">→ 提问</button>
+        <button class="mini-btn" onclick="learnRecAction(this)" data-kind="queue" data-subject="${esc(r.subject || "")}" data-name="${esc(r.name)}">铺卡</button>
       </span>
     </div>`).join("") : `<div class="hint">暂无薄弱点，先把错题收进来。</div>`;
 
@@ -797,6 +797,7 @@ function mkRowHTML(mm) {
   if (mm.source === "paper") meta.push(`<span class="mk-tag" style="color:var(--info);border-color:var(--info)">押题卷</span>`);
   if (mm.data_broken) meta.push(`<span class="mk-tag" style="color:var(--bad);border-color:var(--bad)">数据损坏</span>`);
   const detail = `
+    ${mm.case_stem ? `<div><b>案例</b>：${esc(mm.case_stem)}</div>` : ""}
     ${mm.image_ref && mm.source_ref && mm.source_ref.pid ? `<div><b>图</b>：<img src="/api/projects/${esc(mm.source_ref.pid)}/assets/${esc(mm.image_ref)}" style="max-width:320px;max-height:240px;border-radius:8px;border:1px solid var(--line);display:block;margin:6px 0" onerror="this.remove()"></div>` : ""}
     ${(mm.options || []).length ? `<div><b>选项</b>：${mm.options.map((o, i) => `${"ABCDEF"[i] || i + 1}. ${esc(o)}`).join("　")}</div>` : ""}
     ${mm.answer ? `<div class="ans">✓ 答案：${esc(mm.answer)}</div>` : ""}
@@ -810,8 +811,8 @@ function mkRowHTML(mm) {
       <div class="mk-detail" id="mkd_${esc(mm.id)}">${detail || '<div class="hint">（无更多详情）</div>'}</div>
     </div>
     <div class="mk-actions">
-      ${kp ? `<button class="mini-btn primary" onclick="learnRecAction('explain','${esc(mm.subject || "")}','${esc(kp)}')">→ 讲解</button>
-      <button class="mini-btn" onclick="learnRecAction('tutor','${esc(mm.subject || "")}','${esc(kp)}')">→ 提问</button>` : ""}
+      ${kp ? `<button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 讲解</button>
+      <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 提问</button>` : ""}
       ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" onclick="mkLearn('${esc(mm.id)}',true)">已掌握</button>`}
       <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" onclick="mkDel('${esc(mm.id)}')">删除</button>
     </div>
@@ -821,8 +822,17 @@ function mkDetailTgl(id) {
   const d = $("mkd_" + id);
   if (d) d.classList.toggle("open");
 }
-/* 学习中心推荐/错题行动作：讲解 / 提问 / 铺卡（复用既有流程，先定位到对应视图） */
-async function learnRecAction(kind, subject, kpName) {
+/* 学习中心推荐/错题行动作：讲解 / 提问 / 铺卡（复用既有流程，先定位到对应视图）
+   R3-02：按钮经 onclick="learnRecAction(this)" + data-kind/data-subject/data-name 传参——
+   知识点名含英文撇号（Hodgkin's 等）不再击穿行内 JS；程序化调用仍可用旧签名。 */
+async function learnRecAction(btnOrKind, subject, kpName) {
+  if (btnOrKind && typeof btnOrKind === "object" && btnOrKind.dataset) {
+    const d = btnOrKind.dataset;
+    subject = d.subject || "";
+    kpName = d.name || "";
+    btnOrKind = d.kind || "";
+  }
+  const kind = btnOrKind;
   if (!kpName) { toast("该记录缺少知识点，无法定位", false); return; }
   try {
     if (kind === "explain") {
@@ -1052,13 +1062,13 @@ async function loadExplains() {
         <div class="exp-article">${expMd(e.content || "")}</div>
         ${e.sources && e.sources.length ? `<details style="margin-top:8px"><summary style="font-size:11.5px">来源（${e.sources.length}）——点击查看</summary>
           <div class="hint" style="margin-top:6px;font-size:11.5px;line-height:1.9">${e.sources.map(s => (s.kind === "web" ? "🌐" : "📖") + " " + esc(s.title || s.url || "")).join("<br>")}</div></details>` : ""}
-        ${e.kp_name ? `<details style="margin-top:8px" ontoggle="expHint(this,'${esc(e.subject || "")}','${esc(e.kp_name)}')">
+        ${e.kp_name ? `<details style="margin-top:8px" ontoggle="expHint(this)" data-subject="${esc(e.subject || "")}" data-kp="${esc(e.kp_name)}">
           <summary style="font-size:11.5px;cursor:pointer">📄 查看教材切片原文（不消耗 AI）</summary>
           <div class="rv-hintbody exp-slices" id="exps_${esc(e.id)}"><span class="hint">展开后自动检索教材切片…</span></div></details>` : ""}
         <div class="btns" style="margin-top:10px">
-          ${e.kp_name ? `<button class="mini-btn" onclick="learnRecAction('tutor','${esc(e.subject || "")}','${esc(e.kp_name)}')">→ 提问练习</button>` : ""}
+          ${e.kp_name ? `<button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(e.subject || "")}" data-name="${esc(e.kp_name)}">→ 提问练习</button>` : ""}
           ${(window.FEATURES && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards('${esc(e.id)}','${esc(e.subject || "")}')">🧠 生成记忆卡</button>` : ""}
-          <button class="mini-btn primary" onclick="expRegen('${esc(e.id)}','${esc(e.subject || "")}','${esc(e.kp_name || "")}')">↻ 重新生成</button>
+          <button class="mini-btn primary" onclick="expRegen(this)" data-id="${esc(e.id)}" data-subject="${esc(e.subject || "")}" data-kp="${esc(e.kp_name || "")}">↻ 重新生成</button>
           <button class="mini-btn" onclick="expCopy('${esc(e.id)}',this)">复制</button>
           <button class="mini-btn danger" onclick="expDel('${esc(e.id)}')">删除</button>
         </div>
@@ -1120,7 +1130,12 @@ function expFold(id) {
   const lbl = c.querySelector(".exp-fold .mini-btn");
   if (lbl) lbl.textContent = open ? "收起" : "展开";
 }
-async function expRegen(id, subject, kpName) {
+async function expRegen(btnOrId, subject, kpName) {
+  if (btnOrId && typeof btnOrId === "object" && btnOrId.dataset) {
+    const d = btnOrId.dataset;
+    subject = d.subject || ""; kpName = d.kp || ""; btnOrId = d.id || "";
+  }
+  const id = btnOrId;
   confirmModal("重新生成讲解", "<p>将<b>删除当前讲解</b>并以同名重新生成（AI 失败时旧讲解不会自动恢复）。继续？</p>",
     "重新生成", async () => {
       try {
@@ -1585,6 +1600,10 @@ async function rvHintGen(btn, kpName, subject) {
 window.rvHintGen = rvHintGen;
 /* 讲解产物「查看教材切片原文」：懒加载（复用 explain/slices 端点，零 LLM） */
 async function expHint(det, subject, kpName) {
+  if (det && typeof det === "object" && det.dataset) {
+    subject = det.dataset.subject || "";
+    kpName = det.dataset.kp || "";
+  }
   if (!det || det.dataset.loaded === "1" || !det.open) return;
   det.dataset.loaded = "1";
   const body = det.querySelector(".exp-slices");

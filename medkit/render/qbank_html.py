@@ -69,9 +69,13 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
     """题目的图像（base64 内嵌，单文件可移动）+ 表格（markdown → <table>，安全白名单）。"""
     out: list[str] = []
     ref = str(q.get("image_ref") or "")
-    if ref and image_index:
-        info = image_index.get(ref)
-        if info:
+    if ref:
+        info = image_index.get(ref) if image_index else None
+        if not info:
+            # R3S-02：有 image_ref 但索引缺图（重渲染未传索引 / 素材已删）→ 明确占位，不静默消失
+            out.append('<p class="hint">⚠️ 本题含图（' + html_mod.escape(ref)
+                       + "）——图片索引缺失或素材已删，请回 MedKit「项目详情 → 图片素材」查看原图。</p>")
+        else:
             p = info.get("path") if isinstance(info, dict) else info
             cap = ((info.get("caption") if isinstance(info, dict) else "") or "")
             try:
@@ -497,6 +501,7 @@ def _questions_json_for_page(questions: list[dict[str, Any]],
                         "subtopic": q.get("subtopic", ""), "question": q.get("question", ""),
                         "options": _effective_options(q), "answer": q.get("answer", ""),
                         "analysis": q.get("analysis", ""), "case_label": label,
+                        "id": q.get("id", ""), "sid": q.get("sid", ""),
                         "case_id": q.get("case_id", ""),
                         "case_stem": q.get("case_stem", ""),
                         "case_order": q.get("case_order", 0),
@@ -545,15 +550,33 @@ const PAPER_SUBJECT = {subj_json};
 const ANON_KEY = ("f"+location.pathname+"#"+document.title).split("").reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7).toString(36);
 const KEY = "medkit-paper-" + (PAPER_PID || ANON_KEY);
 const RETRY_KEY = KEY + "-retry";
-const WRONG_POOL = {{}};   // v0.7：判分用错题集，供「同步到错题本」
+const WRONG_POOL = {{}};   // v0.7：判分用错题集，供「同步到错题本」；resetAll/retryWrong 清池（C-18）
 let secs = 0;
 let judged = false;   // 判分防重入：提交一次后再次点击不重复计分/铺解析
 let showCt = false;   // 限时模式开关（当前页面生命周期内）
+let stInvalidated = false;   // R3S-04：卷面指纹不匹配 → 清档并提示（一次性迁移，不静默套旧答案）
 
 function esc(s){{return String(s??"").replace(/[&<>"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));}}
 function loadState(){{try{{return JSON.parse(localStorage.getItem(KEY)||"null")}}catch(e){{return null}}}}
 function saveState(s){{try{{localStorage.setItem(KEY,JSON.stringify(s));}}catch(e){{}}}}
 function clearState(){{try{{localStorage.removeItem(KEY);}}catch(e){{}}}}
+/* R3S-04：状态按题目 id 建模（答案/旗标均以 q.id 为键）；卷面指纹 = 全卷 id 序列 */
+const FP = QUESTIONS.map(q=>String(q.id||"")).join(",");
+function qid(i){{ const q=QUESTIONS[i]; return String((q&&q.id)||("Q"+(i+1))); }}
+function freshState(){{ return {{fp:FP, answers:{{}}, marked:[], t0:null}}; }}
+function getState(){{
+  const st=loadState();
+  if(!st||st.fp!==FP) return freshState();   // 旧版按下标存（无 fp）或卷面已变 → 不套旧答案
+  const answers={{}};
+  const ids=new Set(QUESTIONS.map(q=>String(q.id||"")));
+  Object.keys(st.answers||{{}}).forEach(k=>{{ if(ids.has(k)) answers[k]=st.answers[k]; }});
+  const marked=Array.isArray(st.marked)?st.marked.filter(m=>ids.has(m)):[];
+  return {{fp:FP, answers:answers, marked:marked, t0:st.t0||null}};
+}}
+function invalidateIfStale(){{
+  const st=loadState();
+  if(st && st.fp!==FP){{ stInvalidated=true; clearState(); }}
+}}
 
 function readAnswer(i){{
   if(QUESTIONS[i].type==="X"){{
@@ -570,12 +593,13 @@ function writeAnswer(i,val){{
 function answersEqual(a,b){{
   if(typeof a!=="string"||typeof b!=="string") return false;
   // 空白归一化：答案键可能带空格（如"B D "/"B, D"），归一后再排序比较
-  const sa=a.replace(/[\s,，、]+/g,"").split("").sort().join("");
-  const sb=b.replace(/[\s,，、]+/g,"").split("").sort().join("");
+  const sa=a.replace(/[\\s,，、]+/g,"").split("").sort().join("");
+  const sb=b.replace(/[\\s,，、]+/g,"").split("").sort().join("");
   return sa.length>0 && sa===sb;
 }}
 
 function render(){{
+  invalidateIfStale();
   const box=document.getElementById('quiz');
   let h='';
   h+='<div class="hint" id="hisline" style="margin-bottom:8px"></div>'
@@ -611,9 +635,12 @@ function render(){{
   buildGrid();
   updateAnswered();
   showHistory();
+  if(stInvalidated && !judged){{
+    banner('卷面已更新（题库已修改/重抽），旧作答已失效，已重新开始',false);
+  }}
   // 续答归还提示：检测到上次作答（跨会话恢复）→ 提示已恢复 + 可清空重来
-  const st=loadState()||{{}};
-  const savedN=(st.answers&&Object.keys(st.answers).length)||0;
+  const st=getState();
+  const savedN=Object.keys(st.answers).length;
   if(savedN>0 && !judged){{
     const note=document.createElement('div');
     note.id='resume_note';
@@ -625,30 +652,37 @@ function render(){{
 }}
 
 function mark(i){{
-  const st=loadState()||{{answers:{{}},marked:null,t0:null}};
-  st.marked=(st.marked===i?null:i);
+  const st=getState();
+  const id=qid(i);
+  const pos=st.marked.indexOf(id);
+  if(pos>=0) st.marked.splice(pos,1); else st.marked.push(id);   // C-14：多题旗标（集合）
   saveState(st);
-  document.querySelectorAll('.q').forEach((d,j)=>d.classList.toggle('flagged', j===st.marked));
+  document.querySelectorAll('.q').forEach((d,j)=>d.classList.toggle('flagged', st.marked.includes(qid(j))));
   buildGrid();
 }}
 function paintAnswers(){{
-  const st=loadState()||{{answers:{{}},marked:null,t0:null}};
+  const st=getState();
   QUESTIONS.forEach((q,i)=>{{
-    if(st.answers && st.answers[i]!=null) writeAnswer(i,st.answers[i]);
+    const a=st.answers[qid(i)];
+    if(a!=null) writeAnswer(i,a);
     const el=document.getElementById('q'+i);
-    if(el&&st.marked===i) el.classList.add('flagged');
+    if(el&&st.marked.includes(qid(i))) el.classList.add('flagged');
   }});
 }}
 function collectAnswers(){{
-  const st=loadState()||{{answers:{{}},marked:null,t0:null}};
-  QUESTIONS.forEach((q,i)=>{{ const v=readAnswer(i); if(v) st.answers[i]=v; }});
+  const st=getState();
+  QUESTIONS.forEach((q,i)=>{{
+    const v=readAnswer(i);
+    const id=qid(i);
+    if(v) st.answers[id]=v; else delete st.answers[id];   // C-02：X 型取消全部勾选 → 删除旧答案
+  }});
   if(!st.t0) st.t0=Date.now();
   saveState(st); buildGrid(); updateAnswered();
 }}
 function updateAnswered(){{
   const el=document.getElementById('asw'); if(!el) return;
-  const st=loadState()||{{answers:{{}}}};
-  let n=0; QUESTIONS.forEach((q,i)=>{{ if(st.answers&&st.answers[i]) n++; }});
+  const st=getState();
+  let n=0; QUESTIONS.forEach((q,i)=>{{ if(st.answers[qid(i)]) n++; }});
   el.textContent='已答 '+n+' / '+QUESTIONS.length;
 }}
 function showHistory(){{
@@ -665,12 +699,13 @@ function showHistory(){{
 }}
 function buildGrid(){{
   const g=document.getElementById('grids'); if(!g) return;
-  const st=loadState()||{{answers:{{}},marked:null}};
+  const st=getState();
   let h='';
   QUESTIONS.forEach((q,i)=>{{
-    const a=st.answers&&st.answers[i];
-    const tip='第 '+(i+1)+' 题 · '+(a?'已答':'未答')+(st.marked===i?' · 已标记':'');
-    h+='<span class="cell'+(a?' done':'')+(st.marked===i?' mk':'')+'" title="'+tip+'" aria-label="'+tip+'" role="button" tabindex="0" onclick="jump('+i+')">'+(i+1)+'</span>';
+    const a=st.answers[qid(i)];
+    const mk=st.marked.includes(qid(i));
+    const tip='第 '+(i+1)+' 题 · '+(a?'已答':'未答')+(mk?' · 已标记':'');
+    h+='<span class="cell'+(a?' done':'')+(mk?' mk':'')+'" title="'+tip+'" aria-label="'+tip+'" role="button" tabindex="0" onclick="jump('+i+')">'+(i+1)+'</span>';
   }});
   g.innerHTML=h;
 }}
@@ -679,27 +714,28 @@ function jump(i){{document.getElementById('q'+i)?.scrollIntoView({{behavior:'smo
 function grade(){{
   if(judged) return;   // 判分防重入
   // 未答提醒：防漏答（有未答时确认后再判）
-  const st0=loadState()||{{answers:{{}}}};
+  const st0=getState();
   let unanswered=0;
-  QUESTIONS.forEach((q,i)=>{{ if(!(st0.answers&&st0.answers[i])) unanswered++; }});
+  QUESTIONS.forEach((q,i)=>{{ if(!st0.answers[qid(i)]) unanswered++; }});
   if(unanswered>0 && !confirm('还有 '+unanswered+' 题未作答，确认提交判分？')) return;
   judged = true;
   collectAnswers();
   let score=0, wrong=[];
-  const st=loadState()||{{answers:{{}}}};
+  const st=getState();
   const caseScore={{}};
   QUESTIONS.forEach((q,i)=>{{
-    const a=(st.answers&&st.answers[i])||"";
+    const a=st.answers[qid(i)]||"";
     const right=answersEqual(a,q.answer);
     if(right) score++;
     else {{
-      wrong.push(i+1);
-      // 去重键改用题目 id（案例组子题题干共享前 40 字会被误并；id 唯一稳定）
+      wrong.push(q);
+      // 去重键：题目 id（案例组子题题干共享前 40 字会被误并；id 唯一稳定）
       WRONG_POOL[String(q.id||"")||String(q.question||"").slice(0,40)] = {{
         id: q.id||"", subject: PAPER_SUBJECT, source:"paper",
         sid: q.sid||"", question: q.question||"", options: q.options||[],
         answer: q.answer||"", analysis: q.analysis||"",
-        subtopic: q.subtopic||"", bloom: q.bloom||"", user_answer: a
+        subtopic: q.subtopic||"", bloom: q.bloom||"", user_answer: a,
+        case_stem: q.case_stem||"", image_ref: q.image_ref||"", data_table: q.data_table||""
       }};
     }}
     const ck=q.case_id||"";
@@ -707,7 +743,7 @@ function grade(){{
   }});
   const total=QUESTIONS.length;
   try{{localStorage.setItem(RETRY_KEY,JSON.stringify(
-    {{title:"错题重练",questions:wrong.map(i=>QUESTIONS[i-1]).filter(Boolean)}}));}}catch(e){{}}
+    {{title:"错题重练",questions:wrong}}));}}catch(e){{}}
   // 成绩留存：最近 10 次（跨会话），供下次打开展示「上次/最佳」
   try{{
     const H=JSON.parse(localStorage.getItem(KEY+'-his')||'[]');
@@ -719,13 +755,14 @@ function grade(){{
     .filter(k=>k && caseScore[k].n>1)
     .map(k=>'案例 '+k+'：'+caseScore[k].t+'/'+caseScore[k].n)
     .join(' · ');
+  const wrongNums=wrong.map(q=>QUESTIONS.indexOf(q)+1);
   document.getElementById('res').innerHTML=
     '<div class="score">得分 '+score+'/'+total+'（'+(total?Math.round(score*100/total):0)+' 分）· 用时 '+fmtT(secs)+'</div>'+
     (caseLines?'<div class="hint">分组判分：'+esc(caseLines)+'</div>':'')+
-    (wrong.length?'<div class="hint bad">错题回顾：'+wrong.join('、')+'（答案见下方解析区）</div>'
+    (wrongNums.length?'<div class="hint bad">错题回顾：'+wrongNums.join('、')+'（答案见下方解析区）</div>'
                  :'<div class="hint good">全对！</div>')+
-    (wrong.length?'<button class="gray" onclick="retryWrong()">只练错题 →</button>':'')+
-    (wrong.length?'<button class="gray" onclick="syncWrong(true)">同步错题到错题本</button>':'')+
+    (wrongNums.length?'<button class="gray" onclick="retryWrong()">只练错题 →</button>':'')+
+    (wrongNums.length?'<button class="gray" onclick="syncWrong(true)">同步错题到错题本</button>':'')+
     '<button class="gray" onclick="resetAll()">重新作答</button>'+
     '<div class="hint">作答已锁定（防止判分后误改）；如需重做请点「重新作答」或「清空重做」。</div>';
   // IMP-08：判分结果对读屏可达（role=status 已声明）+ 滚动并聚焦到结果
@@ -738,7 +775,7 @@ function grade(){{
   document.querySelectorAll('#quiz input').forEach(x=>x.disabled=true);
   document.querySelectorAll('#quiz .q').forEach(d=>d.classList.add('judged'));
   QUESTIONS.forEach((q,i)=>{{
-    const a=(st.answers&&st.answers[i])||"";
+    const a=st.answers[qid(i)]||"";
     const right=answersEqual(a,q.answer);
     const d=document.getElementById('q'+i); if(!d) return;
     if(!right) d.classList.add('wrongq');
@@ -765,18 +802,19 @@ function grade(){{
   }});
   if(wrong.length) syncWrong();   // 判分后自动回流错题本（幂等；按钮仅作手动兜底/重试）
 }}
+function clearPool(){{ Object.keys(WRONG_POOL).forEach(k=>{{ delete WRONG_POOL[k]; }}); }}   // C-18：重做/错题重练清池
 function retryWrong(){{
   let r=null; try{{r=JSON.parse(localStorage.getItem(RETRY_KEY)||"null");}}catch(e){{r=null;}}
   if(!r||!r.questions||!r.questions.length){{banner("暂无错题数据：先提交判分后再练错题",false);return;}}
   QUESTIONS=r.questions.slice();
-  clearState(); t0Reset(); judged=false; document.getElementById('res').innerHTML='';
+  clearState(); clearPool(); t0Reset(); judged=false; document.getElementById('res').innerHTML='';
   render();
   document.getElementById('res').innerHTML=
     '<div class="hint good">错题重练：'+QUESTIONS.length+' 题 · '+
     '<button class="mini" onclick="backToAll()">返回全卷</button></div>';
 }}
-function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); t0Reset(); judged=false; render();}}
-function resetAll(){{clearState(); t0Reset(); judged=false; document.getElementById('res').innerHTML=''; render();}}
+function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); clearPool(); t0Reset(); judged=false; render();}}
+function resetAll(){{clearState(); clearPool(); t0Reset(); judged=false; document.getElementById('res').innerHTML=''; render();}}
 
 /* 内联提示条（取代原生 alert，风格与页面一致） */
 function banner(text,ok){{
@@ -826,7 +864,7 @@ async function syncWrong(manual){{
   }}catch(e){{ bannerRetry("同步失败："+e.message); }}
 }}
 
-const T0_START=(loadState()||{{}}).t0||Date.now();
+const T0_START=(getState()).t0||Date.now();
 let T0 = T0_START;
 function t0Reset(){{ T0=Date.now(); secs=0; }}
 function fmtT(s){{const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}}

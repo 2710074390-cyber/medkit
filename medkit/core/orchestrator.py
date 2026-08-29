@@ -11,6 +11,7 @@ U5：结束时把实际 usage（token）与估算成本写入 meta。
 U6：查重门禁（n-gram Jaccard >0.8 → warn → MedFix 改写）。
 """
 
+import contextvars
 import json
 import random
 import threading
@@ -226,16 +227,79 @@ def _save_checkpoint(base: Path, done_sids: set[str], questions: list[dict[str, 
         "updated": datetime.now().isoformat()})
 
 
+def build_image_index(base: Path,
+                      slices: Optional[list[dict[str, Any]]] = None) -> tuple[dict[str, Any], str]:
+    """WP-04：从 slices.json 重建图像索引与提示词清单（管线初跑与审核台重渲染共用）。
+
+    R3S-02：审核台 _rerender_project 原先不传 image_index → 重渲染后图题全丢图；
+    现在两处统一走本函数，渲染层（qbank_html.render_media）缺图时也给占位提示。
+    返回 (image_index, image_sections)：image_index = {sid: {"path": Path, "caption": str}}。
+    """
+    if slices is None:
+        try:
+            slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001  切片损坏 → 空索引（题目保留，渲染给占位）
+            slices = []
+    image_index: dict[str, Any] = {}
+    image_sections = ""
+    for _s in slices:
+        if _s.get("role") != "image" or not (_s.get("image") or {}).get("path"):
+            continue
+        _sid = _s.get("sid") or ""
+        if not _sid:
+            continue
+        image_index[_sid] = {"path": base / str(_s["image"]["path"]),
+                             "caption": _s.get("text") or _s.get("title") or ""}
+        image_sections += f"[{_sid}] {_s.get('text') or _s.get('title') or ''}\n"
+    return image_index, image_sections
+
+
+def _record_usage_on_exit(pid: str, *, cancelled: bool) -> None:
+    """B27/R3S-03：取消/失败路径也落 usage（已烧 token 不失踪；「费用透明」承诺）。
+
+    只在有实际 token 消耗时写 meta，避免污染从未调用 LLM 的失败（如参数校验错误）。
+    """
+    try:
+        base = Path(cfg.load()["projects_dir"]) / pid
+        meta_path = base / "meta.json"
+        if not meta_path.exists():
+            return
+        snap = usage.snapshot()
+        if not snap["prompt_tokens"] and not snap["completion_tokens"]:
+            return
+        from .providers import get_provider as _gp  # noqa: PLC0415
+        price = (_gp(cfg.load().get("provider", "")) or {}).get("price")
+        est_cost = usage.estimate_cost_cny(snap["prompt_tokens"], snap["completion_tokens"], price)
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["usage"] = {**snap, "est_cost_cny": round(est_cost, 2) if est_cost is not None else None,
+                         "price_unit": "元/1M token（官网为准）"}
+        _write_json_atomic(meta_path, meta)
+        label = "取消前" if cancelled else "失败前"
+        _log(base, f"  💰 {label}实际消耗：输入 {snap['prompt_tokens']} token + "
+                   f"输出 {snap['completion_tokens']} token"
+                   + (f" ≈ ¥{est_cost:.2f}" if est_cost is not None else ""))
+    except Exception:  # noqa: BLE001  记账失败不掩盖主流程结果
+        pass
+
+
 def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[str, Any]] = None,
                 cancel: Optional[threading.Event] = None) -> dict[str, Any]:
     """同步执行整条管线；overrides 用于测试注入 Fake client；cancel 用于取消。
 
     returns {"stage", "questions", "qc_decision", ...}
     U5（v0.5）：按次上下文记账 — 本次 run 独立账本（trial/regen 不再串账），结束即还原。
+    R3S-03/B27：取消与失败路径也 snapshot usage 落 meta——已烧 token 永久可见。
     """
     token = usage.activate()
     try:
-        return _run_project_impl(pid, seed, overrides, cancel)
+        try:
+            res = _run_project_impl(pid, seed, overrides, cancel)
+        except BaseException:
+            _record_usage_on_exit(pid, cancelled=False)
+            raise
+        if res.get("stage") == "cancelled":
+            _record_usage_on_exit(pid, cancelled=True)
+        return res
     finally:
         usage.deactivate(token)
 
@@ -284,18 +348,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         syllabus_text = ""
     if syllabus_text:
         _log(base, f"📋 大纲锚定注入 {len(syllabus_text)} 字（subtopic 对齐考点条目）")
-    # WP-04：图像素材（图/表题）——清单注入提示词 + 渲染用索引
-    image_sections = ""
-    image_index: dict[str, Any] = {}
-    for _s in slices:
-        if _s.get("role") != "image" or not (_s.get("image") or {}).get("path"):
-            continue
-        _sid = _s.get("sid") or ""
-        if not _sid:
-            continue
-        image_index[_sid] = {"path": base / str(_s["image"]["path"]),
-                             "caption": _s.get("text") or _s.get("title") or ""}
-        image_sections += f"[{_sid}] {_s.get('text') or _s.get('title') or ''}\n"
+    # WP-04：图像素材（图/表题）——清单注入提示词 + 渲染用索引（R3S-02：与审核台重渲染共用构建函数）
+    image_index, image_sections = build_image_index(base, slices)
     if image_sections:
         _log(base, f"🖼 图像素材 {len(image_index)} 个注入（鼓励出图题，image_ref 门禁校验）")
     ratios = _effective_ratios(meta.get("ratios", {}))
@@ -456,7 +510,9 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                     for idx, (item, cnt, sid) in enumerate(items):
                         if sid in done_sids:
                             continue
-                        futures[ex.submit(gen_one, idx, item, cnt, sid, id_ranges[idx][0])] = sid
+                        # R3S-03：ContextVar 不随 submit 传播——copy_context 把本次 run 的用量账本带进切片线程
+                        futures[ex.submit(contextvars.copy_context().run,
+                                          gen_one, idx, item, cnt, sid, id_ranges[idx][0])] = sid
                     for fut in as_completed(futures):
                         try:
                             sid_r, qs = fut.result()

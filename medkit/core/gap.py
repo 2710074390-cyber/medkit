@@ -195,49 +195,51 @@ def create_gap_project(subject: str = "", count: int = 50, w_freq: float = 0.15,
                        source_pid: str = "") -> dict[str, Any]:
     """一键刷薄弱：配题 → 复制来源项目切片 → 追加薄弱清单 → 走 create_project 通道。"""
     from ..routers._common import _read_meta_checked, proj_dir
-    from ..routers.projects import ProjectBody, create_project
+    from ..routers.projects import ProjectBody, _subject_lock, create_project
 
     plan_data = plan(subject, count, w_freq)
     if not plan_data["plan"]:
         return {"ok": False, "pid": "", "plan": plan_data,
                 "msg": "当前没有可刷的薄弱知识点（priority≥0.3）——先做错题/复习积累，或调低阈值"}
-    reused = recent_gap_project(subject)
-    if reused:
-        return {"ok": True, "pid": reused, "reused": True, "plan": plan_data,
-                "msg": f"已有未完成的薄弱组卷（{reused}），直接复用——可在其详情页继续/删除"}
-    recent_done = recent_gap_done_project(subject)
-    if recent_done:
-        return {"ok": False, "pid": recent_done, "plan": plan_data,
-                "msg": f"最近 24 小时内已生成过薄弱组卷（{recent_done}，已完成）：为避免重复创建/扣费，"
-                       f"请先在「我的项目」查看或删除它，或改变薄弱点后再试"}
+    # R3-08：幂等判定与创建进同一把 per-subject 锁（RLock——create_project 同线程可重入）
+    with _subject_lock(subject):
+        reused = recent_gap_project(subject)
+        if reused:
+            return {"ok": True, "pid": reused, "reused": True, "plan": plan_data,
+                    "msg": f"已有未完成的薄弱组卷（{reused}），直接复用——可在其详情页继续/删除"}
+        recent_done = recent_gap_done_project(subject)
+        if recent_done:
+            return {"ok": False, "pid": recent_done, "plan": plan_data,
+                    "msg": f"最近 24 小时内已生成过薄弱组卷（{recent_done}，已完成）：为避免重复创建/扣费，"
+                           f"请先在「我的项目」查看或删除它，或改变薄弱点后再试"}
 
-    src = source_pid or pick_source_project(subject)
-    if not src:
-        return {"ok": False, "pid": "", "plan": plan_data,
-                "msg": "未找到可复用的来源项目（需含教材 + 教师重点切片）——请先在「② 新建课题」建过项目"}
-    slices = _load_slices(src)
-    textbooks = [s for s in slices if s.get("role") == "textbook"]
-    teachers = [s for s in slices if s.get("role") == "teacher"]
-    if not textbooks or not teachers:
-        return {"ok": False, "pid": "", "plan": plan_data, "msg": "来源项目切片不完整，请换一个来源项目"}
+        src = source_pid or pick_source_project(subject)
+        if not src:
+            return {"ok": False, "pid": "", "plan": plan_data,
+                    "msg": "未找到可复用的来源项目（需含教材 + 教师重点切片）——请先在「② 新建课题」建过项目"}
+        slices = _load_slices(src)
+        textbooks = [s for s in slices if s.get("role") == "textbook"]
+        teachers = [s for s in slices if s.get("role") == "teacher"]
+        if not textbooks or not teachers:
+            return {"ok": False, "pid": "", "plan": plan_data, "msg": "来源项目切片不完整，请换一个来源项目"}
 
-    weak_list = "、".join(plan_data["weak_top"])
-    teacher_text = "\n".join(s.get("text", "") or "" for s in teachers)
-    teacher_text += f"\n【本次薄弱点清单（优先覆盖，单知识点≤3题）】\n{weak_list}"
+        weak_list = "、".join(plan_data["weak_top"])
+        teacher_text = "\n".join(s.get("text", "") or "" for s in teachers)
+        teacher_text += f"\n【本次薄弱点清单（优先覆盖，单知识点≤3题）】\n{weak_list}"
 
-    body = ProjectBody(
-        subject=subject or _read_meta_checked(proj_dir(src)).get("subject", ""),
-        exam="薄弱专项",
-        target=count,
-        toggles={"qbank": True, "paper": True, "review": True},
-        textbook_slices=textbooks,
-        teacher_slices=teachers,
-        teacher_text=teacher_text,
-        requirements=f"优先覆盖薄弱点：{weak_list}；同一知识点不超过 3 题；卷面标注「薄弱点专项」",
-        knobs={"k_realexam_weight": str(w_freq), "k_gap": "1"},
-        web_search=False,
-    )
-    created = create_project(body)
+        body = ProjectBody(
+            subject=subject or _read_meta_checked(proj_dir(src)).get("subject", ""),
+            exam="薄弱专项",
+            target=count,
+            toggles={"qbank": True, "paper": True, "review": True},
+            textbook_slices=textbooks,
+            teacher_slices=teachers,
+            teacher_text=teacher_text,
+            requirements=f"优先覆盖薄弱点：{weak_list}；同一知识点不超过 3 题；卷面标注「薄弱点专项」",
+            knobs={"k_realexam_weight": str(w_freq), "k_gap": "1"},
+            web_search=False,
+        )
+        created = create_project(body)
     pid = created["pid"]
     meta = _read_meta_checked(proj_dir(pid))
     meta["scope"] = "gap"

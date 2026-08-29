@@ -85,7 +85,13 @@ def _wait_ready(url: str, proc, timeout: float = 30.0) -> None:
 
 
 @pytest.fixture(scope="session")
-def server_url(tmp_path_factory):
+def server_home(tmp_path_factory):
+    """隔离配置根目录（server_url 与测试共享；测试可向其 projects 目录播种项目/产物）。"""
+    return tmp_path_factory.mktemp("medkit-browser-home")
+
+
+@pytest.fixture(scope="session")
+def server_url(server_home):
     """启动独立后端子进程，返回 base_url。任一旁路条件命中即整体 skip。"""
     if _skipped_by_env():
         pytest.skip("SKIP_BROWSER=1：浏览器层被显式旁路（verify.cmd 已跳过该步骤）")
@@ -94,7 +100,7 @@ def server_url(tmp_path_factory):
     if not _chromium_available():
         pytest.skip("未安装 chromium：python -m playwright install chromium 后再跑浏览器用例")
 
-    home = tmp_path_factory.mktemp("medkit-browser-home")
+    home = server_home
     port = _free_port()
     env = dict(os.environ)
     env["MEDKIT_PORT"] = str(port)

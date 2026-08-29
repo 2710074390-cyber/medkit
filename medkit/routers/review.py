@@ -4,6 +4,7 @@
 """
 
 import json
+import threading
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -19,6 +20,19 @@ from ..state import RUNNING
 from ._common import _log_project, _read_meta_checked, _safe_pid, _write_meta_atomic, proj_dir
 
 router = APIRouter()
+
+# R3-07：审核/重掷/重渲染 per-pid 写锁——三者「读→改→原子写→重渲染」串行化，
+# 防止快速连点/双标签并发后写覆盖先写（静默丢编辑）。
+_LOCK_GUARD = threading.Lock()
+_PID_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _pid_lock(pid: str) -> threading.Lock:
+    with _LOCK_GUARD:
+        lock = _PID_LOCKS.get(pid)
+        if lock is None:
+            lock = _PID_LOCKS[pid] = threading.Lock()
+        return lock
 
 
 @router.get("/api/projects/{pid}/questions")
@@ -46,7 +60,7 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
     which（B17「仅重渲染此产物」）：None=全部；"qbank"=题库 md/html；"paper"=押题卷；
     "review"=复习手册 html；"anki"=anki_export.txt + .apkg。
     """
-    from ..core.orchestrator import select_paper_stable
+    from ..core.orchestrator import build_image_index, select_paper_stable
     from ..render import qbank_html, review_html
     subject = meta.get("subject", "")
     toggles = meta.get("toggles", {})
@@ -58,13 +72,16 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
         pass
     out_dir = base / "最终产物"
     out_dir.mkdir(exist_ok=True)
+    # R3S-02：从 slices.json 重建 image_index（初跑管线传索引，重渲染必须同口径，否则图题全丢图）
+    image_index, _ = build_image_index(base)
     rendered: list[str] = []
     full = which is None
     if full or which == "qbank":
         qbank_md = qbank_html.export_md(questions, f"{subject} 题库")
         (out_dir / "qbank.md").write_text(qbank_md, encoding="utf-8")
         (out_dir / "qbank.html").write_text(
-            qbank_html.export_html(questions, f"{subject} 题库", pid=base.name),
+            qbank_html.export_html(questions, f"{subject} 题库", pid=base.name,
+                                   image_index=image_index),
             encoding="utf-8")
         rendered += ["qbank.md", "qbank.html"]
     if (full or which == "paper") and toggles.get("paper", True):
@@ -80,7 +97,8 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
         paper_qs = select_paper_stable(ids, questions)
         (out_dir / "押题卷.html").write_text(
             qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
-                                         pid=base.name, subject=subject), encoding="utf-8")
+                                         pid=base.name, subject=subject,
+                                         image_index=image_index), encoding="utf-8")
         try:
             ids_path.write_text(
                 json.dumps({"ids": [q.get("id") for q in paper_qs]}, ensure_ascii=False),
@@ -134,7 +152,11 @@ def _answer_issue(q: dict[str, Any]) -> str | None:
     opts = q.get("options") or []
     if not opts and q.get("group_kind") == "option_group" and isinstance(q.get("group"), dict):
         opts = (q.get("group") or {}).get("options") or []
-    letters = "ABCDEFGHIJ"[:max(len([o for o in opts if isinstance(o, str)]), 4)]
+    n_opts = len([o for o in opts if isinstance(o, str)])
+    if n_opts <= 0:
+        return "题目没有选项，无法校验答案键"
+    # R3-06：letters 按实际选项数（去掉 max(...,4) 地板）——3 选项题答案 D 不再被放行
+    letters = "ABCDEFGHIJ"[:n_opts]
     if qtype != "X" and len(answer) != 1:
         return f"单选/案例题答案应为单字母（当前「{answer}」）"
     if qtype == "X" and len(answer) < 2:
@@ -150,6 +172,11 @@ def review_questions(pid: str, body: ReviewBody) -> dict[str, Any]:
     pid = _safe_pid(pid)
     if RUNNING.get(pid):  # v0.5：运行中审核 → 409（旧实现与出题线程并发写盘）
         raise HTTPException(409, "项目正在生成中，暂不可审核（请等待完成或先停止）")
+    with _pid_lock(pid):
+        return _review_questions_locked(pid, body)
+
+
+def _review_questions_locked(pid: str, body: ReviewBody) -> dict[str, Any]:
     base = proj_dir(pid)
     meta = _read_meta_checked(base)
     f = base / "最终产物" / "questions_final.json"
@@ -219,13 +246,18 @@ def rerender_project(pid: str, body: RerenderBody) -> dict[str, Any]:
     pid = _safe_pid(pid)
     if RUNNING.get(pid):  # 与审核同策略：生成中禁止并发渲染
         raise HTTPException(409, "项目正在生成中，暂不可重渲染（请等待完成或先停止）")
+    with _pid_lock(pid):
+        return _rerender_project_locked(pid, body.what)
+
+
+def _rerender_project_locked(pid: str, what_raw: str) -> dict[str, Any]:
     base = proj_dir(pid)
     meta = _read_meta_checked(base)
     f = base / "最终产物" / "questions_final.json"
     if not f.exists():
         raise HTTPException(404, "题库尚未生成，无法重渲染")
     questions = json.loads(f.read_text(encoding="utf-8"))
-    what = body.what if body.what in ("qbank", "paper", "review", "anki") else None
+    what = what_raw if what_raw in ("qbank", "paper", "review", "anki") else None
     try:
         rendered = _rerender_project(base, questions, meta, what)
     except Exception as e:  # noqa: BLE001
@@ -242,15 +274,20 @@ def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
     pid = _safe_pid(pid)
     if RUNNING.get(pid):  # v0.5：运行中重掷 → 409（避免与出题线程并发写盘）
         raise HTTPException(409, "项目正在生成中，暂不可重掷（请等待完成或先停止）")
+    with _pid_lock(pid):
+        return _regen_question_locked(pid, body.id)
+
+
+def _regen_question_locked(pid: str, qid: str) -> dict[str, Any]:
     base = proj_dir(pid)
     meta = _read_meta_checked(base)
     f = base / "最终产物" / "questions_final.json"
     if not f.exists():
         raise HTTPException(404, "题库尚未生成")
     questions = json.loads(f.read_text(encoding="utf-8"))
-    q = next((x for x in questions if x.get("id") == body.id), None)
+    q = next((x for x in questions if x.get("id") == qid), None)
     if q is None:
-        raise HTTPException(404, f"题目 {body.id} 不存在")
+        raise HTTPException(404, f"题目 {qid} 不存在")
     # B12：案例组/选项组子题与图/表题重掷会破坏组结构或 image_ref 引用——禁止并引导行内编辑
     if (q.get("group_kind") in ("case", "option_group") or q.get("case_id")
             or q.get("image_ref") or q.get("data_table")):

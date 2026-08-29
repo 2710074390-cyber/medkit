@@ -2,7 +2,8 @@
 
 v0.5（2026-08 审计）：原全局单账本导致 run / trial / regen 互相串账（trial 的 token 会
 被并行的管线快照；regen 会污染下一次 run 的起点）。现改为「按次上下文」：
-- run_project 进入独立账本（ContextVar，随 ThreadPoolExecutor 提交自动传播到切片线程）；
+- run_project 进入独立账本（ContextVar；ThreadPoolExecutor.submit 不传播 ContextVar，
+  需在提交处用 contextvars.copy_context().run 包装——见 orchestrator/medqc 的提交点）；
 - trial / regen 各自 with usage.context() 独立记账并随响应返回；
 - 无显式上下文的调用（如外部脚本直达 LLMClient）落在线程局部默认账本，互不干扰。
 线程安全：每账本自带锁（并发切片/QC 批次共用）。

@@ -28,9 +28,21 @@ class FakeLLM:
         self.role = role
         self.calls = 0
         self.systems: list[str] = []
+        self.usage = {"prompt_tokens": 0, "completion_tokens": 0}   # R3S-03：测试可见的记账
+
+    def _bill(self, messages, out_chars: int) -> None:
+        """像真实 LLMClient 一样把 token 记入当前 usage 账本（copy_context 传播可被断言）。"""
+        from medkit.core import usage as usage_mod  # noqa: PLC0415
+
+        pin = max(8, sum(len(str(m.get("content", ""))) for m in messages) // 3)
+        pout = max(8, out_chars // 3)
+        self.usage["prompt_tokens"] += pin
+        self.usage["completion_tokens"] += pout
+        usage_mod.current().add(prompt_tokens=pin, completion_tokens=pout)
 
     def chat(self, messages, **kwargs):
         self.calls += 1
+        self._bill(messages, 1200)
         self.systems.append(messages[0] and messages[0].get("content", ""))
         if self.role == "review":
             return ("# 儿科复习手册\n\n## 一、考点速记表\n\n| 考点 | 核心要点 |\n|---|--|\n| 生长发育 | 两个高峰 |\n\n"
@@ -39,6 +51,7 @@ class FakeLLM:
 
     def chat_json(self, messages, **kwargs):
         self.calls += 1
+        self._bill(messages, 2400)
         self.systems.append(messages[0] and messages[0].get("content", ""))
         content = "\n".join(m.get("content", "") for m in messages)
         if self.role == "gen":
@@ -130,7 +143,8 @@ def test_orchestrator_end_to_end(isolated_cfg):
     pid = build_project()
     tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
 
-    res = run_project(pid, overrides=_overrides())
+    ov = _overrides()
+    res = run_project(pid, overrides=ov)
     assert res["stage"] == "done", res
     assert res["questions"] >= 15, res
     # 门禁修复循环后，坏题 Q001 应被修复
@@ -147,6 +161,14 @@ def test_orchestrator_end_to_end(isolated_cfg):
     # 质检报告
     qc = json.loads((tmp / "质检报告" / "质检报告.json").read_text(encoding="utf-8"))
     assert qc["gate_decision"] == "PASS_WITH_FIXES"
+    # R3S-03：FakeLLM 记账必须经 copy_context 从切片/质检线程回流到 run 账本——
+    # 若 ContextVar 传播丢失，切片线程的 token 会漏记（meta.usage < 各 client 合计）
+    meta = json.loads((tmp / "meta.json").read_text(encoding="utf-8"))
+    exp_pin = sum(o.usage["prompt_tokens"] for o in ov.values())
+    exp_pout = sum(o.usage["completion_tokens"] for o in ov.values())
+    assert meta["usage"]["prompt_tokens"] == exp_pin, \
+        f"切片线程 token 漏记：{meta['usage']} vs 合计 {exp_pin}"
+    assert meta["usage"]["completion_tokens"] == exp_pout
 
 
 def test_resume_from_checkpoint(isolated_cfg, monkeypatch):
@@ -196,6 +218,31 @@ def test_resume_from_checkpoint(isolated_cfg, monkeypatch):
     # 断点题被 MedFix 重写也允许；但 S001 的题目总数不应超过断点题数量
     s001_cnt = sum(1 for q in final if q.get("sid") == "S001")
     assert s001_cnt <= n_ck, f"S001 题目被重复生成：{s001_cnt} > {n_ck}"
+
+
+def test_cancel_midway_records_usage(isolated_cfg):
+    """B27/R3S-03：取消路径也把已烧 token 落 meta.usage（费用透明承诺）。"""
+    import threading
+
+    pid = build_project("_cancel_usage_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+    ev = threading.Event()
+
+    class GenCancelAfterFirst(FakeLLM):
+        def chat_json(self, messages, **kwargs):
+            out = super().chat_json(messages, **kwargs)
+            ev.set()   # 首个切片生成完成后请求取消
+            return out
+
+    ov = _overrides()
+    ov["gen"] = GenCancelAfterFirst("gen")
+    res = run_project(pid, cancel=ev, overrides=ov)
+    assert res["stage"] == "cancelled", res
+    meta = json.loads((tmp / "meta.json").read_text(encoding="utf-8"))
+    assert meta["usage"]["prompt_tokens"] > 0, "取消路径应把已烧 token 落 meta.usage"
+    # 续跑不受影响
+    res2 = run_project(pid, overrides=_overrides())
+    assert res2["stage"] == "done", res2
 
 
 def test_cancel_early_and_resume(isolated_cfg):

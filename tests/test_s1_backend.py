@@ -118,6 +118,174 @@ def test_review_regen_conflict_when_running(monkeypatch, tmp_path):
     assert r.status_code in (404, 422), r.text
 
 
+def test_review_rejects_answer_outside_option_range(monkeypatch, tmp_path):
+    """R3-06：3 选项题答案 D 必须被后端拒绝（去掉 letters max(...,4) 地板）。"""
+    import json as _json
+
+    _isolate_cfg(monkeypatch, tmp_path)
+    from medkit.routers._common import _write_meta_atomic, proj_dir
+    import medkit.render.apkg as apkg_mod
+    monkeypatch.setattr(apkg_mod, "export_apkg", lambda *a, **k: None)
+
+    pid = "review_letters"
+    base = proj_dir(pid)
+    (base / "最终产物").mkdir(parents=True)
+    _write_meta_atomic(base, {"subject": "儿科学",
+                              "toggles": {"qbank": True, "paper": True, "review": False}})
+    qs = [{"id": "Q1", "type": "A1", "bloom": "理解", "subtopic": "章",
+           "question": "题？", "options": ["A", "B", "C"], "answer": "C",
+           "analysis": "解析"}]
+    (base / "最终产物" / "questions_final.json").write_text(_json.dumps(qs), encoding="utf-8")
+
+    c = _client()
+    r = c.post(f"/api/projects/{pid}/questions/review",
+               json={"keep": [], "edits": [{"id": "Q1", "answer": "D"}]})
+    assert r.status_code == 400, r.text
+    assert "答案键有误" in r.json()["detail"]
+
+    r2 = c.post(f"/api/projects/{pid}/questions/review",
+                json={"keep": [], "edits": [{"id": "Q1", "answer": "C"}]})
+    assert r2.status_code == 200, r2.text
+
+
+def test_review_concurrent_edits_no_lost_update(monkeypatch, tmp_path):
+    """R3-07：per-pid 锁——并发保存不同题的编辑不得互相覆盖（丢编辑）。"""
+    import json as _json
+    import threading as _th
+
+    _isolate_cfg(monkeypatch, tmp_path)
+    from medkit.routers._common import _write_meta_atomic, proj_dir
+    import medkit.render.apkg as apkg_mod
+    monkeypatch.setattr(apkg_mod, "export_apkg", lambda *a, **k: None)
+
+    pid = "review_lock"
+    base = proj_dir(pid)
+    (base / "最终产物").mkdir(parents=True)
+    _write_meta_atomic(base, {"subject": "儿科学",
+                              "toggles": {"qbank": True, "paper": True, "review": False}})
+    qs = [{"id": f"Q{i}", "type": "A1", "bloom": "理解", "subtopic": "章",
+           "question": f"题{i}？", "options": ["A", "B", "C", "D", "E"],
+           "answer": "A", "analysis": "解析"} for i in range(1, 6)]
+    f = base / "最终产物" / "questions_final.json"
+    f.write_text(_json.dumps(qs), encoding="utf-8")
+
+    results: list[tuple[int, int]] = []
+
+    def worker(i: int) -> None:
+        cc = _client()
+        r = cc.post(f"/api/projects/{pid}/questions/review",
+                    json={"keep": [], "edits": [{"id": f"Q{i}", "question": f"编辑后题{i}"}]})
+        results.append((i, r.status_code))
+
+    threads = [_th.Thread(target=worker, args=(i,)) for i in range(1, 6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert all(s == 200 for _, s in results), results
+    final = _json.loads(f.read_text(encoding="utf-8"))
+    for i in range(1, 6):
+        q = next(x for x in final if x["id"] == f"Q{i}")
+        assert q["question"] == f"编辑后题{i}", "并发保存不得丢编辑"
+
+
+def test_create_project_double_click_dedupe(monkeypatch, tmp_path):
+    """R3-08：同一 client_token 的重复提交（双击）→ 幂等去重，只建一个项目、只扣一次配额。"""
+    _isolate_cfg(monkeypatch, tmp_path)
+    c = _client()
+    body = {
+        "client_token": "ct-double-click-test",
+        "subject": "儿科学", "exam": "期末", "target": 20,
+        "ratios": {"A1": 40, "A2": 30, "B1": 20, "X": 10},
+        "toggles": {"qbank": True, "paper": True, "review": True},
+        "textbook_slices": [{"sid": "S001", "title": "第一章", "text": "教材内容" * 50}],
+        "teacher_slices": [{"sid": "T001", "title": "教师重点", "text": "重点内容" * 20}],
+        "teacher_text": "教师重点文本",
+    }
+    r1 = c.post("/api/projects", json=body)
+    r2 = c.post("/api/projects", json=body)
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert r1.json()["pid"] == r2.json()["pid"], "双击应复用同一项目"
+    assert r2.json().get("reused") is True
+    dirs = [d for d in (tmp_path / "projects").iterdir() if d.is_dir()]
+    assert len(dirs) == 1, f"应只建一个项目目录：{[d.name for d in dirs]}"
+
+
+def test_create_project_concurrent_double_submit_single_project(monkeypatch, tmp_path):
+    """R3-08：同一 client_token 并发双提交 → per-subject 锁 + 幂等，仍只建一个项目。"""
+    import threading as _th
+
+    _isolate_cfg(monkeypatch, tmp_path)
+    body = {
+        "client_token": "ct-concurrent-test",
+        "subject": "内科学", "exam": "期末", "target": 20,
+        "ratios": {"A1": 40, "A2": 30, "B1": 20, "X": 10},
+        "toggles": {"qbank": True, "paper": True, "review": True},
+        "textbook_slices": [{"sid": "S001", "title": "第一章", "text": "教材内容" * 50}],
+        "teacher_slices": [{"sid": "T001", "title": "教师重点", "text": "重点内容" * 20}],
+        "teacher_text": "教师重点文本",
+    }
+    barrier = _th.Barrier(2)
+    pids: list[str] = []
+    statuses: list[int] = []
+
+    def worker() -> None:
+        cc = _client()
+        barrier.wait()
+        r = cc.post("/api/projects", json=body)
+        statuses.append(r.status_code)
+        if r.status_code == 200:
+            pids.append(r.json()["pid"])
+
+    threads = [_th.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert statuses == [200, 200], statuses
+    assert pids[0] == pids[1], "并发双提交应落到同一项目"
+    dirs = [d for d in (tmp_path / "projects").iterdir() if d.is_dir()]
+    assert len(dirs) == 1, f"应只建一个项目目录：{[d.name for d in dirs]}"
+
+
+def test_rerender_preserves_images(monkeypatch, tmp_path):
+    """R3S-02：审核台重渲染必须重建 image_index——图题重渲染后图仍在（初跑管线传索引）。"""
+    import base64 as _b64  # noqa: F401
+    import json as _json
+
+    _isolate_cfg(monkeypatch, tmp_path)
+    from medkit.routers._common import _write_meta_atomic, proj_dir
+
+    pid = "rerender_img"
+    base = proj_dir(pid)
+    (base / "最终产物").mkdir(parents=True)
+    (base / "assets").mkdir(parents=True)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    (base / "assets" / "fig_1.png").write_bytes(png)
+    _write_meta_atomic(base, {"subject": "儿科学",
+                              "toggles": {"qbank": True, "paper": True, "review": True}})
+    (base / "slices.json").write_text(_json.dumps(
+        [{"sid": "IMG1", "role": "image", "text": "心电图",
+          "image": {"path": "assets/fig_1.png"}}]), encoding="utf-8")
+    qs = [{"id": "Q1", "type": "A1", "bloom": "理解", "subtopic": "章",
+           "question": "如图所示，诊断是？", "options": ["A", "B", "C", "D", "E"],
+           "answer": "A", "analysis": "解析 【源:切片S001】", "image_ref": "IMG1"}]
+    out_dir = base / "最终产物"
+    (out_dir / "questions_final.json").write_text(_json.dumps(qs), encoding="utf-8")
+
+    c = _client()
+    r = c.post(f"/api/projects/{pid}/rerender", json={"what": "qbank"})
+    assert r.status_code == 200, r.text
+    html = (out_dir / "qbank.html").read_text(encoding="utf-8")
+    assert "data:image/png;base64," in html, "重渲染后图题图片应内嵌（R3S-02）"
+
+    r2 = c.post(f"/api/projects/{pid}/rerender", json={"what": "paper"})
+    assert r2.status_code == 200, r2.text
+    paper = (out_dir / "押题卷.html").read_text(encoding="utf-8")
+    assert "data:image/png;base64," in paper, "押题卷重渲染后图题图片应内嵌"
+
+
 def test_fsutil_atomic_write(tmp_path):
     target = tmp_path / "sub" / "data.json"
     write_json_atomic(target, {"a": [1, 2], "b": {"c": "中"}})

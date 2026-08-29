@@ -4,6 +4,8 @@ import json
 import random
 import re
 import shutil
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,23 @@ _IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 router = APIRouter()
 
 DEFAULT_BLOOM_RATIOS = {"记忆": 30, "理解": 40, "应用": 25, "创造": 5}
+
+# R3-08：建项目并发安全——per-subject 可重入锁（gap 建卷在同一线程内复用 create_project）
+# + client_token 幂等去重（同一创建意图的重复提交只建一个项目、只扣一次配额）。
+# F3「同秒同名不合并」语义保留：不带 token 的两次提交仍各自建项目。
+_CREATE_LOCK_GUARD = threading.Lock()
+_SUBJECT_LOCKS: dict[str, threading.RLock] = {}
+_TOKEN_PIDS: dict[str, tuple[float, str]] = {}
+_TOKEN_WINDOW = 10.0
+
+
+def _subject_lock(subject: str) -> threading.RLock:
+    key = (subject or "").strip() or "__empty__"
+    with _CREATE_LOCK_GUARD:
+        lock = _SUBJECT_LOCKS.get(key)
+        if lock is None:
+            lock = _SUBJECT_LOCKS[key] = threading.RLock()
+        return lock
 
 
 class ProjectBody(BaseModel):
@@ -46,6 +65,7 @@ class ProjectBody(BaseModel):
     web_backend: str = "auto"
     web_ref_quota: int = 0                              # 引用配额 0~30%，默认 0
     web_manual_text: str = ""                           # manual 模式：用户粘贴素材
+    client_token: str = ""                               # R3-08：创建意图幂等令牌（双击/双标签去重）
 
 
 def _validate_bloom(bloom: dict[str, int]) -> dict[str, int]:
@@ -77,64 +97,82 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
     if len(req) > 500:
         raise HTTPException(400, "附加生成要求超过 500 字，请精简")
 
-    # 项目 ID 防呆：仅保留中英数字与 -_，避免特殊字符进路径
-    safe_subject = re.sub(r"[^\w\u4e00-\u9fff-]", "_", body.subject.strip())
-    pid = f"{safe_subject}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-    proj_dir_path = proj_dir(pid)
-    # F3（v0.5）：同秒同名项目不再静默合并（旧实现 mkdir(exist_ok=True) 直接覆盖同一目录）
-    for _try in range(10):
-        if not proj_dir_path.exists():
-            break
-        pid = f"{safe_subject}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{_try + 1}"
+    # R3-08：创建意图幂等——client_token 相同的重复提交（双击/双标签/网络重试）复用已建项目，
+    # 只建一个项目、只扣一次配额。不带 token 的提交保持 F3 语义（各自建项目，不静默合并）。
+    with _subject_lock(body.subject):
+        if body.client_token:
+            hit = _TOKEN_PIDS.get(body.client_token)
+            if hit and time.time() - hit[0] <= _TOKEN_WINDOW and proj_dir(hit[1]).exists():
+                try:
+                    hit_quota = json.loads(
+                        (proj_dir(hit[1]) / "meta.json").read_text(encoding="utf-8")).get("quota", [])
+                except Exception:  # noqa: BLE001
+                    hit_quota = []
+                return {"pid": hit[1], "quota": hit_quota, "reused": True}
+
+        # 项目 ID 防呆：仅保留中英数字与 -_，避免特殊字符进路径
+        safe_subject = re.sub(r"[^\w\u4e00-\u9fff-]", "_", body.subject.strip())
+        pid = f"{safe_subject}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
         proj_dir_path = proj_dir(pid)
-    proj_dir_path.mkdir(parents=True, exist_ok=False)
+        # F3（v0.5）：同秒同名项目不再静默合并（旧实现 mkdir(exist_ok=True) 直接覆盖同一目录）
+        for _try in range(10):
+            if not proj_dir_path.exists():
+                break
+            pid = f"{safe_subject}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{_try + 1}"
+            proj_dir_path = proj_dir(pid)
+        proj_dir_path.mkdir(parents=True, exist_ok=False)
 
-    # F4（全链路审查）：多教材会话合并后各会话 sid 均从 S001 起始 → 在去重前统一重编号，
-    # 防止 orchestrator slice_by_sid 按 sid 覆盖导致前一教材切片静默丢失/配额错配（见 core/orchestrator.py _load）
-    tb_slices = body.textbook_slices
-    sids = [s.get("sid", "") or "" for s in tb_slices]
-    if len(set(sids)) != len(sids):
-        tb_slices = [{**s, "sid": f"S{i + 1:03d}"} for i, s in enumerate(tb_slices)]
+        # F4（全链路审查）：多教材会话合并后各会话 sid 均从 S001 起始 → 在去重前统一重编号，
+        # 防止 orchestrator slice_by_sid 按 sid 覆盖导致前一教材切片静默丢失/配额错配（见 core/orchestrator.py _load）
+        tb_slices = body.textbook_slices
+        sids = [s.get("sid", "") or "" for s in tb_slices]
+        if len(set(sids)) != len(sids):
+            tb_slices = [{**s, "sid": f"S{i + 1:03d}"} for i, s in enumerate(tb_slices)]
 
-    all_slices = ([{**s, "role": "textbook"} for s in tb_slices]
-                  + [{**s, "role": "teacher"} for s in body.teacher_slices]
-                  + [{**s, "role": "exam"} for s in body.exam_slices]
-                  + [{**s, "role": "extra"} for s in body.extra_slices])
-    (proj_dir_path / "slices.json").write_text(
-        json.dumps(all_slices, ensure_ascii=False, indent=1), encoding="utf-8")
+        all_slices = ([{**s, "role": "textbook"} for s in tb_slices]
+                      + [{**s, "role": "teacher"} for s in body.teacher_slices]
+                      + [{**s, "role": "exam"} for s in body.exam_slices]
+                      + [{**s, "role": "extra"} for s in body.extra_slices])
+        (proj_dir_path / "slices.json").write_text(
+            json.dumps(all_slices, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    title_by_sid = {s["sid"]: s.get("title", "") for s in tb_slices}
-    quota = [{**q, "title": title_by_sid.get(q["sid"], "")} for q in
-             allocate(tb_slices, body.teacher_text, body.target)]
-    meta = {
-        "pid": pid,
-        "subject": body.subject,
-        "exam": body.exam,
-        "target": body.target,
-        "ratios": body.ratios,
-        "toggles": body.toggles,
-        "requirements": req,
-        "knobs": body.knobs,
-        "bloom": bloom,
-        "web_search": bool(body.web_search),
-        "web_backend": body.web_backend or "auto",
-        "web_ref_quota": int(body.web_ref_quota or 0),
-        "web_manual_text": (body.web_manual_text or "")[:20000],
-        "exam_chars": sum(len(s.get("text", "") or "") for s in body.exam_slices),   # v0.5.2
-        "extra_chars": sum(len(s.get("text", "") or "") for s in body.extra_slices),
-        "stages": {"parsing": "done"},
-        "stage": "quota",
-        "quota": quota,
-        "seed": int(random.random() * 1_000_000),  # 每项目固定种子：可复现 + 每次不同
-        "created": datetime.now().isoformat(),
-    }
-    from ._common import _write_meta_atomic
+        title_by_sid = {s["sid"]: s.get("title", "") for s in tb_slices}
+        quota = [{**q, "title": title_by_sid.get(q["sid"], "")} for q in
+                 allocate(tb_slices, body.teacher_text, body.target)]
+        meta = {
+            "pid": pid,
+            "subject": body.subject,
+            "exam": body.exam,
+            "target": body.target,
+            "ratios": body.ratios,
+            "toggles": body.toggles,
+            "requirements": req,
+            "knobs": body.knobs,
+            "bloom": bloom,
+            "web_search": bool(body.web_search),
+            "web_backend": body.web_backend or "auto",
+            "web_ref_quota": int(body.web_ref_quota or 0),
+            "web_manual_text": (body.web_manual_text or "")[:20000],
+            "exam_chars": sum(len(s.get("text", "") or "") for s in body.exam_slices),   # v0.5.2
+            "extra_chars": sum(len(s.get("text", "") or "") for s in body.extra_slices),
+            "stages": {"parsing": "done"},
+            "stage": "quota",
+            "quota": quota,
+            "seed": int(random.random() * 1_000_000),  # 每项目固定种子：可复现 + 每次不同
+            "created": datetime.now().isoformat(),
+        }
+        from ._common import _write_meta_atomic
 
-    _write_meta_atomic(proj_dir_path, meta)
-    (proj_dir_path / "stage.json").write_text(
-        json.dumps({"stage": "quota", "updated": datetime.now().isoformat()}),
-        encoding="utf-8")
-    return {"pid": pid, "quota": quota}
+        _write_meta_atomic(proj_dir_path, meta)
+        (proj_dir_path / "stage.json").write_text(
+            json.dumps({"stage": "quota", "updated": datetime.now().isoformat()}),
+            encoding="utf-8")
+        if body.client_token:
+            _TOKEN_PIDS[body.client_token] = (time.time(), pid)
+        _now = time.time()   # 机会式清理过期键
+        for _k in [k for k, v in _TOKEN_PIDS.items() if _now - v[0] > _TOKEN_WINDOW]:
+            _TOKEN_PIDS.pop(_k, None)
+        return {"pid": pid, "quota": quota}
 
 
 @router.get("/api/projects")

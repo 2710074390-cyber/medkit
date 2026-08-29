@@ -1,4 +1,5 @@
 /* ---- ① 服务商 */
+let createToken = "";   // R3-08：建课题意图令牌（双击/双标签幂等；失败保留供重试复用）
 function modelValue(id) {
   const manual = $(id + "_manual");
   if (manual.style.display !== "none" && manual.value.trim()) return manual.value.trim();
@@ -1093,7 +1094,10 @@ $("btn_create").onclick = async () => {
     return markErr([$("b_mem"), $("b_und"), $("b_app"), $("b_cre")], "Bloom 配比合计应为 100%（当前 " + Object.values(bloom).reduce((a, b) => a + b, 0) + "%）");
   try {
     $("btn_create").disabled = true; $("btn_create").textContent = "创建中…";
+    // R3-08：创建意图令牌——双击/双标签重复提交后端幂等去重（只建一个项目、只扣一次配额）
+    if (!createToken) createToken = "ct-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
     const body = {
+      client_token: createToken,
       subject: $("subject").value.trim(),
       exam: $("exam").value,
       target: parseInt($("target").value || "100"),
@@ -1110,6 +1114,7 @@ $("btn_create").onclick = async () => {
       web_manual_text: $("ws_manual").value,
     };
     const r = await api("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    createToken = "";   // 成功即重置：下一次创建是新的意图
     toast("课题已创建：" + r.pid + "（已打开项目详情）");
     location.hash = "bank";
     showTab("bank");
@@ -1210,8 +1215,8 @@ async function showProject(pid) {
   $("pd_title").textContent = `项目详情 · ${meta.subject}`;
   const quota = (meta.quota || []).map(q =>
     `<span>${esc(q.title ? (q.title.length > 14 ? q.title.slice(0, 14) + "…" : q.title) : q.sid)}：${q.count}题</span>`).join("");
-  const inWan = (meta.usage.prompt_tokens || 0) / 10000, outWan = (meta.usage.completion_tokens || 0) / 10000;
-  const usage = meta.usage ? `<div class="hint" style="margin-top:6px">本次消耗：输入 ${inWan.toFixed(2)} + 输出 ${outWan.toFixed(2)} 万 token`
+  // R3S-01：meta.usage 仅在管线成功跑完才写入——先判空再计算，新建/取消/error 项目详情不再整页崩溃
+  const usage = meta.usage ? `<div class="hint" style="margin-top:6px">本次消耗：输入 ${((meta.usage.prompt_tokens || 0) / 10000).toFixed(2)} + 输出 ${((meta.usage.completion_tokens || 0) / 10000).toFixed(2)} 万 token`
     + (meta.usage.est_cost_cny != null ? ` ≈ ¥${meta.usage.est_cost_cny}` : "") + `（以官网为准）</div>` : "";
   // ME-9：Anki 导出按「产物文件是否存在」判断（后端已放开 stage 门禁）——error/取消后已产出的文件同样可下载
   const ankiOk = (meta.artifacts || []).some(n => /\.apkg$/i.test(n) || /^anki_export\.txt$/i.test(n));

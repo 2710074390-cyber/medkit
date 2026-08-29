@@ -1,5 +1,6 @@
 """MedQC：LLM-as-judge 分批质检（无金标准模式；U3：批次并发 ≤3）。"""
 
+import contextvars
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -150,8 +151,11 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
             results[i] = _qc_batch_once(client, b, slice_by_sid)
             _call_progress(i + 1)
     else:
+        # R3S-03：ContextVar 不随线程池提交传播——copy_context 把 run 的用量账本带到质检线程
+        ctx = contextvars.copy_context()
         with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            for i, r in ex.map(run, range(len(batches)), batches):
+            for i, r in ex.map(lambda _i, _b: ctx.run(run, _i, _b),
+                               range(len(batches)), batches):
                 results[i] = r
                 _call_progress(i + 1)
 

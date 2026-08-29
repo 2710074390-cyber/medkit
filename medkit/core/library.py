@@ -206,6 +206,7 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
             "know_tags": [str(t).strip() for t in (data.get("know_tags") or []) if str(t).strip()],
             "bloom": str(data.get("bloom", "") or "").strip(),
             "image_ref": str(data.get("image_ref") or "").strip(),
+            "case_stem": str(data.get("case_stem") or "").strip(),   # C-04：案例子题回流共享题干
             "miss_count": max(int(data.get("miss_count", 1) or 1), 1),
             "learned": bool(data.get("learned", False)),
             # 出错样本入聚点时的归类快照：按 learned 记 correct/miss（入账当时）。
@@ -245,12 +246,17 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None) 
     """
     existing = list_mistakes()
     sigs = {m.get("question", "")[:40] for m in existing if m.get("question")}
+    # C-04：优先按 question_id 去重——案例组子题题干前 40 字相同，qtext 键会误并/漏存
+    sigs_qid = {str((m.get("source_ref") or {}).get("question_id") or "") for m in existing}
     rows: list[dict[str, Any]] = []
     for q in questions:
         qtext = str(q.get("question", "") or "").strip()
         if not qtext:
             continue
-        if qtext[:40] in sigs:      # 去重
+        qid = str(q.get("id") or "")
+        if qid and qid in sigs_qid:
+            continue
+        if qtext[:40] in sigs:      # 兜底去重（无 id 的旧卷/手工导入）
             continue
         rows.append({
             "source": "paper",
@@ -268,6 +274,7 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None) 
                          or ([str(q.get("subtopic") or "").strip()] if q.get("subtopic") else []),
             "bloom": q.get("bloom") or "",
             "image_ref": str(q.get("image_ref") or "").strip(),
+            "case_stem": str(q.get("case_stem") or "").strip(),   # C-04：案例子题共享题干入库
             "error_reason": str(q.get("error_reason") or "").strip() or "reasoning",
             "correct": False,
         })
