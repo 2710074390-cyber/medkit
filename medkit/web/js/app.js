@@ -268,7 +268,9 @@ function showTab(name) {
     if (cur && cur !== name) history.replaceState(null, "", "#" + cur);
     return;
   }
-  document.querySelectorAll("nav button").forEach(x => {
+  /* 只作用于主导航（data-tab）：学习中心子导航 #learnnav 也是 <nav>，
+     若用裸 "nav button" 会误重置子导航的 aria-selected/active 状态。 */
+  document.querySelectorAll("nav button[data-tab]").forEach(x => {
     const on = x.dataset.tab === name;
     x.classList.toggle("active", on);
     if (on) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current");
@@ -285,14 +287,22 @@ function showTab(name) {
   if (name === "learn") loadLibrary();
   if (name === "proj") { ratioSum(); bloomSum(); }   // 面板从隐藏变可见 → 重测配比条标签适配
 }
-document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   location.hash = b.dataset.tab;
   showTab(b.dataset.tab);
 });
-(function initTab() {
+/* H-1：hash 直达（如 #learn/#mine）时 showTab 会调用 stopPoll/loadProjects/loadLibrary，
+   这些函数定义在 app.js 之后加载的 review-desk.js / learn.js 中。初始化须推迟到全部
+   脚本执行完毕（DOMContentLoaded），否则 ReferenceError → tab 面板已切但内容空屏。 */
+function initTab() {
   const h = (location.hash || "").replace("#", "");
   if (["conn", "proj", "mine", "learn", "prompts"].includes(h)) showTab(h);
-})();
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initTab);
+} else {
+  initTab();
+}
 window.addEventListener("hashchange", () => {
   const h = (location.hash || "").replace("#", "");
   if (["conn", "proj", "mine", "learn", "prompts"].includes(h)) showTab(h);

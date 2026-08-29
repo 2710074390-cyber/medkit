@@ -1579,7 +1579,6 @@ async function memExportTxt() {
 }
 window.memExportApkg = memExportApkg; window.memExportTxt = memExportTxt;
 
-window.ankiPreview = ankiPreview;
 /* Anki 卡样预览：前 3 张卡正反面（直接复用项目题目数据，零后端改动） */
 async function ankiPreview(pid) {
   try {
@@ -1605,7 +1604,7 @@ async function ankiPreview(pid) {
     $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
   } catch (e) { toast(e.message, false); }
 }
-window.ankiHelp = ankiHelp;
+window.ankiPreview = ankiPreview;
 /* Anki 导入指引（.txt 文本导入 / .apkg 桌面导入，含手机端说明） */
 function ankiHelp() {
   $("md_title").textContent = "Anki 导入指引";
@@ -1624,3 +1623,4 @@ function ankiHelp() {
   $("modal_mask").style.display = "flex";
   $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
 }
+window.ankiHelp = ankiHelp;

@@ -8,6 +8,7 @@
 - 兼容 re-export：测试与旧调用方仍可 `from medkit.main import ...`
 """
 
+import logging
 import os
 import threading
 import webbrowser
@@ -113,6 +114,18 @@ app.add_exception_handler(LLMError, lambda _r, e: _err_response(502, e, "LLM_ERR
 app.add_exception_handler(SearchError, lambda _r, e: _err_response(502, e, "SEARCH_ERROR"))
 app.add_exception_handler(MinerUError, lambda _r, e: _err_response(502, e, "MINERU_ERROR"))
 app.add_exception_handler(PipelineError, lambda _r, e: _err_response(500, e, "PIPELINE_ERROR"))
+
+
+# H-3：未捕获异常统一兜底——结构化 500 + 中文可读提示 + 完整 traceback 入日志。
+# 注意：HTTPException / RequestValidationError 已由 FastAPI 更具体的 handler 承接，不受影响。
+@app.exception_handler(Exception)
+async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    logging.getLogger("medkit.main").exception(
+        "未捕获异常（%s %s）: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=500, content={
+        "detail": f"服务器内部错误（{exc.__class__.__name__}），详情已写入日志，可查看 ~/.medkit/logs/medkit.log",
+        "error_code": "INTERNAL_ERROR",
+    })
 
 
 # ---------------------------------------------------------------- 路由装配

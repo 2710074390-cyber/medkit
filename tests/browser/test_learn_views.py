@@ -7,10 +7,8 @@
 - 390×844 窄屏：六个视图均无横向溢出（documentElement.scrollWidth 不超视口 + 容忍）；
 - 明暗主题切换：data-theme 属性翻转（light<->dark）且页面内容仍渲染。
 
-注：本文件不断言「视图必须 CSS 可见」——index.html 存在既有的 div 嵌套缺陷（lv-explain /
-lv-tutor / lv-review / lv-syllabus 未正确闭合，tutor/review/syllabus 被嵌套进 lv-explain，
-导致它们点上后不会展开、且 showTab 会把学习中心子导航的 aria-selected 重置为 false）。
-故这里断言「激活态 + aria-selected 变化」这一应用实际表达的行为，而非被该缺陷掩盖的 pixels。
+注：历史缺陷（lv-explain 缺失闭合致 tutor/review/syllabus 视图被嵌套隐藏）已在
+commit 7555b77 修复；本文件同时断言 aria-selected 与可见性双重口径。
 """
 
 from __future__ import annotations
@@ -126,3 +124,23 @@ def test_theme_toggle_flips_data_theme(page, server_url):
     assert after != before, "data-theme 未翻转"
     page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
     assert page.locator("#btn_theme").is_enabled()
+
+
+def test_hash_direct_navigation_initializes_tab(page, server_url):
+    """H-1 回归：带 hash 直达 URL 时 tab 内容必须初始化（initTab 推迟到 DOMContentLoaded）。
+
+    直达 #learn：学习中心概览由 loadLibrary 渲染（learn.js 后于 app.js 加载）；
+    直达 #mine：项目列表由 loadProjects 渲染（review-desk.js 最后加载）。
+    修复前 initTab 在脚本加载完成前调用 showTab → stopPoll/loadLibrary 未定义 →
+    ReferenceError（内容空屏 + 「脚本异常」toast）。
+    """
+    cases = (("learn", "#dash_loop", "汇总中"), ("mine", "#proj_list", "加载中"))
+    for tab, container, placeholder in cases:
+        page.goto(f"{server_url}/#{tab}")
+        page.wait_for_selector(f"#tab-{tab}.show", timeout=15000)
+        page.wait_for_function(
+            "args => !document.querySelector(args[0]).innerText.includes(args[1])",
+            arg=(container, placeholder), timeout=15000,
+        )
+        assert page.locator("#toasts .toast.bad").count() == 0, \
+            f"#{tab} 直达不应出现错误 toast（脚本异常）"

@@ -8,6 +8,7 @@
 
 | 日期 | commit | 变更 |
 | - | - | - |
+| 2026-08-29 | 本批 | **PRD/交接配置入库 + 差距审查**：`docs/reviews/gap-audit-prd-2026-08-29.md`（现状 vs PRD/交接配置全量对照 + 断点清单 H-1/H-2/H-3）；两份交接文档归档 `docs/archive/product/`；产品方向 5 项决策已拍板（见 §6）；批次 A 修复：H-1 脚本时序（initTab 推迟 DOMContentLoaded）/ H-2 声明序 / H-3 后端全局异常兜底 + 浏览器 hash 直达回归用例 |
 | 2026-08-27 | `74d999b` | NX-02：打包环境 jieba 兜底（fts_tokens 仅 bigram、spec 收集 jieba 数据） |
 | 2026-08-27 | `8b4baf4` | K3/IMP-13：官方大纲文件导入闭环（LLM 契约抽取 → seed）+ 教师重点 v4 后端（+前端官方大纲入口） |
 | 2026-08-27 | 本批 | **大纲标准二选一收尾**：教师重点文件导入前端入口 + 知识点提取（`extract_teacher_kps`）+ 标准切换去「全部」档 + api() Content-Type 修复 + 本交接文档 |
@@ -103,3 +104,35 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
 - 总闸：`verify.cmd`（Windows）。
 - 单测隔离：`tests/conftest.py` 把 `dbs.DB_PATH` 等指向 tmp；新增库表/迁移需同时覆盖 `tests/test_db.py`（migration 标记）。
 - 打包：`pack/build.bat`（PyInstaller，`medkit.spec`；version 单源 `medkit/__init__.py`）。
+
+## 6. 产品方向（2026-08-29 交接 · 已拍板决策）
+
+> 来源：`docs/archive/product/medkit-agent-handover-2026-08-29.json`（执行阶段 PHASE-1~5 / API 契约 /
+> 风险）+ `docs/archive/product/medkit-prd-v1.0.md`（PRD：仪表盘/4Tab/卡翻/三按钮/双场景/视觉规范）。
+> 全量差距对照见 `docs/reviews/gap-audit-prd-2026-08-29.md`。
+
+1. **产品形态 = 桌面形态下的卡片刷题**（不转移动端范式）：保留现有侧栏与桌面广度，
+   以「卡片翻转 + 底部三按钮」补齐刷题沉浸感；不做底部 Tab/手势优先的全屏移动化。
+2. **API 契约以现有实现为准**（复用 `/api/library/review/today`、`/api/library/review/grade`
+   等，文档对齐而非新增端点）。交接配置里的映射：`GET /api/today-tasks` →
+   `GET /api/library/review/today`（`{cards,total,stats}`，stats.total/new/due/in_progress/review）；
+   `POST /api/review/feedback {task_id,rating,timestamp}` → `POST /api/library/review/grade`
+   `{card_id,quality}`（quality 0~5，next_review/interval 在返回的 `card.due/interval/state` 内）。
+3. **rating 保留 0~5/四档**（FSRS 四档 + SM-2 六档），三按钮（忘/糊/记）做前端映射，不在调度器加档位。
+4. **真题来源标注本期做**：题目契约/管线支持可选 `source_year/source_type`，考频解析年份维度，
+   渲染标签 + 筛选器（无标注题显示「未标注」）。
+5. **交接文档归档入库**（已做，本目录 `docs/archive/product/`）。
+
+### 执行批次（后续接手者按序推进）
+
+- **批次 A（止血收尾）**：H-1 hash 直达脚本时序（已修）· H-2 声明序（已修）· H-3 后端全局
+  异常兜底（已修，`main.py` `_unhandled_exception`）——含浏览器回归用例 `test_hash_direct_navigation_initializes_tab`。
+- **批次 B（导航重组）**：功能分级表（P0 刷题/生成、P1 学习中心、P2 设置高级）→ 学习中心
+  内部导航重组 → 科目分类卡片（SubjectCard：题目数+掌握率，数据已有）。
+- **批次 C（卡片化刷题）**：QuestionCard 3D 翻转（≤300ms）→ 底部三按钮（红 #EF4444 忘 / 黄
+  #F59E0B 糊 / 绿 #10B981 记，映射 0/1、2、3/4/5；快捷键 1/2/3）→ 解析关键词高亮（配置化）→ 顶部进度 X/Y。
+- **批次 D（仪表盘 + 视觉）**：首页仪表盘（今日待复习/新题/完成数 + 「开始学习」主按钮 +
+  考试倒计时）→ 主色青绿 #2A6B5A 全量替换 → 字号收敛 4 级（21/16/14/12）。
+- **批次 E（真题标注）**：迁移加年份维度 → realexams 年份提取 → 契约可选字段 →
+  渲染标签 → 筛选器（年份/题型，localStorage 记忆）。
+- 验证：每批 `verify.cmd`（ruff → pytest → 浏览器）全绿后立即提交（见 §4 第 7 条多 Agent 并发警示）。

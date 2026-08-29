@@ -1,0 +1,801 @@
+{
+  "$schema": "https://agent-config.medkit.io/v1/schema",
+  "project": {
+    "name": "MedKit",
+    "full_name": "MedKit · 医学题库工坊（MedAgentWork 桌面版）",
+    "version": "v0.8.0",
+    "repository": "https://github.com/2710074390-cyber/medkit",
+    "core_positioning": "面向医学生期末考试、考研备考场景的智能刷题工具，核心解决背了就忘、刷题效率低、重点抓不准的痛点",
+    "tech_stack": {
+      "backend": "Python 3.10+ / FastAPI",
+      "frontend": "Web (零CDN单页UI，位于medkit/web目录)",
+      "database": "SQLite + WAL模式（core/db.py，含迁移/备份/回滚）",
+      "ai_providers": [
+        "DeepSeek",
+        "智谱GLM",
+        "通义千问",
+        "Kimi（月之暗面）",
+        "自定义OpenAI兼容端点"
+      ],
+      "key_modules": {
+        "core_scheduler": "core/scheduler.py（FSRS·SM-2间隔复习调度）",
+        "core_syllabus": "core/syllabus.py（教学大纲覆盖度分析）",
+        "core_gap": "core/gap.py（薄弱知识点组卷）",
+        "core_realexams": "core/realexams.py（历年真题考频统计）",
+        "core_cost": "core/cost.py（成本估算单源公式）",
+        "core_db": "core/db.py（SQLite迁移/备份/导入）",
+        "agents": "medkit/agents/（medgen/medqc/medfix/medreview）",
+        "web": "medkit/web/（零CDN单页前端）"
+      }
+    }
+  },
+  "current_state": {
+    "implemented_features": [
+      "五阶段AI题目生成管线（资料解析→大纲匹配→题目生成→解析补充→质量校验）",
+      "Anki牌组导出功能（.txt + .apkg真包）",
+      "教学大纲覆盖度分析（core/syllabus.py，1291条种子数据/10科）",
+      "薄弱知识点组卷（core/gap.py，priority×考频×未覆盖配题）",
+      "历年真题考频统计（core/realexams.py，本地词典匹配，零LLM）",
+      "基础FSRS间隔复习调度（core/scheduler.py，FSRS·SM-2）",
+      "交互押题卷（X型checkbox+集合判分、答题卡、计时断点恢复、错题重练）",
+      "题库/押题卷/复习手册三套产物页主题（双主题变量/明暗切换）",
+      "逐题审核台（保留/剔除/行内编辑/单题重掷/批量操作）",
+      "网络检索多后端（DeepSeek自带/智谱自带/千问自带/博查需外部/手动粘贴兜底）"
+    ],
+    "core_problems": {
+      "ui_overload": "功能入口过多，首页信息密度过高，用户找不到核心刷题入口",
+      "interaction_complexity": "核心刷题流交互复杂，解析默认展开容易剧透答案，没有即时操作反馈",
+      "scenario_gap": "没有区分期末突击、考研强化两种场景的差异化功能，功能堆砌没有贴合用户实际需求"
+    }
+  },
+  "product_goals": {
+    "short_term": {
+      "timeline": "1-2个月",
+      "objective": "完成UI瘦身，跑通核心刷题流，修复所有阻断性bug，用户能顺畅完成上传资料→刷题→复习全流程"
+    },
+    "mid_term": {
+      "timeline": "3-6个月",
+      "objective": "完成期末/考研双场景适配，接入py-fsrs算法优化复习调度，上线薄弱点变式题推送功能"
+    },
+    "long_term": {
+      "timeline": "6-12个月",
+      "objective": "成为医学生备考垂直工具，支持多端同步、离线刷题、社区记忆口诀分享"
+    }
+  },
+  "design_principles": [
+    {
+      "id": "DP-01",
+      "name": "少即是多",
+      "rule": "每个页面只保留1个核心操作入口，高级功能全部折叠进设置页"
+    },
+    {
+      "id": "DP-02",
+      "name": "场景优先",
+      "rule": "所有功能必须对应明确的备考场景（期末突击/考研强化），不做无场景的通用功能"
+    },
+    {
+      "id": "DP-03",
+      "name": "即时反馈",
+      "rule": "用户的每一次操作（答题、收藏、标记）都要有视觉/震动反馈，让用户明确知道操作已生效"
+    },
+    {
+      "id": "DP-04",
+      "name": "认知减负",
+      "rule": "不强迫用户做选择题（比如不用手动设置复习时间、不用手动分类错题），所有调度逻辑由算法自动完成"
+    }
+  ],
+  "reference_projects": {
+    "open_source": [
+      {
+        "name": "py-fsrs",
+        "type": "开源项目",
+        "core_insight": "目前最先进的间隔重复算法，比SM-2预测准确度更高，Anki 23.10+已内置支持",
+        "implementation": "直接替换现有的core/scheduler模块，调用pip install fsrs即可接入，复用现有的last_review、interval、ease字段适配算法输入"
+      },
+      {
+        "name": "MedSchoolAnki",
+        "type": "开源项目",
+        "core_insight": "医学生卡片设计规范：一卡一知识点（One Fact Per Card）、层级标签体系（学科→系统→考点）、多模态卡片（支持嵌入影像/音频）",
+        "implementation": "制定MedKit的卡片生成规范，AI生成题目时强制拆分原子知识点，给每道题打上#学科-#系统-#考点三级标签，支持插入临床影像图"
+      },
+      {
+        "name": "DeepTutor",
+        "type": "开源项目",
+        "core_insight": "三层记忆系统（实时记录→单维度总结→跨维度知识合成）、薄弱点动态追踪、Mastery Path个性化学习路径",
+        "implementation": "复用它的Memory Graph逻辑，把用户的错题、模糊题关联到知识点图谱，自动生成同类知识点变式题推送"
+      },
+      {
+        "name": "Memo",
+        "type": "开源项目",
+        "core_insight": "跨平台刷题交互、学习进度可视化、卡片模板自定义",
+        "implementation": "参考它的刷题页布局：题目居中、底部仅保留三按钮、支持左右滑动切题，统计面板直接复用它的开源组件"
+      },
+      {
+        "name": "PyFlashcard",
+        "type": "开源项目",
+        "core_insight": "轻量化的Deck/Card数据结构、JSON格式导入导出",
+        "implementation": "优化现有的题库数据结构，支持一键导出为Anki兼容的JSON格式，方便用户迁移到Anki使用"
+      }
+    ],
+    "commercial": [
+      {
+        "name": "医考帮",
+        "type": "商业产品",
+        "core_insight": "真题标记体系（标注年份、题型、考频）、评论区记忆口诀、分层刷题模式（快刷/练习/测试/背题）",
+        "implementation": "每道题强制标注来源（如2023西综A型题），开放题目评论区供用户分享记忆技巧，新增速刷模式（上滑下一题、左滑错题、右滑掌握）"
+      },
+      {
+        "name": "墨墨背单词",
+        "type": "商业产品",
+        "core_insight": "三按钮操作（认识/模糊/忘记）、极简仪表盘（仅展示今日待复习数+开始学习按钮）、个性化遗忘算法",
+        "implementation": "刷题页底部仅保留红/黄/绿三按钮对应三种掌握程度，首页砍掉所有冗余入口，直接复用它的算法调度逻辑"
+      },
+      {
+        "name": "百词斩",
+        "type": "商业产品",
+        "core_insight": "即时反馈动效（答对绿色动效、答错红色震动）、错题自动归档",
+        "implementation": "用户点记住时播放绿色打勾动效，点忘了时手机震动+题目自动进入错题池，当天优先推送"
+      },
+      {
+        "name": "刷刷题",
+        "type": "商业产品",
+        "core_insight": "结果页黄金三角布局（上20%题目+中50%解析+下30%功能入口）、解析关键词高亮、夜间模式适配",
+        "implementation": "解析页采用卡片式设计，把首选药、金标准等关键词自动标红加粗，默认开启护眼模式"
+      }
+    ]
+  },
+  "execution_phases": [
+    {
+      "phase_id": "PHASE-1",
+      "phase_name": "止血",
+      "timeline": "1-2周",
+      "objective": "解决不能用的问题，跑通核心链路",
+      "tasks": [
+        {
+          "task_id": "1.1",
+          "name": "梳理核心链路",
+          "description": "画出上传资料→生成题目→刷题→查看解析流程图，标记每个断点",
+          "action_items": [
+            "遍历medkit/web目录，梳理所有页面路由和跳转逻辑",
+            "按上传→生成→刷题→查看解析顺序，逐页面验证功能完整性",
+            "记录每个断点：Bug描述、复现步骤、影响范围"
+          ],
+          "acceptance_criteria": "所有断点列出，形成完整的链路断点清单文档",
+          "estimated_hours": 4,
+          "priority": "P0",
+          "dependencies": []
+        },
+        {
+          "task_id": "1.2",
+          "name": "修复阻断性Bug",
+          "description": "按链路顺序逐个修复阻断核心流程的Bug",
+          "action_items": [
+            "根据1.1的断点清单，按严重程度排序",
+            "优先修复导致崩溃、数据丢失、流程中断的Bug",
+            "每修复一个Bug，运行pytest确保无回归"
+          ],
+          "acceptance_criteria": "核心链路可跑通，无崩溃，无阻断性错误",
+          "estimated_hours": 20,
+          "priority": "P0",
+          "dependencies": [
+            "1.1"
+          ]
+        },
+        {
+          "task_id": "1.3",
+          "name": "修复体验性Bug",
+          "description": "修复加载卡顿、显示错位、按钮无响应等问题",
+          "action_items": [
+            "在1.2跑通的基础上，逐页面检查UI显示",
+            "修复样式错乱、按钮无响应、加载无反馈等问题",
+            "检查390px窄屏适配（已有修复但需回归验证）"
+          ],
+          "acceptance_criteria": "无明显卡顿，UI无错位，所有按钮有响应反馈",
+          "estimated_hours": 20,
+          "priority": "P1",
+          "dependencies": [
+            "1.2"
+          ]
+        },
+        {
+          "task_id": "1.4",
+          "name": "添加错误兜底",
+          "description": "所有异步操作加loading态+错误Toast提示",
+          "action_items": [
+            "检查所有API调用（/api/路由），确保有loading状态",
+            "统一错误处理：捕获异常→显示Toast→记录日志",
+            "验证网络断开、API Key失效等异常场景的降级表现"
+          ],
+          "acceptance_criteria": "任何操作失败都有明确Toast提示，无静默失败",
+          "estimated_hours": 8,
+          "priority": "P1",
+          "dependencies": [
+            "1.2"
+          ]
+        }
+      ]
+    },
+    {
+      "phase_id": "PHASE-2",
+      "phase_name": "瘦身",
+      "timeline": "2-3周",
+      "objective": "解决按钮太多的问题，界面清爽、导航清晰",
+      "tasks": [
+        {
+          "task_id": "2.1",
+          "name": "功能分级",
+          "description": "将所有功能分为P0（刷题/生成）、P1（错题本/统计）、P2（设置/导出/高级配置）三级",
+          "action_items": [
+            "列出medkit/web目录下所有页面和功能入口",
+            "按P0/P1/P2分级，标注每个入口的用户频率和重要性",
+            "输出功能分级表（Markdown表格）"
+          ],
+          "acceptance_criteria": "功能分级表完成，所有功能有明确归属",
+          "estimated_hours": 4,
+          "priority": "P0",
+          "dependencies": []
+        },
+        {
+          "task_id": "2.2",
+          "name": "建立底部Tab导航",
+          "description": "实现3个底部Tab：学习/题库/我的",
+          "action_items": [
+            "在medkit/web中新增底部TabBar组件",
+            "路由重构：/study（学习）、/library（题库）、/profile（我的）",
+            "将现有页面按Tab归属重新路由",
+            "支持Ctrl/⌘+1..5快捷键（已有，需适配新路由）"
+          ],
+          "acceptance_criteria": "首页不超过3个可点击入口，底部Tab切换流畅",
+          "estimated_hours": 16,
+          "priority": "P0",
+          "dependencies": [
+            "2.1"
+          ]
+        },
+        {
+          "task_id": "2.3",
+          "name": "首页改造为仪表盘",
+          "description": "首页仅展示：今日待复习数、今日新题数、倒计时、一个开始学习大按钮",
+          "action_items": [
+            "设计仪表盘UI：顶部统计卡片（今日待复习/新题/倒计时）",
+            "中央放置开始学习主按钮（大尺寸、高对比度）",
+            "底部可放最近项目卡片列表",
+            "对接/api/today-tasks接口（需后端新增）"
+          ],
+          "acceptance_criteria": "首页信息密度降低70%，用户一眼看到今日任务",
+          "estimated_hours": 16,
+          "priority": "P0",
+          "dependencies": [
+            "2.2"
+          ]
+        },
+        {
+          "task_id": "2.4",
+          "name": "隐藏高级配置",
+          "description": "API Key、参数调整、日志查看移入我的→开发者设置，默认折叠",
+          "action_items": [
+            "在/profile下新建/developer子页面",
+            "将服务商配置、提示词编辑、日志查看等功能移入",
+            "在/profile首页添加开发者设置折叠入口（默认收起）",
+            "普通用户路径中完全隐藏技术配置项"
+          ],
+          "acceptance_criteria": "普通用户无需看到技术配置项即可使用核心功能",
+          "estimated_hours": 8,
+          "priority": "P1",
+          "dependencies": [
+            "2.2"
+          ]
+        },
+        {
+          "task_id": "2.5",
+          "name": "统一配色方案",
+          "description": "主色（青绿#0D9488）+灰阶中性色，全局替换",
+          "action_items": [
+            "在CSS变量中定义主题色板（主色/辅助色/背景色/文字色）",
+            "全局搜索硬编码颜色值，替换为CSS变量引用",
+            "验证明暗主题切换正常"
+          ],
+          "acceptance_criteria": "主色不超过2种，明暗主题均正常显示",
+          "estimated_hours": 8,
+          "priority": "P1",
+          "dependencies": [
+            "2.2"
+          ]
+        },
+        {
+          "task_id": "2.6",
+          "name": "统一字体层级",
+          "description": "标题/正文/辅助文字各一个字号，层级不超过4级",
+          "action_items": [
+            "定义字体层级：H1(21px)/H2(16px)/Body(14px)/Caption(12px)",
+            "全局搜索font-size，统一为4个层级",
+            "检查所有页面的字体一致性"
+          ],
+          "acceptance_criteria": "字号层级不超过4级，全文统一",
+          "estimated_hours": 4,
+          "priority": "P2",
+          "dependencies": [
+            "2.5"
+          ]
+        },
+        {
+          "task_id": "2.7",
+          "name": "增加留白",
+          "description": "卡片间距≥16px，页面边距≥20px，按钮间距≥12px",
+          "action_items": [
+            "定义间距系统：4px/8px/12px/16px/20px/24px",
+            "全局替换硬编码margin/padding为间距变量",
+            "视觉验收：页面有呼吸感，不拥挤"
+          ],
+          "acceptance_criteria": "视觉呼吸感明显提升，无内容紧贴边界的场景",
+          "estimated_hours": 8,
+          "priority": "P2",
+          "dependencies": [
+            "2.6"
+          ]
+        }
+      ]
+    },
+    {
+      "phase_id": "PHASE-3",
+      "phase_name": "重塑核心体验",
+      "timeline": "3-4周",
+      "objective": "解决不好用的问题，刷题体验接近墨墨背单词流畅度",
+      "tasks": [
+        {
+          "task_id": "3.1",
+          "name": "卡片翻转交互",
+          "description": "正面显示题目+选项，点击/滑动翻转显示答案+解析",
+          "action_items": [
+            "设计QuestionCard组件：正面（题干+选项）、背面（答案+解析）",
+            "实现3D翻转动画（CSS transform: rotateY，duration≤300ms）",
+            "支持点击翻转和左右滑动切题",
+            "对接交互押题卷数据接口，复用已有题目数据结构"
+          ],
+          "acceptance_criteria": "翻转动画流畅≤300ms，支持点击和滑动两种操作方式",
+          "estimated_hours": 16,
+          "priority": "P0",
+          "dependencies": [
+            "2.3"
+          ]
+        },
+        {
+          "task_id": "3.2",
+          "name": "三按钮操作栏",
+          "description": "底部仅保留：忘了（红）/模糊（黄）/记住（绿）",
+          "action_items": [
+            "设计底部操作栏组件，占屏幕底部1/4区域",
+            "三个按钮：忘了（红色#EF4444）、模糊（黄色#F59E0B）、记住（绿色#10B981）",
+            "每个按钮绑定/api/review/feedback接口",
+            "按钮支持键盘快捷键（1/2/3）"
+          ],
+          "acceptance_criteria": "操作区占屏幕底部1/4，三按钮颜色固定，响应迅速",
+          "estimated_hours": 8,
+          "priority": "P0",
+          "dependencies": [
+            "3.1"
+          ]
+        },
+        {
+          "task_id": "3.3",
+          "name": "解析折叠",
+          "description": "答案和解析默认隐藏，选择后才展开，关键词加粗高亮",
+          "action_items": [
+            "在卡片背面，答案和解析默认折叠（仅显示点击查看答案按钮）",
+            "点击后展开解析内容",
+            "解析中自动识别关键词（首选药、金标准、确诊等）并加粗标红",
+            "关键词列表可配置（存储在配置文件中）"
+          ],
+          "acceptance_criteria": "不会一眼看到答案，用户需主动点击才展开解析",
+          "estimated_hours": 8,
+          "priority": "P0",
+          "dependencies": [
+            "3.1"
+          ]
+        },
+        {
+          "task_id": "3.4",
+          "name": "接入间隔复习算法",
+          "description": "三按钮反馈接入FSRS/SM-2算法，自动计算下次复习时间",
+          "action_items": [
+            "安装py-fsrs：pip install fsrs",
+            "改造core/scheduler.py，适配FSRS算法输入（last_review, interval, ease, reps）",
+            "新增/api/review/feedback POST接口：接收task_id+rating→更新复习计划",
+            "rating映射：0=忘记→立即重现，1=模糊→10分钟后，2=简单→按FSRS计算间隔",
+            "新增/api/today-tasks GET接口：返回今日待复习题目列表"
+          ],
+          "acceptance_criteria": "点忘了的题当天/次日重现，点记住的题按算法间隔推送",
+          "estimated_hours": 24,
+          "priority": "P0",
+          "dependencies": [
+            "3.2",
+            "3.3"
+          ]
+        },
+        {
+          "task_id": "3.5",
+          "name": "刷题进度反馈",
+          "description": "操作后显示微动效，顶部显示今日进度23/100",
+          "action_items": [
+            "顶部进度条组件：显示今日进度 X/Y（X=已完成数，Y=今日目标数）",
+            "每次操作后播放微动效（按钮缩放+Toast提示）",
+            "进度数据从/api/today-tasks获取，实时更新"
+          ],
+          "acceptance_criteria": "用户随时知道今日进度，每次操作有即时视觉反馈",
+          "estimated_hours": 8,
+          "priority": "P1",
+          "dependencies": [
+            "3.4"
+          ]
+        },
+        {
+          "task_id": "3.6",
+          "name": "科目分类页",
+          "description": "题库Tab按学科分类展示，每学科一张卡片，显示题目数和掌握率",
+          "action_items": [
+            "设计SubjectCard组件：学科名+题目数+掌握率进度条",
+            "对接题库数据，按学科分组统计",
+            "点击卡片进入该学科的刷题列表"
+          ],
+          "acceptance_criteria": "一目了然各学科题目数和掌握率",
+          "estimated_hours": 16,
+          "priority": "P1",
+          "dependencies": [
+            "2.2"
+          ]
+        },
+        {
+          "task_id": "3.7",
+          "name": "一键导入优化",
+          "description": "上传资料时提供期末突击和考研强化两个预设模板",
+          "action_items": [
+            "在课题创建页新增模板选择：期末突击/考研强化",
+            "期末模板：题量少、重重点、Bloom低阶为主",
+            "考研模板：题量大、重真题、重解析、Bloom高阶为主",
+            "预设配置JSON化，支持用户自建模板（已有配置预设功能，需对接UI）"
+          ],
+          "acceptance_criteria": "用户无需手动调参，选择模板后一键生成",
+          "estimated_hours": 16,
+          "priority": "P1",
+          "dependencies": [
+            "2.4"
+          ]
+        },
+        {
+          "task_id": "3.8",
+          "name": "生成进度可视化",
+          "description": "生成过程显示进度条+预计剩余时间+已生成题目预览",
+          "action_items": [
+            "利用已有的六阶段stepper（出题/门禁/质检/修复/汇总/产物）",
+            "增强进度显示：百分比+预计剩余时间+当前阶段明细",
+            "实时预览已生成题目（前3题卡片式展示）"
+          ],
+          "acceptance_criteria": "用户知道系统在干活，有明确的进度预期",
+          "estimated_hours": 8,
+          "priority": "P2",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "phase_id": "PHASE-4",
+      "phase_name": "场景化",
+      "timeline": "2-3周",
+      "objective": "解决不贴合考试的问题，完全贴合医学生备考场景",
+      "tasks": [
+        {
+          "task_id": "4.1",
+          "name": "期末速刷模式",
+          "description": "上滑下一题、左滑错题、右滑掌握手势操作，去掉文字按钮",
+          "action_items": [
+            "在刷题页新增速刷模式开关",
+            "实现手势识别：上滑=下一题、左滑=标记错题、右滑=标记掌握",
+            "速刷模式下隐藏三按钮操作栏，全屏沉浸式",
+            "支持触屏和鼠标拖拽两种操作方式"
+          ],
+          "acceptance_criteria": "单手操作无压力，手势响应灵敏",
+          "estimated_hours": 16,
+          "priority": "P0",
+          "dependencies": [
+            "3.1"
+          ]
+        },
+        {
+          "task_id": "4.2",
+          "name": "重点提炼卡",
+          "description": "基于老师PPT/重点文档，自动生成考前必背清单",
+          "action_items": [
+            "复用core/syllabus.py解析老师重点文档",
+            "调用MedReview生成考前1小时背诵清单（仅展示背诵清单部分）",
+            "清单按优先级排序，关键词高亮",
+            "UI：卡片式展示，支持字号调节（已有功能，复用即可）"
+          ],
+          "acceptance_criteria": "清单按优先级排序，关键词高亮，用户可直接背诵",
+          "estimated_hours": 24,
+          "priority": "P0",
+          "dependencies": [
+            "3.7"
+          ]
+        },
+        {
+          "task_id": "4.3",
+          "name": "考前倒计时",
+          "description": "首页显示距考试天数，自动调整每日复习量",
+          "action_items": [
+            "在首页仪表盘新增距考试X天倒计时卡片",
+            "用户可设置考试日期（在/profile中配置）",
+            "考前3天自动加大每日复习量（调整scheduler的每日推送上限）",
+            "倒计时数据持久化存储"
+          ],
+          "acceptance_criteria": "考前3天自动加大强度，用户可自定义考试日期",
+          "estimated_hours": 8,
+          "priority": "P1",
+          "dependencies": [
+            "2.3"
+          ]
+        },
+        {
+          "task_id": "4.4",
+          "name": "真题标记与筛选",
+          "description": "每道题标注来源年份和题型，支持按年份/题型筛选",
+          "action_items": [
+            "在题目数据结构中新增source_year、source_type字段",
+            "出题管线（MedGen）中自动标注真题来源（从realexams数据匹配）",
+            "刷题页和题库页新增年份/题型筛选器",
+            "筛选状态本地记忆（localStorage）"
+          ],
+          "acceptance_criteria": "可按年份/题型筛选题目，筛选状态持久化",
+          "estimated_hours": 16,
+          "priority": "P0",
+          "dependencies": [
+            "3.6"
+          ]
+        },
+        {
+          "task_id": "4.5",
+          "name": "薄弱组卷（变式题推送）",
+          "description": "基于错题数据，自动生成同类知识点变式卷",
+          "action_items": [
+            "复用core/gap.py的plan()函数（已有，纯本地配题）",
+            "对接薄弱点清单，每次生成10-20题变式卷",
+            "难度递进：先易后难",
+            "刷题页新增薄弱组卷入口，与常规刷题流复用同一组件"
+          ],
+          "acceptance_criteria": "每次10-20题，难度递进，用户可流畅完成变式刷题",
+          "estimated_hours": 24,
+          "priority": "P0",
+          "dependencies": [
+            "3.4",
+            "4.4"
+          ]
+        },
+        {
+          "task_id": "4.6",
+          "name": "考研统计面板",
+          "description": "我的页面展示各科掌握率雷达图、每日学习时长、预计得分",
+          "action_items": [
+            "设计统计面板UI：雷达图（各科掌握率）+ 折线图（每日学习时长趋势）+ 预计得分卡片",
+            "对接学习中心数据（library/review/explain/tutor四域SQL）",
+            "使用Chart.js或ECharts绘制图表",
+            "数据缓存30s（复用已有的subjects/mastery缓存逻辑）"
+          ],
+          "acceptance_criteria": "数据可视化清晰，加载迅速，数据准确",
+          "estimated_hours": 16,
+          "priority": "P1",
+          "dependencies": [
+            "3.6",
+            "4.4"
+          ]
+        }
+      ]
+    },
+    {
+      "phase_id": "PHASE-5",
+      "phase_name": "持续打磨",
+      "timeline": "持续迭代",
+      "objective": "持续优化体验，提升产品成熟度",
+      "tasks": [
+        {
+          "task_id": "5.1",
+          "name": "离线支持",
+          "description": "断网后核心刷题功能可用",
+          "action_items": [
+            "利用Service Worker缓存题目数据和复习计划",
+            "断网时降级为本地数据刷题",
+            "联网后自动同步复习进度"
+          ],
+          "acceptance_criteria": "断网后核心刷题功能可用，联网后进度自动同步",
+          "estimated_hours": 24,
+          "priority": "P2",
+          "dependencies": [
+            "3.4"
+          ]
+        },
+        {
+          "task_id": "5.2",
+          "name": "Anki导出优化",
+          "description": "一键导出为Anki牌组，进度同步",
+          "action_items": [
+            "优化现有Anki导出（已有.txt+.apkg），增加进度同步字段",
+            "导出时附带复习记录（last_review, interval等）",
+            "支持从Anki导入复习进度回MedKit"
+          ],
+          "acceptance_criteria": "导出牌组可直接在Anki中使用，进度可双向同步",
+          "estimated_hours": 16,
+          "priority": "P2",
+          "dependencies": []
+        },
+        {
+          "task_id": "5.3",
+          "name": "数据备份与恢复",
+          "description": "导出学习记录为JSON/CSV，换设备可恢复",
+          "action_items": [
+            "在/profile新增数据备份页面",
+            "一键导出所有学习记录为JSON文件",
+            "支持从JSON文件导入恢复数据",
+            "导出文件包含：题目记录、复习历史、设置偏好"
+          ],
+          "acceptance_criteria": "导出/导入完整无损，换设备可100%恢复学习进度",
+          "estimated_hours": 12,
+          "priority": "P2",
+          "dependencies": []
+        },
+        {
+          "task_id": "5.4",
+          "name": "深色模式优化",
+          "description": "跟随系统自动切换，优化暗色主题细节",
+          "action_items": [
+            "复用已有的明暗主题切换逻辑（已有，需优化暗色细节）",
+            "跟随系统prefers-color-scheme自动切换",
+            "暗色主题下验证产物页（题库/押题卷/复习手册）显示效果"
+          ],
+          "acceptance_criteria": "暗色主题下所有页面显示正常，无对比度问题",
+          "estimated_hours": 12,
+          "priority": "P2",
+          "dependencies": [
+            "2.5"
+          ]
+        },
+        {
+          "task_id": "5.5",
+          "name": "性能优化",
+          "description": "1000+题列表滚动不卡顿",
+          "action_items": [
+            "列表组件实现虚拟滚动（只渲染可见区域的DOM节点）",
+            "图片懒加载（base64内嵌图+IntersectionObserver）",
+            "前端路由懒加载，减少首屏加载时间",
+            "性能测试：Lighthouse评分≥90"
+          ],
+          "acceptance_criteria": "1000+题列表滚动流畅，首屏加载≤2s",
+          "estimated_hours": 16,
+          "priority": "P2",
+          "dependencies": [
+            "3.6"
+          ]
+        }
+      ]
+    }
+  ],
+  "api_contract": {
+    "new_endpoints_required": [
+      {
+        "method": "GET",
+        "path": "/api/today-tasks",
+        "description": "获取今日待复习题目列表",
+        "response_schema": {
+          "today_review_count": "number",
+          "today_new_count": "number",
+          "total_completed": "number",
+          "tasks": "array of question objects"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/review/feedback",
+        "description": "提交复习反馈（三按钮操作）",
+        "request_schema": {
+          "task_id": "string",
+          "rating": "number (0=忘记, 1=模糊, 2=简单)",
+          "timestamp": "string (ISO 8601)"
+        },
+        "response_schema": {
+          "next_review_date": "string (ISO 8601)",
+          "interval": "number (days)",
+          "status": "string"
+        }
+      }
+    ],
+    "existing_modules_to_reuse": [
+      "core/scheduler.py（改造为FSRS）",
+      "core/syllabus.py（重点提炼）",
+      "core/gap.py（薄弱组卷）",
+      "core/realexams.py（真题考频）",
+      "core/db.py（数据持久化）",
+      "medkit/agents/medreview（复习手册生成）"
+    ]
+  },
+  "testing_requirements": {
+    "unit_tests": "每个功能上线前必须经过pytest测试，核心刷题流测试覆盖率≥80%",
+    "user_tests": "每个阶段交付前必须经过3个真实医学生用户测试",
+    "smoke_test": "verify.cmd一键验证（已有，需持续维护）",
+    "performance_baseline": {
+      "list_scroll": "1000+题滚动≥60fps",
+      "first_load": "首屏加载≤2s",
+      "card_flip": "翻转动画≤300ms"
+    }
+  },
+  "delivery_rhythm": {
+    "cycle": "每两周交付一个可测试版本",
+    "validation": "每个版本包含至少3个真实医学生用户的测试反馈",
+    "next_step_after_validation": "验证通过后进下一阶段，未通过则返回当前阶段修复"
+  },
+  "risk_register": [
+    {
+      "risk_id": "R-01",
+      "description": "FSRS算法接入可能导致现有复习数据不兼容",
+      "severity": "高",
+      "mitigation": "保留SM-2算法作为降级方案，FSRS接入时做数据迁移脚本",
+      "owner": "后端负责人"
+    },
+    {
+      "risk_id": "R-02",
+      "description": "前端重构可能破坏现有产物页（题库/押题卷/复习手册）的样式",
+      "severity": "中",
+      "mitigation": "产物页主题单源（render/pagechrome.py已有），复用主题变量",
+      "owner": "前端负责人"
+    },
+    {
+      "risk_id": "R-03",
+      "description": "手势操作与浏览器默认手势冲突",
+      "severity": "中",
+      "mitigation": "使用Pointer Events API而非Touch Events，正确处理touch-action CSS",
+      "owner": "前端负责人"
+    },
+    {
+      "risk_id": "R-04",
+      "description": "离线缓存数据与服务器数据不一致",
+      "severity": "低",
+      "mitigation": "联网时做数据冲突检测（最后写入时间戳优先），允许用户手动合并",
+      "owner": "全栈"
+    },
+    {
+      "risk_id": "R-05",
+      "description": "AI生成题目质量不稳定影响用户体验",
+      "severity": "高",
+      "mitigation": "保留逐题审核台（已有），生成后强制审核流程，未审核题目不进入刷题池",
+      "owner": "后端负责人"
+    }
+  ],
+  "success_metrics": [
+    {
+      "metric": "核心链路完成率",
+      "baseline": "未知",
+      "target": "≥95%的用户能独立完成上传→刷题全流程"
+    },
+    {
+      "metric": "界面按钮数量",
+      "baseline": "首页>10个入口",
+      "target": "首页≤3个可点击入口"
+    },
+    {
+      "metric": "刷题完成率",
+      "baseline": "未知",
+      "target": "单次刷题会话完成率≥80%"
+    },
+    {
+      "metric": "用户满意度",
+      "baseline": "未知",
+      "target": "≥4.0/5.0（基于用户反馈问卷）"
+    },
+    {
+      "metric": "复习留存率",
+      "baseline": "未知",
+      "target": "用户7日留存率≥60%"
+    },
+    {
+      "metric": "场景贴合度",
+      "baseline": "未区分场景",
+      "target": "期末/考研用户分别评分≥4.5/5.0"
+    }
+  ]
+}
