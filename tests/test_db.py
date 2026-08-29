@@ -60,6 +60,15 @@ def test_downgrade_rollback(iso):
     assert not (_tables() & set(TABLES))
 
 
+@pytest.mark.migration
+def test_v6_realexam_freq_year_column(iso):
+    """v6（真题标注）：realexam_freq 含 year 列（可空，真题文本年份）。"""
+    db.migrate()
+    conn = db.get_conn()
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(realexam_freq)")}
+    assert "year" in cols
+
+
 def test_tx_rollback_on_error(iso):
     db.migrate()
     with pytest.raises(RuntimeError):

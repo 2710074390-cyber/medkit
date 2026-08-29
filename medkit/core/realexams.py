@@ -18,7 +18,15 @@ from typing import Any, Optional
 from . import db as dbs
 from .schema import RealexamNorm, validate_or_repair
 
-_RE_COLS = ("subject", "chapter", "item", "freq", "confirmed", "source", "created_at")
+_RE_COLS = ("subject", "chapter", "item", "freq", "confirmed", "source", "year", "created_at")
+
+# 真题年份提取（PRD 6.3.2 真题标记）：19xx/20xx + 可选「年」字。
+_YEAR_RE = re.compile(r"(?:19|20)\d{2}\s*年?")
+
+
+def _extract_year(s: str) -> str:
+    m = _YEAR_RE.search(s or "")
+    return m.group(0)[:4] if m else ""
 
 
 def _now() -> str:
@@ -49,34 +57,45 @@ def analyze(text: str, subject: str = "") -> dict[str, Any]:
     """真题文本 → 频次草稿（本地词典匹配，零 LLM；主体 = 大纲条目命中计数）。
 
     未命中任何条目/章的句子计入 stats.unmatched（提示归属覆盖不足）。
+    v0.8.1：按段落/句子提取年份（段落级优先，句子级覆盖）——每条草稿带主导年份 `year`，
+    供出题来源标注（source_year）使用。
     """
     dbs.migrate()
     entries = [e for e in _dictionary() if e["item"]]
     chapters_src = [e for e in _dictionary() if e["chapter"]]
     drafts: dict[tuple[str, str, str], int] = {}
     chapter_hits: dict[tuple[str, str], int] = {}
+    # 条目 → {year: 命中句数}（主导年份 = 命中最多的年份）
+    year_hits: dict[tuple[str, str, str], dict[str, int]] = {}
     unmatched = 0
-    for sent in _sentences(text):
-        # 一句可命中多条目标（不再首命中即 break）→ 频次更接近语义命中率
-        hits = [e for e in entries
-                if e["item"] and len(e["item"]) >= 2 and e["item"] in sent]
-        if hits:
-            for hit in hits:
-                subject_of = hit["subject"] or subject
-                key = (subject_of, hit["chapter"] or "", hit["item"])
-                drafts[key] = drafts.get(key, 0) + 1
-            continue
-        # 章级命中（条目词典未覆盖而章名出现）
-        for e in chapters_src:
-            ch = e["chapter"]
-            if ch and len(ch) >= 2 and ch in sent:
-                subj = e["subject"] or subject
-                chapter_hits[(subj, ch)] = chapter_hits.get((subj, ch), 0) + 1
-                break
-        else:
-            unmatched += 1
+    for para in re.split(r"\n\s*\n", text or ""):
+        para_year = _extract_year(para)   # 段落级年份（如「2023 年真题」小标题）
+        for sent in _sentences(para):
+            sent_year = _extract_year(sent) or para_year
+            # 一句可命中多条目标（不再首命中即 break）→ 频次更接近语义命中率
+            hits = [e for e in entries
+                    if e["item"] and len(e["item"]) >= 2 and e["item"] in sent]
+            if hits:
+                for hit in hits:
+                    subject_of = hit["subject"] or subject
+                    key = (subject_of, hit["chapter"] or "", hit["item"])
+                    drafts[key] = drafts.get(key, 0) + 1
+                    if sent_year:
+                        yh = year_hits.setdefault(key, {})
+                        yh[sent_year] = yh.get(sent_year, 0) + 1
+                continue
+            # 章级命中（条目词典未覆盖而章名出现）
+            for e in chapters_src:
+                ch = e["chapter"]
+                if ch and len(ch) >= 2 and ch in sent:
+                    subj = e["subject"] or subject
+                    chapter_hits[(subj, ch)] = chapter_hits.get((subj, ch), 0) + 1
+                    break
+            else:
+                unmatched += 1
     out = {
-        "drafts": [{"subject": k[0], "chapter": k[1], "item": k[2], "freq": v}
+        "drafts": [{"subject": k[0], "chapter": k[1], "item": k[2], "freq": v,
+                    "year": _dominant_year(year_hits.get(k))}
                    for k, v in drafts.items()],
         "chapter_hits": [{"subject": k[0], "chapter": k[1], "freq": v}
                          for k, v in chapter_hits.items()],
@@ -85,6 +104,13 @@ def analyze(text: str, subject: str = "") -> dict[str, Any]:
     }
     out["drafts"].sort(key=lambda d: -d["freq"])
     return out
+
+
+def _dominant_year(years: Optional[dict[str, int]]) -> str:
+    """条目各年份命中计数中的主导年份；无年份 → ""。"""
+    if not years:
+        return ""
+    return max(years, key=lambda y: (years[y], y))
 
 
 # ---------------------------------------------------------------- 人工确认门
@@ -117,7 +143,9 @@ def confirm(items: list[dict[str, Any]]) -> dict[str, Any]:
             exists = cur.execute("SELECT 1 FROM realexam_freq WHERE id=?", (rid,)).fetchone()
             rec = {"id": rid, "subject": subj, "chapter": ch, "item": item,
                    "freq": freq, "confirmed": 1 if it.get("confirmed", True) else 0,
-                   "source": it.get("source") or "manual", "created_at": _now()}
+                   "source": it.get("source") or "manual",
+                   "year": str(it.get("year") or "")[:4] or "",
+                   "created_at": _now()}
             dbs.put_row(cur, "realexam_freq", rec, _RE_COLS)
             if exists:
                 updated += 1
@@ -218,3 +246,34 @@ def analyze_llm(client: Any, text: str, subject: str = "", enabled: bool = False
     drafts = [item.model_dump() for item in norm.items]
     return {"drafts": drafts, "stats": {"sentences": len(_sentences(text)),
                                         "items": len(drafts), "unmatched": 0}}
+
+
+# ---------------------------------------------------------------- 出题来源标注（v0.8.1 · 零 LLM）
+def annotate_questions(questions: list[dict[str, Any]], subject: str = "") -> list[dict[str, Any]]:
+    """题目来源标注（PRD 6.3.2 真题标记）：题干/章节命中**已确认**考频条目 →
+    source_type='真题' + source_year=该条目主导年份（无年份 → 空串）。
+
+    - 仅基于人工确认门后的频次数据（未确认不标注，WP-02 红线）；
+    - 已带 source_type/source_year 的题目跳过（管线写回后的幂等）；
+    - 就地修改并返回同一列表（渲染层 / 管线收尾复用）。
+    """
+    dbs.migrate()
+    rows = list_drafts(subject, confirmed=True)
+    best: dict[str, tuple[int, str]] = {}   # item → (freq, year)
+    for r in rows:
+        it = str(r.get("item") or "").strip()
+        if len(it) < 2:
+            continue
+        f = int(r.get("freq") or 0)
+        cur = best.get(it)
+        if cur is None or f > cur[0]:
+            best[it] = (f, str(r.get("year") or "")[:4])
+    for q in questions:
+        if not isinstance(q, dict) or q.get("source_type"):
+            continue
+        hay = f"{q.get('subtopic') or ''} {q.get('question') or ''}"
+        hit = next((it for it in best if it in hay), None)
+        if hit:
+            q["source_type"] = "真题"
+            q["source_year"] = best[hit][1] or ""
+    return questions

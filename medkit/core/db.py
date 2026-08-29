@@ -130,7 +130,16 @@ _V5_DOWN: list[str] = [
     "DROP TABLE IF EXISTS cards",
 ]
 
-MIGRATIONS: list[int] = [1, 2, 3, 4, 5]  # 版本列表（只增不改）
+# v6（2026-08-29 真题标注）：realexam_freq 增 year 列（真题文本提取的年份，可空；
+# 供出题来源标注 source_year 使用）。SQLite ALTER ADD COLUMN 可回滚性差，
+# DOWN 留空——回滚兜底依赖升级前全量自动备份（ADR-005 既有机制）。
+_V6_UP: list[str] = [
+    "ALTER TABLE realexam_freq ADD COLUMN year TEXT",
+]
+
+_V6_DOWN: list[str] = []
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -154,6 +163,13 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         for stmt in _V5_UP:
             cur.execute(stmt)
         return
+    if ver == 6:
+        # 幂等防御：重升级路径（如测试模拟旧库 / 手工降 user_version）下列可能已存在
+        cur.execute("PRAGMA table_info(realexam_freq)")
+        cols = {r[1] for r in cur.fetchall()}
+        if "year" not in cols:
+            cur.execute("ALTER TABLE realexam_freq ADD COLUMN year TEXT")
+        return
     raise ValueError(f"未知迁移版本 {ver}")
 
 
@@ -176,6 +192,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 5:
         for stmt in _V5_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 6:
+        for stmt in _V6_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

@@ -26,6 +26,7 @@ button.mini,.mini,.btn{background:var(--card);border:1px solid var(--line);color
 .hint.bad{color:var(--bad)}
 .tag{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11.5px;background:rgba(56,189,248,.14);color:var(--acc);margin-right:6px}
 .tag.b{background:rgba(52,211,153,.14);color:var(--good)}
+.tag.src{background:rgba(245,158,11,.15);color:var(--miss)}
 .chip{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11.5px;font-weight:600}
 .chip.yes{background:rgba(52,211,153,.16);color:var(--good)}
 .chip.no{background:rgba(248,113,113,.16);color:var(--bad)}

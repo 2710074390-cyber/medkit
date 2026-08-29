@@ -639,6 +639,13 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         meta["image_warning"] = True
         _write_json_atomic(meta_path, meta)
     (base / "最终产物").mkdir(exist_ok=True)
+    # v0.8.1 真题标注（PRD 6.3.2）：题干/章节命中已确认考频条目 → 写回 source_type/source_year
+    # （零 LLM；未确认考频不标注，WP-02 红线）
+    try:
+        from ..core import realexams as _rex
+        _rex.annotate_questions(questions, subject)
+    except Exception as _e:  # noqa: BLE001  标注失败不阻断产物落盘
+        _log(base, f"  ⚠️ 真题来源标注失败（不影响产物）：{_e}")
     (base / "最终产物" / "questions_final.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
     _log(base, f"  最终题库 {len(questions)} 题")

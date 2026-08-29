@@ -129,18 +129,19 @@ def test_switch_algo_affects_new_cards_only(iso):
 
 # ---------------------------------------------------------------- 旧库升级路径（打包/存量用户）
 def test_old_db_autoupgrade_on_first_read(monkeypatch, tmp_path):
-    """NX-04：旧库（v4，无 cards 表）首次读取自动迁移 v5（存量用户升级路径，防 500）。"""
+    """NX-04：旧库（v4，无 cards 表）首次读取自动迁移（存量用户升级路径，防 500）。
+    v0.8.1：迁移目标已升至最新版（含 v6 真题年份列）；升级幂等（year 列存在时跳过 ALTER）。"""
     libd = tmp_path / "library"
     monkeypatch.setattr(cardlib, "LIBRARY_DIR", libd)
     monkeypatch.setattr(cardlib, "CARDS_FILE", libd / "memory_cards.json")
     monkeypatch.setattr(cardlib, "DB_FILE", libd / "medkit.db")
-    dbs.migrate()                                # 先建到 v5 再手工模拟 v4 旧库
+    dbs.migrate()                                # 先建到最新版再手工模拟 v4 旧库
     with dbs.tx(write=True) as cur:
         cur.execute("DROP TABLE IF EXISTS cards")
         cur.execute("PRAGMA user_version = 4")
     assert dbs.user_version() == 4
     assert cardlib.list_cards() == [], "旧库首读应自动升级而非 500"
-    assert dbs.user_version() == 5, "首读后应升级到 v5"
+    assert dbs.user_version() == dbs.MIGRATIONS[-1], "首读后应升级到最新版"
 
 
 # ---------------------------------------------------------------- 路由（flag 门禁 + 全链路）

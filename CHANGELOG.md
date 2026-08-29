@@ -8,6 +8,19 @@
 
 ## [Unreleased]
 
+### 差距审查批次E（2026-08-29，真题来源标注全链：决策 4 本期交付）
+
+#### Added
+
+- **考频年份提取**：迁移 v6（`realexam_freq` 增 `year` 列，可空，幂等升级）；真题解析按「段落级年份继承 + 句子级年份覆盖」提取 `(19|20)xx 年`，草稿/确认记录带主导年份。
+- **题目来源标注**（PRD 6.3.2 真题标记，零 LLM）：题干/章节命中**已确认**考频条目 → `source_type='真题'` + `source_year=主导年份`（未确认不标注，WP-02 红线）。三处接入：① 生成管线收尾写回 `questions_final.json`（新项目持久化）；② `/api/projects/{pid}/questions` 读取时兜底标注（老项目实时补齐，不写文件）；③ 审核台「保存并重渲染」前补齐。`QuestionItem` 契约新增可选 `source_type/source_year`（缺省空，不破坏旧产物）。
+- **来源标签渲染**：题库 HTML（单题/案例/选项组摘要）、押题卷卡面、题库 MD、Anki .txt 前端、审核台题目卡统一显示「20XX 真题」标签（`.tag.src`，pagechrome 单源样式）。
+- **年份筛选**：题库页新增「按真题年份过滤」（与题型/Bloom/关键词联动，localStorage 按项目隔离记忆）；审核台新增年份筛选下拉。
+
+#### Changed
+
+- `realexam_freq` 存储列扩展（`_RE_COLS` 含 year）；`test_old_db_autoupgrade_on_first_read` 升级断言改为「首读升级到最新版」。
+
 ### 差距审查批次D（2026-08-29，视觉统一：青绿主色 + 字号四级）
 
 #### Changed

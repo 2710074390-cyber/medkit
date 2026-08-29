@@ -156,6 +156,25 @@ def _esc_anki(s: Any) -> str:
     return _esc(s).replace("\n", "<br>").replace("\t", " ")
 
 
+def _src_tag(q: dict[str, Any]) -> str:
+    """真题来源标签（PRD 6.3.2 真题标记）：source_type=真题 且带年份 → 「20XX 真题」；
+    仅类型无年份 → 「真题」。无标注 → 空串。"""
+    st = str(q.get("source_type") or "")
+    if st != "真题":
+        return ""
+    yr = str(q.get("source_year") or "")[:4]
+    label = f"{yr} 真题" if yr else "真题"
+    return f'<span class="tag src">{html_mod.escape(label)}</span>'
+
+
+def _src_text(q: dict[str, Any]) -> str:
+    """来源文本（MD / Anki 行内标记，无标签样式环境）。"""
+    if str(q.get("source_type") or "") != "真题":
+        return ""
+    yr = str(q.get("source_year") or "")[:4]
+    return f"{yr}真题" if yr else "真题"
+
+
 def _md_media(q: dict[str, Any]) -> list[str]:
     """MD 版图/表题：data_table 渲染为 Markdown 表格；图片标注（base64 不内嵌文本，提示见 HTML 版）。"""
     out: list[str] = []
@@ -171,7 +190,9 @@ def _md_media(q: dict[str, Any]) -> list[str]:
 
 
 def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = True) -> list[str]:
-    out = [f"{prefix} {q.get('id')} · {TYPE_LABELS.get(q.get('type'), q.get('type', ''))} · {q.get('bloom', '')}"]
+    src = _src_text(q)
+    out = [f"{prefix} {q.get('id')} · {TYPE_LABELS.get(q.get('type'), q.get('type', ''))} · {q.get('bloom', '')}"
+           + (f" · {src}" if src else "")]
     out.append(f"**{q.get('subtopic', '')}**")
     out.append(q.get("question", ""))
     if show_options:
@@ -223,8 +244,10 @@ def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
             media_note = "⚠️ 本题含图（如图所示）——图片不在 Anki 卡内，请回 题库.html 查看原图。"
         elif q.get("data_table"):
             media_note = "⚠️ 本题含表格数据——表格不在 Anki 卡内，请回 题库.html 查看。"
+        src = _src_text(q)
         front = [f"<b>Q{q.get('id', '')}</b> · {_esc_anki(q.get('type', ''))}型 · {_esc_anki(q.get('bloom', ''))} · "
-                 f"{_esc_anki(q.get('subtopic', ''))}",
+                 f"{_esc_anki(q.get('subtopic', ''))}"
+                 + (f" · {_esc_anki(src)}" if src else ""),
                  _esc_anki(front_question)]
         for i, o in enumerate(_effective_options(q)):
             front.append(f"{LETTERS[i]}. {_esc_anki(o)}")
@@ -258,6 +281,10 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
     D8：筛选记忆按项目（pid）隔离，跨项目不再串台。
     """
     items: list[tuple[str, int]] = []
+    years = sorted({str(q.get("source_year") or "")[:4] for q in questions
+                    if str(q.get("source_year") or "")[:4]}, reverse=True)
+    year_opts = "".join(f'<option value="{html_mod.escape(y)}">{html_mod.escape(y)} 年</option>'
+                        for y in years)
     for b in _case_blocks(questions):
         if b["kind"] == "case":
             first = b["items"][0]
@@ -266,8 +293,9 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
             items.append((
                 f'<details class="q case" data-type="{html_mod.escape(str(first.get("type", "")))}" '
                 f'data-group="case" data-blm="{html_mod.escape(str(first.get("bloom", "")))}" '
+                f'data-yr="{html_mod.escape(str(first.get("source_year") or "")[:4])}" '
                 f'data-kw="{html_mod.escape(kw.lower())}">'
-                f'<summary class="qs"><span class="tag">📋 案例 '
+                f'<summary class="qs">{_src_tag(first)}<span class="tag">📋 案例 '
                 f'{html_mod.escape(str(b["key"][1]))}</span> '
                 f'{html_mod.escape(TYPE_LABELS.get(str(first.get("type", "")), ""))} · '
                 f'{len(b["items"])} 道子题 · 点击展开案例题干</summary>'
@@ -276,14 +304,18 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 + "".join(_html_sub(q) for q in b["items"]) + '</div></details>',
                 len(b["items"])))
         elif b["kind"] == "option_group":
+            first = b["items"][0]
             shared = "<ul>" + "".join(
                 f"<li><b>{LETTERS[i]}</b> · {html_mod.escape(str(o))}</li>"
                 for i, o in enumerate(b["options"])) + "</ul>"
             kw = " ".join(str(q.get("id", "")) + " " + str(q.get("question", "")) + " " + str(q.get("subtopic", ""))
                           for q in b["items"]) + " B1 选项组 共享选项"
             items.append((
-                f'<details class="q case" data-type="B1" data-group="og" data-blm="{html_mod.escape(str(b["items"][0].get("bloom", "")))}" data-kw="{html_mod.escape(kw.lower())}">'
-                f'<summary class="qs"><span class="tag">🧩 选项组（B1）</span>'
+                f'<details class="q case" data-type="B1" data-group="og" '
+                f'data-blm="{html_mod.escape(str(first.get("bloom", "")))}" '
+                f'data-yr="{html_mod.escape(str(first.get("source_year") or "")[:4])}" '
+                f'data-kw="{html_mod.escape(kw.lower())}">'
+                f'<summary class="qs">{_src_tag(first)}<span class="tag">🧩 选项组（B1）</span>'
                 f'（{len(b["items"])} 题共享下列选项）</summary>'
                 f'<div class="qb">{shared}'
                 + "".join(_html_sub(q, show_options=False) for q in b["items"]) + '</div></details>',
@@ -298,8 +330,10 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
             items.append((
                 f'<details class="q" data-type="{html_mod.escape(str(q.get("type", "")))}" '
                 f'data-group="single" data-blm="{html_mod.escape(str(q.get("bloom", "")))}" '
+                f'data-yr="{html_mod.escape(str(q.get("source_year") or "")[:4])}" '
                 f'data-kw="{html_mod.escape(kw.lower())}">'
                 f'<summary class="qs">'
+                f'{_src_tag(q)}'
                 f'<span class="tag">{html_mod.escape(str(q.get("type", "")))}</span> '
                 f'<span class="tag b">{html_mod.escape(str(q.get("bloom", "")))}</span> '
                 f'{html_mod.escape(str(q.get("question", ""))[:60])}…</summary>'
@@ -341,6 +375,9 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
     <option value="">全部层级</option><option value="记忆">记忆</option><option value="理解">理解</option>
     <option value="应用">应用</option><option value="创造">创造</option>
   </select>
+  <select id="qbyear" aria-label="按真题年份过滤">
+    <option value="">全部年份</option>{year_opts}
+  </select>
   <input id="qsearch" type="search" aria-label="搜索题干 / 考点 / 章节" placeholder="🔍 搜索题干 / 考点 / 章节…" oninput="ftq(this.value)">
   <button id="qreset" class="mini" title="清除全部筛选" aria-label="清除全部筛选" onclick="resetFilter()">重置</button>
 </div>
@@ -353,7 +390,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
 <script>
 const QB_PID={pid_json};
 const QB_KEY="medkitQbFilter-"+(QB_PID||(("f"+location.pathname+"#"+document.title).split("").reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7).toString(36)));
-let FT_T='',FT_B='',FT_Q='';
+let FT_T='',FT_B='',FT_Q='',FT_Y='';
 const PS=50;
 let PAGES=Math.max(1,document.querySelectorAll('.qpage').length);
 let PG=0;
@@ -362,7 +399,7 @@ function renderPg(){{
   const info=document.getElementById('pginfo');
   if(info) info.textContent='第 '+(PG+1)+' / '+PAGES+' 页';
   const pr=document.getElementById('qpager');
-  if(pr) pr.style.display=(FT_T||FT_B||FT_Q)?'none':'flex';
+  if(pr) pr.style.display=(FT_T||FT_B||FT_Q||FT_Y)?'none':'flex';
 }}
 function pg(d){{
   PG=Math.max(0,Math.min(PAGES-1,PG+d));
@@ -370,7 +407,7 @@ function pg(d){{
   window.scrollTo({{top:0,behavior:'smooth'}});
 }}
 function saveFilter(){{
-  try{{localStorage.setItem(QB_KEY,JSON.stringify({{t:FT_T,b:FT_B,q:FT_Q}}));}}catch(e){{}}
+  try{{localStorage.setItem(QB_KEY,JSON.stringify({{t:FT_T,b:FT_B,q:FT_Q,y:FT_Y}}));}}catch(e){{}}
 }}
 function ft(t,btn){{
   FT_T=t;
@@ -384,11 +421,13 @@ function ft(t,btn){{
 }}
 function ftq(v){{FT_Q=(v||'').toLowerCase().trim();saveFilter();apply();}}
 function ftb(v){{FT_B=(v||'');saveFilter();apply();}}
+function fty(v){{FT_Y=(v||'');saveFilter();apply();}}
 function resetFilter(){{
-  FT_T='';FT_B='';FT_Q='';
+  FT_T='';FT_B='';FT_Q='';FT_Y='';
   document.querySelectorAll('.filters button').forEach(b=>{{b.classList.remove('on');
     if(b.getAttribute('data-t')==='') b.classList.add('on');}});
   const bs=document.getElementById('qbloom'); if(bs) bs.value='';
+  const by=document.getElementById('qbyear'); if(by) by.value='';
   const qs=document.getElementById('qsearch'); if(qs) qs.value='';
   try{{localStorage.removeItem(QB_KEY);}}catch(e){{}}
   apply();
@@ -399,15 +438,16 @@ function apply(){{
     const okT=!FT_T||(FT_T==='case'&&d.dataset.group==='case')||(FT_T==='og'&&d.dataset.group==='og')||(d.dataset.type||'')===FT_T;
     const okB=!FT_B||(d.dataset.blm||'')===FT_B;
     const okQ=!FT_Q||(d.dataset.kw||'').indexOf(FT_Q)>-1;
-    d.style.display=(okT&&okB&&okQ)?'':'none';
-    if(okT&&okB&&okQ) n++;
+    const okY=!FT_Y||(d.dataset.yr||'')===FT_Y;
+    d.style.display=(okT&&okB&&okQ&&okY)?'':'none';
+    if(okT&&okB&&okQ&&okY) n++;
   }});
   // 过滤/搜索激活 → 跨页显示全部匹配（分页条隐藏）；未过滤 → 回到当前页
-  const filtered=!!(FT_T||FT_B||FT_Q);
+  const filtered=!!(FT_T||FT_B||FT_Q||FT_Y);
   document.querySelectorAll('.qpage').forEach(p=>{{p.style.display=filtered?'':'none';}});
   if(!filtered) renderPg();
   const c=document.getElementById('qcount');
-  if(c) c.textContent=(FT_T||FT_B||FT_Q)?('显示 '+n+' / '+document.querySelectorAll('details.q').length+' 题'):'';
+  if(c) c.textContent=(FT_T||FT_B||FT_Q||FT_Y)?('显示 '+n+' / '+document.querySelectorAll('details.q').length+' 题'):'';
 }}
 function setCounts(){{
   const c={{}};
@@ -422,21 +462,23 @@ function setCounts(){{
 }}
 setCounts();
 renderPg();
-/* 记忆上次过滤状态（题型/Bloom/关键词），下次打开保持不变（按项目隔离，D8） */
+/* 记忆上次过滤状态（题型/Bloom/关键词/年份），下次打开保持不变（按项目隔离，D8） */
 try{{
   const saved=JSON.parse(localStorage.getItem(QB_KEY)||'null');
-  if(saved&&(saved.t||saved.b||saved.q)){{
-    FT_T=saved.t||'';FT_B=saved.b||'';FT_Q=saved.q||'';
+  if(saved&&(saved.t||saved.b||saved.q||saved.y)){{
+    FT_T=saved.t||'';FT_B=saved.b||'';FT_Q=saved.q||'';FT_Y=saved.y||'';
     document.querySelectorAll('.filters button').forEach(b=>{{
       if(b.getAttribute('data-t')===FT_T) b.classList.add('on');
       else b.classList.remove('on');
     }});
     const bs=document.getElementById('qbloom'); if(bs) bs.value=FT_B||'';
+    const by=document.getElementById('qbyear'); if(by) by.value=FT_Y||'';
     const qs=document.getElementById('qsearch'); if(qs) qs.value=FT_Q||'';
     apply();
   }}
 }}catch(e){{}}
 document.getElementById('qbloom').addEventListener('change',function(){{ftb(this.value);}});
+document.getElementById('qbyear').addEventListener('change',function(){{fty(this.value);}});
 </script>""", extras="qbank")
 
 
@@ -458,6 +500,8 @@ def _questions_json_for_page(questions: list[dict[str, Any]],
                         "case_id": q.get("case_id", ""),
                         "case_stem": q.get("case_stem", ""),
                         "case_order": q.get("case_order", 0),
+                        "source_type": str(q.get("source_type") or ""),
+                        "source_year": str(q.get("source_year") or "")[:4],
                         "media": render_media(q, image_index)})
     return json.dumps(compact, ensure_ascii=False).replace("</", "<\\/")
 
@@ -547,7 +591,9 @@ function render(){{
     }}
     if(q.media) h+=q.media;
     h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(TL[q.type]||q.type)+'</span>'
-      +'<span class="tag b">'+esc(q.bloom)+'</span> <b>'+(i+1)+'.</b> '+esc(q.question)+'</p>';
+      +'<span class="tag b">'+esc(q.bloom)+'</span>'
+      +(q.source_type==='真题'?'<span class="tag src">'+esc(q.source_year?q.source_year+' ':'')+'真题</span>':'')
+      +' <b>'+(i+1)+'.</b> '+esc(q.question)+'</p>';
     h+='<fieldset class="optfs"><legend class="sr">第 '+(i+1)+' 题选项</legend>';
     q.options.forEach((o,j)=>{{
       const t=q.type==="X"?"checkbox":"radio";

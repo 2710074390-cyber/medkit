@@ -27,6 +27,25 @@ def test_letters_cover_render_max():
     assert len(LETTERS) >= RENDER_MAX_OPTIONS
 
 
+def test_qbank_html_source_tag_and_year_filter():
+    """v0.8.1 真题标记：来源标签（20XX 真题）与年份筛选器进入题库 HTML（含 data-yr）。"""
+    qs = [{"id": "Q001", "type": "A1", "bloom": "理解", "subtopic": "呼吸",
+           "question": "肺通气机制？", "options": ["a", "b", "c", "d", "e"],
+           "answer": "A", "analysis": "解析",
+           "source_type": "真题", "source_year": "2023"},
+          {"id": "Q002", "type": "A1", "bloom": "理解", "subtopic": "呼吸",
+           "question": "另一题？", "options": ["a", "b", "c", "d", "e"],
+           "answer": "B", "analysis": "解析"}]
+    h = export_html(qs, "题库")
+    assert '<span class="tag src">2023 真题</span>' in h
+    assert 'id="qbyear"' in h
+    assert '<option value="2023">2023 年</option>' in h
+    assert 'data-yr="2023"' in h and 'data-yr=""' in h
+    # 押题卷卡面同样带来源标签（QUESTIONS 内嵌字段 → JS 渲染）
+    p = export_paper_html(qs, "押题卷")
+    assert '"source_year": "2023"' in p
+
+
 def test_options_over_limit_flags_R14():
     q = {"id": "Q1", "type": "A1", "bloom": "理解", "question": "题",
          "options": [f"选项{i}" for i in range(7)], "answer": "A",

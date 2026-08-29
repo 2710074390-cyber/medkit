@@ -40,6 +40,39 @@ def test_analyze_counts_and_unmatched(dict_seed):
     assert next(d["freq"] for d in out2["drafts"] if d["item"] == "肺通气") == 2
 
 
+def test_analyze_extracts_year(dict_seed):
+    """v0.8.1 真题标记：段落级年份继承（标题）+ 句子级年份覆盖；草稿带主导年份。"""
+    text = ("2023 年真题\n"
+            "肺通气 的机制是什么？\n\n"
+            "2021年\n肺炎链球菌肺炎首选青霉素。\n\n"
+            "2022 年\n2024年心力衰竭的 NYHA 分级？\n")
+    out = rex.analyze(text, "内科学")
+    by_item = {d["item"]: d for d in out["drafts"]}
+    assert by_item["肺通气"]["year"] == "2023"              # 段落年份继承
+    assert by_item["肺炎链球菌肺炎"]["year"] == "2021"      # 段落年份继承
+    assert by_item["心力衰竭"]["year"] == "2024"            # 句子级年份覆盖段落级
+
+
+def test_annotate_questions_sources(dict_seed):
+    """v0.8.1：已确认考频条目 → 题目标注 真题+年份；未确认不标注；已标注幂等跳过。"""
+    drafts = rex.analyze("2022年\n肺通气 机制？\n", "内科学")["drafts"]
+    assert drafts[0]["year"] == "2022"
+    rex.confirm_drafts(drafts)
+    qs = [
+        {"id": "Q001", "type": "A1", "bloom": "理解", "subtopic": "呼吸",
+         "question": "下列关于肺通气的说法正确的是？", "options": [], "answer": "A"},
+        {"id": "Q002", "type": "A1", "bloom": "理解", "subtopic": "循环",
+         "question": "心绞痛发作首选药物是？", "options": [], "answer": "A"},
+    ]
+    rex.annotate_questions(qs, "内科学")
+    assert qs[0]["source_type"] == "真题" and qs[0]["source_year"] == "2022"
+    assert not qs[1].get("source_type"), "未命中已确认考频条目的题不应标注"
+    # 幂等：已有标注不被覆盖
+    qs[0]["source_year"] = "2020"
+    rex.annotate_questions(qs, "内科学")
+    assert qs[0]["source_year"] == "2020"
+
+
 def test_confirm_gate_and_freq_view(dict_seed):
     assert rex.freq_view("内科学")["total"] == 0          # 未确认 → 不进权重/视图
     drafts = rex.analyze("肺通气 机制？\n心力衰竭 分级？\n", "内科学")["drafts"]

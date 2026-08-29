@@ -1422,7 +1422,7 @@ $("btn_delete").onclick = () => {
 $("btn_review").onclick = () => openReview();
 let reviewState = { questions: [], keep: null, drop: new Set(), edits: {}, dirty: false,
                     select: new Set(),
-                    filter: { q: "", type: "", bloom: "" } };
+                    filter: { q: "", type: "", bloom: "", year: "" } };
 /* 审核台脏状态守卫：切主 tab / 换项目 / 刷新关闭都要确认（防未保存修改静默丢失） */
 function reviewDirtyGuard() {
   if (reviewState.dirty && !confirm("审核台有未保存的修改（剔除/编辑/重掷尚未保存），确定离开？修改将丢失。")) return false;
@@ -1455,6 +1455,7 @@ function updateRevCount() {
 function revFilterText(q) {
   const ed = reviewState.edits[q.id] || {};
   return ((q.id || "") + " " + (q.type || "") + " " + (q.bloom || "") + " " + (q.subtopic || "")
+    + " " + (q.source_type || "") + " " + String(q.source_year || "")
     + " " + (ed.question ?? q.question ?? "")).toLowerCase();
 }
 function applyReviewFilter() {
@@ -1470,7 +1471,8 @@ function applyReviewFilter() {
     const okT = !f.type || q.type === f.type;
     const okB = !f.bloom || q.bloom === f.bloom;
     const okQ = !f.q || revFilterText(q).includes(f.q);
-    const show = okT && okB && okQ;
+    const okY = !f.year || (q.source_year || "") === f.year;
+    const show = okT && okB && okQ && okY;
     el.style.display = show ? "" : "none";
     if (show) visible++;
   });
@@ -1517,6 +1519,12 @@ function renderReview(scrollToId = null) {
       <select id="rev_fbloom"><option value="">全部层级</option>
         ${BLOOMS.slice(1).map(b => `<option value="${b}" ${reviewState.filter.bloom === b ? "selected" : ""}>${b}</option>`).join("")}
       </select>
+      <select id="rev_fyear" title="按真题年份过滤"><option value="">全部年份</option>
+        ${[...new Set(qs.map(q => String(q.source_year || "").slice(0, 4)))]
+          .filter(y => y)
+          .sort().reverse()
+          .map(y => `<option value="${esc(y)}" ${reviewState.filter.year === y ? "selected" : ""}>${esc(y)} 年</option>`).join("")}
+      </select>
       <span id="rev_batch" style="display:none;align-items:center;gap:6px">
         <span class="hint" id="rev_batch_n" style="margin:0"></span>
         <select id="rev_bb" style="min-width:96px"><option value="">Bloom →</option>
@@ -1550,6 +1558,7 @@ function renderReview(scrollToId = null) {
   $("rev_search").oninput = e => { reviewState.filter.q = e.target.value.trim().toLowerCase(); applyReviewFilter(); };
   $("rev_ftype").onchange = e => { reviewState.filter.type = e.target.value; applyReviewFilter(); };
   $("rev_fbloom").onchange = e => { reviewState.filter.bloom = e.target.value; applyReviewFilter(); };
+  $("rev_fyear").onchange = e => { reviewState.filter.year = e.target.value; applyReviewFilter(); };
   $("rev_keepall").onclick = () => {
     reviewState.drop.clear();
     reviewState.dirty = true;
@@ -1628,6 +1637,7 @@ function renderReview(scrollToId = null) {
       <div class="qhead">
         <input type="checkbox" class="revck" title="勾选以批量操作">
         <b>${esc(q.id)}</b><span class="tag">${esc(q.type)}</span><span class="tag">${esc(q.bloom)}</span>
+        ${q.source_type === "真题" ? `<span class="tag" style="background:rgba(245,158,11,.15);color:var(--warn)">${esc((q.source_year ? String(q.source_year).slice(0, 4) + " " : "") + "真题")}</span>` : ""}
         <span class="hint">${esc(q.subtopic || "")}</span>
         <button class="inlineBtn revact" data-a="drop">${dropped ? "↩ 恢复" : "✗ 剔除"}</button>
         <button class="inlineBtn blue revact" data-a="edit">编辑</button>

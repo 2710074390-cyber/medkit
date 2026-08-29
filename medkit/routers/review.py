@@ -25,11 +25,18 @@ router = APIRouter()
 def project_questions(pid: str) -> dict[str, Any]:
     pid = _safe_pid(pid)
     base = proj_dir(pid)
-    _read_meta_checked(base)
+    meta = _read_meta_checked(base)
     f = base / "最终产物" / "questions_final.json"
     if not f.exists():
         raise HTTPException(404, "题库尚未生成，请先「开始生成」")
-    return {"questions": json.loads(f.read_text(encoding="utf-8"))}
+    questions = json.loads(f.read_text(encoding="utf-8"))
+    # v0.8.1 真题标注兜底：老项目题目无 source 字段 → 读取时实时标注（不写回文件）
+    from ..core import realexams as _rex
+    try:
+        _rex.annotate_questions(questions, meta.get("subject", ""))
+    except Exception:  # noqa: BLE001  标注失败不阻断题目读取
+        pass
+    return {"questions": questions}
 
 
 def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any],
@@ -43,6 +50,12 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
     from ..render import qbank_html, review_html
     subject = meta.get("subject", "")
     toggles = meta.get("toggles", {})
+    # v0.8.1 真题标注：渲染前补齐 source_type/source_year（老项目产物同样带标签；幂等）
+    try:
+        from ..core import realexams as _rex
+        _rex.annotate_questions(questions, subject)
+    except Exception:  # noqa: BLE001
+        pass
     out_dir = base / "最终产物"
     out_dir.mkdir(exist_ok=True)
     rendered: list[str] = []

@@ -95,6 +95,9 @@ class QuestionItem(BaseModel):
     # WP-04：图 / 表题可选字段。
     image_ref: str = ""
     data_table: str = ""
+    # v0.8.1 真题标注（PRD 6.3.2）：管线收尾/渲染层按已确认考频条目标注，缺省为空（不破坏旧产物）。
+    source_type: str = ""
+    source_year: str = ""
 
     @field_validator("options", mode="before")
     @classmethod
@@ -115,7 +118,7 @@ class QuestionItem(BaseModel):
             return 0
 
     @field_validator("type", "bloom", "subtopic", "case_id", "case_stem", "group_kind",
-                     "image_ref", "data_table", mode="before")
+                     "image_ref", "data_table", "source_type", "source_year", mode="before")
     @classmethod
     def _word_str(cls, v: Any) -> str:
         return str(v or "")
