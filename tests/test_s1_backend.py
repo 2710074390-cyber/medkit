@@ -139,13 +139,19 @@ def test_review_rejects_answer_outside_option_range(monkeypatch, tmp_path):
 
     c = _client()
     r = c.post(f"/api/projects/{pid}/questions/review",
-               json={"keep": [], "edits": [{"id": "Q1", "answer": "D"}]})
+               json={"keep": ["Q1"], "edits": [{"id": "Q1", "answer": "D"}]})
     assert r.status_code == 400, r.text
     assert "答案键有误" in r.json()["detail"]
 
     r2 = c.post(f"/api/projects/{pid}/questions/review",
-                json={"keep": [], "edits": [{"id": "Q1", "answer": "C"}]})
+                json={"keep": ["Q1"], "edits": [{"id": "Q1", "answer": "C"}]})
     assert r2.status_code == 200, r2.text
+
+    # C-10：keep=[] 明确剔除全部 → 400；未传 keep → 全保留
+    r3 = c.post(f"/api/projects/{pid}/questions/review", json={"keep": []})
+    assert r3.status_code == 400 and "保留题数为 0" in r3.json()["detail"]
+    r4 = c.post(f"/api/projects/{pid}/questions/review", json={"edits": []})
+    assert r4.status_code == 200, r4.text
 
 
 def test_review_concurrent_edits_no_lost_update(monkeypatch, tmp_path):
@@ -174,7 +180,8 @@ def test_review_concurrent_edits_no_lost_update(monkeypatch, tmp_path):
     def worker(i: int) -> None:
         cc = _client()
         r = cc.post(f"/api/projects/{pid}/questions/review",
-                    json={"keep": [], "edits": [{"id": f"Q{i}", "question": f"编辑后题{i}"}]})
+                    json={"keep": [f"Q{j}" for j in range(1, 6)],
+                          "edits": [{"id": f"Q{i}", "question": f"编辑后题{i}"}]})
         results.append((i, r.status_code))
 
     threads = [_th.Thread(target=worker, args=(i,)) for i in range(1, 6)]

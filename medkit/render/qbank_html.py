@@ -555,6 +555,7 @@ let secs = 0;
 let judged = false;   // 判分防重入：提交一次后再次点击不重复计分/铺解析
 let showCt = false;   // 限时模式开关（当前页面生命周期内）
 let stInvalidated = false;   // R3S-04：卷面指纹不匹配 → 清档并提示（一次性迁移，不静默套旧答案）
+let autoGrading = false;    // C-08：限时到点自动判分防重入（取消确认后不再每秒弹窗）
 
 function esc(s){{return String(s??"").replace(/[&<>"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));}}
 function loadState(){{try{{return JSON.parse(localStorage.getItem(KEY)||"null")}}catch(e){{return null}}}}
@@ -866,7 +867,7 @@ async function syncWrong(manual){{
 
 const T0_START=(getState()).t0||Date.now();
 let T0 = T0_START;
-function t0Reset(){{ T0=Date.now(); secs=0; }}
+function t0Reset(){{ T0=Date.now(); secs=0; autoGrading=false; }}   // C-08：重做重置自动判分防重入标志
 function fmtT(s){{const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}}
 function ctLimit(){{
   const m=Math.max(5,Math.min(240,parseInt((document.getElementById('ctMin')||{{}}).value||'60',10)||60));
@@ -885,7 +886,14 @@ function tick(){{
   if(showCt){{
     const left=Math.max(0,ctLimit()-secs);
     el.textContent='⏳ 剩 '+Math.floor(left/60)+':'+(left%60<10?'0':'')+(left%60);
-    if(left<=0 && !judged){{ grade(); return; }}
+    if(left<=0 && !judged){{
+      if(!autoGrading){{
+        autoGrading = true;
+        banner('⏳ 限时已到——提交判分，或继续作答后手动点「提交判分」', true);
+        grade();
+      }}
+      return;
+    }}
   }} else el.textContent='⏱ '+fmtT(secs)+'（练习计时）';
 }}
 setInterval(tick,1000); tick();

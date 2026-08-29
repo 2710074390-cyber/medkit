@@ -132,7 +132,8 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
 
 
 class ReviewBody(BaseModel):
-    keep: list[str] = []
+    # C-10：keep 未传 = 全保留；keep=[] = 明确「全部剔除」→ 拒绝（前端把剔除编码进 keep）
+    keep: list[str] | None = None
     drop: list[str] = []
     edits: list[dict[str, Any]] = []
 
@@ -183,7 +184,10 @@ def _review_questions_locked(pid: str, body: ReviewBody) -> dict[str, Any]:
     if not f.exists():
         raise HTTPException(404, "题库尚未生成")
     questions = json.loads(f.read_text(encoding="utf-8"))
-    keep_set = set(body.keep) if body.keep else None          # 空 = 全保留
+    if body.keep is not None and not body.keep:
+        # C-10：明确剔除全部（keep=[]）→ 400 并引导；未传 keep 才是「全保留」
+        raise HTTPException(400, "保留题数为 0，请至少保留一题（如整卷作废可在项目列表删除项目）")
+    keep_set = set(body.keep) if body.keep is not None else None   # 未传 = 全保留
     drop_set = set(body.drop)
     edits = {e.get("id"): e for e in body.edits if e.get("id")}
     out: list[dict[str, Any]] = []

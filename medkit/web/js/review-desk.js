@@ -101,7 +101,9 @@ async function loadKeys() {
           web_search_enabled: $("t_web").checked, web_search_api_key: "",
           web_search_backend: $("ws_backend").value,
           mineru_api_key: "", mineru_auto_ocr: $("t_autoocr").checked }) });
-      toast(`已切换到 ${k.name}（存档 Key 已生效）`);
+      // A-新2：切换后清空 api_key 输入框——否则刚填的 A 家 Key 未保存就切 B 再保存会被归档到 B 名下
+      if ($("api_key")) $("api_key").value = "";
+      toast(`已切换到 ${k.name}（存档 Key 已生效；输入框已清空，如需换 Key 请重新粘贴）`);
       loadConfig();
     } catch (e) { toast(e.message, false); b.disabled = false; b.textContent = "使用"; }
   });
@@ -189,6 +191,7 @@ function doPickProvider(pr) {
   }
   $("base_url").value = pr.base_url || "";
   baseUrlDirty = false;
+  scheduleReady();   // R3-10：切换服务商 → 价格口径变化，刷新成本预估
   if (pr.default_model) {
     fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
     const qc = modelValue("model_qc");
@@ -264,6 +267,7 @@ $("btn_save").onclick = async () => {
       ? "配置已保存（本机 ~/.medkit/config.json；⚠️ 当前环境未能 DPAPI 加密 Key，已明文保存——请注意本机安全）"
       : "配置已保存（本机 ~/.medkit/config.json，Key 已加密）");
     $("api_key").value = ""; $("mineru_key").value = ""; baseUrlDirty = false; loadConfig();
+    updateReady();   // R3-10：保存配置（可能换服务商/模型）后立即刷新成本预估
   } catch (e) { toast(e.message, false); }
 };
 $("btn_mineru_test").onclick = async () => {
@@ -501,6 +505,8 @@ function scheduleReady() {
 }
 ["target", "r_a1", "r_a2", "r_b1", "r_x", "b_mem", "b_und", "b_app", "b_cre", "web_quota"]
   .forEach(id => { const el = $(id); if (el) el.addEventListener("input", scheduleReady); });
+["model_gen", "model_qc"]   // R3-10：换模型也刷新成本预估（模型/服务商价格口径变化）
+  .forEach(id => { const el = $(id); if (el) el.addEventListener("change", scheduleReady); });
 
 /* ---- ② 预设（2C） */
 function currentFormPayload() {
@@ -1160,7 +1166,7 @@ const ART_LABEL = [
 function artifactLinks(pid, names) {
   return `<div class="artgrid">` + (names || []).map(n => {
     const hit = ART_LABEL.find(([re]) => re.test(n));
-    const [ico, label] = hit ? [hit[0], hit[1]] : ["📃", n];
+    const [ico, label] = hit ? [hit[1], hit[2]] : ["📃", n];   // C-06：三元组 [正则,图标,标题] 取下标 1/2
     const href = n.endsWith(".apkg")
       ? `/api/projects/${encodeURIComponent(pid)}/export/apkg`
       : `/api/projects/${encodeURIComponent(pid)}/files/${encodeURIComponent(n)}`;
@@ -1311,9 +1317,17 @@ async function loadLog(pid) {
   } catch (e) { /* ignore */ }
 }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } pollFails = 0; }
-function updateRunBtn(running, stage) {
+function updateRunBtn(running, stage, cancelling) {
   const b = $("btn_run");
   if (!b) return;
+  if (cancelling) {   // R3-09：取消请求已发出、各阶段检查点陆续生效——禁用停止按钮防重复请求
+    b.textContent = "正在取消中…";
+    b.disabled = true;
+    b.dataset.running = "1";
+    b.dataset.resume = "";
+    return;
+  }
+  b.disabled = false;
   if (running) {
     b.textContent = "⏹ 停止生成（保留断点）";
     b.className = "act danger";
@@ -1346,14 +1360,22 @@ function startPoll(pid) {
       const s = await api("/api/projects/" + pid + "/status");
       pollFails = 0;
       const stageEl = $("pd_stage");
-      if (stageEl) stageEl.innerHTML = esc(s.stage_label) + (s.running ? " <span class='spin'></span>" : "");
+      if (stageEl) {
+        if (s.cancelling) {
+          stageEl.innerHTML = "正在取消中… <span class='spin'></span>";
+          stageEl.style.color = "var(--warn)";
+        } else {
+          stageEl.innerHTML = esc(s.stage_label) + (s.running ? " <span class='spin'></span>" : "");
+          stageEl.style.color = "";
+        }
+      }
       const st = $("pd_stepper");
       if (st) st.innerHTML = renderStepper(s.stage, s.progress);
       const logEl = $("pd_log");
       if (logEl) renderLog(logEl, s.log || []);
       const arts = $("pd_arts");
       if (arts && s.artifacts) arts.innerHTML = "已生成：" + artifactLinks(pid, s.artifacts);
-      updateRunBtn(s.running, s.stage);
+      updateRunBtn(s.running, s.stage, s.cancelling);
       if (!s.running && ["done", "error", "cancelled"].includes(s.stage)) {
         stopPoll();
         if (s.stage === "done") { toast("全部产物生成完成 "); $("btn_review").style.display = "inline-block"; }
@@ -1829,6 +1851,11 @@ function renderReview(scrollToId = null) {
       return;
     }
     const keep = qs.map(x => x.id).filter(id => !reviewState.drop.has(id));
+    // C-10：保留 0 题 → 后端拒绝保存空题库；前端先拦截并说明（剔除意图不再静默蒸发）
+    if (qs.length && !keep.length) {
+      toast("已剔除全部题目——题库至少保留 1 题（后端拒绝保存空题库）；整卷作废请到「我的项目」删除项目", false);
+      return;
+    }
     const edits = Object.entries(reviewState.edits).filter(([k, v]) => k !== "drop" && v && Object.keys(v).some(x => !x.startsWith("_")) && !reviewState.drop.has(k))
       .map(([id, v]) => {
         const clean = { id };
@@ -2033,9 +2060,11 @@ function wzRender() {
     $("wz_back").onclick = () => { wzStep = 1; wzRender(); };
     $("wz_fin").onclick = () => wzDone();
     const goDemo = () => {
-      // ME-1/A1：无 Key 时「载入示例」= 流程必然失败——先定向到连接页，且不关闭向导（保留引导闭环）
+      // ME-1/A1：无 Key 时「载入示例」= 流程必然失败——先定向到连接页；
+      // R3-05/A-新1：先关遮罩再跳（否则盖板压在连接页上，表单点不到）
       if (!(state.cfg && state.cfg.api_key_masked)) {
         toast("试出一题需要用 API Key——请先完成「我的 → 连接服务商」配置（充值 ¥10 可出多套题）", false);
+        wzClose();
         showTab("mine"); $("api_key").focus();
         return;
       }

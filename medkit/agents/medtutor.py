@@ -9,6 +9,8 @@
 
 from typing import Any, Optional
 
+from ..core.llm import LLMError
+
 from . import render_prompt
 from .medexplain import _web_digest
 
@@ -58,7 +60,14 @@ def score_answer(client: Any, subject: str, kp_name: str, state: str,
         gap = str(obj.get("gap") or "").strip()
         nq = str(obj.get("next_question") or "").strip()
         nt = str(obj.get("next_type") or "").strip()
-    except Exception:  # noqa: BLE001  解析失败 → 启发式兜底
+    except LLMError as e:
+        # D-03：LLM 异常区分——断网/Key 失效/限流上抛（路由转 502 中文，不再伪装成「请再答一次」）；
+        # 仅 JSON 解析失败走兜底 -1（不计分重答）
+        if "JSON" in str(e) or "解析" in str(e):
+            score, gap, nq, nt = -1, "", "", ""
+        else:
+            raise
+    except Exception:  # noqa: BLE001  其它异常 → 兜底
         score, gap, nq, nt = -1, "", "", ""
     if score < 0 or score > 3:
         score = _heuristic_score(user_answer, question)

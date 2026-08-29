@@ -122,10 +122,12 @@ def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
 def qc_batch(client: Any, questions: list[dict[str, Any]],
              slice_by_sid: dict[str, str],
              concurrency: int = MAX_WORKERS,
-             on_progress: Optional[Callable[[int, int], None]] = None) -> dict[str, Any]:
+             on_progress: Optional[Callable[[int, int], None]] = None,
+             cancel: Optional[Any] = None) -> dict[str, Any]:
     """分批质检（并发），聚合报告（按批次顺序）。
 
     ``on_progress(done, total)``：每完成一批回调（长任务进度可见性；QL-2026-08）。
+    ``cancel``（B24）：取消 Event——逐批检查，已取消时提前返回 ``{"cancelled": True}``。
     """
     if not questions:
         # 空题库：跳过该批 + warn（原逻辑会把空列表判成 PASS 0 分）
@@ -148,16 +150,23 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
 
     if len(batches) <= 1 or concurrency <= 1:
         for i, b in enumerate(batches):
+            if cancel is not None and cancel.is_set():   # B24：逐批检查取消
+                return {"score": 0, "gate_decision": "PASS_WITH_FIXES",
+                        "issues": [], "summary": "", "cancelled": True}
             results[i] = _qc_batch_once(client, b, slice_by_sid)
             _call_progress(i + 1)
     else:
-        # R3S-03：ContextVar 不随线程池提交传播——copy_context 把 run 的用量账本带到质检线程
-        ctx = contextvars.copy_context()
+        # R3S-03：ContextVar 不随线程池提交传播——每次 submit 在主线程 copy_context()
+        # （每个 worker 拿到独立副本，避免共享 Context 并发 enter 报错）
         with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            for i, r in ex.map(lambda _i, _b: ctx.run(run, _i, _b),
-                               range(len(batches)), batches):
-                results[i] = r
+            futures = [(i, ex.submit(contextvars.copy_context().run, run, i, b))
+                       for i, b in enumerate(batches)]
+            for i, fut in futures:
+                results[i] = fut.result()
                 _call_progress(i + 1)
+                if cancel is not None and cancel.is_set():   # B24：批次间取消（已提交批次收尾后返回）
+                    return {"score": 0, "gate_decision": "PASS_WITH_FIXES",
+                            "issues": [], "summary": "", "cancelled": True}
 
     issues: list[dict[str, Any]] = []
     scores: list[int] = []
@@ -184,6 +193,6 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
     }
 
 
-def make_client() -> Any:
+def make_client(cancel=None) -> Any:
     from . import get_client
-    return get_client("qc")
+    return get_client("qc", cancel=cancel)

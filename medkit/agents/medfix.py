@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 
 # 合并策略下取原题的字段（溯源/结构），其余内容字段取新题
 # S3：案例/组题结构字段一并保留（修复子题不丢组上下文）
+# B23：图/表引用一并保留——MedFix 改写图/表题后不得丢引用（否则与 B12「审核台禁掷图题」矛盾）
 PROVENANCE_KEYS = ("sid", "module", "subtopic", "type", "case_id", "case_order",
-                   "case_stem", "group_kind", "group")
+                   "case_stem", "group_kind", "group", "image_ref", "data_table")
 
 
 def fix_questions(client: Any, questions: list[dict[str, Any]],
@@ -37,6 +38,8 @@ def fix_questions(client: Any, questions: list[dict[str, Any]],
         "id": q.get("id", ""), "type": q.get("type", ""), "bloom": q.get("bloom", ""),
         "question": q.get("question", ""), "options": q.get("options", []),
         "answer": q.get("answer", ""), "analysis": q.get("analysis", ""),
+        # B23：图/表引用随 payload 带给 LLM（可回传保留；不传则合并回原题字段）
+        "image_ref": q.get("image_ref", ""), "data_table": q.get("data_table", ""),
         "issues": [x for x in issues if x.get("q_id") == q.get("id")],
         "source_slice": slice_by_sid.get(q.get("sid", ""), "")[:1500],
     } for q in target]
@@ -66,6 +69,6 @@ def fix_questions(client: Any, questions: list[dict[str, Any]],
     return {"fixed": fixed, "trace": trace}
 
 
-def make_client() -> Any:
+def make_client(cancel=None) -> Any:
     from . import get_client
-    return get_client("gen")
+    return get_client("gen", cancel=cancel)

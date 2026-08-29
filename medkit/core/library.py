@@ -468,6 +468,7 @@ def parse_import_text(text: str, fmt: str) -> list[dict[str, Any]]:
       答案/answer · 解析/analysis · 科目/subject · 章节/chapter · 标签/知识点/know_tags）；
     - md/txt：按题号/「第N题」/题干行+选项块切分，逐块走 parse_question_text 本地结构化。
     """
+    text = text.lstrip("\ufeff")   # D-06：BOM 剥离（Excel「CSV UTF-8」；否则首列表头带 BOM 全行静默过滤）
     rows: list[dict[str, Any]] = []
     if fmt == "json":
         try:

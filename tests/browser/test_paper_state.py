@@ -160,6 +160,28 @@ def test_paper_stale_state_invalidated(page, server_url, server_home):
         "指纹不匹配应清档（不静默映射旧答案）"
 
 
+def test_paper_timelimit_auto_grade_no_dialog_loop(page, server_url, server_home):
+    """C-08：限时到点自动判分防重入——取消确认后不再每秒弹窗。"""
+    pid = "paper_ct_test"
+    _mk_project(server_home, pid, [
+        {"id": "Q001", "sid": "S001", "type": "A1", "bloom": "记忆", "subtopic": "章",
+         "question": "限时题？", "options": ["A", "B", "C", "D"],
+         "answer": "A", "analysis": "解析。"}], subject="儿科限时测试")
+    _render_paper(server_url, pid)
+    page.goto(_paper_url(server_url, pid))
+    page.wait_for_selector("#quiz .q", timeout=15000)
+
+    dialogs: list[str] = []
+    page.on("dialog", lambda d: (dialogs.append(d.type), d.dismiss()))
+    page.evaluate(
+        "() => { showCt = true; document.getElementById('ctMin').value = 5;"
+        " T0 = Date.now() - 6 * 60 * 1000; tick(); }")
+    # 第一次自动判分弹 confirm（已 dismiss）；跨 2 个 tick 周期后不得再弹
+    page.wait_for_timeout(2600)
+    assert len(dialogs) == 1, f"取消确认后不应每秒重复弹窗：{dialogs}"
+    assert "限时已到" in page.locator(".banner").inner_text()
+
+
 def test_paper_reset_clears_wrong_pool(page, server_url, server_home):
     """C-18：判分后「重新作答」清空错题池（重做全对不再回流第一轮错题）。"""
     pid = "paper_reset_test"

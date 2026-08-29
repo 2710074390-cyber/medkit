@@ -34,30 +34,31 @@ def slice_text(blocks: list[dict[str, Any]], max_chars: int = MAX_CHARS) -> list
             slices.append(cur)
         cur = None
 
+    # B25：PDF 按页成块——不再每块重置标题/强切切片；续页续接当前切片，章节标题跨页传递
+    # （否则章节跨页后切片标题退化为「P2」「P3」，污染 subtopic 与「按章去重」）
+    cur_title = str(blocks[0].get("label", "") if blocks else "")[:MAX_TITLE]
     for blk in blocks:
-        cur_title = blk.get("label", "")
+        if not cur_title and blk.get("label"):
+            cur_title = str(blk.get("label"))[:MAX_TITLE]
         for para in blk["text"].splitlines():
             para = para.strip()
             if not para:
                 continue
             if _is_chapter(para):
                 flush()
-                cur = {"sid": f"S{len(slices) + 1:03d}", "title": para[:MAX_TITLE],
-                       "text": "", "source": blk.get("source", ""),
-                       "page": blk.get("label", "")}
                 cur_title = para[:MAX_TITLE]
             if cur is None:
                 cur = {"sid": f"S{len(slices) + 1:03d}", "title": cur_title,
                        "text": "", "source": blk.get("source", ""),
                        "page": blk.get("label", "")}
-            # 超长切片按段落拆
+            # 超长切片按段落拆（续接切片沿用当前章节标题）
             if len(cur["text"]) + len(para) + 1 > max_chars:
                 flush()
                 cur = {"sid": f"S{len(slices) + 1:03d}", "title": cur_title,
                        "text": "", "source": blk.get("source", ""),
                        "page": blk.get("label", "")}
             cur["text"] = (cur["text"] + "\n" + para).strip()
-        flush()
+    flush()
 
     # 兜底：一个切片也没有（无章节标题）→ 全文单切片
     if not slices:

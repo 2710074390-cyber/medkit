@@ -34,7 +34,8 @@ def render_prompt(name: str, **parts: object) -> str:
                             load_prompt(name))
 
 
-def get_client(role: str = "gen") -> LLMClient:
+def get_client(role: str = "gen", cancel=None) -> LLMClient:
     c = cfg.load()
     model = c.get("model_qc") if role == "qc" else c.get("model_gen")
-    return LLMClient(c.get("base_url", ""), resolve_key(c.get("api_key", "")), model or "")
+    return LLMClient(c.get("base_url", ""), resolve_key(c.get("api_key", "")), model or "",
+                     cancel=cancel)

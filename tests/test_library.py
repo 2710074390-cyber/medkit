@@ -29,6 +29,25 @@ def temp_dir(p):
     return p
 
 
+# ---------------------------------------------------------------- 导入解析
+def test_import_bom_stripped_and_official_json():
+    """D-06：BOM CSV 首列不静默过滤；README 官方结构 JSON（options:[{label,text}]）可解析。"""
+    import json as _json
+
+    csv_text = "\ufeff题干,选项,答案\n什么是肺炎？,A|B|C,D"
+    rows = lib.parse_import_text(csv_text, "csv")
+    assert rows and rows[0]["question"] == "什么是肺炎？", f"BOM 首列不应静默过滤：{rows}"
+    assert rows[0]["answer"] == "D"
+
+    js = _json.dumps([{"stem": "题？",
+                       "options": [{"label": "A", "text": "甲"}, {"label": "B", "text": "乙"}],
+                       "answer": "A", "explanation": "解析", "module_name": "呼吸"}])
+    rows2 = lib.parse_import_text(js, "json")
+    assert rows2 and rows2[0]["options"] == ["甲", "乙"]
+    assert rows2[0]["topic"] == "呼吸"
+    assert rows2[0]["analysis"] == "解析"
+
+
 # ---------------------------------------------------------------- 掌握度纯逻辑
 def test_compute_state_thresholds():
     assert lib.compute_state(1.0) == "mastered"

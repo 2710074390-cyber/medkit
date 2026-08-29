@@ -245,6 +245,76 @@ def test_cancel_midway_records_usage(isolated_cfg):
     assert res2["stage"] == "done", res2
 
 
+def test_cancel_during_gate1_returns_cancelled(isolated_cfg):
+    """B24：门禁修复轮次间取消——不再跑完 QC/修复/渲染全部阶段（且取消路径落 usage）。"""
+    import threading
+
+    pid = build_project("_cancel_gate1_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+    ev = threading.Event()
+
+    class FixCancel(FakeLLM):
+        def chat_json(self, messages, **kwargs):
+            out = super().chat_json(messages, **kwargs)
+            ev.set()   # 第一轮修复后请求取消 → 下一轮门禁循环顶部生效
+            return out
+
+    ov = _overrides()
+    ov["fix"] = FixCancel("fix")
+    res = run_project(pid, cancel=ev, overrides=ov)
+    assert res["stage"] == "cancelled", res
+    meta = json.loads((tmp / "meta.json").read_text(encoding="utf-8"))
+    assert meta["stage"] == "cancelled"
+    assert meta["usage"]["prompt_tokens"] > 0, "取消路径应落已消耗 token（B27）"
+    assert not (tmp / "质检报告" / "质检报告.json").exists(), "取消后不应再跑 QC"
+
+
+def test_cancel_during_qc_returns_cancelled(isolated_cfg):
+    """B24：质检批次间取消——不再进入修复/渲染阶段。"""
+    import threading
+
+    pid = build_project("_cancel_qc_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+    # 两切片各 12 题 → 24 题 → 2 个 QC 批次（否则单批走顺序路径，批次间取消无从触发）
+    meta = json.loads((tmp / "meta.json").read_text(encoding="utf-8"))
+    meta["target"] = 24
+    meta["quota"] = [dict(q, count=12) for q in meta["quota"]]
+    (tmp / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    ev = threading.Event()
+
+    class Gen12(FakeLLM):
+        def chat_json(self, messages, **kwargs):
+            self.calls += 1
+            self._bill(messages, 2400)
+            self.systems.append(messages[0] and messages[0].get("content", ""))
+            return {"questions": [{
+                "type": "A1", "bloom": "记忆" if i % 2 == 0 else "理解",
+                "subtopic": "生长发育规律",
+                "question": f"关于生长发育，下列正确的是{i}？",
+                "options": [f"选项{i}A", "选项B", "选项C", "选项D", "选项E"],
+                "answer": "B", "analysis": f"机制解析{i}。【源:切片S001】",
+            } for i in range(12)]}
+
+    class QcCancel(FakeLLM):
+        def __init__(self, role):
+            super().__init__(role)
+            self.n = 0
+
+        def chat_json(self, messages, **kwargs):
+            out = super().chat_json(messages, **kwargs)
+            self.n += 1
+            if self.n >= 2:
+                ev.set()   # 第二批质检后请求取消
+            return out
+
+    ov = _overrides()
+    ov["gen"] = Gen12("gen")
+    ov["qc"] = QcCancel("qc")
+    res = run_project(pid, cancel=ev, overrides=ov)
+    assert res["stage"] == "cancelled", res
+    assert not (tmp / "最终产物" / "qbank.html").exists(), "取消后不应进入渲染阶段"
+
+
 def test_cancel_early_and_resume(isolated_cfg):
     """U1 取消：预置 cancel Event → 管线返回 cancelled 且保留断点；再跑续完。"""
     import threading

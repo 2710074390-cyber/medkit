@@ -108,6 +108,14 @@ let SYL_STD = "teacher";   // 大纲标准二选一：teacher=教师重点(默�
     const s = sessionStorage.getItem("medkit-syl-std");
     if (s === "teacher" || s === "seed") SYL_STD = s;
   } catch (e) { /* ignore */ }
+  // D-07：恢复后同步 pill 高亮（否则显示「教师重点」但实际按官方大纲口径计算覆盖）
+  if (SYL_STD !== "teacher") {
+    document.querySelectorAll("#syl_std .css-pill").forEach(b => {
+      const on = b.dataset.std === SYL_STD;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  }
 })();
 /* 大纲标准二选一：syl_std pill 仅 teacher / seed 两档（移除历史 all 档，见 AGENT_HANDOFF） */
 async function sylLoad() {
@@ -342,15 +350,24 @@ async function rexAnalyze() {
       { method: "POST", body: JSON.stringify({ text, subject: rexSubject() }) });
   } catch (e) { toast(e.message || "分析失败", false); return; }
   REX_DRAFTS = r.drafts || [];
-  const box = document.getElementById("rex_drafts");
   if (!REX_DRAFTS.length) {
+    const box = document.getElementById("rex_drafts");
     box.innerHTML = `<div class="hint">未识别到考点命中（${r.stats?.unmatched ?? 0} 句未命中词典）——可先导入大纲种子或粘贴大纲，词典越全频次越准。</div>`;
     toast(`分析完成：命中 0 条（${r.stats?.unmatched ?? 0} 句未匹配）`, false);
     return;
   }
+  renderRexDrafts(r.stats || {});
+}
+function renderRexDrafts(stats) {
+  // R3-04：草稿列表统一走全量重渲染——跳过删除后重算 data-skip 索引与「草稿确认（N 条）」计数
+  const box = document.getElementById("rex_drafts");
+  if (!REX_DRAFTS.length) {
+    box.innerHTML = '<div class="hint">已清空选择。</div>';
+    return;
+  }
   // IMP-12③：草稿确认区折叠（默认收起，避免长表格把热力表挤出首屏）
   box.innerHTML = `<details class="rex-fold" open><summary>草稿确认（${REX_DRAFTS.length} 条）</summary>
-    <div class="hint">来源句子 ${r.stats?.sentences} · 未命中 ${r.stats?.unmatched} ——核实后确认：</div>` +
+    <div class="hint">来源句子 ${stats.sentences ?? 0} · 未命中 ${stats.unmatched ?? 0} ——核实后确认：</div>` +
     REX_DRAFTS.slice(0, 30).map((d, i) => `<div class="syl-item">
       <span class="learn-chip pending">×${d.freq}</span>
       <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")} · ${esc(d.subject || "?")}</div></span>
@@ -361,14 +378,7 @@ async function rexAnalyze() {
      <span class="hint" style="align-self:center">未确认不进入任何推荐权重（红线）</span></div></details>`;
   box.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => {
     REX_DRAFTS.splice(+b.dataset.skip, 1);
-    rexAnalyzeRender();
-  });
-}
-function rexAnalyzeRender() {
-  const box = document.getElementById("rex_drafts");
-  if (!REX_DRAFTS.length) { box.innerHTML = '<div class="hint">已清空选择。</div>'; return; }
-  document.querySelectorAll("#rex_drafts .syl-item").forEach((el, i) => {
-    if (i < REX_DRAFTS.length) { el.querySelector("b").textContent = REX_DRAFTS[i].item; }
+    renderRexDrafts(stats);   // 全量重渲染：索引与计数同步更新
   });
 }
 async function rexConfirmAll() {
@@ -936,12 +946,12 @@ async function mkBatchFile(input) {
   const ext = name.includes(".") ? name.split(".").pop() : "txt";
   try {
     if (ext === "json") {
-      // JSON 历史兼容：直接数组提交（结构与批量接口一致），失败时回退 import-file 表单
-      let rows = JSON.parse(await f.text());
-      if (!Array.isArray(rows)) throw new Error("需为 JSON 数组");
-      const added = await api("/api/library/mistakes/batch", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rows) });
-      toast(`已批量入库 ${added.added || 0} 道`);
+      // D-06：JSON 也走 import-file 本地解析器——README 官方结构 options:[{label,text}] 不再 422，
+      // 与 csv/md/txt 同口径（BOM/表头别名/归一化都在服务端）
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await api("/api/library/mistakes/import-file", { method: "POST", body: fd });
+      toast(`已批量入库 ${r.added || 0} 道（共 ${r.total || 0} 条，跳过 ${r.skipped || 0} 条）`);
       loadLibrary();
     } else {
       // csv / md / txt：统一走本地解析导入（多字段/多格式归一化）
@@ -1163,10 +1173,22 @@ async function expCards(eid, subject) {
 }
 window.expCards = expCards;
 async function expDel(id) {
-  confirmModal("删除讲解产物", `<p style="margin:0;color:var(--dim)">确定删除这篇讲解吗？删除后不可恢复。</p>`, "删除", async () => {
-    try { await api("/api/library/explains/" + id, { method: "DELETE" }); toast("已删除"); loadExplains(); }
-    catch (e) { toast(e.message, false); }
-  });
+  // D-05：删除讲解会级联删除派生记忆卡——确认文案先列出数量（不静默不可恢复消失）
+  let cardN = 0;
+  try {
+    const c = await api("/api/library/cards");
+    cardN = (c.cards || []).filter(x => String(x.source || "") === String(id)).length;
+  } catch (e) { /* 查询失败不阻断删除流程 */ }
+  confirmModal("删除讲解产物", `<p style="margin:0;color:var(--dim)">确定删除这篇讲解吗？删除后不可恢复。</p>`
+    + (cardN ? `<p style="margin:6px 0 0;color:var(--warn)">⚠️ 将<b>同时删除</b>由它生成的 <b>${cardN}</b> 张医学记忆卡（不可恢复）。</p>` : ""),
+    "删除", async () => {
+      try {
+        const r = await api("/api/library/explains/" + id, { method: "DELETE" });
+        toast("已删除" + (r.cards_removed ? `（含 ${r.cards_removed} 张派生记忆卡）` : ""));
+        loadExplains();
+      }
+      catch (e) { toast(e.message, false); }
+    });
 }
 function downloadText(name, content) {
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
@@ -1298,6 +1320,9 @@ function conversationHTML(s) {
         <textarea id="tu_answer" placeholder="在文本框里作答…（写不下可先答要点，MedTutor 会追问细节）"></textarea>
         <button class="act" onclick="tutorSubmit()">提交作答</button>
       </div>`;
+  } else if ((s.rounds || []).length === 0) {
+    // D-04：无问题且无轮次 = 第一问生成失败残留会话（旧数据）——明确提示，不再伪装「已达成掌握目标」
+    bottom = `<div class="tu-gap">第一问生成失败，请重试——可删除本场会话后重新「开始提问」。</div>`;
   } else {
     bottom = `<div class="tu-gap">本轮已达成掌握目标，可以「开始提问」开辟新一轮，或换一个知识点。</div>`;
   }
@@ -1620,7 +1645,14 @@ async function expHint(det, subject, kpName) {
   } catch (e) { body.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
 }
 window.expHint = expHint;
+/* R3-03：自评/铺卡防重入——双击不再对同一张卡连发两次 grade（SM-2/FSRS 双计、排期错乱） */
+const gradeBusy = new Set();
+let queueBusy = false;
 async function rvGrade(cid, q, label = null) {
+  if (gradeBusy.has(cid)) return;   // 该卡评分在途 → 忽略重复点击
+  gradeBusy.add(cid);
+  const cardEl = document.querySelector('.qcard[data-card="' + CSS.escape(cid) + '"]');
+  if (cardEl) cardEl.querySelectorAll("button").forEach(b => { b.disabled = true; });
   try {
     await api("/api/library/review/grade", {
       method: "POST",
@@ -1630,14 +1662,20 @@ async function rvGrade(cid, q, label = null) {
     toast(label ? `已记录「${label}」（${q}/5），卡片已按 SM-2 排入下次复习`
                 : `已记录 ${q}/5 分，卡片已按 SM-2 排入下次复习`);
     await Promise.all([loadReviewCtx(rvSubject), loadLibrary()]);
-  } catch (e) { toast(e.message, false); }
+  } catch (e) {
+    toast(e.message, false);
+    if (cardEl && document.body.contains(cardEl)) cardEl.querySelectorAll("button").forEach(b => { b.disabled = false; });
+  } finally { gradeBusy.delete(cid); }
 }
 async function rvQueueAll() {
+  if (queueBusy) return;   // R3-03：铺卡防重入（连点不再重复入队）
+  queueBusy = true;
   try {
     const r = await api("/api/library/review/queue-all?subject=" + encodeURIComponent(rvSubject));
     toast(r.added ? `已入队 ${r.added} 张薄弱卡片` : "没有新的薄弱知识点需要入队");
     loadReviewCtx(rvSubject);
   } catch (e) { toast(e.message, false); }
+  finally { queueBusy = false; }
 }
 async function rvDel(cid) {
   confirmModal("移出复习队列？", `<p style="margin:0;color:var(--dim)">该复习卡将从队列移除（知识点可随时「铺卡」重新入队）。</p>`, "移出", async () => {
@@ -1711,6 +1749,10 @@ async function memGrade3(cid, key) {
 }
 window.memGrade3 = memGrade3;
 async function memGrade(cid, q, label = null) {
+  if (gradeBusy.has(cid)) return;   // R3-03：记忆卡评分防重入
+  gradeBusy.add(cid);
+  const cardEl = document.querySelector('.memq[data-card="' + CSS.escape(cid) + '"]');
+  if (cardEl) cardEl.querySelectorAll("button").forEach(b => { b.disabled = true; });
   try {
     await api("/api/library/cards/" + encodeURIComponent(cid) + "/grade", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1718,7 +1760,10 @@ async function memGrade(cid, q, label = null) {
     toast(label ? `已记录「${label}」（${q}/5），记忆卡已排入下次复习`
                 : `已记录自评 ${q}/5，记忆卡已排入下次复习`);
     loadReviewCtx(rvSubject);
-  } catch (e) { toast(e.message, false); }
+  } catch (e) {
+    toast(e.message, false);
+    if (cardEl && document.body.contains(cardEl)) cardEl.querySelectorAll("button").forEach(b => { b.disabled = false; });
+  } finally { gradeBusy.delete(cid); }
 }
 async function memDel(cid) {
   confirmModal("删除记忆卡？", `<p style="margin:0;color:var(--dim)">该记忆卡将从队列删除（讲解产物可重新「🧠 生成记忆卡」）。</p>`, "删除", async () => {

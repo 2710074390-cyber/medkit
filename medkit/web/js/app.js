@@ -285,7 +285,7 @@ function showTab(name) {
   /* v0.8.1：5 Tab 分发（开始/刷题/题库/学习中心/我的） */
   if (name === "start") loadStart();
   if (name === "study") loadStudy();
-  if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); }   // 面板从隐藏变可见 → 重测配比条标签适配
+  if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
   if (name === "learn") loadLibrary();
   if (name === "mine") loadPrompts();
 }

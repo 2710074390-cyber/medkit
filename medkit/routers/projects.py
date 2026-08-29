@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from ..core import config as cfg
 from ..core.quota import allocate
-from ..state import RUNNING
+from ..state import CANCELLING, RUNNING
 from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir, require_flag
 
 _ALLOW_IMG = (".png", ".jpg", ".jpeg", ".webp", ".gif")
@@ -254,6 +254,7 @@ def project_status(pid: str) -> dict[str, Any]:
     return {"pid": pid, "stage": stage,
             "stage_label": STAGE_LABELS.get(stage, stage or "……"),
             "running": bool(RUNNING.get(pid)),
+            "cancelling": bool(CANCELLING.get(pid)),   # R3-09：前端「正在取消中…」展示
             "progress": progress,
             "artifacts": _project_artifacts(base),
             "log": log_lines}

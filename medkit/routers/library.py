@@ -7,9 +7,9 @@ OCR 复用 MinerU；掌握度/优先级纯本地）。错题结构从押题卷�
 import asyncio
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -92,6 +92,7 @@ async def import_file(file: UploadFile = File(...)) -> dict[str, Any]:
             text = raw.decode("gb18030")
         except UnicodeDecodeError:
             raise HTTPException(400, "文件编码无法识别（请用 UTF-8）")
+    text = text.lstrip("\ufeff")   # D-06：Excel「CSV UTF-8」带 BOM → 剥离（否则首列变 \ufeff 题干，全行静默过滤）
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else "txt"
     if ext not in ("json", "csv", "md", "txt"):
         raise HTTPException(400, f"不支持的文件类型 .{ext}（支持 json / csv / md / txt）")
@@ -350,8 +351,21 @@ def _resolve_search_fn():
         return None
 
 
+def _explain_guard(body: ExplainBody) -> Iterator[None]:
+    """R3-21：同知识点「在飞」去重——连点/双标签重复生成 → 409，防双扣费。"""
+    from ..core import dedupe
+
+    key = f"explain:{body.subject}|{body.kp_name}|{body.kp_id}"
+    if dedupe.begin(key):
+        raise HTTPException(409, "该知识点的讲解正在生成，请稍候查看产物，勿重复提交")
+    try:
+        yield
+    finally:
+        dedupe.end(key)
+
+
 @router.post("/api/library/explain")
-def explain(body: ExplainBody) -> dict[str, Any]:
+def explain(body: ExplainBody, _guard: None = Depends(_explain_guard)) -> dict[str, Any]:
     """教材讲解：检索切片(+联网补充默认) → MedExplain 生成 → 存产物 + 回写掌握度。
 
     无原文回退（2026-08-29）：切片未命中 → 先说明 + 联网补充 + 模型知识输出，
@@ -469,8 +483,21 @@ def _tutor_grounding(subject: str, kp_name: str) -> tuple[str, bool, list[dict[s
     return slices_text, grounded, web_materials
 
 
+def _tutor_start_guard(body: TutorStartBody) -> Iterator[None]:
+    """R3-21：同知识点同契入「在飞」去重（防连点双开会话双扣费）。"""
+    from ..core import dedupe
+
+    key = f"tutor-start:{body.subject}|{body.kp_name}|{body.kp_id or body.mistake_id}"
+    if dedupe.begin(key):
+        raise HTTPException(409, "该知识点的提问会话正在创建，请稍候或直接进入会话，勿重复提交")
+    try:
+        yield
+    finally:
+        dedupe.end(key)
+
+
 @router.post("/api/library/tutor/start")
-def tutor_start(body: TutorStartBody) -> dict[str, Any]:
+def tutor_start(body: TutorStartBody, _guard: None = Depends(_tutor_start_guard)) -> dict[str, Any]:
     """开一个 Socratic 会话：锁定知识点+教材切片 → LLM 出第一问 → 存会话。"""
     if not body.kp_name.strip() and not body.kp_id and not body.mistake_id:
         raise HTTPException(400, "请指定待学习的知识点")
@@ -480,8 +507,16 @@ def tutor_start(body: TutorStartBody) -> dict[str, Any]:
     slices_text, grounded, web_materials = _tutor_grounding(subject, kp_name)
     session = tut.start_session(subject, kp_name, body.kp_id or "")
     qtype = session["current"]["type"]
-    question = mt.start_applying(client, subject, kp_name, session["state"],
-                                 qtype, slices_text, web_materials)
+    try:
+        question = mt.start_applying(client, subject, kp_name, session["state"],
+                                     qtype, slices_text, web_materials)
+    except Exception as e:  # noqa: BLE001
+        # D-04：第一问生成失败 → 回滚会话（不留「无问题空会话」伪装已掌握）
+        tut.delete_session(session["id"])
+        raise HTTPException(502, f"第一问生成失败，请稍后重试（{type(e).__name__}）") from e
+    if not (question or "").strip():
+        tut.delete_session(session["id"])
+        raise HTTPException(502, "第一问生成失败（模型返回为空），请稍后重试")
     tut.seed_first(session["id"], qtype, question)
     lib.log_knowledge_event(kp_name, "tutor",
                             note=f"{subject} / start / {qtype} / grounded={grounded}")
@@ -491,8 +526,21 @@ def tutor_start(body: TutorStartBody) -> dict[str, Any]:
             "note": "" if grounded else "本知识点未在本地教材中检索到原文——问题由网络素材与模型知识生成（未经教材核实）。"}
 
 
+def _tutor_answer_guard(body: TutorAnswerBody) -> Iterator[None]:
+    """R3-21：同一作答「在飞」去重（连点提交 → 409，防重复判分扣费）。"""
+    from ..core import dedupe
+
+    key = f"tutor-answer:{body.session_id}|{body.user_answer[:80]}"
+    if dedupe.begin(key):
+        raise HTTPException(409, "该作答正在判分，请勿重复提交（稍候刷新查看结果）")
+    try:
+        yield
+    finally:
+        dedupe.end(key)
+
+
 @router.post("/api/library/tutor/answer")
-def tutor_answer(body: TutorAnswerBody) -> dict[str, Any]:
+def tutor_answer(body: TutorAnswerBody, _guard: None = Depends(_tutor_answer_guard)) -> dict[str, Any]:
     """提交作答：LLM 判分+出下一问 → 本地推进状态机 → 回写掌握度。"""
     if not body.session_id.strip():
         raise HTTPException(400, "缺少会话 ID")
@@ -667,9 +715,12 @@ def cards_list(subject: str = "", due: int = 0) -> dict[str, Any]:
 @router.post("/api/library/cards/{cid}/grade")
 def cards_grade(cid: str, body: CardsGradeBody) -> dict[str, Any]:
     """自评 quality(0~5) → 按卡片绑定算法（FSRS/SM-2）推进下次排程。"""
-    card = cardlib.grade_card(cid, max(0, min(int(body.quality), 5)))
+    quality = max(0, min(int(body.quality), 5))
+    card = cardlib.grade_card(cid, quality)
     if card is None:
         raise HTTPException(404, "记忆卡不存在")
+    # D-09：记忆卡评分回写掌握度（与复习卡同口径）——否则天天「记住」概览掌握率纹丝不动
+    lib.record_review(card.get("kp_name") or "", quality)
     return {"ok": True, "card": card}
 
 

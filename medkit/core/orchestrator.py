@@ -254,6 +254,14 @@ def build_image_index(base: Path,
     return image_index, image_sections
 
 
+def _cancel_out(base: Path, meta_path: Path, done_sids: set[str],
+                questions: list[dict[str, Any]], msg: str = "题目已保留") -> dict[str, Any]:
+    """B24：后段各阶段取消出口——标 cancelled、落断点、返回部分结果（usage 由外层记账）。"""
+    _set_stage(base, meta_path, "cancelled", f"⏹ 已取消（{msg}）")
+    _save_checkpoint(base, done_sids, questions)
+    return {"stage": "cancelled", "questions": len(questions), "partial": True}
+
+
 def _record_usage_on_exit(pid: str, *, cancelled: bool) -> None:
     """B27/R3S-03：取消/失败路径也落 usage（已烧 token 不失踪；「费用透明」承诺）。
 
@@ -330,10 +338,11 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     text_by_sid = {sid: s.get("text", "") for sid, s in slice_by_sid.items()}
     known_sids = set(slice_by_sid)
 
-    gen_client = (overrides or {}).get("gen") or medgen.make_client()
-    qc_client = (overrides or {}).get("qc") or medqc.make_client()
-    fix_client = (overrides or {}).get("fix") or medfix.make_client()
-    rev_client = (overrides or {}).get("review") or medreview.make_client()
+    # R3-09/B24：cancel 下透到 LLM 层（流式读取提前退出，停止后不再烧完整回复）
+    gen_client = (overrides or {}).get("gen") or medgen.make_client(cancel=cancel)
+    qc_client = (overrides or {}).get("qc") or medqc.make_client(cancel=cancel)
+    fix_client = (overrides or {}).get("fix") or medfix.make_client(cancel=cancel)
+    rev_client = (overrides or {}).get("review") or medreview.make_client(cancel=cancel)
 
     subject = meta.get("subject", "")
     exam = meta.get("exam", "期末")
@@ -598,6 +607,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                              and q.get("image_ref") not in image_sids)]
         _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题（image_ref 不在素材清单）")
     for round_i in range(1, FIX_ROUNDS_GATE + 2):
+        if cancel.is_set():   # B24：门禁循环轮次间可取消
+            return _cancel_out(base, meta_path, done_sids, questions)
         _set_stage(base, meta_path, "gate1", f"② 门禁① 第 {round_i} 轮…")
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮")
         gate = {
@@ -618,6 +629,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             break
         to_fix = fails + dup_issues
         if round_i <= FIX_ROUNDS_GATE:
+            if cancel.is_set():   # B24：修复轮开始前可取消（单次修复调用期间的取消由 LLM 层流式退出接管）
+                return _cancel_out(base, meta_path, done_sids, questions)
             _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} → MedFix 修复第 {round_i} 轮…")
             fixed = medfix.fix_questions(fix_client, questions, to_fix, text_by_sid)
             by_id = {q["id"]: q for q in questions}
@@ -633,16 +646,17 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
 
     # ---------------- ③ MedQC 质检（并发批次）
     if cancel.is_set():
-        _set_stage(base, meta_path, "cancelled", "⏹ 已取消（题目已保留）")
-        _save_checkpoint(base, done_sids, questions)
-        return {"stage": "cancelled", "questions": len(questions), "partial": True}
+        return _cancel_out(base, meta_path, done_sids, questions)
     _set_stage(base, meta_path, "qc", "③ MedQC 质检（LLM-as-judge 并行分批）…")
     total_batches = (len(questions) + medqc.BATCH_SIZE - 1) // medqc.BATCH_SIZE
     _set_progress(base, "qc", 0, total_batches, "质检中…")
     qc_report = medqc.qc_batch(
         qc_client, questions, text_by_sid,
         on_progress=lambda done, tot: _set_progress(
-            base, "qc", done, tot, f"质检中… 第 {done}/{tot} 批"))
+            base, "qc", done, tot, f"质检中… 第 {done}/{tot} 批"),
+        cancel=cancel)   # B24：逐批检查取消
+    if qc_report.get("cancelled"):
+        return _cancel_out(base, meta_path, done_sids, questions)
     (base / "质检报告" / "质检报告.json").write_text(
         json.dumps(qc_report, ensure_ascii=False, indent=2), encoding="utf-8")
     # NX-03（R-2）：契约硬闭环失败批次 → 人工复核清单（与网络冲突/渲染前剔除并存）
@@ -654,6 +668,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     _log(base, f"  QC score={qc_report['score']} decision={qc_report['gate_decision']}"
                f" issues={len(qc_report['issues'])}")
     if qc_report["gate_decision"] == "BLOCKED":
+        if cancel.is_set():   # B24：质检修复阶段可取消
+            return _cancel_out(base, meta_path, done_sids, questions)
         _set_stage(base, meta_path, "fixing", "④ MedFix（质检 BLOCKED → 定向修复）…")
         _set_progress(base, "fixing", 0, 1, "定向修复中…（最长约 1~2 分钟）")
         fixed = medfix.fix_questions(fix_client, questions,
@@ -680,6 +696,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     (base / "最终产物" / "追溯日志.md").write_text(trace_md, encoding="utf-8")
 
     # ---------------- ④ 最终题库落盘
+    if cancel.is_set():   # B24：汇总/终检前可取消（题目仍保留断点）
+        return _cancel_out(base, meta_path, done_sids, questions)
     _set_stage(base, meta_path, "finalizing", "④ 汇总题库…")
     _set_progress(base, "finalizing", 0, 1, "汇总题库与终检…")
     for i, q in enumerate(questions):
@@ -712,14 +730,15 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _set_stage(base, meta_path, "reviewing", "⑤ MedReview 复习手册生成…")
         _set_progress(base, "reviewing", 0, 1, "生成复习手册…（预计 1~2 分钟）")
         if cancel.is_set():
-            _set_stage(base, meta_path, "cancelled", "⏹ 已取消（题目已保留）")
-            return {"stage": "cancelled", "questions": len(questions), "partial": True}
+            return _cancel_out(base, meta_path, done_sids, questions)
         review_md = medreview.generate_review(
             rev_client, subject, exam, questions, teacher_text,
             "\n\n".join(f"【{s.get('title','')}】\n{s.get('text','')[:1200]}" for s in textbook_slices))
         (base / "最终产物" / "复习手册.md").write_text(review_md, encoding="utf-8")
 
     # ---------------- ⑥ 渲染产物
+    if cancel.is_set():   # B24：渲染前可取消（题库已落盘、产物可稍后「仅重渲染」补齐）
+        return _cancel_out(base, meta_path, done_sids, questions)
     _set_stage(base, meta_path, "rendering", "⑥ 渲染产物…")
     _set_progress(base, "rendering", 0, 1, "生成 HTML…")
     qbank_md = qbank_html.export_md(questions, f"{subject} 题库")

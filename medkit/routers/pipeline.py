@@ -17,7 +17,7 @@ from ..core.config import resolve_key
 from ..core.cost import estimate_run
 from ..core.llm import LLMClient
 from ..gates import options_check, trace_check
-from ..state import RUN_LOCK, RUNNING
+from ..state import CANCELLING, RUN_LOCK, RUNNING
 from ._common import _log_project, _read_meta_checked, _safe_pid, _write_meta_atomic, proj_dir
 
 router = APIRouter()
@@ -54,6 +54,9 @@ def cancel_project(pid: str) -> dict[str, Any]:
     if not ev:
         raise HTTPException(404, "项目当前未在生成中")
     ev.set()
+    # R3-09：cancelling 态供前端展示「正在取消中…」（各阶段检查点陆续生效）
+    with RUN_LOCK:
+        CANCELLING[pid] = True
     return {"ok": True, "cancelling": True}
 
 
@@ -80,6 +83,7 @@ def _run_pipeline_thread(pid: str, cancel_ev: threading.Event) -> None:
     finally:
         with RUN_LOCK:
             RUNNING.pop(pid, None)
+            CANCELLING.pop(pid, None)
 
 
 # ---------------------------------------------------------------- 试玩三件套（可玩性 迭代1）
@@ -108,6 +112,25 @@ def trial(body: TrialBody) -> dict[str, Any]:
         raise HTTPException(400, "请先配置生成模型")
     if not body.slice_text.strip():
         raise HTTPException(400, "切片内容为空")
+    # R3-21：同契入「在飞」去重 + per-subject 并发上限（连点/双标签试出不双扣费）
+    from ..core import dedupe
+
+    dedupe_key = f"trial:{body.subject}|{body.exam}|{body.slice_text[:120]}|" \
+                 f"{body.requirements[:60]}|{body.teacher_text[:60]}"
+    if dedupe.begin(dedupe_key):
+        raise HTTPException(409, "相同内容的试出题正在生成，请稍候查看结果，勿重复提交")
+    if not dedupe.try_acquire(body.subject or "__trial__", n=2):
+        dedupe.end(dedupe_key)
+        raise HTTPException(429, "该科目的试出题请求过多，请稍候再试")
+    try:
+        return _trial_locked(c, body)
+    finally:
+        dedupe.end(dedupe_key)
+        dedupe.release(body.subject or "__trial__")
+
+
+def _trial_locked(c: dict[str, Any], body: TrialBody) -> dict[str, Any]:
+    """trial 主体（per-subject 信号量内执行）。"""
     client = LLMClient(c.get("base_url", ""), resolve_key(c.get("api_key", "")),
                        c.get("model_gen", ""), timeout=90)
     slice_ = {"sid": body.slice_sid, "title": body.slice_title, "text": body.slice_text[:6000]}

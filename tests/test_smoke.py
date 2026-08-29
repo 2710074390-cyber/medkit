@@ -60,6 +60,19 @@ def test_config_view_masks_key():
     assert "1234567890" not in view["api_key_masked"]
 
 
+def test_slice_cross_page_continuation():
+    """B25：PDF 按页成块——章节跨页续接同一切片，标题不退化「P2」。"""
+    blocks = [
+        {"label": "P1", "source": "doc.pdf", "text": "第一章 生长发育\n婴儿期生长最快。"},
+        {"label": "P2", "source": "doc.pdf", "text": "青春期第二高峰。"},
+        {"label": "P3", "source": "doc.pdf", "text": "第二章 营养\n能量需求。"},
+    ]
+    slices = slice_text(blocks)
+    assert slices[0]["title"] == "第一章 生长发育"
+    assert "青春期第二高峰" in slices[0]["text"], "续页内容应并入同一章节切片"
+    assert slices[1]["title"] == "第二章 营养"
+
+
 def test_slice_health_warnings():
     """素材体检：无章节标题 → 警告；token 估算为正；切片含完整文本（创建课题需要）。"""
     from medkit.main import _analyze_slices

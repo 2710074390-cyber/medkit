@@ -5,6 +5,7 @@
 
 import json
 import re
+import threading
 import time
 from typing import Any, Optional
 
@@ -56,13 +57,15 @@ def _is_retryable(exc: Exception) -> bool:
 
 class LLMClient:
     def __init__(self, base_url: str, api_key: str, model: str,
-                 timeout: float = 300.0, max_retries: int = 2):
+                 timeout: float = 300.0, max_retries: int = 2,
+                 cancel: Optional[threading.Event] = None):
         if not base_url:
             raise LLMError("未配置服务商地址（base_url）")
         if not model:
             raise LLMError("未配置模型")
         self.model = model
         self.max_retries = max_retries
+        self._cancel = cancel   # R3-09/B24：取消事件——流式读取中提前退出，停止不再烧完整回复
         self._client = OpenAI(base_url=base_url.rstrip("/"), api_key=api_key or "none",
                               timeout=timeout, max_retries=0)  # 重试由本类控制
 
@@ -80,6 +83,25 @@ class LLMClient:
                     kwargs["response_format"] = {"type": "json_object"}
                 if max_tokens:
                     kwargs["max_tokens"] = max_tokens
+                if self._cancel is not None:
+                    # R3-09/B24：带取消事件时走流式——用户点「停止」后提前退出读取，
+                    # 不等待整段回复烧完 token（取消时已产生费用仍由 usage 记录）
+                    if self._cancel.is_set():
+                        raise LLMError("已取消（用户停止）")
+                    parts: list[str] = []
+                    stream = self._client.chat.completions.create(**kwargs, stream=True)
+                    for chunk in stream:
+                        if self._cancel.is_set():
+                            raise LLMError("已取消（用户停止）")
+                        try:
+                            if chunk.choices and chunk.choices[0].delta                                     and chunk.choices[0].delta.content:
+                                parts.append(chunk.choices[0].delta.content)
+                        except Exception:  # noqa: BLE001  部分服务商终止块结构差异
+                            pass
+                        if getattr(chunk, "usage", None) is not None:
+                            usage.add(getattr(chunk.usage, "prompt_tokens", 0),
+                                      getattr(chunk.usage, "completion_tokens", 0))
+                    return "".join(parts)
                 resp = self._client.chat.completions.create(**kwargs)
                 use = getattr(resp, "usage", None)
                 if use is not None:  # U5：记录实际消耗

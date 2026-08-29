@@ -250,5 +250,5 @@ def generate_slice(client: Any, subject: str, exam: str, slice_: dict[str, Any],
     return questions, ids_start + len(questions)
 
 
-def make_client() -> Any:
-    return _get_client("gen")
+def make_client(cancel=None) -> Any:
+    return _get_client("gen", cancel=cancel)

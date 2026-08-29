@@ -35,6 +35,6 @@ def generate_review(client: Any, subject: str, exam: str,
     ], temperature=0.4)
 
 
-def make_client() -> Any:
+def make_client(cancel=None) -> Any:
     from . import get_client
-    return get_client("gen")
+    return get_client("gen", cancel=cancel)

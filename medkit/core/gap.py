@@ -39,6 +39,9 @@ def plan(subject: str = "", count: int = 50, w_freq: float = 0.15,
     from . import syllabus as syl
     count = max(1, min(int(count), 500))
     kps = kps if kps is not None else lib.recommend(limit=40)
+    if subject:
+        # D-02：薄弱卷只扫本科目——否则「内科」薄弱卷混入外科薄弱点（出题偏移、token 白烧）
+        kps = [k for k in kps if str(k.get("subject") or "") == subject]
     freq = rex.freq_map(subject)
     pending: set[str] = set()
     if use_syllabus:
