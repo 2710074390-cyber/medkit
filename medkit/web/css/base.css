@@ -1,8 +1,9 @@
-  /* 设计语言：仿 Cherry Studio v2 —— 中性灰优先，主操作黑白反转，彩色仅语义反馈与数据可视化 */
+  /* 设计语言：中性灰优先 + 青绿主色（PRD 7.2：#2A6B5A），主操作青绿反转，彩色仅语义反馈与数据可视化。
+     v0.8.1：语义色取 PRD 7.2 色相（红 #E15759 / 黄 #EDC948 / 绿 #59A14F）并依 WCAG 加深/提亮保对比度。 */
   :root{
     --bg1:#0a0a0a; --bg2:#0a0a0a; --card:#242424; --card2:#303030;
-    --line:#404040; --accent:#d4d4d4; --accent2:#e5e5e5; --good:#4ade80;
-    --warn:#fbbf24; --bad:#f87171; --text:#fafafa; --dim:#a3a3a3;
+    --line:#404040; --accent:#3aa58c; --accent2:#5bc2a8; --good:#6ccb62;
+    --warn:#fbbf24; --bad:#ff7b7d; --text:#fafafa; --dim:#a3a3a3;
     --link:#60a5fa;
     --info:#60a5fa; --infobg:rgba(96,165,250,.13);
     --card3:#3a3a3a;
@@ -10,13 +11,13 @@
     --goodbg:rgba(74,222,128,.12); --badbg:rgba(248,113,113,.12);
     --codebg:#2e2e2e; --codefg:#a3a3a3; --reqbg:#2e2e2e;
     --navbg:#171717; --errbg:rgba(248,113,113,.12);
-    --onaccent:#171717;
+    --onaccent:#0d1f1a;
     --s1:#60a5fa; --s2:#2dd4bf; --s3:#a78bfa; --s4:#fbbf24;   /* 配比条四段色（数据可视化豁免） */
   }
   :root[data-theme=light]{
     --bg1:#ffffff; --bg2:#ffffff; --card:#ffffff; --card2:#f5f5f5;
-    --line:#e5e5e5; --accent:#171717; --accent2:#171717; --good:#16a34a;
-    --warn:#b45309; --bad:#dc2626; --text:#0a0a0a; --dim:#6a6a6a;   /* IMP-08 对比度：4.35→4.96:1（card2 上） */
+    --line:#e5e5e5; --accent:#2A6B5A; --accent2:#1f5144; --good:#4a8f45;
+    --warn:#a16207; --bad:#d64545; --text:#2E3440; --dim:#6a6a6a;   /* 正文 #2E3440（PRD 7.2）；dim 对比度 4.96:1 */
     --link:#2563eb;
     --info:#2563eb; --infobg:rgba(37,99,235,.08);
     --card3:#ececec;
@@ -24,7 +25,7 @@
     --goodbg:rgba(22,163,74,.10); --badbg:rgba(220,38,38,.08);
     --codebg:#f5f5f5; --codefg:#525252; --reqbg:#f5f5f5;
     --navbg:#fafafa; --errbg:rgba(220,38,38,.08);
-    --onaccent:#fafafa;
+    --onaccent:#ffffff;
     --s1:#3b82f6; --s2:#0d9488; --s3:#8b5cf6; --s4:#d97706;
   }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -32,6 +33,7 @@
     font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;color:var(--text);
     background:var(--bg1);
     min-height:100vh;display:flex;
+    font-size:14px;   /* PRD 7.3：正文 14px（层级收敛 21/16/14/12） */
   }
   /* ---- Cherry 式左侧栏：独立空间区域（浅 #fafafa / 深 #171717，右边框分隔） ---- */
   aside.side{
@@ -86,7 +88,7 @@
     background:var(--card);border:1px solid var(--line);border-radius:10px;
     padding:20px;margin-top:16px;
   }
-  .card h2{font-size:14px;font-weight:600;margin-bottom:14px;color:var(--text)}
+  .card h2{font-size:16px;font-weight:600;margin-bottom:14px;color:var(--text)}   /* PRD 7.3：卡片标题 16px */
   label{display:block;font-size:13px;color:var(--dim);margin:12px 0 5px}
   input[type=text],input[type=password],input[type=number],select,textarea{
     width:100%;background:var(--card2);border:1px solid var(--line);color:var(--text);
@@ -100,7 +102,7 @@
   .btns{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center}
   button.act{
     background:var(--accent);
-    color:var(--onaccent);border:1px solid var(--accent);border-radius:8px;padding:9px 20px;font-size:13.5px;
+    color:var(--onaccent);border:1px solid var(--accent);border-radius:8px;padding:9px 20px;font-size:14px;   /* PRD 7.3：按钮文字 14px */
     font-weight:600;cursor:pointer;font-family:inherit;
   }
   button.act:hover{opacity:.88}
@@ -372,7 +374,7 @@
   .psub{font-size:12.5px;color:var(--dim);margin-bottom:8px;max-width:760px;line-height:1.7}
   /* 卡片头组件：标题 + 右侧计数（替代 float:right，窄屏不再挤压换行） */
   .cardh{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
-  .cardh h2{margin:0;font-size:14px;font-weight:600;color:var(--text)}
+  .cardh h2{margin:0;font-size:16px;font-weight:600;color:var(--text)}   /* PRD 7.3：卡片标题 16px */
   .cardh .hint{margin:0;margin-left:auto;white-space:nowrap;font-size:12px}
   @media (max-width:640px){.cardh .hint{white-space:normal;text-align:right}}
   /* 学习中心子导航（pills）：一屏一任务，避免超长页 */
@@ -464,7 +466,7 @@
     .rv-grades button{min-width:26px}
   }
   /* v0.8.1：开始仪表盘 + 我的/题库 tab 分区标题 */
-  h2.subh{display:flex;align-items:center;gap:8px;margin:22px 0 6px;font-size:15px;font-weight:600;color:var(--text)}
+  h2.subh{display:flex;align-items:center;gap:8px;margin:22px 0 6px;font-size:16px;font-weight:600;color:var(--text)}
   h2.subh .ic{width:16px;height:16px;color:var(--accent2)}
   .start-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:6px}
   .start-stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 10px;text-align:center}
