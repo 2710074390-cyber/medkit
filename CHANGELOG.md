@@ -6,7 +6,7 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
-## [0.10.0] - Unreleased
+## [0.10.0] - 2026-08-31
 
 ### PR-1 开始页多场考试计划 + 红点来源可感知（2026-08-30）
 
@@ -132,6 +132,21 @@
 - **纯净检查**：新增 `pack/check-package.py`（pathlib 扫描 `dist/MedKit/`，blacklist：`samples` / `syllabus_seed_306.json` / `tests` / `__pycache__` / `.pyc`）；`pack/build.bat` 构建后自动运行，失败即构建失败。
 - **README**：绿色版说明改为“纯净版不含任何学科/题目/样例/测试数据，请自行上传教材/教师重点，官方 306 大纲在「大纲管理」一键导入”。
 - 测试：`tests/test_check_package.py`（干净通过 / 残留失败 / 缺失跳过）、`tests/browser/test_sample_purity.py`（按钮降级）。
+
+### R4 全链路复核修复（2026-08-31，批次 1/2：流式主路径 P0/P1 + 后端健壮性）
+
+#### Fixed
+
+- **R4-01 流式去重改绑流生命周期**：`dedupe.begin/end` 移入生成器 `finally`——覆盖 done/error/canceled/断连 GeneratorExit，不再「响应对象返回即释放锁」导致并发双跑双扣费（`routers/library.py`；测试 `tests/test_dedupe.py`）。
+- **R4-02 流式取消全链路**：前端 `AbortController` +「■ 停止生成」按钮 + 切视图/页签即 `sseAbortAll()`；服务端 `cancel_ev` 传入 client，`StreamingResponse` 断开 `finally` 置位（`app.js`/`learn.js`/`library.py`；测试 `tests/test_explain_stream.py::test_explain_stream_canceled_no_save`）。
+- **R4-03 断流不再自动回退非流式**：仅流式接口不可用（`streamed` 未置位）才降级——AbortError/断流/出错一律不二次请求，杜绝断流重生成双倍扣费。
+- **R4-04 tutor 流空会话回收**：`seeded` 标志 + `finally`——未落定（未出第一问）的会话 `delete_session` 兜底删除（测试 `tests/test_tutor_stream.py::test_tutor_start_stream_canceled_session_cleaned`）。
+- **R4-05 structurize 产物可回读**：完整性 ≥95% 即自动 `add_seed_items(outline_drafts())` 幂等落库为官方大纲（`source='seed'`，返回 `source`/`added`）；原文 sha1 存 `~/.medkit/outline_originals/` 可审计；不达标保留原文不替换（`core/syllabus.py`；测试 `test_structurize_roundtrip_and_original_store`）。
+- **R4-06 资产上传硬上限**：`_MAX_ASSET_BYTES = 200MB`，读后即判，超限 400 且不写盘/不进切片索引（`routers/projects.py`；测试 `test_asset_upload_size_limit`）。
+- **R4-07 config 原子写**：`config.save` 统一 `write_json_atomic`（唯一临时名 + Windows 共享冲突重试），与 FTS/状态文件同口径（测试 `test_config_save_atomic_roundtrip`）。
+- **R4-08 syllabus 纯读事务**：`_rows`/`list_subjects` 改 `tx(write=False)`，不再 `BEGIN IMMEDIATE` 抢占写锁。
+- **R4-12 配额超界统一 400**：`official_quota` 越界（0~30 外）显式 400，与 `web_ref_quota`/`bloom` 口径一致，`meta` 不再静默钳制（测试 `test_create_project_rejects_quota_out_of_range`）。
+- 验证：离线 pytest **424 passed**，ruff 干净；批次 1/2 独立提交（`8e603a0`/`c55bb9d`/`9980a27`）。
 
 ## [0.9.0] - 2026-08-29
 
