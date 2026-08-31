@@ -101,7 +101,7 @@
 - **端点**：`POST /api/syllabus/outline/structurize`（返回 `{ok, structured, stats, diff, original_path, note}`）。
 - **出题角色**：项目 `official_quota`（0~30，默认 0 = 仅教师重点）；`orchestrator.py` 教师重点为主线 `source="teacher"` + 官方306 按配额补充；`chapter_items_text` 支持 source 过滤。
 - **前端**：新建课题表单新增“官方 306 补充条目数”；大纲管理视图新增“AI 结构化预览”按钮（diff/原文路径展示）。
-- 测试：`tests/test_syllabus_manage.py`（round-trip/失败保留原文/角色过滤）、`tests/browser/test_syllabus_manage.py`（无“大纲覆盖”文案 + 角色标签）。
+- 测试：`tests/test_syllabus_manage.py`（round-trip/失败保留原文/角色过滤）、`tests/browser/test_syllabus_manage_ui.py`（无“大纲覆盖”文案 + 角色标签）。
 
 ### PR-9 外部做题数据导入（WP-11，2026-08-30）
 
@@ -155,6 +155,7 @@
 - **`_sseAbort` TDZ 击穿整个学习中心脚本**：`let _sseAbort` 声明在 `showLearnView` 之后——脚本求值期 `initLearnView` 恢复上次视图时调用 `showLearnView` → `sseAbortAll()` 触发「Cannot access '_sseAbort' before initialization」ReferenceError，learn.js 后续全部代码不执行（子导航/讲解/提问/大纲管理全挂）。修复：声明前移到文件头（`medkit/web/js/learn.js`）。回归：`test_learn_view_remembered_after_reload`（CI 首曝光）。
 - **`sseStopUI` 先清后挂顺序错**：`expGenerate`/`tutorStart` 先 `_sseAbort = abort` 再调 `sseStopUI`（内部先 `sseAbortAll()`）——新 controller 被立即 abort，fetch 未发出即「已停止生成（未保存）」、流式永不建立（测试模拟 SSE 全量帧时 `exp_live` 无增量）。修复：先 `sseStopUI` 清上一处残留，再挂新 controller（两处）。回归：`test_explain_stream_live_display`。
 - 两项均为基础层（learn.js）缺陷，整个浏览器层 34 用例重跑全绿。
+- **测试文件重名冲突**：`tests/browser/test_syllabus_manage.py` 与 `tests/test_syllabus_manage.py` 同名——pytest 全量收集（`verify.cmd`/CI verify job）报 `import file mismatch` 收集错误。浏览器层重命名为 `test_syllabus_manage_ui.py`，验证口径恢复「全量收集无冲突」。
 
 ## [0.9.0] - 2026-08-29
 
