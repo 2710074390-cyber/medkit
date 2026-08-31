@@ -1,5 +1,6 @@
 """routers：服务商配置 / 健康检查 / LLM 工具（连接测试·模型列表）。"""
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -41,6 +42,8 @@ class ConfigBody(BaseModel):
     web_search_enabled: bool = False
     web_search_api_key: str = ""
     web_search_backend: str = "auto"
+    web_search_trusted_only: bool = False
+    web_search_trusted_domains: str = ""
     mineru_api_key: str = ""
     mineru_auto_ocr: bool = True
 
@@ -90,6 +93,9 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
 
     mineru_api_key = body.mineru_api_key or (saved.get("mineru", {}) or {}).get("api_key", "")
     ws_api_key = body.web_search_api_key or (saved.get("web_search", {}) or {}).get("api_key", "")
+    trusted_domains = [d.strip().lower() for d in
+                       re.split(r"[,\n;，；]+", body.web_search_trusted_domains or "")
+                       if d.strip()]
 
     new_cfg = {
         "provider": body.provider,
@@ -101,6 +107,8 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
             "enabled": body.web_search_enabled,
             "backend": body.web_search_backend or "auto",
             "api_key": cfg.encrypt_for_save(ws_api_key),
+            "trusted_only": bool(body.web_search_trusted_only),
+            "trusted_domains": trusted_domains,
         },
         "mineru": {"api_key": cfg.encrypt_for_save(mineru_api_key),
                    "auto_ocr": body.mineru_auto_ocr},

@@ -76,6 +76,8 @@ async function loadConfig() {
   const wsc = c.web_search || {};
   $("ws_key").placeholder = wsc.api_key_masked ? ("已保存：" + wsc.api_key_masked) : "留空 = 保留已保存的 Key";
   $("t_web").checked = !!wsc.enabled;
+  $("t_web_trusted").checked = !!wsc.trusted_only;
+  $("ws_trusted_domains").value = (wsc.trusted_domains || []).join(", ");
   syncWsManual();
   loadSearchOptions().then(() => { $("ws_backend").value = wsc.backend || "auto"; updateWsNote(); syncWsManual(); });
   loadPresets().catch(() => {});
@@ -269,6 +271,8 @@ $("btn_save").onclick = async () => {
       web_search_enabled: $("t_web").checked,
       web_search_api_key: $("ws_key").value.trim(),
       web_search_backend: $("ws_backend").value,
+      web_search_trusted_only: $("t_web_trusted").checked,
+      web_search_trusted_domains: $("ws_trusted_domains").value.trim(),
       mineru_api_key: $("mineru_key").value.trim(),
       mineru_auto_ocr: $("t_autoocr").checked,
     };
@@ -330,6 +334,8 @@ $("btn_ws_save").onclick = async () => {
       web_search_enabled: $("t_web").checked,
       web_search_api_key: $("ws_key").value.trim(),
       web_search_backend: $("ws_backend").value,
+      web_search_trusted_only: $("t_web_trusted").checked,
+      web_search_trusted_domains: $("ws_trusted_domains").value.trim(),
       mineru_api_key: "",
       mineru_auto_ocr: $("t_autoocr").checked,
     };
@@ -539,6 +545,7 @@ function currentFormPayload() {
     bloom: bloomSum(),
     knobs: collectKnobs(),
     requirements: $("requirements").value.trim(),
+    official_quota: parseInt($("official_quota") ? $("official_quota").value : "0") || 0,
   };
 }
 function collectKnobs() {
@@ -562,6 +569,7 @@ function fillPayload(p) {
   $("k_difficulty").value = k.difficulty || ""; $("k_analysis").value = k.analysis_style || "";
   $("k_stem").value = k.stem_style || "";
   $("requirements").value = (p.requirements || "").slice(0, 500);
+  if ($("official_quota")) $("official_quota").value = p.official_quota ?? 0;
   ratioSum(); bloomSum();
   $("req_count").textContent = $("requirements").value.length + "/500";
 }
@@ -928,6 +936,17 @@ $("btn_sample").onclick = async () => {
   } catch (e) { toast(e.message, false); }
   $("btn_sample").disabled = false; $("btn_sample").textContent = "手头还没素材？载入示例体验";
 };
+/* WP-12：纯净安装包无示例数据 → 探测并降级“载入示例”按钮（开发版不受影响） */
+async function probeSampleAvailability() {
+  try {
+    const s = await api("/api/sample");
+    const btn = $("btn_sample");
+    if (btn && !s.sample && s.available === false) {
+      btn.disabled = true; btn.title = s.error || "";
+      btn.textContent = "示例仅开发版可用（纯净版请自备素材/上传官方大纲）";
+    }
+  } catch (e) { /* 探测失败不阻塞页面 */ }
+}
 
 /* ---- S3：素材库（历史解析会话）与项目模板 ---- */
 async function loadSessions() {
@@ -1156,6 +1175,7 @@ $("btn_create").onclick = async () => {
       web_backend: $("ws_backend").value,
       web_ref_quota: parseInt($("web_quota").value || "0"),
       web_manual_text: $("ws_manual").value,
+      official_quota: parseInt($("official_quota") ? $("official_quota").value : "0") || 0,
     };
     const r = await api("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     createToken = "";   // 成功即重置：下一次创建是新的意图
@@ -1263,14 +1283,43 @@ function fmtClock(iso) {
 }
 function renderStepper(stage, progress) {
   const cur = stepIdx(stage);
+  let subStr = "", desc = "";
+  if (progress) {
+    const pct = progress.pct || 0;
+    subStr = progress.sub_total
+      ? ` · ${esc(progress.sub || "子任务")} ${progress.sub_done || 0}/${progress.sub_total}`
+      : (progress.sub ? ` · ${esc(progress.sub)}` : "");
+    desc = progress.detail ? esc(progress.detail)
+      : (stage === "done" ? "已完成" : (pct > 0 ? "进行中…" : "准备中…"));
+  }
   return STEPS.map((s, i) =>
     `<span class="stp ${i === cur ? "cur" : i < cur ? "done" : ""}">${s[1]}</span>`).join("")
     + `<span class="stp ${cur >= STEPS.length ? "done" : ""}">完成</span>`
     + (progress ? `<div style="flex:1;min-width:180px">
         <div class="pvbar"><i style="width:${progress.pct || 0}%"></i></div>
-        <div id="pvtext">${progress.detail ? esc(progress.detail) : ""} · ${progress.pct || 0}%`
+        <div id="pvtext">${desc} · ${progress.pct || 0}%${subStr}`
         + (progress.updated ? ` · 更新 ${fmtClock(progress.updated)}` : "") + `</div>
       </div>` : "");
+}
+const SUBSTEP_LABEL = {pending:"排队中", running:"进行中", done:"完成", failed:"失败", retry:"重试"};
+const SUBSTEP_ICON = {pending:"•", running:"⏳", done:"✓", failed:"✗", retry:"↻"};
+function renderSubsteps(rows, stage) {
+  // 终态（done/error/cancelled）展示全部最近事件，运行中按当前阶段过滤
+  const isTerminal = ["done", "error", "cancelled"].includes(stage);
+  const list = (rows || []).filter(s => isTerminal || !stage || s.stage === stage);
+  if (!list.length) return `<div class="hint">暂无子步骤记录${stage ? "（当前阶段：" + esc(stage) + "）" : ""}</div>`;
+  return `<details class="substeps-card" open>
+    <summary>子步骤 · ${list.length} 条${stage ? " · " + (isTerminal ? "全部阶段" : "阶段 " + esc(stage)) : ""}</summary>
+    <div class="substeps">` + list.map(s => {
+      const st = s.status || "pending";
+      const cls = st === "running" ? " running" : st === "done" ? " done"
+        : st === "failed" ? " failed" : st === "retry" ? " retry" : "";
+      return `<details class="substep${cls}"${st === "running" ? " open" : ""}>
+        <summary><span class="ss-ico">${SUBSTEP_ICON[st] || "•"}</span> ${esc(s.label || s.step)}
+          <small class="hint">${esc(SUBSTEP_LABEL[st] || st)}${s.detail ? " · " + esc(s.detail) : ""}</small></summary>
+        <div class="substep-detail">${esc(s.step)}${s.detail ? " · " + esc(s.detail) : ""}${s.ts ? " · " + fmtClock(s.ts) : ""}</div>
+      </details>`;
+    }).join("") + `</div></details>`;
 }
 async function showProject(pid) {
   if (currentPid && pid !== currentPid && typeof reviewDirtyGuard === "function" && !reviewDirtyGuard()) return;
@@ -1304,6 +1353,7 @@ async function showProject(pid) {
       <a class="btnart" href="javascript:void(0)" onclick="ankiHelp()" title="如何把导出文件导入 Anki">Anki 导入指引</a>` : ""}</div>
     ${extra.length ? `<div class="hint" style="margin-top:6px">${extra.join(" · ")}</div>` : ""}
     <div id="pd_stepper" class="stepper">${renderStepper(meta.stage, meta.progress)}</div>
+    <div id="pd_substeps" class="substeps-card">${renderSubsteps(meta.substeps, meta.stage)}</div>
     <div class="hint" style="margin-top:6px">各章节配额（教师重点词频加权）：</div>
     <div class="quota">${quota}</div>
     <div id="pd_arts" class="hint" style="margin-top:8px">${artifactLinks(pid, meta.artifacts)}</div>
@@ -1373,6 +1423,8 @@ async function loadLog(pid) {
   try {
     const s = await api("/api/projects/" + pid + "/status");
     renderLog($("pd_log"), s.log || []);
+    const ss = $("pd_substeps");
+    if (ss) ss.innerHTML = renderSubsteps(s.substeps, s.stage);
   } catch (e) { /* ignore */ }
 }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } pollFails = 0; }
@@ -1430,6 +1482,8 @@ function startPoll(pid) {
       }
       const st = $("pd_stepper");
       if (st) st.innerHTML = renderStepper(s.stage, s.progress);
+      const ss = $("pd_substeps");
+      if (ss) ss.innerHTML = renderSubsteps(s.substeps, s.stage);
       const logEl = $("pd_log");
       if (logEl) renderLog(logEl, s.log || []);
       const arts = $("pd_arts");
@@ -2197,3 +2251,4 @@ $("side_ver").onclick = () => checkUpdate(false);
 $("side_ver").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); checkUpdate(false); } };
 setTimeout(() => checkUpdate(true), 4000);
 loadConfig().then(maybeShowWizard).catch(e => toast(e.message, false));
+probeSampleAvailability();

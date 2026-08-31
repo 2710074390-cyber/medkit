@@ -61,7 +61,8 @@ pack\build.bat              # 或：python -m PyInstaller --noconfirm --clean me
 
 - 产物：`dist\MedKit\`（约 87 MB，含 `MedKit.exe` + `_internal\`）
 - 使用：**复制整个 `MedKit` 文件夹**到任意位置 → 双击 `MedKit.exe` → 自动打开浏览器
-- 自带资源：静态前端 / 八个提示词（MedGen·MedQC·MedFix·MedReview·MedExplain·MedTutor·MedCards·SyllabusExtract）/ 示例素材 / **内置西综306 大纲种子**（打包路径已验证）；**无需安装 Python**
+- 自带资源：静态前端 / 八个提示词（MedGen·MedQC·MedFix·MedReview·MedExplain·MedTutor·MedCards·SyllabusExtract）；**纯净版不含任何学科/题目/样例/测试数据**——首次使用请自行上传教材、教师重点，官方 306 大纲可在「大纲管理」一键导入（md/txt）；**无需安装 Python**
+- 纯净检查：`pack\check-package.py`（构建后自动运行；也可手动 `python pack\check-package.py` 对 `dist\MedKit` 断言无样例/种子/测试/字节码）
 
 ## 安装包（Inno Setup，可选）
 

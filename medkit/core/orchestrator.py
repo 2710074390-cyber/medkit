@@ -36,6 +36,10 @@ TEACHER_CHAR_LIMIT = medgen.TEACHER_CHAR_LIMIT  # S2：单源常量（medgen.py 
 
 RENDER_MAX_OPTIONS = 6  # 渲染前终检上限（qbank_html LETTERS=10 保底防 IndexError，超限题剔除）
 
+# v0.10.0：统一阶段序列（WP-2 进度模型；前端 STEPS 与此对齐）
+PIPELINE_STAGES = ["websearch", "generating", "gate1", "qc", "fixing",
+                   "finalizing", "reviewing", "rendering", "done"]
+
 
 def _render_precheck(questions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """渲染前终检（D2）：仍超限/缺字段的题剔除出产物 + 记入人工复核清单。
@@ -119,6 +123,89 @@ def _write_json_atomic(path: Path, data: Any) -> None:
 
 _PROG_LOCK = threading.Lock()
 
+# WP-3：子步骤事件流（{project}/substeps.jsonl），保留最近 200 行
+_SUBSTEP_LOCK = threading.Lock()
+_SUBSTEP_KEEP = 200
+
+
+def _substep(base: Path, stage: str, step: str, label: str,
+             status: str, detail: str = "") -> None:
+    """WP-3：追加写一条子步骤事件（status ∈ pending/running/done/failed/retry）。
+
+    写入失败（磁盘只读等）静默跳过——事件流是辅助可视化，不阻断管线。
+    """
+    record = {"stage": stage, "step": step, "label": label,
+              "status": status, "detail": detail,
+              "ts": datetime.now().isoformat()}
+    with _SUBSTEP_LOCK:
+        path = base / "substeps.jsonl"
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            lines = path.read_text(encoding="utf-8").splitlines()
+            if len(lines) > _SUBSTEP_KEEP:
+                path.write_text("\n".join(lines[-_SUBSTEP_KEEP:]) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+
+def _append_manual_section(base: Path, title: str, lines: list[str]) -> None:
+    """把子步骤失败/降级说明追加进人工复核清单.md（与既有清单并存不覆盖）。"""
+    section = ["", f"## {title}", "", "> 子步骤失败/降级，已记录供人工复核：", ""]
+    section.extend(f"- {line}" for line in lines)
+    section.append("")
+    target = base / "人工复核清单.md"
+    pre = target.read_text(encoding="utf-8") + "\n" if target.exists() else ""
+    target.write_text(pre + "\n".join(section) + "\n", encoding="utf-8")
+
+
+def _run_substep(base: Path, stage: str, step: str, label: str, fn,
+                 ttl: float = 60, retries: int = 2,
+                 detail: str = "", on_fail=None) -> tuple[Any, Optional[Exception]]:
+    """WP-3：超时/重试子步骤包装。
+
+    每次尝试：retry → running → fn（守护线程，ttl 秒）→ done/failed；
+    超时或异常写 failed 并重试（retry 事件），重试用尽返回 (None, err)，
+    调用方按需求降级（写人工复核清单并继续，不中断管线）。
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(retries + 1):
+        if attempt:
+            _substep(base, stage, step, label, "retry",
+                     f"第 {attempt}/{retries} 次重试（上次：{last_err}）")
+        _substep(base, stage, step, label, "running", detail)
+        box: dict[str, Any] = {}
+        # R3S-03：子步骤在线程执行——在父线程先取上下文，worker 内 run 才带 token 账本
+        _ctx = contextvars.copy_context()
+
+        def _target(_box: dict[str, Any] = box, _c: Any = _ctx) -> None:
+            try:
+                _box["result"] = _c.run(fn)
+            except BaseException as e:  # noqa: BLE001  超时线程异常只回传不抛出
+                _box["error"] = e
+
+        t = threading.Thread(target=_target, daemon=True)
+        t.start()
+        t.join(ttl)
+        if t.is_alive():
+            last_err = TimeoutError(f"子步骤超过 {ttl}s 未完成")
+            _substep(base, stage, step, label, "failed", str(last_err))
+            continue
+        err = box.get("error")
+        if err is not None:
+            last_err = err
+            _substep(base, stage, step, label, "failed", str(err)[:300])
+            continue
+        _substep(base, stage, step, label, "done", detail)
+        return box.get("result"), None
+    _substep(base, stage, step, label, "failed", f"重试用尽（{retries} 次），降级继续")
+    if on_fail is not None:
+        try:
+            on_fail(last_err)
+        except Exception:  # noqa: BLE001  降级回执失败不阻断
+            pass
+    return None, last_err
+
 
 def _set_stage(proj_dir: Path, meta_path: Path, stage: str, msg: str) -> None:
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -130,12 +217,15 @@ def _set_stage(proj_dir: Path, meta_path: Path, stage: str, msg: str) -> None:
     _log(proj_dir, msg)
 
 
-def _set_progress(proj_dir: Path, stage: str, done: int, total: int, detail: str = "") -> None:
+def _set_progress(proj_dir: Path, stage: str, done: int, total: int, detail: str = "",
+                  sub: str = "", sub_done: int = 0, sub_total: int = 0) -> None:
+    """写进度（WP-2）：阶段级 done/total/pct + 子步骤级 sub/sub_done/sub_total。"""
     pct = round(done / total * 100) if total else (100 if stage == "done" else 0)
     with _PROG_LOCK:  # 并发切片各自写进度 → 串行化
         _write_json_atomic(proj_dir / "progress.json", {
             "stage": stage, "done": done, "total": total, "pct": pct,
-            "detail": detail, "updated": datetime.now().isoformat()})
+            "detail": detail, "sub": sub, "sub_done": sub_done, "sub_total": sub_total,
+            "updated": datetime.now().isoformat()})
 
 
 def _effective_ratios(ratios: dict[str, int]) -> dict[str, int]:
@@ -399,16 +489,25 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     subject = meta.get("subject", "")
     exam = meta.get("exam", "期末")
     toggles = meta.get("toggles", {})
-    # WP-01：大纲锚定注入（有大纲库才参与，零成本兜底；≤800 字）
+    # WP-01/WP-10：大纲锚定注入——教师重点为主（source=teacher），官方 306 仅作补充
     syllabus_text = ""
+    official_note = ""
     try:
         from . import syllabus as syl
         if dbs.enabled() and syl.list_subjects():
-            syllabus_text = syl.chapter_items_text(subject)
+            syllabus_text = syl.chapter_items_text(subject, limit=800, source="teacher")
+            official_quota = int(meta.get("official_quota") or 0)
+            if official_quota > 0:
+                official_text = syl.chapter_items_text(
+                    subject, limit=min(400, official_quota * 10), source="seed")
+                if official_text:
+                    syllabus_text = (syllabus_text + "\n\n# 官方 306 补充大纲（仅补充，考点以教师重点为准）\n"
+                                     + official_text)[:1200]
+                    official_note = f" + 官方306补充 {len(official_text)} 字"
     except Exception:  # noqa: BLE001  大纲引擎故障不阻塞出题
         syllabus_text = ""
     if syllabus_text:
-        _log(base, f"📋 大纲锚定注入 {len(syllabus_text)} 字（subtopic 对齐考点条目）")
+        _log(base, f"📋 大纲锚定注入 {len(syllabus_text)} 字（教师重点为主{official_note}，subtopic 对齐考点条目）")
     # WP-04：图像素材（图/表题）——清单注入提示词 + 渲染用索引（R3S-02：与审核台重渲染共用构建函数）
     image_index, image_sections = build_image_index(base, slices)
     if image_sections:
@@ -450,7 +549,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             _log(base, "  网络检索：上一轮被取消（结果不完整）→ 续跑重新检索")
         if not web_materials:
             _set_stage(base, meta_path, "websearch", "⓪ 多轮网络检索（考纲/真题/指南）…")
-            _set_progress(base, "websearch", 0, 1, "检索中…（首次约 1~3 分钟）")
+            _set_progress(base, "websearch", 0, 1, "检索中…（首次约 1~3 分钟）", sub="多轮检索", sub_done=0, sub_total=3)
             ws_cfg = cfg.load().get("web_search", {}) or {}
             backend = ws.resolve_backend(meta.get("web_backend", "auto") or "auto",
                                          cfg.load().get("provider", "deepseek"),
@@ -472,7 +571,9 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                     slices_digest="\n\n".join(
                         f"【{s.get('title','')}】\n{s.get('text','')[:600]}"
                         for s in textbook_slices[:4]),
-                    cancel=cancel)
+                    cancel=cancel,
+                    trusted_only=bool(ws_cfg.get("trusted_only", False)),
+                    trusted_domains=ws_cfg.get("trusted_domains") or [])
                 materials = res_search["materials"]
                 logs_list = res_search["logs"]
                 err_list = res_search["errors"]
@@ -492,6 +593,10 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                 return {"stage": "cancelled", "questions": 0, "partial": True}
             inc_flag.unlink(missing_ok=True)
             conflicts = [m for m in materials if m.get("conflict")]
+            if err_list:
+                _append_manual_section(base, "网络检索失败（已降级继续）",
+                                       [str(e) for e in err_list])
+                _log(base, f"  ⚠️ 网络检索 {len(err_list)} 项失败 → 人工复核清单.md")
             if conflicts:
                 lines = ["# 人工复核清单（网络检索冲突项）", "",
                          "> 下列网络素材与教材切片结论/数值直接矛盾，已**标记不自动改写**；"
@@ -535,7 +640,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         if cancel.is_set():
             raise PipelineCancelled()
         _set_progress(base, "generating", progress_done, total_slices,
-                      f"{slice_by_sid[sid].get('title', '')[:24]}（{cnt} 题）")
+                      f"{slice_by_sid[sid].get('title', '')[:24]}（{cnt} 题）",
+                      sub="切片出题", sub_done=progress_done, sub_total=total_slices)
         _log(base, f"  切片 {sid}（{slice_by_sid[sid].get('title', '')[:20]}）出题 {cnt} 题…")
         qs, _ = medgen.generate_slice(
             gen_client, subject, exam, slice_by_sid[sid], cnt, ratios, teacher_text,
@@ -590,7 +696,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                             _save_checkpoint(base, done_sids,
                                              [q for v in result_by_sid.values() for q in v])
                         _set_progress(base, "generating", progress_done, total_slices,
-                                      f"已完成 {progress_done}/{total_slices} 切片")
+                                      f"已完成 {progress_done}/{total_slices} 切片",
+                                      sub="切片出题", sub_done=progress_done, sub_total=total_slices)
                 # 中途退出/取消：把已完成但尚未写入的切片结果一并落 checkpoint，避免续跑重生成白花钱
                 with ckpt_lock:
                     for fut in futures:
@@ -621,7 +728,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     if not questions and done_questions:
         questions = done_questions
     _set_progress(base, "generating", progress_done, total_slices,
-                  "出题完成" if not cancelled_midway else "已取消")
+                  "出题完成" if not cancelled_midway else "已取消",
+                  sub="切片出题", sub_done=progress_done, sub_total=total_slices)
 
     if cancelled_midway:
         _save_checkpoint(base, done_sids, questions)
@@ -652,7 +760,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     # WP-04+B28：image_ref 必须指向已上传的图片素材；任何不匹配都剔除并记 warning
     # （不再要求 image_sids 非空——未传图项目的幻觉 image_ref 同样拦截，防伪图题零提示）
     image_sids = {s.get("sid") for s in slices if s.get("role") == "image" and s.get("image")}
+    _substep(base, "gate1", "image_ref", "图像引用检查", "running",
+             f"{len(image_sids)} 个素材")
     questions, dropped_img = _gate_image_refs(questions, image_sids)
+    _substep(base, "gate1", "image_ref", "图像引用检查",
+             "done" if not dropped_img else "failed",
+             f"剔除 {len(dropped_img)} 题" if dropped_img else "通过")
     if dropped_img:
         _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题"
              f"（image_ref 不在素材清单：{'、'.join(str(x) for x in dropped_img[:5])}）")
@@ -660,13 +773,54 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         if cancel.is_set():   # B24：门禁循环轮次间可取消
             return _cancel_out(base, meta_path, done_sids, questions)
         _set_stage(base, meta_path, "gate1", f"② 门禁① 第 {round_i} 轮…")
-        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮")
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="选项校验", sub_done=0, sub_total=4)
+        _opt_issues, opt_err = _run_substep(
+            base, "gate1", "options", "选项校验",
+            lambda qs=questions: options_check.check_all(qs)["issues"],
+            detail=f"第 {round_i} 轮")
+        if opt_err:
+            _append_manual_section(base, "门禁① 选项校验",
+                                   [f"第 {round_i} 轮失败：{opt_err}", "已按无问题继续，建议人工复核。"])
+            _opt_issues = []
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="Bloom 校验", sub_done=1, sub_total=4)
+        _bloom_issues, bloom_err = _run_substep(
+            base, "gate1", "bloom", "Bloom 校验",
+            lambda qs=questions: bloom_check.check_bloom(qs, bloom_target)["issues"],
+            detail=f"第 {round_i} 轮")
+        if bloom_err:
+            _append_manual_section(base, "门禁① Bloom 校验",
+                                   [f"第 {round_i} 轮失败：{bloom_err}", "已按无问题继续，建议人工复核。"])
+            _bloom_issues = []
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="溯源回查", sub_done=2, sub_total=4)
+        _trace_issues, trace_err = _run_substep(
+            base, "gate1", "trace", "溯源回查",
+            lambda qs=questions: trace_check.check_trace(qs, known_sids)["issues"],
+            detail=f"第 {round_i} 轮")
+        if trace_err:
+            _append_manual_section(base, "门禁① 溯源回查",
+                                   [f"第 {round_i} 轮失败：{trace_err}", "已按无问题继续，建议人工复核。"])
+            _trace_issues = []
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="查重", sub_done=3, sub_total=4)
+        _dup, dup_err = _run_substep(
+            base, "gate1", "dup", "查重",
+            lambda qs=questions: dedup_check.check_dup(qs),
+            detail=f"第 {round_i} 轮")
+        if dup_err:
+            _append_manual_section(base, "门禁① 查重",
+                                   [f"第 {round_i} 轮失败：{dup_err}", "已按无问题继续，建议人工复核。"])
+            _dup = {"issues": []}
         gate = {
-            "options": options_check.check_all(questions),
-            "bloom": bloom_check.check_bloom(questions, bloom_target),
-            "trace": trace_check.check_trace(questions, known_sids),
-            "dup": dedup_check.check_dup(questions),
+            "options": {"issues": _opt_issues},
+            "bloom": {"issues": _bloom_issues},
+            "trace": {"issues": _trace_issues},
+            "dup": _dup,
         }
+        _set_progress(base, "gate1", round_i, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮完成",
+                      sub="门禁检查", sub_done=4, sub_total=4)
         dup_issues = [x for x in gate["dup"]["issues"] if x.get("severity") in ("fail", "warn")]
         all_issues = (gate["options"]["issues"] + gate["bloom"]["issues"]
                       + gate["trace"]["issues"] + dup_issues)
@@ -682,7 +836,28 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             if cancel.is_set():   # B24：修复轮开始前可取消（单次修复调用期间的取消由 LLM 层流式退出接管）
                 return _cancel_out(base, meta_path, done_sids, questions)
             _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} → MedFix 修复第 {round_i} 轮…")
-            fixed = medfix.fix_questions(fix_client, questions, to_fix, text_by_sid)
+            for _i, iss in enumerate(to_fix):
+                _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+                _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}", "running",
+                         f"第 {round_i} 轮 · {str(iss.get('reason', ''))[:80]}")
+            fixed, fix_err = _run_substep(
+                base, "gate1", "medfix", "MedFix 批量修复",
+                lambda qs=questions, tf=to_fix: medfix.fix_questions(
+                    fix_client, qs, tf, text_by_sid),
+                ttl=300, retries=1,
+                detail=f"第 {round_i} 轮 · {len(to_fix)} 条问题")
+            if fix_err:
+                _append_manual_section(base, "门禁① MedFix",
+                                       [f"第 {round_i} 轮失败：{fix_err}",
+                                        "本轮未修复，题目保留待人工复核。"])
+                fixed = {"fixed": [], "trace": []}
+            fixed = fixed or {"fixed": [], "trace": []}
+            _fixed_ids = {fq.get("id") for fq in fixed.get("fixed", [])}
+            for _i, iss in enumerate(to_fix):
+                _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+                _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}",
+                         "done" if _qid in _fixed_ids else "failed",
+                         "已自动修复" if _qid in _fixed_ids else "保留待人工复核")
             by_id = {q["id"]: q for q in questions}
             for fq in fixed["fixed"]:
                 if fq.get("id") in by_id:
@@ -699,12 +874,35 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         return _cancel_out(base, meta_path, done_sids, questions)
     _set_stage(base, meta_path, "qc", "③ MedQC 质检（LLM-as-judge 并行分批）…")
     total_batches = (len(questions) + medqc.BATCH_SIZE - 1) // medqc.BATCH_SIZE
-    _set_progress(base, "qc", 0, total_batches, "质检中…")
-    qc_report = medqc.qc_batch(
-        qc_client, questions, text_by_sid,
-        on_progress=lambda done, tot: _set_progress(
-            base, "qc", done, tot, f"质检中… 第 {done}/{tot} 批"),
-        cancel=cancel)   # B24：逐批检查取消
+    _set_progress(base, "qc", 0, total_batches, "质检中…", sub="LLM 判分", sub_done=0, sub_total=total_batches)
+
+    def _qc_step(done: int, tot: int) -> None:
+        """QC 每批完成 → 进度 + substeps.jsonl 每批事件（WP-3）。"""
+        _set_progress(base, "qc", done, tot, f"质检中… 第 {done}/{tot} 批",
+                      sub="LLM 判分", sub_done=done, sub_total=tot)
+        _substep(base, "qc", f"batch{done}", f"质检批次 {done}/{tot}", "done",
+                 f"第 {done}/{tot} 批完成")
+        if done < tot:
+            _substep(base, "qc", f"batch{done + 1}", f"质检批次 {done + 1}/{tot}",
+                     "running", "提交中…")
+
+    if total_batches:
+        _substep(base, "qc", "batch1", f"质检批次 1/{total_batches}", "running", "提交中…")
+    qc_report, qc_err = _run_substep(
+        base, "qc", "medqc", "MedQC 质检",
+        lambda: medqc.qc_batch(qc_client, questions, text_by_sid,
+                               on_progress=_qc_step, cancel=cancel),
+        ttl=600, retries=1, detail=f"{total_batches} 批")
+    if qc_err:
+        _append_manual_section(base, "MedQC 质检",
+                               [f"质检失败/超时：{qc_err}",
+                                "已按「质检通过」降级继续，建议人工复核质检报告。"])
+        qc_report = {"score": 50, "gate_decision": "PASS_WITH_FIXES",
+                     "issues": [], "summary": f"质检降级继续：{qc_err}"}
+        _set_progress(base, "qc", 0, total_batches, f"质检降级继续：{str(qc_err)[:60]}",
+                      sub="LLM 判分", sub_done=0, sub_total=total_batches)
+    qc_report = qc_report or {"score": 50, "gate_decision": "PASS_WITH_FIXES",
+                              "issues": [], "summary": "质检结果缺失，降级继续"}
     if qc_report.get("cancelled"):
         return _cancel_out(base, meta_path, done_sids, questions)
     (base / "质检报告" / "质检报告.json").write_text(
@@ -721,15 +919,36 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         if cancel.is_set():   # B24：质检修复阶段可取消
             return _cancel_out(base, meta_path, done_sids, questions)
         _set_stage(base, meta_path, "fixing", "④ MedFix（质检 BLOCKED → 定向修复）…")
-        _set_progress(base, "fixing", 0, 1, "定向修复中…（最长约 1~2 分钟）")
-        fixed = medfix.fix_questions(fix_client, questions,
-                                     qc_report["issues"], text_by_sid)
+        _set_progress(base, "fixing", 0, 1, "定向修复中…（最长约 1~2 分钟）",
+                      sub="MedFix", sub_done=0, sub_total=1)
+        for _i, iss in enumerate(qc_report["issues"]):
+            _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+            _substep(base, "fixing", f"fix:{_qid}", f"修复 {_qid}", "running",
+                     str(iss.get("reason", ""))[:80])
+        fixed, fix_err = _run_substep(
+            base, "fixing", "medfix", "MedFix 质检修复",
+            lambda: medfix.fix_questions(fix_client, questions,
+                                         qc_report["issues"], text_by_sid),
+            ttl=300, retries=1, detail=f"{len(qc_report['issues'])} 条问题")
+        if fix_err:
+            _append_manual_section(base, "MedFix 质检修复",
+                                   [f"失败：{fix_err}", "本轮未修复，题目保留待人工复核。"])
+            fixed = {"fixed": [], "trace": []}
+        fixed = fixed or {"fixed": [], "trace": []}
+        _fixed_ids = {fq.get("id") for fq in fixed.get("fixed", [])}
+        for _i, iss in enumerate(qc_report["issues"]):
+            _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+            _substep(base, "fixing", f"fix:{_qid}", f"修复 {_qid}",
+                     "done" if _qid in _fixed_ids else "failed",
+                     "已自动修复" if _qid in _fixed_ids else "保留待人工复核")
         by_id = {q["id"]: q for q in questions}
         for fq in fixed["fixed"]:
             if fq.get("id") in by_id:
                 by_id[fq["id"]] = fq
         questions = list(by_id.values())
         _log(base, f"  修复 {len(fixed['fixed'])} 题")
+        _set_progress(base, "fixing", 1, 1, f"修复完成（{len(fixed['fixed'])} 题）",
+                      sub="MedFix", sub_done=1, sub_total=1)
         # 修复后终检：门禁① 快速复核（不再 QC，成本控制）
         gate = {
             "options": options_check.check_all(questions),
@@ -749,11 +968,17 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     if cancel.is_set():   # B24：汇总/终检前可取消（题目仍保留断点）
         return _cancel_out(base, meta_path, done_sids, questions)
     _set_stage(base, meta_path, "finalizing", "④ 汇总题库…")
-    _set_progress(base, "finalizing", 0, 1, "汇总题库与终检…")
+    _set_progress(base, "finalizing", 0, 1, "汇总题库与终检…",
+                  sub="渲染前终检", sub_done=0, sub_total=1)
     for i, q in enumerate(questions):
         q.setdefault("id", f"Q{i + 1:03d}")
     # 渲染前终检（D2）：修复轮用尽仍超限/缺字段的题剔除出产物 + 人工复核清单
+    _substep(base, "finalizing", "precheck", "渲染前终检", "running",
+             f"{len(questions)} 题")
     questions, dropped_list = _render_precheck(questions)
+    _substep(base, "finalizing", "precheck", "渲染前终检",
+             "done" if not dropped_list else "failed",
+             f"剔除 {len(dropped_list)} 题" if dropped_list else "通过")
     if dropped_list:
         _log(base, f"  ⚠️ 渲染前终检剔除 {len(dropped_list)} 题 → 人工复核清单.md")
         _append_review_list(base, dropped_list)
@@ -772,55 +997,85 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _log(base, f"  ⚠️ 真题来源标注失败（不影响产物）：{_e}")
     (base / "最终产物" / "questions_final.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
+    _set_progress(base, "finalizing", 1, 1, "题库已落盘", sub="渲染前终检", sub_done=1, sub_total=1)
     _log(base, f"  最终题库 {len(questions)} 题")
 
     # ---------------- ⑤ MedReview 复习手册
     review_md = ""
     if toggles.get("review", True):
         _set_stage(base, meta_path, "reviewing", "⑤ MedReview 复习手册生成…")
-        _set_progress(base, "reviewing", 0, 1, "生成复习手册…（预计 1~2 分钟）")
+        _set_progress(base, "reviewing", 0, 1, "生成复习手册…（预计 1~2 分钟）",
+                      sub="MedReview", sub_done=0, sub_total=1)
         if cancel.is_set():
             return _cancel_out(base, meta_path, done_sids, questions)
+        _substep(base, "reviewing", "medreview", "MedReview 复习手册", "running",
+                 "生成中…（预算 6000 字）")
         review_md = medreview.generate_review(
             rev_client, subject, exam, questions, teacher_text,
             _review_slice_digest(textbook_slices))   # B32：6000 预算按切片顺序轮转分配，后面章节也进手册
+        _substep(base, "reviewing", "medreview", "MedReview 复习手册", "done",
+                 f"{len(review_md)} 字")
         (base / "最终产物" / "复习手册.md").write_text(review_md, encoding="utf-8")
+        _set_progress(base, "reviewing", 1, 1, "复习手册已生成",
+                      sub="MedReview", sub_done=1, sub_total=1)
 
     # ---------------- ⑥ 渲染产物
     if cancel.is_set():   # B24：渲染前可取消（题库已落盘、产物可稍后「仅重渲染」补齐）
         return _cancel_out(base, meta_path, done_sids, questions)
     _set_stage(base, meta_path, "rendering", "⑥ 渲染产物…")
-    _set_progress(base, "rendering", 0, 1, "生成 HTML…")
+    _set_progress(base, "rendering", 0, 1, "生成 HTML…",
+                  sub="题库 MD/HTML", sub_done=0, sub_total=5)
     qbank_md = qbank_html.export_md(questions, f"{subject} 题库")
     qbank_html_text = qbank_html.export_html(questions, f"{subject} 题库",
                                              image_index=image_index, pid=pid)
     (base / "最终产物" / "qbank.md").write_text(qbank_md, encoding="utf-8")
     (base / "最终产物" / "qbank.html").write_text(qbank_html_text, encoding="utf-8")
     rendered = ["qbank.md", "qbank.html"]
+    _set_progress(base, "rendering", 0, 1, "题库 MD/HTML 完成",
+                  sub="题库 MD/HTML", sub_done=1, sub_total=5)
+    _substep(base, "rendering", "qbank", "题库 MD/HTML", "done",
+             "qbank.md / qbank.html")
     if toggles.get("paper", True):
+        _substep(base, "rendering", "paper", "押题卷", "running", "抽样+渲染…")
         paper_qs = _sample_paper(questions, min(PAPER_DEFAULT, len(questions)))
         _save_paper_ids(base, paper_qs)   # ME-7：审核重渲染时防抽样漂移
+        _set_progress(base, "rendering", 0, 1, "生成押题卷…",
+                      sub="押题卷", sub_done=2, sub_total=5)
         (base / "最终产物" / "押题卷.html").write_text(
             qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
                                          pid=pid, subject=subject,
                                          image_index=image_index), encoding="utf-8")
         rendered.append("押题卷.html")
+        _substep(base, "rendering", "paper", "押题卷", "done",
+                 f"{len(paper_qs)} 题")
     if review_md and toggles.get("review", True):
+        _substep(base, "rendering", "review", "复习手册 HTML", "running")
+        _set_progress(base, "rendering", 0, 1, "生成复习手册 HTML…",
+                      sub="复习手册", sub_done=3, sub_total=5)
         (base / "最终产物" / "复习手册.html").write_text(
             review_html.review_to_html(review_md, f"{subject} 复习手册",
                                        out_dir=base / "最终产物"), encoding="utf-8")
         rendered.append("复习手册.html")
+        _substep(base, "rendering", "review", "复习手册 HTML", "done")
     # Anki 导出（U8，随产物生成，项目目录留档 + 详情页可下载）
+    _substep(base, "rendering", "anki", "Anki 导出", "running", "txt / apkg")
+    _set_progress(base, "rendering", 0, 1, "生成 Anki 导出…",
+                  sub="Anki.txt", sub_done=4, sub_total=5)
     anki_txt = qbank_html.export_anki(questions, f"{subject} 题库")
     (base / "最终产物" / "anki_export.txt").write_text(anki_txt, encoding="utf-8")
     rendered.append("anki_export.txt")
+    _substep(base, "rendering", "anki", "Anki 导出", "done", "anki_export.txt")
     # S3：.apkg 真包导出（genanki；model/deck id 按项目名稳定哈希）
     try:
         from ..core.fsutil import safe_filename
         from ..render.apkg import export_apkg
         apkg_path = base / "最终产物" / f"{safe_filename(subject)} 题库.apkg"
+        _substep(base, "rendering", "apkg", "Anki.apkg", "running", "真包导出…")
         export_apkg(questions, subject, pid, apkg_path)
         rendered.append(apkg_path.name)
+        _set_progress(base, "rendering", 1, 1, "产物渲染完成",
+                      sub="Anki.apkg", sub_done=5, sub_total=5)
+        _substep(base, "rendering", "apkg", "Anki.apkg", "done")
         _log(base, f"  ✅ .apkg 导出：{apkg_path.name}")
     except Exception as e:  # noqa: BLE001  apkg 失败不阻断其余产物
         _log(base, f"  ⚠️ .apkg 导出失败（不影响其余产物）：{e}")

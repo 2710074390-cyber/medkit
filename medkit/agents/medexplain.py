@@ -58,19 +58,16 @@ def _web_digest(materials: list[dict[str, Any]], limit: int,
     return header + "\n" + "\n".join(out)
 
 
-def explain_knowledge(client: Any,
-                      subject: str,
+def prepare_explain(subject: str,
                       kp_name: str,
                       slices_text: str = "",
                       related_mistake: Optional[dict[str, Any]] = None,
                       web_materials: Optional[list[dict[str, Any]]] = None,
                       search_fn: Optional[Callable[[str], list[dict[str, Any]]]] = None,
-                      use_web: bool = True) -> dict[str, Any]:
-    """生成一篇结构化讲解。
+                      use_web: bool = True) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    """WP-8：构造讲解 LLM 请求（流式/非流式共用），返回 (messages, meta)。
 
-    返回 {content, sources:[{kind:"textbook"|"web", title, url}], via_web,
-          web_materials, grounded}——grounded=False 表示未命中教材切片原文，
-    内容依据为网络素材与模型知识（前端据此展示「无教材原文」说明）。
+    meta = {grounded, via_web, web_materials}，与 explain_knowledge 返回值对齐。
     """
     grounded = bool(slices_text.strip())
     via_web = False
@@ -106,13 +103,35 @@ def explain_knowledge(client: Any,
                 + "不要标注【教材】，不要谎称内容出自教材。）")
         body.insert(0, lead)
     user = "\n\n".join(body)
+    return ([{"role": "system", "content": system},
+             {"role": "user", "content": user}],
+            {"grounded": grounded, "via_web": via_web,
+             "web_materials": web_materials})
 
-    msg = client.chat([{"role": "system", "content": system},
-                       {"role": "user", "content": user}], temperature=0.5)
+
+def explain_knowledge(client: Any,
+                      subject: str,
+                      kp_name: str,
+                      slices_text: str = "",
+                      related_mistake: Optional[dict[str, Any]] = None,
+                      web_materials: Optional[list[dict[str, Any]]] = None,
+                      search_fn: Optional[Callable[[str], list[dict[str, Any]]]] = None,
+                      use_web: bool = True) -> dict[str, Any]:
+    """生成一篇结构化讲解。
+
+    返回 {content, sources:[{kind:"textbook"|"web", title, url}], via_web,
+          web_materials, grounded}——grounded=False 表示未命中教材切片原文，
+    内容依据为网络素材与模型知识（前端据此展示「无教材原文」说明）。
+    """
+    messages, meta = prepare_explain(subject, kp_name, slices_text,
+                                     related_mistake=related_mistake,
+                                     web_materials=web_materials,
+                                     search_fn=search_fn, use_web=use_web)
+    msg = client.chat(messages, temperature=0.5)
     content = (msg or "").strip()
-    sources = _sources_of(slices_text, web_materials)
-    return {"content": content, "sources": sources, "via_web": via_web,
-            "web_materials": web_materials, "grounded": grounded}
+    sources = _sources_of(slices_text, meta["web_materials"])
+    return {"content": content, "sources": sources, "via_web": meta["via_web"],
+            "web_materials": meta["web_materials"], "grounded": meta["grounded"]}
 
 
 def _sources_of(slices_text: str, web_materials: list[dict[str, Any]]) -> list[dict[str, Any]]:

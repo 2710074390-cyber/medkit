@@ -37,6 +37,16 @@ BANNED_HOSTS = ("bilibili.com", "douyin.com", "youtube.com", "weibo.com",
                 "tieba.baidu.com", "xiaohongshu.com", "kuaishou.com",
                 "sohu.com", "sina.com.cn")
 
+# WP-6：可信医学来源（后缀/域名白名单，用户可自定义追加）
+TRUSTED_SUFFIXES = (
+    "gov.cn", "edu.cn", "org.cn", "ac.cn", "who.int", "nih.gov",
+    "nhs.uk", "medlineplus.gov", "gov.hk", "cmap.org.cn", "cma.org.cn",
+)
+TRUSTED_DOMAINS = (
+    "msdmanuals.cn", "dayi.org.cn", "cnki.net", "wanfangdata.com.cn",
+    "pubmed.ncbi.nlm.nih.gov", "nmpa.gov.cn", "nhc.gov.cn",
+)
+
 BACKEND_LABELS = {
     "zhipu_tool": "智谱 GLM（Web Search API）",
     "qwen_tool": "通义千问（enable_search）",
@@ -80,6 +90,37 @@ def _clip(s: str, n: int = SNIPPET_LIMIT) -> str:
 
 def _banned(url: str) -> bool:
     return any(h in url.lower() for h in BANNED_HOSTS)
+
+
+def _is_trusted(url: str, trusted_domains: Optional[list[str]] = None) -> bool:
+    """WP-6：可信来源判定——内置后缀/域名白名单 + 用户自定义域名（精确/二级子域）。"""
+    host = (url or "").lower()
+    for scheme in ("https://", "http://"):
+        if host.startswith(scheme):
+            host = host[len(scheme):]
+    host = host.split("/")[0].split(":")[0].split("?")[0].strip(".")
+    if not host:
+        return False
+    domains = set(TRUSTED_DOMAINS)
+    domains.update(str(d or "").strip().lower() for d in (trusted_domains or []) if str(d or "").strip())
+    for d in domains:
+        if d and (host == d or host.endswith("." + d)):
+            return True
+    for s in TRUSTED_SUFFIXES:
+        if host == s or host.endswith("." + s):
+            return True
+    return False
+
+
+def trusted_filter(materials: list[dict[str, Any]], trusted_only: bool = False,
+                   trusted_domains: Optional[list[str]] = None) -> list[dict[str, Any]]:
+    """WP-6：标记 trusted 并按「可信优先」排序；trusted_only=True 时过滤掉不可信条目。"""
+    for m in materials:
+        m["trusted"] = _is_trusted(m.get("url", ""), trusted_domains)
+    if trusted_only:
+        materials = [m for m in materials if m.get("trusted")]
+    materials.sort(key=lambda m: not bool(m.get("trusted")))
+    return materials
 
 
 def _dedup(materials: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -364,8 +405,13 @@ def run_search_rounds(client: Any, subject: str, chapter: str, keywords: str,
                       search_fn: Optional[Callable[[str], list[dict[str, Any]]]] = None,
                       slices_digest: str = "",
                       cancel: Optional[Any] = None,
-                      max_rounds: int = ROUNDS_MAX) -> dict[str, Any]:
+                      max_rounds: int = ROUNDS_MAX,
+                      trusted_only: bool = False,
+                      trusted_domains: Optional[list[str]] = None) -> dict[str, Any]:
     """多轮检索主循环（LLM 驱动，≤3 轮）。search_fn 可注入（测试/离线）。"""
+    def _trusted(mats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return trusted_filter(mats, trusted_only=trusted_only,
+                              trusted_domains=trusted_domains)
     if cancel is not None and cancel.is_set():
         return {"materials": [], "logs": ["已取消"], "errors": []}
     logs: list[str] = []
@@ -417,7 +463,13 @@ def run_search_rounds(client: Any, subject: str, chapter: str, keywords: str,
             time.sleep(0.2)
 
     materials = _dedup(materials)[:MATERIALS_LIMIT]
-    logs.append(f"已收集 {len(materials)} 条素材（去重后）")
+    # WP-6：可信标记 + 可信优先排序（trusted_only 时先过滤再排序）
+    before_trusted = len(materials)
+    materials = _trusted(materials)
+    if trusted_only and len(materials) < before_trusted:
+        logs.append(f"⚠️ 仅保留可信来源：过滤掉 {before_trusted - len(materials)} 条不可信素材")
+    logs.append(f"已收集 {len(materials)} 条素材（去重后"
+                + ("，可信优先" if any(m.get("trusted") for m in materials) else "") + "）")
 
     # Round 3：conflict 核查
     if max_rounds >= 3 and materials and slices_digest:
@@ -437,7 +489,7 @@ def digest_for_prompt(materials: list[dict[str, Any]]) -> str:
     lines = ["## 网络检索参考素材（考纲/真题/指南，供选题与答案校准；"
              "conflict 条目不得作为正确答案依据）"]
     for i, m in enumerate(materials, 1):
-        tag = "【与教材冲突-勿用答案】" if m.get("conflict") else ""
+        tag = "【与教材冲突-勿用答案】" if m.get("conflict") else ("【可信】" if m.get("trusted") else "")
         lines.append(f"{i}. {tag}{m.get('title', '')} · {m.get('url', '')}\n"
                      f"   {m.get('snippet', '')}")
     return "\n".join(lines)

@@ -48,6 +48,11 @@ class SeedBody(BaseModel):
     force: bool = False
 
 
+class StructurizeBody(BaseModel):
+    text: str = ""
+    subject: str = ""
+
+
 class TeacherImportBody(BaseModel):
     text: str
     subject: str = ""
@@ -70,6 +75,15 @@ def syllabus_ensure(body: SeedBody) -> dict[str, Any]:
     require_flag("syllabus")
     dbs.migrate()
     return syl.ensure_seed(force=body.force)
+
+
+@router.post("/api/syllabus/outline/structurize")
+def syllabus_structurize(body: StructurizeBody) -> dict[str, Any]:
+    """WP-10：AI 结构化大纲（原文 + 结构化双存储；完整性校验不通过不替换）。"""
+    require_flag("syllabus")
+    if not (body.text or "").strip():
+        raise HTTPException(400, "原文内容为空")
+    return syl.structurize_outline(body.text, body.subject or "")
 
 
 @router.post("/api/syllabus/sync-teacher")

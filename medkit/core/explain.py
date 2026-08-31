@@ -308,6 +308,20 @@ def delete_explain(eid: str) -> bool:
     return True
 
 
+def delete_by_subject(subject: str) -> int:
+    """WP-4：删除某科目的全部讲解产物（空科目名不删「未分类」），返回删除数量。"""
+    if not subject:
+        return 0
+    with _store() as st:
+        recs = st["recs"]
+        remain = [r for r in recs if r.get("subject") != subject]
+        n = len(recs) - len(remain)
+        if n:
+            st["recs"] = remain
+            st["dirty"] = True
+    return n
+
+
 def export_subject_md(subject: str = "") -> str:
     """当前科目全部讲解产物 → 合并 markdown（充当『个人复习手册』）。"""
     recs = list_explains(subject)

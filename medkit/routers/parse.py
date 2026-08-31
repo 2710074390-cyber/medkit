@@ -37,7 +37,14 @@ async def parse_files(files: list[UploadFile] = File(...),
 
 @router.get("/api/sample")
 def sample_materials() -> dict[str, Any]:
-    """一键载入示例素材（体验用）：返回与 /api/parse 相同结构。"""
+    """一键载入示例素材（体验用）：返回与 /api/parse 相同结构。
+
+    WP-12：纯净安装包不含示例数据 → 明确返回 available=False（前端隐藏/提示）。
+    """
+    if not SAMPLE_DIR.is_dir() or not SAMPLE_TEXTBOOK.exists() or not SAMPLE_TEACHER.exists():
+        return {"sample": False, "available": False,
+                "error": "示例素材仅开发版可用（纯净版不含示例数据）；请用你自备教材与教师重点，或上传官方 306 大纲"}
+
     def load(path: Path, name: str) -> dict[str, Any]:
         blocks = ex.extract_text(path)
         slices = slice_text(blocks)

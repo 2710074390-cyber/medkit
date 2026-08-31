@@ -19,6 +19,35 @@ def needs_client_and_price(subject: str, kp_name: str) -> int:
     return 500 + len(subject) * 2 + len(kp_name) * 2 + 700
 
 
+def build_start_messages(subject: str, kp_name: str, state: str,
+                          qtype: str, slices_text: str = "",
+                          web_materials: Optional[list[dict[str, Any]]] = None
+                          ) -> list[dict[str, str]]:
+    """WP-8：构造出第一问的 LLM 请求（流式/非流式共用）。"""
+    system = _system(subject, kp_name, state, qtype, task="first")
+    body = _materials_body(slices_text, history=None, user_answer="",
+                           web_materials=web_materials)
+    user = "\n\n".join(["## 素材", body])
+    return [{"role": "system", "content": system},
+            {"role": "user", "content": user}]
+
+
+def build_score_messages(subject: str, kp_name: str, state: str,
+                         qtype: str, question: str, user_answer: str,
+                         slices_text: str = "",
+                         history: Optional[list[dict[str, Any]]] = None,
+                         web_materials: Optional[list[dict[str, Any]]] = None
+                         ) -> list[dict[str, str]]:
+    """WP-8：构造判分+出下一问的 LLM 请求（流式/非流式共用）。"""
+    system = _system(subject, kp_name, state, qtype, task="score")
+    body = _materials_body(slices_text, history, user_answer,
+                           web_materials=web_materials)
+    user = "\n\n".join(["## 素材", body, f"## 本轮问题（{qtype}）\n{question}",
+                          f"## 学生作答\n{user_answer or '（学生未作答）'}"])
+    return [{"role": "system", "content": system},
+            {"role": "user", "content": user}]
+
+
 def start_applying(client: Any, subject: str, kp_name: str, state: str,
                    qtype: str, slices_text: str = "",
                    web_materials: Optional[list[dict[str, Any]]] = None) -> str:
@@ -27,12 +56,9 @@ def start_applying(client: Any, subject: str, kp_name: str, state: str,
     无原文回退（2026-08-29）：切片检索不到原文时注入说明文案，
     并结合网络补充素材（如有）与模型医学常识出问。
     """
-    system = _system(subject, kp_name, state, qtype, task="first")
-    body = _materials_body(slices_text, history=None, user_answer="",
-                           web_materials=web_materials)
-    user = "\n\n".join(["## 素材", body])
-    msg = client.chat([{"role": "system", "content": system},
-                       {"role": "user", "content": user}], temperature=0.6)
+    msg = client.chat(build_start_messages(subject, kp_name, state, qtype,
+                                           slices_text, web_materials),
+                      temperature=0.6)
     return (msg or "").strip()
 
 
@@ -46,14 +72,10 @@ def score_answer(client: Any, subject: str, kp_name: str, state: str,
     score 用本地规则兜底：模型未返回合法分数时返回 -1（无法判定 → 不计分重答），
     避免启发式被套话刷分污染掌握度。
     """
-    system = _system(subject, kp_name, state, qtype, task="score")
-    body = _materials_body(slices_text, history, user_answer,
-                           web_materials=web_materials)
-    user = "\n\n".join(["## 素材", body, f"## 本轮问题（{qtype}）\n{question}",
-                        f"## 学生作答\n{user_answer or '（学生未作答）'}"])
     try:
-        raw = client.chat_json([{"role": "system", "content": system},
-                                {"role": "user", "content": user}], temperature=0.3)
+        raw = client.chat_json(build_score_messages(
+            subject, kp_name, state, qtype, question, user_answer,
+            slices_text, history, web_materials), temperature=0.3)
         obj = raw if isinstance(raw, dict) else {}
         score = _num(obj.get("score", -1), default=-1)
         gap = str(obj.get("gap") or "").strip()

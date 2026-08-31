@@ -222,6 +222,20 @@ def delete_card(cid: str) -> bool:
     return True
 
 
+def delete_by_subject(subject: str) -> int:
+    """WP-4：删除某科目的全部复习卡（空科目名不删「未分类」），返回删除数量。"""
+    if not subject:
+        return 0
+    with _store() as st:
+        cards = st["cards"]
+        remain = [c for c in cards if c.get("subject") != subject]
+        n = len(cards) - len(remain)
+        if n:
+            st["cards"] = remain
+            st["dirty"] = True
+    return n
+
+
 def stats(subject: str = "") -> dict[str, int]:
     cards = list_cards(subject)
     today = _today().isoformat()

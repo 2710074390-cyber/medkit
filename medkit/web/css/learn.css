@@ -20,6 +20,23 @@
       .mk-row .meta{font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.6}
       .mk-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
       .mk-actions button{white-space:nowrap}
+      .mk-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 10px}
+      .mkck-wrap{flex:none;display:flex;align-items:center;padding:4px 2px}
+      .mk-group{border:1px solid var(--line);border-radius:10px;margin-top:8px;background:var(--card2)}
+      .mk-group > summary{display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;user-select:none;flex-wrap:wrap}
+      .mk-group-title{font-weight:600;font-size:13px;color:var(--text)}
+      .mk-group-title small{font-weight:400;color:var(--dim);margin-left:6px}
+      .mk-group-tag{font-size:11.5px;color:var(--accent2);background:var(--infobg);border:1px solid var(--line);padding:1px 8px;border-radius:20px}
+      .mk-group-count{font-size:11.5px;color:var(--dim);margin-left:auto}
+      .mk-group-sel{font-size:11.5px;white-space:nowrap}
+      .mk-group-body{padding:0 8px 8px}
+      .exp-live{background:var(--codebg);border:1px solid var(--line);border-radius:10px;padding:10px 14px;
+        margin:6px 0;max-height:320px;overflow:auto;font-size:13px;line-height:1.8;white-space:normal}
+      .tu-live{background:var(--infobg);border:1px solid var(--info);border-radius:10px;padding:10px 14px;
+        margin:6px 0;font-size:13.5px;line-height:1.8;white-space:pre-wrap}
+      .caret{display:inline-block;width:2px;height:14px;background:var(--accent2);vertical-align:-2px;
+        margin-left:2px;animation:caretBlink 0.9s steps(1) infinite}
+      @keyframes caretBlink{50%{opacity:0}}
       /* ---- M2 掌握度驾驶舱（含状态分布环图 / 指标卡 / 弱项清单） ---- */
       .dash-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
       .dash-metric{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:8px 6px;text-align:center;min-width:0}
@@ -60,6 +77,10 @@
       .exp-article li{margin:3px 0}
       .exp-article code{background:var(--card3);padding:1px 5px;border-radius:4px;font-size:13px}
       .exp-article blockquote{border-left:3px solid var(--good);padding:4px 12px;margin:8px 0;color:var(--dim);background:var(--card3);border-radius:0 6px 6px 0}
+      .exp-article table,.tu-q table,.tu-gap table{width:100%;border-collapse:collapse;margin:8px 0;font-size:12.5px}
+      .exp-article th,.exp-article td,.tu-q th,.tu-q td,.tu-gap th,.tu-gap td{border:1px solid var(--line);padding:4px 8px;text-align:left}
+      .exp-article th,.tu-q th,.tu-gap th{background:var(--card3);color:var(--text)}
+      .exp-article hr,.tu-gap hr{border:none;border-top:1px solid var(--line);margin:10px 0}
       @media(max-width:860px){.learn-grid{grid-template-columns:1fr}}
       /* ---- M4 提问式学习（Socratic MedTutor）---- */
       .tu-wrap{display:grid;grid-template-columns:250px 1fr;gap:16px;margin-top:10px}
@@ -162,3 +183,14 @@
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .subj-row{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--dim);margin-top:3px}
 .subj-row b{color:var(--text)}
+.subj-card{display:flex;gap:10px;align-items:center}
+.subj-avatar{flex:none;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  font-size:16px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--accent2),var(--accent))}
+.subj-avatar.all{background:linear-gradient(135deg,var(--dim),var(--accent));font-size:15px}
+.subj-main{flex:1;min-width:0}
+.subj-mgr{display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto}
+.subj-mgr-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card2)}
+.subj-mgr-avatar{flex:none;width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--accent2),var(--accent))}
+.subj-mgr-row .grow{flex:1;min-width:0;display:flex;flex-direction:column}
+.subj-mgr-row small{font-size:11px;margin-top:2px}

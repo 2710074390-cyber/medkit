@@ -31,6 +31,24 @@ def search_backends() -> dict[str, Any]:
             "builtin_backend_by_provider": ws.BUILTIN_BACKEND_BY_PROVIDER}
 
 
+def _search_error_hint(e: Exception) -> str:
+    """WP-6：检索测试失败 → 可操作的中文原因（缺 Key / 无权 / 网络 / 参数）。"""
+    s = str(e or "").lower()
+    if "未配置" in str(e):
+        return str(e)
+    if "401" in s or "unauthorized" in s or "invalid api key" in s or "authentication" in s:
+        return "API Key 无效或无权限（401）——请检查 Key 与账户余额"
+    if "403" in s or "forbidden" in s:
+        return "无权限（403）——请检查 Key 权限/账户状态"
+    if "timeout" in s or "timed out" in s:
+        return "连接超时——网络不可达或后端响应慢，请稍后重试"
+    if "connection" in s or "getaddrinfo" in s or "connect" in s or "network" in s:
+        return "网络不可达——请检查本机网络或后端地址"
+    if "400" in s:
+        return "请求参数不被后端接受（模型/工具版本可能过时）"
+    return f"测试失败：{e}"
+
+
 @router.post("/api/search/test")
 def search_test(body: SearchTestBody) -> dict[str, Any]:
     """单次检索连通性测试（不记账、不落盘）。manual 不支持在线测试。
@@ -57,4 +75,4 @@ def search_test(body: SearchTestBody) -> dict[str, Any]:
                 "samples": results[:3],
                 "msg": f"{ws.BACKEND_LABELS.get(backend, backend)} 连通（{len(results)} 条）"}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "backend": backend, "msg": f"测试失败：{e}"}
+        return {"ok": False, "backend": backend, "msg": _search_error_hint(e)}

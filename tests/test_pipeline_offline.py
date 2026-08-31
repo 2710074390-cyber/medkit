@@ -556,6 +556,52 @@ def test_case_group_full_chain(isolated_cfg):
     assert apkg is not None, "案例题也应产出 .apkg"
 
 
+def test_pipeline_progress_substeps(isolated_cfg, monkeypatch):
+    """WP-2：离线全链路进度事件应带子步骤（门禁四类检查/QC 批次/渲染产物）。"""
+    import medkit.core.orchestrator as orch
+
+    calls: list[dict] = []
+    orig = orch._set_progress
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs)
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(orch, "_set_progress", spy)
+    pid = build_project("_progress_sub_test")
+    res = run_project(pid, overrides=_overrides())
+    assert res["stage"] == "done", res
+    subs = [c.get("sub") for c in calls]
+    for expected in ("选项校验", "Bloom 校验", "溯源回查", "查重", "LLM 判分",
+                     "题库 MD/HTML", "押题卷"):
+        assert expected in subs, f"缺少子步骤 {expected}（实得 {subs}）"
+    for c in calls:
+        sd, st = c.get("sub_done", 0), c.get("sub_total", 0)
+        if st:
+            assert 0 <= sd <= st, f"子步骤计数越界：{c}"
+
+
+def test_pipeline_writes_substeps_e2e(isolated_cfg):
+    """WP-3：离线全链路产生 substeps.jsonl（门禁四类检查/QC 批次/渲染产物）。"""
+    pid = build_project("_substeps_e2e_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+    res = run_project(pid, overrides=_overrides())
+    assert res["stage"] == "done", res
+    lines = (tmp / "substeps.jsonl").read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line) for line in lines]
+    steps = {e["step"] for e in events}
+    for s in ("options", "bloom", "trace", "dup", "medqc", "medfix",
+              "precheck", "medreview", "qbank", "paper"):
+        assert s in steps, f"缺少子步骤事件 {s}（实得 {sorted(steps)}）"
+    qc_done = [e for e in events if e["stage"] == "qc" and e["status"] == "done"]
+    assert qc_done, "QC 应产生 done 事件"
+    # 事件顺序：同一步 running 先于 done
+    for step in ("options", "medqc"):
+        seq = [e["status"] for e in events if e["step"] == step]
+        assert "running" in seq and "done" in seq
+        assert seq.index("running") < seq.index("done")
+
+
 if __name__ == "__main__":
     import pytest
 

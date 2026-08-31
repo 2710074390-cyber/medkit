@@ -7,6 +7,10 @@
 | 路径 | 内容 |
 |---|---|
 | `AGENT_HANDOFF.md` | 交接与执行记录（最新变更表 + 产品方向决策 §6 + 执行批次状态）——**新人/新 Agent 首选** |
+| `0.10.0-requirement-analysis.md` | 0.10.0 需求整理（18 条 issue 汇总，来源 `0.9.0.issue.txt`） |
+| `0.10.0-task-split.md` | 0.10.0 任务拆分（13 个工作包 / 4 个迭代 / 验收口径） |
+| `0.10.0-work-breakdown.md` | 0.10.0 工作包细化（函数/端点/数据/交互/测试粒度 + PR 拆分） |
+| `engineering/` | 工程规范：借鉴优秀工程与最小改动规则（`borrow-rules.md`） |
 | `adr/` | 架构决策记录（ADR-001 SQLite 存储 / 002 FTS5+jieba 检索 / 003 Pydantic 契约 / 004 FSRS 调度 / 005 迁移备份） |
 
 ## 历史层（docs/archive/）

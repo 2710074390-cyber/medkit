@@ -174,6 +174,20 @@ def delete_session(sid: str) -> bool:
     return True
 
 
+def delete_by_subject(subject: str) -> int:
+    """WP-4：删除某科目的全部提问会话（空科目名不删「未分类」），返回删除数量。"""
+    if not subject:
+        return 0
+    with _store() as st:
+        sessions = st["sessions"]
+        remain = [s for s in sessions if s.get("subject") != subject]
+        n = len(sessions) - len(remain)
+        if n:
+            st["sessions"] = remain
+            st["dirty"] = True
+    return n
+
+
 def cleanup_stale(days: int = 30) -> int:
     """C18：清理 days 天无活动的会话（防止会话列表无限增长）。
 

@@ -31,6 +31,15 @@ if errorlevel 1 (
 )
 
 echo.
+echo === 打包纯净检查（WP-12：无样例/种子/测试数据）===
+python pack\check-package.py
+if errorlevel 1 (
+  echo [错误] 打包检查未通过：dist 含违规数据（样例/种子/测试/字节码）。
+  pause
+  exit /b 1
+)
+
+echo.
 echo === 构建完成 ===
 echo 绿色版目录：dist\MedKit\
 echo 使用：双击 dist\MedKit\MedKit.exe（或复制整个 MedKit 文件夹到别处使用）

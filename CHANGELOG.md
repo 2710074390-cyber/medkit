@@ -6,6 +6,133 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
+## [0.10.0] - Unreleased
+
+### PR-1 开始页多场考试计划 + 红点来源可感知（2026-08-30）
+
+#### Added
+
+- **多场考试计划**（WP-1）：开始页“考试计划”支持添加/编辑/删除多场考试（名称/日期/标签/考前提醒 3·7·14·30 天），按日期升序展示、最近一场优先；旧单场键 `medkit-exam-date` 自动迁移为一场考试（`medkit/web/js/app.js` `renderExamPlans` 系列）。
+- **红点来源可感知**（WP-7）：侧栏红点带 `title`/aria 说明（今日到期复习 N 张 / 进行中提问 M 场）与 `data-source`；学习中心概览新增“侧栏红点来源”说明条；子导航计数徽章带来源说明（`medkit/web/js/learn.js` `setNavTabBadge`/`updateLearnBadges`/`renderDashboard`）。
+- 浏览器用例：`tests/browser/test_start_exams.py`（多场添加/排序/删除/迁移 + 红点 title 与学习中心说明条）。
+
+#### Changed
+
+- 开始页倒计时卡片文案更新为“考试计划 · 支持多场”。
+- `medkit/web/css/base.css` 新增考试计划卡片/表单样式。
+
+### PR-2 出题进度条修复（WP-2，2026-08-30）
+
+#### Added
+
+- **进度子步骤模型**：`progress.json` 增加 `sub/sub_done/sub_total`，`_set_progress` 支持子步骤粒度（`medkit/core/orchestrator.py`）；新增阶段序列常量 `PIPELINE_STAGES`。
+- **门禁①四类检查逐项上报**：选项校验 / Bloom 校验 / 溯源回查 / 查重各占 1/4 子进度；QC 按批次、修复/汇总/复习/渲染按产物逐步上报。
+- **前端 stepper 空进度修复**：`pct=0` 不再空白，显示“准备中…”；子步骤显示“选项校验 1/4”等（`medkit/web/js/review-desk.js` `renderStepper`）。
+- 测试：`tests/test_orchestrator_progress.py`（进度字段/阶段序）、`tests/test_pipeline_offline.py::test_pipeline_progress_substeps`（离线全链路子步骤）、`tests/browser/test_pipeline_progress.py`（stepper 渲染）。
+
+#### Changed
+
+- 出题阶段/质检/修复/汇总/复习/渲染进度调用补充子步骤信息；`progress.json` 旧字段保持兼容。
+
+### PR-3 门禁 subagent 分步可视化（WP-3，2026-08-30）
+
+#### Added
+
+- **子步骤事件流**：`{project}/substeps.jsonl` 每行一条 `{stage, step, label, status, detail, ts}`（status=pending/running/done/failed/retry），`_substep()` 追加写并保留最近 200 行；`_run_substep(ttl=60, retries=2)` 守护线程超时/重试包装，重试用尽降级写「人工复核清单.md」并继续（不中断管线）。
+- **门禁/质检/修复逐步上报**：门禁① 图像引用 + 选项/Bloom/溯源/查重四类检查、QC 每批、MedFix 每条 issue、渲染前终检/复习手册/题库/押题卷/Anki 均写子步骤事件（`medkit/core/orchestrator.py`）。
+- **状态接口**：`GET /api/projects/{pid}/status` 与新详情读项目均返回最近 50 条 `substeps`（`medkit/routers/projects.py` `_read_substeps`）。
+- **前端子步骤面板**：`#pd_substeps` 与 stepper 并列，按当前阶段过滤；运行中高亮 + 呼吸图标、完成打勾、失败红标、重试提示、`<details>` 可展开详情（`medkit/web/js/review-desk.js` `renderSubsteps` + `medkit/web/css/base.css`）。
+- 测试：`tests/test_pipeline_events.py`（事件裁剪/超时重试/重试成功/降级/路由读取与 status 返回）、`tests/test_pipeline_offline.py::test_pipeline_writes_substeps_e2e`、`tests/browser/test_substeps_panel.py`。
+
+#### Changed
+
+- R3S-03 记账兼容：`_run_substep` 线程内先取父线程 `contextvars.copy_context()` 再运行，QC/MedFix 子步骤不丢 token 账本。
+- `docs/engineering/borrow-rules.md` 新增「已落地借鉴点（0.10.0 滚动记录）」表（DSH 事件流/子任务视图/重试）。
+
+### PR-4 刷题科目切换与删除（WP-4，2026-08-30）
+
+#### Added
+
+- **科目卡片图标化**：首字徽章（本地渐变样式，无图片资源）+「全部科目」📚 卡片；点击过滤复习计划仍生效（`medkit/web/js/learn.js` `loadStudySubjects` + `medkit/web/css/learn.css`）。
+- **科目管理弹层**：刷题页科目卡右上角「科目管理」入口，列出全部科目 + 错题/知识点/复习卡统计，每科可删除（`subjectMgrOpen`/`subjectDelete`）。
+- **删除科目（自动备份）**：`medkit/core/library.py::delete_subject_with_backup(subject)` 删除前把该科错题、知识点、复习卡、记忆卡、提问会话、讲解产物导出 JSON 到 `~/.medkit/exports/subject_<safe>_<ts>.json`，再清理；SQL 模式单事务逐表删除，JSON 模式逐模块原子写。
+- **删除端点**：`POST /api/library/subjects/delete`（Pydantic body `{subject}`），返回 `{ok, deleted:{mistakes,knowledge,review_cards,memory_cards,sessions,explains}, backup}`（`medkit/routers/library.py`）。
+- 删除后刷新：`loadStudy()`（科目卡片 + 复习计划）+ `loadLibrary()`（概览/dashboard/badge）。
+- 测试：`tests/test_subject_delete.py`（JSON/SQL 双态：备份存在、计数正确、另科保留、路由返回）、`tests/browser/test_study_subjects.py`（卡片点击过滤 + 弹层删除后卡片消失）。
+
+### PR-5 错题本批量/分类/折叠（WP-5，2026-08-30）
+
+#### Added
+
+- **错题多选 + 工具栏**：每行 checkbox；全选可见 / 反选 / 清空 / 批量删除 / 标记已掌握 / 导出 JSON / 导出 MD（`learn.js` `mkSelected` + `mkToggleAllVisible`/`mkInvert`/`mkClearSel` 等）。
+- **三级分组折叠**：科目 → 章节 → 标签（知识点）`<details open>` 分组，组头显示计数与「本组全选」；保留首屏 100 条分块 + 「加载全部」（`mkGroupHTML` + `learn.css`）。
+- **批量删除（自动备份）**：`core/library.py::batch_delete_with_backup(ids)` 删除前导出 `~/.medkit/exports/mistakes_batch_<ts>.json`；`batch_mark_learned` 批量归档标记；`export_mistakes(ids, fmt)` 支持 json/md。
+- **批量端点**：`POST /api/library/mistakes/batch-delete | batch-learn | batch-export`（ids ≤500，空 ids 400；`medkit/routers/library.py`）。
+- **联动**：批量删除/标记后 `loadLibrary()` 刷新掌握度与近期活动；`renderLibrary` 数据刷新自动清空多选。
+- 测试：`tests/test_mistake_batch.py`（备份/幂等/学习/导出/路由校验）、`tests/browser/test_mistakes_batch.py`（分组折叠 + 勾选 2 条批量删除 + 导出下载 + 已掌握过滤）。
+
+### PR-6 网络检索修复与可信源（WP-6，2026-08-30）
+
+#### Added
+
+- **可信来源**：`websearch.py` 新增 `TRUSTED_SUFFIXES`（gov.cn/edu.cn/who.int/nih.gov 等）与 `TRUSTED_DOMAINS`（msdmanuals.cn/dayi.org.cn 等）；`trusted_filter` 打 `trusted` 标记 + 可信优先排序，`trusted_only=True` 过滤不可信；`digest_for_prompt` 标 `【可信】`。
+- **配置**：`web_search.trusted_only`（默认关）+ `trusted_domains` 自定义域名列表（`routers/config.py` + `config.py` DEFAULTS）；设置页新增开关与域名输入框（`review-desk.js` + `index.html`）。
+- **错误中文化**：`routers/search.py::_search_error_hint` 把 401/403/超时/网络不可达/参数 400 映射为可操作中文原因；内置后端复用服务商 Key，缺 Key 明确报错。
+- **失败降级**：`orchestrator.py` 网络检索错误写 `run.log` + 追加「人工复核清单.md」（`_append_manual_section`），生成继续；项目级 `web_backend` 已由 `projects.py` 落 meta。
+- 测试：`tests/test_websearch.py`（可信排序/过滤/自定义域名/多轮注入）、`tests/test_search_router.py`（四后端 mock 全绿 + 超时中文 + 配置往返）、`tests/browser/test_search_settings.py`（设置页可信开关往返 + manual 测试文案）。
+
+### PR-7 沉浸式讲解/提问 + 流式（WP-8，2026-08-30）
+
+#### Added
+
+- **`LLMClient.chat_stream`**：OpenAI 兼容流式生成器，yield `{delta, usage, canceled}`，复用取消事件（`medkit/core/llm.py`）。
+- **SSE 端点**：`POST /api/library/explain/stream`（meta → delta* → done/error，完成才落盘 explains）与 `POST /api/library/tutor/start/stream`（出第一问流式；成功才 seed 会话；取消/失败回滚会话）。判分（answer）保留 JSON 契约，保证状态机/掌握度稳定。
+- **Agent 复用重构**：`medexplain.prepare_explain` / `medtutor.build_start_messages` / `build_score_messages`——流式与非流式共用同一 prompt 构造。
+- **前端 SSE 消费**：`learn.js::consumeSSE`（ReadableStream 手工解析）+ 讲解/出题流式增量区（`#exp_live` / `#tu_live`）；`expGenerate`/`tutorStart` 优先流式、失败自动回退非流式端点。
+- **取消/降级**：流式 canceled 事件停止并撤销未完成会话；非流式端点保留兼容旧客户端。
+- 测试：`tests/test_explain_stream.py`（chat_stream mock + explain SSE 事件/落盘/错误不落盘）、`tests/test_tutor_stream.py`（tutor start SSE/会话 seed/错误回滚）、`tests/browser/test_tutor_immersive.py`（拦截 SSE 验证前端增量渲染）。
+
+### PR-8 大纲管理重构（WP-10，2026-08-30）
+
+#### Added
+
+- **功能改名**：学习中心“大纲覆盖” → “大纲管理”；角色标签“教师重点（主要依据）/ 官方 306（补充）”；旧数据（seed/teacher）保留展示。
+- **AI 结构化大纲**：`core/syllabus.py::structurize_outline`（LLM 契约抽取 + 完整性校验 ≥95% 条目 + **原文 sha1 双存储** `~/.medkit/outline_originals/`）；失败保留原文不替换。
+- **端点**：`POST /api/syllabus/outline/structurize`（返回 `{ok, structured, stats, diff, original_path, note}`）。
+- **出题角色**：项目 `official_quota`（0~30，默认 0 = 仅教师重点）；`orchestrator.py` 教师重点为主线 `source="teacher"` + 官方306 按配额补充；`chapter_items_text` 支持 source 过滤。
+- **前端**：新建课题表单新增“官方 306 补充条目数”；大纲管理视图新增“AI 结构化预览”按钮（diff/原文路径展示）。
+- 测试：`tests/test_syllabus_manage.py`（round-trip/失败保留原文/角色过滤）、`tests/browser/test_syllabus_manage.py`（无“大纲覆盖”文案 + 角色标签）。
+
+### PR-9 外部做题数据导入（WP-11，2026-08-30）
+
+#### Added
+
+- **站点导入 schema**：`{source, subject, chapter, topic, question, options, answer, user_answer, analysis, tags, occurred_at, extra}`（`core/library.py::import_site_items`）。
+- **幂等去重**：sha1(norm(subject)|norm(chapter)|norm(question))；命中则更新答案/解析/选项/作答/标签，不重复新增；单条缺失/异常记入错误列表并跳过。
+- **端点**：`POST /api/library/mistakes/import-export`（JSON body `{items:[...]}`；空 items 400），返回 `{ok, added, updated, skipped, errors}`。
+- **前端**：错题本新增「站点数据(JSON)」按钮；`mkBatchFile` 对含 items 的 JSON 自动路由 import-export，其余 JSON 走旧 import-file；导入后 `loadLibrary()` 刷新。
+- 测试：`tests/test_mistake_import_export.py`（幂等/更新/跳过/路由 400）、`tests/browser/test_site_import.py`（拦截端点验证前端导入流）。
+
+### PR-10 视觉与富文本输出（WP-9，2026-08-30）
+
+#### Added
+
+- **本地 Markdown 渲染器**：新增 `medkit/web/js/md.js`（`window.mdRender` / `mdHighlight` / `mdKeywords`）——标题/列表/表格/代码/引用/加粗/分隔线，**先转义再解析**，XSS 安全，零 CDN。
+- **统一富文本**：讲解 `expMd` 委托 `mdRender`；提问问题/判分反馈（`.tu-q`/`.tu-gap`）富文本展示；医学关键词高亮扩充（首选药/金标准/确诊/禁忌/一线/休克等）。
+- **样式统一**：`.exp-article` / `.tu-q` / `.tu-gap` 表格、表头、分隔线样式；明暗主题沿用 CSS 变量。
+- 测试：`tests/test_render_markdown.py`（node vm 执行 md.js：富文本 + XSS）、`tests/browser/test_richtext.py`（浏览器侧 mdRender/expMd）。
+
+### PR-11 纯净安装包（WP-12，2026-08-30）
+
+#### Added
+
+- **spec 纯净**：`medkit.spec` datas 移除 `("medkit/data", …)` 与 `("data/syllabus_seed_306.json", …)`——示例素材、内置大纲种子**不进 dist**（仅仓库/CI 保留）。
+- **示例降级**：`POST /api/sample` 缺示例返回 `{sample:False, available:False, error}`；前端 `probeSampleAvailability()` 禁用“载入示例”按钮并显示“示例仅开发版可用（纯净版请自备素材/上传官方大纲）”。
+- **大纲降级**：`ensure_seed` 无种子返回“未内置大纲（纯净版）：可上传官方 306 大纲(md/txt) 或使用教师重点”；`sylEnsure` 文案同步。
+- **纯净检查**：新增 `pack/check-package.py`（pathlib 扫描 `dist/MedKit/`，blacklist：`samples` / `syllabus_seed_306.json` / `tests` / `__pycache__` / `.pyc`）；`pack/build.bat` 构建后自动运行，失败即构建失败。
+- **README**：绿色版说明改为“纯净版不含任何学科/题目/样例/测试数据，请自行上传教材/教师重点，官方 306 大纲在「大纲管理」一键导入”。
+- 测试：`tests/test_check_package.py`（干净通过 / 残留失败 / 缺失跳过）、`tests/browser/test_sample_purity.py`（按钮降级）。
+
 ## [0.9.0] - 2026-08-29
 
 ### R3 全链路 UX 审查修复（2026-08-29，批次0/1/2 合流：数据正确性 → 链路闭环 → 打磨）

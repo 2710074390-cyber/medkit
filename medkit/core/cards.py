@@ -211,3 +211,17 @@ def delete_by_source(source: str) -> int:
             st["cards"] = remain
             st["dirty"] = True
     return n
+
+
+def delete_by_subject(subject: str) -> int:
+    """WP-4：删除某科目的全部记忆卡（空科目名不删「未分类」），返回删除数量。"""
+    if not subject:
+        return 0
+    _ensure_schema()
+    with _store() as st:
+        remain = [c for c in st["cards"] if c.get("subject") != subject]
+        n = len(st["cards"]) - len(remain)
+        if n:
+            st["cards"] = remain
+            st["dirty"] = True
+    return n

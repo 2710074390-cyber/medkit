@@ -8,6 +8,7 @@
 - knowledge: 由错题的 know_tags/topic 归并出的知识点，含掌握度状态机 weak→shaky→solid→mastered
 """
 
+import hashlib
 import itertools
 import json
 import re
@@ -229,6 +230,77 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def _norm_key(text: str) -> str:
+    """外部导入去重归一：去空白/分隔符/括号，小写。"""
+    return re.sub(r"[\s·、/（）()\-——]", "", str(text or "")).lower()
+
+
+def _site_dedupe_key(item: dict[str, Any]) -> str:
+    """WP-11：站点导入幂等键 sha1(subject|chapter|question[:80])。"""
+    raw = "|".join([_norm_key(item.get("subject") or ""),
+                    _norm_key(item.get("chapter") or ""),
+                    _norm_key(str(item.get("question") or "")[:80])])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def import_site_items(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """WP-11：外部站点做题数据导入（med-review-site 等）。
+
+    Schema 兼容：{subject, chapter, topic, question, options, answer,
+    user_answer, analysis, tags, occurred_at, extra}。
+    去重：sha1(subject|chapter|question) —— 已有则更新答案/解析/作答等字段；
+    单条字段缺失/异常不阻断整体。返回 {added, updated, skipped, errors}。
+    """
+    stats: dict[str, Any] = {"added": 0, "updated": 0, "skipped": 0, "errors": []}
+    if not items:
+        return stats
+    existing = list_mistakes()
+    by_key: dict[str, dict[str, Any]] = {}
+    for m in existing:
+        by_key[_site_dedupe_key(m)] = m
+    for i, it in enumerate(items or [], 1):
+        try:
+            question = str(it.get("question") or "").strip()
+            if not question:
+                stats["skipped"] += 1
+                stats["errors"].append(f"#{i}: 缺少题干，已跳过")
+                continue
+            subject = str(it.get("subject") or "").strip() or "未分类"
+            chapter = str(it.get("chapter") or "").strip()
+            topic = str(it.get("topic") or "").strip()
+            tags = [str(t).strip() for t in (it.get("tags") or it.get("know_tags") or [])
+                    if str(t).strip()] or ([topic] if topic else [])
+            rec = {"source": str(it.get("source") or "site"),
+                   "source_ref": {"site": str(it.get("site") or "med-review-site"),
+                                   "occurred_at": str(it.get("occurred_at") or "")},
+                   "subject": subject, "chapter": chapter, "topic": topic,
+                   "question": question,
+                   "options": [str(o) for o in (it.get("options") or []) if str(o).strip()],
+                   "answer": str(it.get("answer") or "").strip(),
+                   "user_answer": str(it.get("user_answer") or "").strip(),
+                   "analysis": str(it.get("analysis") or "")[:2000],
+                   "know_tags": tags, "miss_count": max(int(it.get("miss_count", 1) or 1), 1),
+                   "error_reason": str(it.get("error_reason") or "").strip(),
+                   "correct": bool(it.get("correct", False))}
+            key = _site_dedupe_key(rec)
+            hit = by_key.get(key)
+            if hit is not None:
+                patch = {k: v for k, v in rec.items()
+                         if k in ("chapter", "topic", "question", "options", "answer",
+                                  "user_answer", "analysis", "know_tags", "correct")}
+                if update_mistake(hit["id"], patch) is not None:
+                    stats["updated"] += 1
+                else:
+                    stats["skipped"] += 1
+            else:
+                add_mistake(rec)
+                stats["added"] += 1
+        except Exception as e:  # noqa: BLE001  单条失败不阻断整体
+            stats["skipped"] += 1
+            stats["errors"].append(f"#{i}: {e}")
+    return stats
+
+
 def batch_add(records: list[dict[str, Any]]) -> int:
     """批量入错题（导入/同步）；返回成功条数。"""
     added = 0
@@ -312,6 +384,170 @@ def delete_mistake(mid: str) -> bool:
         st["dirty"]["mistakes"] = True
         _drop_knowledge_of_in(st, cur)
     return True
+
+
+def _ids_set(ids: list[str]) -> set[str]:
+    return {str(i).strip() for i in (ids or []) if str(i).strip()}
+
+
+def batch_delete(ids: list[str]) -> int:
+    """WP-5：按 id 批量删除错题（一次事务内完成，同步刷新掌握度），返回删除数量。"""
+    wanted = _ids_set(ids)
+    if not wanted:
+        return 0
+    with _store() as st:
+        removed = [m for m in st["mistakes"] if str(m.get("id")) in wanted]
+        if not removed:
+            return 0
+        st["mistakes"] = [m for m in st["mistakes"] if str(m.get("id")) not in wanted]
+        st["dirty"]["mistakes"] = True
+        for m in removed:
+            _drop_knowledge_of_in(st, m)
+    return len(removed)
+
+
+def batch_delete_with_backup(ids: list[str]) -> dict[str, Any]:
+    """WP-5：批量删除前自动导出所选错题 JSON 到 ~/.medkit/exports/，删除可追溯。
+
+    返回 {"deleted": n, "backup": <路径或空>}。
+    """
+    wanted = _ids_set(ids)
+    records = [m for m in list_mistakes() if str(m.get("id")) in wanted]
+    backup = ""
+    if records:
+        exports = cfg.CONFIG_DIR / "exports"
+        exports.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = exports / f"mistakes_batch_{ts}.json"
+        write_json_atomic(path, {
+            "exported_at": datetime.now().isoformat(timespec="seconds"),
+            "ids": sorted(wanted), "mistakes": records,
+        })
+        backup = str(path)
+    return {"deleted": batch_delete(ids), "backup": backup}
+
+
+def batch_mark_learned(ids: list[str], learned: bool = True) -> int:
+    """WP-5：按 id 批量翻转「已掌握」归档标记（不改写掌握度计数），返回更新数量。"""
+    wanted = _ids_set(ids)
+    if not wanted:
+        return 0
+    with _store() as st:
+        n = 0
+        for m in st["mistakes"]:
+            if str(m.get("id")) in wanted:
+                m["learned"] = bool(learned)
+                n += 1
+        if n:
+            st["dirty"]["mistakes"] = True
+    return n
+
+
+def export_mistakes(ids: list[str], fmt: str = "json") -> dict[str, Any]:
+    """WP-5：导出所选错题（json 原样 / md 可读排版），返回 {"filename", "data"}。"""
+    wanted = _ids_set(ids)
+    records = [m for m in list_mistakes() if str(m.get("id")) in wanted]
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    if fmt == "md":
+        lines = ["# 错题导出", "", f"> 共 {len(records)} 道 · 导出时间 {_now()}", ""]
+        for i, m in enumerate(records, 1):
+            lines.append(f"## {i}. {m.get('question') or '(无题干)'}")
+            if m.get("subject"):
+                lines.append(f"**科目**：{m['subject']}")
+            if m.get("chapter") or m.get("topic"):
+                lines.append(f"**章节/主题**：{(m.get('chapter') or '') + (' · ' + m['topic'] if m.get('topic') else '')}")
+            opts = m.get("options") or []
+            for j, o in enumerate(opts):
+                lines.append(f"{'ABCDEFGHIJ'[j] if j < 10 else j + 1}. {o}")
+            if m.get("answer"):
+                lines.append(f"**答案**：{m['answer']}")
+            if m.get("analysis"):
+                lines.append(f"**解析**：{m['analysis']}")
+            if m.get("know_tags"):
+                lines.append(f"**标签**：{'、'.join(map(str, m['know_tags']))}")
+            if m.get("error_reason"):
+                lines.append(f"**错因**：{m['error_reason']}")
+            lines.append("")
+        return {"filename": f"medkit_mistakes_export_{ts}.md", "data": "\n".join(lines)}
+    return {"filename": f"medkit_mistakes_export_{ts}.json",
+            "data": json.dumps({"exported_at": _now(), "mistakes": records},
+                               ensure_ascii=False, indent=2)}
+
+
+def delete_subject_with_backup(subject: str) -> dict[str, Any]:
+    """WP-4：删除某科目全部本地数据（先导出 JSON 备份到 ~/.medkit/exports/）。
+
+    影响范围：错题、知识点掌握度、复习卡（SM-2）、记忆卡（FSRS/讲解产物）、
+    提问会话；「未分类」（subject 为空）不受影响。
+    SQL 模式单事务逐表删除；JSON 模式逐模块原子写。
+    返回 {"deleted": {mistakes, knowledge, review_cards, memory_cards, sessions, explains},
+          "backup": <备份文件绝对路径>}。
+    """
+    subject = str(subject or "").strip()
+    if not subject:
+        raise ValueError("科目不能为空")
+    from . import cards as cardlib  # noqa: PLC0415  函数内导入避免循环依赖
+    from . import explain as expl  # noqa: PLC0415
+    from . import review as rev  # noqa: PLC0415
+    from . import tutor as tut  # noqa: PLC0415
+    from .fsutil import safe_filename  # noqa: PLC0415
+
+    # 1) 删除前导出快照（备份路径返回给前端展示）
+    mistakes = [m for m in list_mistakes() if m.get("subject") == subject]
+    knowledge = [k for k in list_knowledge() if k.get("subject") == subject]
+    explains = [e for e in expl.list_explains() if e.get("subject") == subject]
+    review_cards = [c for c in rev.list_cards() if c.get("subject") == subject]
+    memory_cards = [c for c in cardlib.list_cards() if c.get("subject") == subject]
+    sessions = [s for s in tut.list_sessions() if s.get("subject") == subject]
+    exports = cfg.CONFIG_DIR / "exports"
+    exports.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = exports / f"subject_{safe_filename(subject)}_{ts}.json"
+    write_json_atomic(backup, {
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "subject": subject,
+        "mistakes": mistakes, "knowledge": knowledge,
+        "explains": explains, "review_cards": review_cards,
+        "memory_cards": memory_cards, "tutor_sessions": sessions,
+    })
+
+    # 2) 删除（SQL 模式单事务；JSON 模式逐模块）
+    if DB_FILE.exists():
+        with dbs.tx(write=True) as cur:
+            counts: dict[str, int] = {}
+            for table in ("mistakes", "knowledge", "explains",
+                          "review_cards", "tutor_sessions", "cards"):
+                try:
+                    cur.execute(f"DELETE FROM {table} WHERE subject = ?", (subject,))
+                    counts[table] = max(int(cur.rowcount), 0)
+                except Exception:  # noqa: BLE001  旧库缺表（如 cards v5 前）跳过
+                    counts[table] = 0
+        return {"deleted": {
+            "mistakes": counts.get("mistakes", 0),
+            "knowledge": counts.get("knowledge", 0),
+            "review_cards": counts.get("review_cards", 0),
+            "memory_cards": counts.get("cards", 0),
+            "sessions": counts.get("tutor_sessions", 0),
+            "explains": counts.get("explains", 0),
+        }, "backup": str(backup)}
+
+    n_m = n_k = 0
+    with _store() as st:
+        before_m = len(st["mistakes"])
+        st["mistakes"] = [m for m in st["mistakes"] if m.get("subject") != subject]
+        n_m = before_m - len(st["mistakes"])
+        before_k = len(st["knowledge"])
+        st["knowledge"] = [k for k in st["knowledge"] if k.get("subject") != subject]
+        n_k = before_k - len(st["knowledge"])
+        st["dirty"]["mistakes"] = bool(n_m)
+        st["dirty"]["knowledge"] = bool(n_k)
+    return {"deleted": {
+        "mistakes": n_m, "knowledge": n_k,
+        "review_cards": rev.delete_by_subject(subject),
+        "memory_cards": cardlib.delete_by_subject(subject),
+        "sessions": tut.delete_by_subject(subject),
+        "explains": expl.delete_by_subject(subject),
+    }, "backup": str(backup)}
 
 
 def mark_learned(mid: str, learned: bool = True) -> Optional[dict[str, Any]]:
