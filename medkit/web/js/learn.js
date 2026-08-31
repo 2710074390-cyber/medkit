@@ -1,4 +1,7 @@
 /* ---- ④ 学习中心（v0.7 M1/M2：错题本 + 掌握度诊断） ---- */
+/* R4-02 流式取消：在途 AbortController（声明前置——showLearnView 在脚本求值期即可能被
+   initLearnView 调用，置于声明行前会触发 let TDZ ReferenceError，中断整个学习中心脚本） */
+let _sseAbort = null;
 const LEARN_STATE = { weak: "待加强", shaky: "需复习", solid: "较熟练", mastered: "已掌握" };
 function learnChip(state) {
   const txt = LEARN_STATE[state] || state || "未知";
@@ -590,9 +593,8 @@ async function consumeSSE(res, onEvent) {
   }
 }
 /* R4-02：流式 SSE（讲解/提问）的取消支持——AbortController +「停止生成」按钮 + 切视图/切 tab 即中断。
-   _sseAbort 保存当前在途流式的 AbortController；abort() 使 fetch/reader 抛 AbortError，
-   由消费方 catch 处理为「已停止生成（未保存）」。 */
-let _sseAbort = null;
+   _sseAbort 保存当前在途流式的 AbortController（声明见文件头，初始化前置防 TDZ）；
+   abort() 使 fetch/reader 抛 AbortError，由消费方 catch 处理为「已停止生成（未保存）」。 */
 function sseAbortAll() {
   if (_sseAbort) { try { _sseAbort.abort(); } catch (e) { /* ignore */ } _sseAbort = null; }
   const sb = document.getElementById("sse_stop_btn");
@@ -1448,8 +1450,11 @@ async function expGenerate() {
   let streamed = false;
   try {
     // R4-02：AbortController +「停止生成」按钮；停止点触发 abort() → fetch 抛 AbortError
-    const abort = new AbortController(); _sseAbort = abort;
+    // 注意顺序：sseStopUI 内部先 sseAbortAll() 清理上一处残留——必须【先清后挂】，
+    // 否则新建的 controller 会被自己立即 abort（fetch 未发出即 AbortError）。
+    const abort = new AbortController();
     sseStopUI("btn_exp_gen");
+    _sseAbort = abort;
     const res = await fetch("/api/library/explain/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload), signal: abort.signal });
@@ -1768,8 +1773,10 @@ async function tutorStart() {
   let streamed = false;
   try {
     // R4-02：AbortController +「停止生成」按钮；停止→abort()→fetch 抛 AbortError（会话由后端兜底撤销）
-    const abort = new AbortController(); _sseAbort = abort;
+    // 顺序同 expGenerate：sseStopUI 先清上一处残留（sseAbortAll），再挂新 controller。
+    const abort = new AbortController();
     sseStopUI("btn_tu_start");
+    _sseAbort = abort;
     const res = await fetch("/api/library/tutor/start/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload), signal: abort.signal });

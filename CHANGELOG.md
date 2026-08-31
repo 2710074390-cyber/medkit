@@ -148,6 +148,14 @@
 - **R4-12 配额超界统一 400**：`official_quota` 越界（0~30 外）显式 400，与 `web_ref_quota`/`bloom` 口径一致，`meta` 不再静默钳制（测试 `test_create_project_rejects_quota_out_of_range`）。
 - 验证：离线 pytest **424 passed**，ruff 干净；批次 1/2 独立提交（`8e603a0`/`c55bb9d`/`9980a27`）。
 
+### R4 发布前回归补丁（2026-08-31，浏览器层 CI 发现并修复）
+
+#### Fixed
+
+- **`_sseAbort` TDZ 击穿整个学习中心脚本**：`let _sseAbort` 声明在 `showLearnView` 之后——脚本求值期 `initLearnView` 恢复上次视图时调用 `showLearnView` → `sseAbortAll()` 触发「Cannot access '_sseAbort' before initialization」ReferenceError，learn.js 后续全部代码不执行（子导航/讲解/提问/大纲管理全挂）。修复：声明前移到文件头（`medkit/web/js/learn.js`）。回归：`test_learn_view_remembered_after_reload`（CI 首曝光）。
+- **`sseStopUI` 先清后挂顺序错**：`expGenerate`/`tutorStart` 先 `_sseAbort = abort` 再调 `sseStopUI`（内部先 `sseAbortAll()`）——新 controller 被立即 abort，fetch 未发出即「已停止生成（未保存）」、流式永不建立（测试模拟 SSE 全量帧时 `exp_live` 无增量）。修复：先 `sseStopUI` 清上一处残留，再挂新 controller（两处）。回归：`test_explain_stream_live_display`。
+- 两项均为基础层（learn.js）缺陷，整个浏览器层 34 用例重跑全绿。
+
 ## [0.9.0] - 2026-08-29
 
 ### R3 全链路 UX 审查修复（2026-08-29，批次0/1/2 合流：数据正确性 → 链路闭环 → 打磨）
