@@ -8,6 +8,20 @@
 
 | 日期 | commit | 变更 |
 | - | - | - |
+| 2026-08-31 | 本批 | **R4 审查批次 2 落地（5 缺陷）**：R4-05 `structurize_outline` 完整性通过即 `add_seed_items` 幂等落库官方大纲（返回 `source`/`added`，付费产物可回读）· R4-06 资产上传 200MB 上限（`_MAX_ASSET_BYTES`，超限 400 不落盘）· R4-07 `config.save` 统一 `write_json_atomic` 原子写 · R4-08 `syllabus._rows`/`list_subjects` 切 `tx(write=False)` 纯读事务 · R4-12 `official_quota` 越界由静默钳制改 400（口径与 web_ref_quota/bloom 一致）；测试 `test_s1_backend.py`/`test_syllabus_manage.py`/`test_wp04.py`，离线 424 passed · ruff 干净 |
+| 2026-08-31 | 本批 | **R4 审查批次 1 落地（流式主路径 P0/P1，4 缺陷）**：R4-01 去重锁改绑流生命周期（`dedupe.begin/end` 移入 `gen()` finally，覆盖断连 GeneratorExit）· R4-02 流式取消全链路（前端 `AbortController`+`sseStopUI`「停止生成」+切view/tab abort；服务端 `cancel_ev` 传 client、断开 set）· R4-03 断流不再自动回退非流式（仅流式接口不可用才降级，杜绝双扣费）· R4-04 tutor 流未落定空会话 finally 兜底删除；流式端口统一经 `_explain_client(cancel=...)`/`_tutor_client(cancel=...)` 注入 client（单一 mock 触点）；测试 `test_dedupe.py`/`test_explain_stream.py`/`test_tutor_stream.py`，离线 421 passed · ruff 干净 |
+| 2026-08-30 | 本批 | **0.10.0 全部落地（PR-1..PR-11，13 个 WP ✅）**：多场考试/进度/门禁子步骤/科目删除/错题批量/网络检索可信源/流式讲解提问/大纲管理/外部数据导入/富文本/纯净包；工程借鉴规则随程落地 |
+| 2026-08-30 | 本批 | **0.10.0 PR-11 落地**：纯净安装包：`medkit.spec` 移除示例/种子 datas；`/api/sample available=False` + 前端按钮降级；`ensure_seed` 无种子提示可上传；`pack/check-package.py` + `build.bat` 自动纯净检查；README 纯净版说明；测试 `tests/test_check_package.py` / `tests/browser/test_sample_purity.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-10 落地**：视觉与富文本输出：本地 `md.js`（`mdRender`/`mdHighlight`，先转义再解析，XSS 安全）；讲解/提问/复习卡统一富文本 + 医学关键词高亮；表格样式；测试 `tests/test_render_markdown.py` / `tests/browser/test_richtext.py`；零 CDN/零新增二进制 |
+| 2026-08-30 | 本批 | **0.10.0 PR-9 落地**：外部做题数据导入：`library.import_site_items` sha1(subject|chapter|question) 幂等（命中更新）；`POST /api/library/mistakes/import-export`；错题本「站点数据(JSON)」入口 + JSON items 自动路由；测试 `tests/test_mistake_import_export.py` / `tests/browser/test_site_import.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-8 落地**：大纲管理重构：“大纲覆盖”→“大纲管理”（教师重点=主要依据 / 官方306=补充）；`structurize_outline` AI 结构化 + 原文 sha1 双存储 + 95% 完整性校验；`POST /api/syllabus/outline/structurize`；项目 `official_quota` + 出题教师主线/官方补充；测试 `tests/test_syllabus_manage.py` / `tests/browser/test_syllabus_manage.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-7 落地**：沉浸式讲解/提问 + 流式（SSE）：`LLMClient.chat_stream`；`POST /api/library/explain/stream`、`tutor/start/stream`（meta→delta*→done/error，取消/失败回滚）；前端 `consumeSSE` + `#exp_live`/`#tu_live` 增量渲染，非流式降级保留；测试 `tests/test_explain_stream.py` / `tests/test_tutor_stream.py` / `tests/browser/test_tutor_immersive.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-6 落地**：网络检索可信来源（`TRUSTED_SUFFIXES`/`TRUSTED_DOMAINS` + `trusted_filter` 可信优先/过滤 + `【可信】` 标注）；`web_search.trusted_only` + 自定义域名配置；`_search_error_hint` 失败原因中文化；检索失败降级写 `run.log` + 人工复核清单；测试 `tests/test_websearch.py` / `tests/test_search_router.py` / `tests/browser/test_search_settings.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-5 落地**：错题本多选工具栏（全选/反选/清空/批量删除/批量已掌握/导出 JSON·MD）+ 三级分组折叠（科目→章节→标签 `<details>`）；批量删除自动导出 `exports/mistakes_batch_*.json` 备份；`POST /api/library/mistakes/batch-delete|batch-learn|batch-export`；测试 `tests/test_mistake_batch.py` / `tests/browser/test_mistakes_batch.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-4 落地**：刷题科目卡片图标化 + 「科目管理」弹层；删除科目前自动导出 `~/.medkit/exports/subject_*.json` 备份，清理错题/知识点/复习卡/记忆卡/提问会话/讲解；`POST /api/library/subjects/delete`（SQL 单事务/JSON 原子写）；测试 `tests/test_subject_delete.py` / `tests/browser/test_study_subjects.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-3 落地**：子步骤事件流 `substeps.jsonl`（`_substep` + `_run_substep` 超时/重试/降级）；门禁①/QC 每批/MedFix 每条 issue/渲染逐步上报；status 返回最近 50 条；前端 `renderSubsteps` 子步骤面板（运行高亮/失败红/重试/可展开）；测试 `tests/test_pipeline_events.py` / `test_pipeline_writes_substeps_e2e` / `tests/browser/test_substeps_panel.py`；借用点记录于 `docs/engineering/borrow-rules.md` §6 |
+| 2026-08-30 | 本批 | **0.10.0 PR-2 落地**：出题进度子步骤模型（`progress.json` 增 `sub/sub_done/sub_total`、`PIPELINE_STAGES`）；门禁①四类检查/QC 批次/渲染产物逐步上报；stepper 空进度显示“准备中”+ 子步骤计数；测试 `tests/test_orchestrator_progress.py` / `test_pipeline_progress_substeps` / `tests/browser/test_pipeline_progress.py` |
+| 2026-08-30 | 本批 | **0.10.0 PR-1 落地**：开始页多场考试计划（`renderExamPlans` 系列 + 旧键 `medkit-exam-date` 自动迁移）+ 红点来源可感知（侧栏 badge title/说明条 + 学习中心来源卡）；新增 `tests/browser/test_start_exams.py`；规划文档 `docs/0.10.0-requirement-analysis.md` / `docs/0.10.0-task-split.md` / `docs/0.10.0-work-breakdown.md` / `docs/engineering/borrow-rules.md` |
 | 2026-08-29 | 本批 | **PRD/交接配置入库 + 差距审查**：`docs/archive/reviews/2026-08-29/gap-audit-prd-2026-08-29.md`（现状 vs PRD/交接配置全量对照 + 断点清单 H-1/H-2/H-3）；两份交接文档归档 `docs/archive/product/`；产品方向 5 项决策已拍板（见 §6）；批次 A 修复：H-1 脚本时序（initTab 推迟 DOMContentLoaded）/ H-2 声明序 / H-3 后端全局异常兜底 + 浏览器 hash 直达回归用例 |
 | 2026-08-27 | `74d999b` | NX-02：打包环境 jieba 兜底（fts_tokens 仅 bigram、spec 收集 jieba 数据） |
 | 2026-08-27 | `8b4baf4` | K3/IMP-13：官方大纲文件导入闭环（LLM 契约抽取 → seed）+ 教师重点 v4 后端（+前端官方大纲入口） |
@@ -104,6 +118,7 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
 - 总闸：`verify.cmd`（Windows）。
 - 单测隔离：`tests/conftest.py` 把 `dbs.DB_PATH` 等指向 tmp；新增库表/迁移需同时覆盖 `tests/test_db.py`（migration 标记）。
 - 打包：`pack/build.bat`（PyInstaller，`medkit.spec`；version 单源 `medkit/__init__.py`）。
+- 规划（0.10.0）：需求整理 `docs/0.10.0-requirement-analysis.md` · 任务拆分 `docs/0.10.0-task-split.md` · 工作包细化 `docs/0.10.0-work-breakdown.md` · 工程借鉴规则 `docs/engineering/borrow-rules.md`。
 
 ## 6. 产品方向（2026-08-29 交接 · 已拍板决策）
 

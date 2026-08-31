@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -52,7 +53,9 @@ def ensure_seed(force: bool = False) -> dict[str, Any]:
     """把 bundled 种子导入 syllabus_items（幂等：已有同 id 跳过）。返回统计。"""
     dbs.migrate()
     if not SEED_FILE.exists():
-        return {"imported": 0, "note": "seed missing"}
+        # WP-12：纯净安装包不内置种子——明确提示可上传官方 306 大纲
+        return {"imported": 0,
+                "note": "未内置大纲（纯净版）：可上传官方 306 大纲(md/txt) 或使用教师重点"}
     seed = json.loads(SEED_FILE.read_text(encoding="utf-8"))
     with dbs.tx(write=True) as cur:
         if force:
@@ -277,6 +280,60 @@ def add_seed_items(drafts: list[dict[str, str]]) -> dict[str, Any]:
             chapters.add(chap)
     return {"added": added, "total": len(drafts),
             "subjects": sorted(subjects), "chapters": len(chapters)}
+# ---------------------------------------------------------------- AI 结构化（WP-10：原文 + 结构化双存储）
+def structurize_outline(text: str, subject: str = "",
+                        client: Any = None) -> dict[str, Any]:
+    """官方/任意大纲原文 → AI 结构化（LLM 契约抽取；不丢失则校验通过）。
+
+    返回 {ok, structured, stats, diff, original_path, note}；
+    - 原文按 sha1 存 ~/.medkit/outline_originals/<sha1>.md（双存储，可审计）；
+    - ok = 结构化条目数 ≥ 原文条目数 × 95%（任一科失败/不达标 → ok=False，不静默替换）。
+    """
+    from . import config as cfg
+
+    orig = parse_text(text, subject)
+    outline = extract_outline(text, client=client)
+    digest = hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]
+    originals = cfg.CONFIG_DIR / "outline_originals"
+    originals.mkdir(parents=True, exist_ok=True)
+    path = originals / f"{digest}.md"
+    path.write_text(text or "", encoding="utf-8")
+    if outline is None:
+        return {"ok": False, "structured": None,
+                "stats": {"source_items": len(orig), "structured_items": 0,
+                          "subjects": [], "chapters": 0},
+                "diff": {"original_items": len(orig), "structured_items": 0,
+                         "missing": len(orig)},
+                "original_path": str(path),
+                "note": "LLM 结构化失败（或原文无法分科）——原文已保留，不替换"}
+    drafts = outline_drafts(outline)
+    stats = {
+        "source_items": len(orig),
+        "structured_items": len(drafts),
+        "subjects": [s.get("name") or "" for s in outline.get("subjects", [])],
+        "chapters": sum(len(s.get("chapters") or []) for s in outline.get("subjects", [])),
+    }
+    target = int(math.ceil(len(orig) * 0.95)) if orig else 0
+    missing = max(0, len(orig) - len(drafts))
+    ok = len(drafts) >= target
+    # R4-05：完整性通过即幂等确立为官方大纲（source='seed'），付费产物有了可回读出口；不达标绝不动原文
+    if ok:
+        saved = add_seed_items(drafts)
+        added = saved["added"]
+        source = "seed"
+        note = (f"结构化 {len(drafts)} 条 / 原文 {len(orig)} 条（缺失 {missing}），通过完整性校验，"
+                f"已确立为官方大纲（新增 {added} 条）")
+    else:
+        added, source = 0, "teacher"
+        note = (f"结构化 {len(drafts)} 条 / 原文 {len(orig)} 条（缺失 {missing}），"
+                "未达 95% 完整性，保留原文未替换")
+    return {"ok": ok, "structured": outline, "stats": stats,
+            "diff": {"original_items": len(orig), "structured_items": len(drafts),
+                     "missing": missing},
+            "source": source, "added": added,
+            "original_path": str(path), "note": note}
+
+
 # ---------------------------------------------------------------- 查询与覆盖
 def _now() -> str:
     from datetime import datetime
@@ -293,13 +350,17 @@ def _rows(subject: str = "", source: str = "all") -> list[dict[str, Any]]:
         params.append(source)
     cond = ("WHERE " + " AND ".join(where)) if where else ""
     order = "ORDER BY subject, chapter, kind, item"
-    with dbs.tx(write=True) as cur:
+    with dbs.tx(write=False) as cur:   # R4-08：纯读路径不开写事务（避免抢写锁）
         return dbs.list_rows(cur, "syllabus_items", f"{cond} {order}", tuple(params))
 
 
-def chapter_items_text(subject: str = "", limit: int = 800) -> str:
-    """科目大纲条目 → 注入文本（≤limit 字；章标题 + 条目，供出题 subtopic 对齐）。"""
-    data = coverage(subject)
+def chapter_items_text(subject: str = "", limit: int = 800,
+                        source: str = "all") -> str:
+    """科目大纲条目 → 注入文本（≤limit 字；章标题 + 条目，供出题 subtopic 对齐）。
+
+    WP-10：source 限定 teacher（主要依据）/ seed（官方 306 补充）/ all（聚合）。
+    """
+    data = coverage(subject, source)
     lines: list[str] = []
     for ch in data["chapters"]:
         items = [it["item"] for it in ch["items"]]
@@ -316,7 +377,7 @@ def list_subjects(source: str = "all") -> list[dict[str, Any]]:
     where, params = "", ()
     if source != "all":
         where, params = "WHERE source = ?", (source,)
-    with dbs.tx(write=True) as cur:
+    with dbs.tx(write=False) as cur:   # R4-08：纯读路径不开写事务（避免抢写锁）
         rows = cur.execute(
             "SELECT subject, COUNT(*) AS n, "
             "SUM(CASE WHEN kind='chapter' THEN 1 ELSE 0 END) AS chapters, "

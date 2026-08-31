@@ -21,6 +21,7 @@ from ..state import CANCELLING, RUNNING
 from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir, require_flag
 
 _ALLOW_IMG = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+_MAX_ASSET_BYTES = 200 * 1024 * 1024   # R4-06：单图上传体积上限 200MB（超限 400，不落盘）
 _IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webp": "image/webp", ".gif": "image/gif"}
 
@@ -78,6 +79,7 @@ class ProjectBody(BaseModel):
     web_backend: str = "auto"
     web_ref_quota: int = 0                              # 引用配额 0~30%，默认 0
     web_manual_text: str = ""                           # manual 模式：用户粘贴素材
+    official_quota: int = 0                             # WP-10：官方306 补充条目配额（0 = 仅教师重点）
     client_token: str = ""                               # R3-08：创建意图幂等令牌（双击/双标签去重）
 
 
@@ -105,6 +107,9 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
         raise HTTPException(400, f"题型配比合计应为 100%（当前 {ratio_sum}%），请调整后重试")
     if not (0 <= body.web_ref_quota <= 30):
         raise HTTPException(400, "网络引用配额需在 0~30% 之间")
+    # R4-12：official_quota 越界由静默钳制改为显式 400（与 web_ref_quota/bloom 口径一致，meta 存原值不钳制）
+    if not (0 <= int(body.official_quota or 0) <= 30):
+        raise HTTPException(400, "官方大纲补充配额需在 0~30% 之间")
     bloom = _validate_bloom(body.bloom)
     req = (body.requirements or "").strip()
     if len(req) > 500:
@@ -165,6 +170,7 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
             "web_search": bool(body.web_search),
             "web_backend": body.web_backend or "auto",
             "web_ref_quota": int(body.web_ref_quota or 0),
+            "official_quota": int(body.official_quota or 0),
             "web_manual_text": (body.web_manual_text or "")[:20000],
             "exam_chars": sum(len(s.get("text", "") or "") for s in body.exam_slices),   # v0.5.2
             "extra_chars": sum(len(s.get("text", "") or "") for s in body.extra_slices),
@@ -242,7 +248,28 @@ def get_project(pid: str) -> dict[str, Any]:
             meta["progress"] = json.loads(progress_path.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             pass
+    meta["substeps"] = _read_substeps(base)
     return meta
+
+
+def _read_substeps(base: Path, limit: int = 50) -> list[dict[str, Any]]:
+    """WP-3：读 substeps.jsonl 最近 limit 条子步骤事件（前端子步骤面板）。"""
+    path = base / "substeps.jsonl"
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:  # noqa: BLE001  单行损坏跳过，不拖垮 status
+                continue
+    except Exception:  # noqa: BLE001
+        return []
+    return rows[-limit:]
 
 
 def _project_artifacts(base: Path) -> list[str]:
@@ -280,6 +307,7 @@ def project_status(pid: str) -> dict[str, Any]:
             "running": bool(RUNNING.get(pid)),
             "cancelling": bool(CANCELLING.get(pid)),   # R3-09：前端「正在取消中…」展示
             "progress": progress,
+            "substeps": _read_substeps(base),
             "artifacts": _project_artifacts(base),
             "log": log_lines}
 
@@ -393,6 +421,9 @@ async def upload_asset(pid: str, file: UploadFile = File(...),
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "文件为空")
+    # R4-06：体积限界在落盘/建索引之前——超限即 400，不产生任何磁盘副作用
+    if len(raw) > _MAX_ASSET_BYTES:
+        raise HTTPException(400, "图片过大（限 200MB）")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in _ALLOW_IMG:
         raise HTTPException(400, f"仅支持图片：{' / '.join(_ALLOW_IMG)}")

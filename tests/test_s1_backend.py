@@ -492,3 +492,41 @@ def test_mineru_upload_skipped_when_cancelled(monkeypatch, tmp_path):
     with pytest.raises(mineru_mod.MinerUError, match="已取消"):
         client._extract_v4(p, cancel=ev)
     assert not puts, "cancel 置位时不应发出 PUT 上传"
+
+
+def test_config_save_atomic_roundtrip(monkeypatch, tmp_path):
+    """R4-07：config.save 统一 write_json_atomic——save→load 回读一致，且无 .tmp 残留。"""
+    conf = tmp_path / "config.json"
+    monkeypatch.setattr(cfgmod, "CONFIG_FILE", conf)
+    monkeypatch.setattr(cfgmod, "CONFIG_DIR", tmp_path)
+    cfg = cfgmod.load()
+    cfg["api_key"] = "sk-roundtrip"
+    cfg["web_search"] = {"enabled": True, "backend": "auto", "api_key": "",
+                         "trusted_only": True, "trusted_domains": ["a.com"]}
+    cfgmod.save(cfg)
+    reloaded = cfgmod.load()
+    assert reloaded["api_key"] == "sk-roundtrip", reloaded["api_key"]
+    assert reloaded["web_search"]["trusted_only"] is True
+    assert reloaded["web_search"]["trusted_domains"] == ["a.com"]
+    leftovers = [p.name for p in tmp_path.glob("*.tmp*")]
+    assert not leftovers, f"config.save 不应残留临时文件：{leftovers}"
+
+
+def test_create_project_rejects_quota_out_of_range(monkeypatch, tmp_path):
+    """R4-12：official_quota 越界 400（与 web_ref_quota 口径一致），边界 0/30 放行。"""
+    _isolate_cfg(monkeypatch, tmp_path)
+    c = _client()
+    base = {
+        "subject": "生理学", "exam": "期末", "target": 20,
+        "ratios": {"A1": 40, "A2": 30, "B1": 20, "X": 10},
+        "toggles": {"qbank": True, "paper": True, "review": True},
+        "textbook_slices": [{"sid": "S001", "title": "第一章", "text": "教学内容" * 30}],
+        "teacher_slices": [{"sid": "T001", "title": "重点", "text": "重点内容" * 10}],
+    }
+    for bad in (31, -1, 999):
+        r = c.post("/api/projects", json={**base, "official_quota": bad})
+        assert r.status_code == 400, (bad, r.status_code)
+        assert "官方大纲补充配额" in r.json()["detail"], r.text
+    for okv in (0, 30):
+        r = c.post("/api/projects", json={**base, "official_quota": okv})
+        assert r.status_code == 200, (okv, r.status_code)

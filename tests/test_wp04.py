@@ -150,3 +150,26 @@ def test_paper_answers_declaration_note():
     out = qb.export_paper_html([q], "押题卷", pid="p1", subject="儿科学")
     assert "请勿用于正式考试" in out
     assert "答案内嵌于本页源码" in out
+
+
+def test_asset_upload_size_limit(tmp_path, monkeypatch):
+    """R4-06：上传超限 → 400，且不落盘/不进切片索引（体积限界前置）。"""
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    from medkit.core import config as cfg
+    from medkit.routers import projects as proj
+
+    p_root = tmp_path / "projects"
+    (p_root / "demo").mkdir(parents=True)
+    real = cfg.load()
+    monkeypatch.setattr(cfg, "load", lambda: {**real, "projects_dir": str(p_root)})
+    monkeypatch.setattr(proj, "_MAX_ASSET_BYTES", 8)  # 压到 8 字节模拟超限
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    r = c.post("/api/projects/demo/assets",
+               files={"file": ("big.png", PNG, "image/png")},
+               data={"caption": "超限图"})
+    assert r.status_code == 400, r.text
+    assert "图片过大" in r.json()["detail"], r.text
+    assert not (p_root / "demo" / "assets").exists(), "超限上传不应落盘"
+    assert not (p_root / "demo" / "slices.json").exists(), "超限上传不应进切片索引"

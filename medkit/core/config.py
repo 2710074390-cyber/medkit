@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .fsutil import write_json_atomic
 from .providers import get_provider
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,8 @@ DEFAULTS: dict[str, Any] = {
     "api_key": "",
     "model_gen": "deepseek-v4-flash",   # v0.5：2026-08 换代（旧值 deepseek-chat 在 load 时自动迁移）
     "model_qc": "deepseek-v4-flash",
-    "web_search": {"enabled": False, "backend": "auto", "api_key": ""},
+    "web_search": {"enabled": False, "backend": "auto", "api_key": "",
+                 "trusted_only": False, "trusted_domains": []},
     "mineru": {"api_key": "", "auto_ocr": True},
     "projects_dir": str(CONFIG_DIR / "projects"),
     "provider_keys": {},   # v0.5.1：多服务商 Key 存档 {pid: {api_key, base_url, model_gen, model_qc}}
@@ -155,10 +157,8 @@ def load() -> dict[str, Any]:
 
 
 def save(cfg: dict[str, Any]) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = CONFIG_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, CONFIG_FILE)  # 原子写
+    # R4-07：统一 write_json_atomic（唯一临时名 + Windows 共享冲突重试），与仓库状态文件口径一致
+    write_json_atomic(CONFIG_FILE, cfg)
 
 
 def mask_api_key(key: str) -> str:
