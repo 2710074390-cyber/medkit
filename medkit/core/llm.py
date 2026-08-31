@@ -116,6 +116,46 @@ class LLMClient:
                 raise LLMError(f"调用失败({self.model}): {e}") from e
         raise LLMError(f"调用失败({self.model}): {last_err}")
 
+    def chat_stream(self, messages: list[dict[str, str]], temperature: float = 0.7,
+                      max_tokens: Optional[int] = None):
+        """WP-8：流式生成器——yield {delta, usage, canceled}，支持取消事件。
+
+        与 chat() 的取消语义一致：取消时不等待整段回复烧完 token。
+        """
+        if self._cancel is not None and self._cancel.is_set():
+            yield {"delta": "", "usage": None, "canceled": True}
+            return
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        try:
+            stream = self._client.chat.completions.create(**kwargs, stream=True)
+            for chunk in stream:
+                if self._cancel is not None and self._cancel.is_set():
+                    yield {"delta": "", "usage": None, "canceled": True}
+                    return
+                delta = ""
+                try:
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                        delta = chunk.choices[0].delta.content
+                except Exception:  # noqa: BLE001  部分服务商终止块结构差异
+                    pass
+                usage_data = None
+                if getattr(chunk, "usage", None) is not None:
+                    usage_data = {"prompt_tokens": getattr(chunk.usage, "prompt_tokens", 0),
+                                  "completion_tokens": getattr(chunk.usage, "completion_tokens", 0)}
+                    usage.add(**usage_data)
+                yield {"delta": delta, "usage": usage_data, "canceled": False}
+        except Exception as e:  # noqa: BLE001
+            if self._cancel is not None and self._cancel.is_set():
+                yield {"delta": "", "usage": None, "canceled": True}
+                return
+            raise LLMError(f"流式调用失败({self.model}): {e}") from e
+
     def chat_json(self, messages: list[dict[str, str]], temperature: float = 0.7,
                   max_tokens: Optional[int] = None,
                   schema: Optional[type[BaseModel]] = None) -> Any:

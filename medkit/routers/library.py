@@ -5,12 +5,14 @@ OCR 复用 MinerU；掌握度/优先级纯本地）。错题结构从押题卷�
 """
 
 import asyncio
+import json
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Iterator
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..agents import medcards
@@ -24,6 +26,11 @@ from ..core import tutor as tut
 from ..core.config import resolve_key
 
 router = APIRouter()
+
+
+def _sse(event: str, data: Any) -> str:
+    """WP-8：SSE 帧序列化（event + data JSON）。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 # ---------------------------------------------------------------- 错题导入 / CRUD
@@ -49,6 +56,21 @@ class MistakeBody(BaseModel):
 class SyncPaperBody(BaseModel):
     pid: str = ""
     questions: list[dict[str, Any]] = []
+
+
+class SubjectDeleteBody(BaseModel):
+    subject: str = ""
+
+
+class MistakeBatchBody(BaseModel):
+    ids: list[str] = []
+    learned: bool = True
+    format: str = "json"
+
+
+class SiteImportBody(BaseModel):
+    items: list[dict[str, Any]] = []
+    meta: dict[str, Any] = {}
 
 
 @router.get("/api/library/mistakes")
@@ -151,6 +173,51 @@ def drop_mistake(mid: str) -> dict[str, Any]:
     if not lib.delete_mistake(mid):
         raise HTTPException(404, "错题不存在")
     return {"ok": True}
+
+
+def _valid_ids(ids: list[str]) -> list[str]:
+    out = [str(x).strip() for x in (ids or []) if str(x).strip()]
+    if not out:
+        raise HTTPException(400, "请先选择错题")
+    if len(out) > 500:
+        raise HTTPException(400, "单次最多操作 500 条")
+    return out
+
+
+@router.post("/api/library/mistakes/batch-delete")
+def batch_delete_mistakes(body: MistakeBatchBody) -> dict[str, Any]:
+    """WP-5：批量删除错题（删除前自动导出备份 JSON 到 ~/.medkit/exports/）。"""
+    ids = _valid_ids(body.ids)
+    res = lib.batch_delete_with_backup(ids)
+    return {"ok": True, **res}
+
+
+@router.post("/api/library/mistakes/batch-learn")
+def batch_learn_mistakes(body: MistakeBatchBody) -> dict[str, Any]:
+    """WP-5：批量标记已掌握（仅归档标记，不改写掌握度计数）。"""
+    ids = _valid_ids(body.ids)
+    updated = lib.batch_mark_learned(ids, bool(body.learned))
+    return {"ok": True, "updated": updated}
+
+
+@router.post("/api/library/mistakes/batch-export")
+def batch_export_mistakes(body: MistakeBatchBody) -> dict[str, Any]:
+    """WP-5：批量导出所选错题（json 原样 / md 可读排版）。"""
+    ids = _valid_ids(body.ids)
+    fmt = (body.format or "json").lower()
+    if fmt not in ("json", "md"):
+        raise HTTPException(400, "导出格式仅支持 json / md")
+    return {"ok": True, **lib.export_mistakes(ids, fmt)}
+
+
+@router.post("/api/library/mistakes/import-export")
+def import_export_mistakes(body: SiteImportBody) -> dict[str, Any]:
+    """WP-11：外部站点做题数据导入（question+subject+chapter 幂等去重）。"""
+    items = body.items or []
+    if not items:
+        raise HTTPException(400, "无导入数据（items 为空）")
+    stats = lib.import_site_items(items)
+    return {"ok": True, **stats}
 
 
 # ---------------------------------------------------------------- 图片 OCR 导入（复用 MinerU）
@@ -315,6 +382,19 @@ def subjects() -> dict[str, Any]:
     return {"subjects": names, "stats": stats_out}
 
 
+@router.post("/api/library/subjects/delete")
+def subject_delete(body: SubjectDeleteBody) -> dict[str, Any]:
+    """WP-4：删除科目及其关联本地数据（先自动导出备份到 ~/.medkit/exports/）。"""
+    subject = (body.subject or "").strip()
+    if not subject:
+        raise HTTPException(400, "科目不能为空")
+    try:
+        res = lib.delete_subject_with_backup(subject)
+    except ValueError as e:  # noqa: BLE001  科目名校验失败
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True, **res}
+
+
 @router.get("/api/library/explain/slices")
 def explain_slices(subject: str = "", query: str = "", limit: int = 20) -> dict[str, Any]:
     """学习中心：某科目可用的教材切片（零 LLM，供讲解 grounding 确认与复习「查看提示」）。
@@ -437,6 +517,80 @@ def explain(body: ExplainBody, _guard: None = Depends(_explain_guard)) -> dict[s
     return {"explain": rec, "title": kp_name}
 
 
+def _explain_start_guard(body: ExplainBody) -> Iterator[None]:
+    """同知识点同契入「在飞」去重（防连点双讲解并发双扣费）。"""
+    from ..core import dedupe
+
+    key = f"explain:{body.subject}|{body.kp_name}|{body.kp_id}"
+    if dedupe.begin(key):
+        raise HTTPException(409, "该知识点的讲解正在生成，请稍候查看产物，勿重复提交")
+    try:
+        yield
+    finally:
+        dedupe.end(key)
+
+
+@router.post("/api/library/explain/stream")
+def explain_stream(body: ExplainBody,
+                   _guard: None = Depends(_explain_start_guard)) -> StreamingResponse:
+    """WP-8：SSE 流式讲解（meta → delta* → done/error）；完成才落盘 explains。
+
+    保留非流式 /api/library/explain 作为旧客户端/降级路径。
+    """
+    from ..agents.medexplain import prepare_explain
+
+    subject, kp_name, related = _resolve_subject_kp(body)
+    expl.index_slices()
+    hits = expl.retrieve(subject=subject, query=f"{kp_name} {_query_extra(related)}")
+    slices_text = expl.slice_text_of(hits)
+    search_fn = _resolve_search_fn() if body.use_web else None
+    client = _explain_client()
+    messages, meta = prepare_explain(
+        subject, kp_name, slices_text,
+        related[0] if related else None,
+        web_materials=[], search_fn=search_fn, use_web=body.use_web)
+
+    def gen():
+        yield _sse("meta", {"kp_name": kp_name, "subject": subject,
+                            "grounded": meta["grounded"], "via_web": meta["via_web"]})
+        parts: list[str] = []
+        try:
+            for ev in client.chat_stream(messages, temperature=0.5):
+                if ev.get("canceled"):
+                    yield _sse("canceled", {})
+                    return
+                parts.append(ev.get("delta") or "")
+                if ev["delta"]:
+                    yield _sse("delta", {"text": ev["delta"]})
+        except Exception as e:  # noqa: BLE001  流式失败 → SSE error，不保存产物
+            yield _sse("error", {"msg": str(e)})
+            return
+        content = "".join(parts).strip()
+        if not content:
+            yield _sse("error", {"msg": "模型返回为空，请重试"})
+            return
+        rec = {
+            "id": f"ex_{_new_milli()}",
+            "subject": subject, "kp_name": kp_name,
+            "kp_id": body.kp_id or "",
+            "created_at": _now_iso(), "content": content,
+            "sources": meta.get("sources") or [],
+            "via_web": bool(meta["via_web"]),
+            "grounded": bool(meta["grounded"]),
+            "web_materials": meta.get("web_materials") or [],
+            "related_mistake": (related[0].get("id") if related else "") or "",
+            "slices_used": [h.get("sid") for h in hits],
+        }
+        expl.save_explain(rec)
+        lib.log_knowledge_event(kp_name, "explain",
+                                note=f"{subject} / via_web={rec['via_web']} / stream")
+        yield _sse("done", {"explain": rec, "title": kp_name})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 @router.get("/api/library/explains")
 def explains_list(subject: str = "") -> dict[str, Any]:
     recs = expl.list_explains(subject)
@@ -547,6 +701,59 @@ def tutor_start(body: TutorStartBody, _guard: None = Depends(_tutor_start_guard)
             "state": session["state"], "subject": subject, "kp_name": kp_name,
             "grounded": grounded,
             "note": "" if grounded else "本知识点未在本地教材中检索到原文——问题由网络素材与模型知识生成（未经教材核实）。"}
+
+
+@router.post("/api/library/tutor/start/stream")
+def tutor_start_stream(body: TutorStartBody,
+                       _guard: None = Depends(_tutor_start_guard)) -> StreamingResponse:
+    """WP-8：SSE 流式出第一问（meta → delta* → done/error）。
+
+    保留非流式 /api/library/tutor/start 作为旧客户端/降级路径。
+    判分（answer）仍走 JSON 契约（非流式），保证 status 机与掌握度回写正确。
+    """
+    if not body.kp_name.strip() and not body.kp_id and not body.mistake_id:
+        raise HTTPException(400, "请指定待学习的知识点")
+
+    subject, kp_name, _ = _resolve_subject_kp(body)
+    from ..agents import medtutor as mt
+    slices_text, grounded, web_materials = _tutor_grounding(subject, kp_name)
+    client = _tutor_client()
+    session = tut.start_session(subject, kp_name, body.kp_id or "")
+    sid = session["id"]
+    qtype = session["current"]["type"]
+    messages = mt.build_start_messages(subject, kp_name, session["state"], qtype,
+                                       slices_text, web_materials)
+
+    def gen():
+        yield _sse("meta", {"session_id": sid, "type": qtype,
+                            "grounded": grounded, "kp_name": kp_name})
+        parts: list[str] = []
+        try:
+            for ev in client.chat_stream(messages, temperature=0.6):
+                if ev.get("canceled"):
+                    return
+                parts.append(ev.get("delta") or "")
+                if ev["delta"]:
+                    yield _sse("delta", {"text": ev["delta"]})
+        except Exception as e:  # noqa: BLE001
+            yield _sse("error", {"msg": str(e)})
+            return
+        question = "".join(parts).strip()
+        if not question:
+            yield _sse("error", {"msg": "模型返回为空，请重试"})
+            return
+        tut.seed_first(sid, qtype, question)
+        lib.log_knowledge_event(kp_name, "tutor",
+                                note=f"{subject} / start-stream / {qtype} / grounded={grounded}")
+        yield _sse("done", {"session": session, "question": question,
+                            "type": qtype, "state": session["state"],
+                            "subject": subject, "kp_name": kp_name,
+                            "grounded": grounded,
+                            "note": "" if grounded else "本知识点未在本地教材中检索到原文——问题由网络素材与模型知识生成（未经教材核实）。"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 def _tutor_answer_guard(body: TutorAnswerBody) -> Iterator[None]:

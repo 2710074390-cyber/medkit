@@ -13,6 +13,7 @@ function hlKw(text) {
 }
 /* ---- 学习中心子导航：一屏一任务（概览/错题本/讲解产物/提问学习/复习计划） ---- */
 function showLearnView(name) {
+  sseAbortAll();   // R4-02：切换子视图/离开学习中心 → 中止在途流式，避免隐藏容器里白烧 token
   document.querySelectorAll("#learnnav button").forEach(b => {
     const on = b.dataset.lv === name;
     b.classList.toggle("on", on);
@@ -75,6 +76,9 @@ function setNavTabBadge(tab, n, title) {
     if (!d) { d = document.createElement("span"); d.className = "navbadge"; b.appendChild(d); }
     d.textContent = n > 99 ? "99+" : String(n);
     d.title = title || (`待办 ${n} 项 → 去「${tab === "study" ? "刷题" : "学习中心"}」`);
+    d.setAttribute("aria-label", d.title);
+    d.dataset.source = tab;
+    d.style.cursor = "pointer";
   } else if (d) d.remove();
 }
 function setLearnNavBadge(n, detail) {
@@ -87,7 +91,12 @@ function updateLearnBadges(d) {
   const loop = (d && d.loop) || {};
   const nb = (id, v, hot) => { const el = $(id); if (!el) return;
     el.textContent = v > 0 ? v : "";
-    el.classList.toggle("hot", !!hot && v > 0); };
+    el.classList.toggle("hot", !!hot && v > 0);
+    const label = { nb_overview: "概览", nb_mistakes: "错题本", nb_explain: "讲解产物",
+                    nb_tutor: "提问学习", nb_review: "复习计划" }[id] || id;
+    el.title = v > 0 ? `${label}：${v} 项（点击进入对应视图）` : "";
+    el.setAttribute("aria-label", el.title || label);
+  };
   nb("nb_overview", 0);
   nb("nb_mistakes", loop.mistakes || 0);                              // 资料库规模，非待办 → 不标红
   nb("nb_explain", loop.explains || 0);
@@ -99,10 +108,10 @@ function updateLearnBadges(d) {
   setLearnNavBadge((r.due || 0) + (t.in_progress || 0),
                    { due: r.due || 0, tutor: t.in_progress || 0 });
 }
-/* ---- ⑥ 大纲覆盖（WP-01 考试锚定 · 以教师重点为纲） ---- */
+/* ---- ⑥ 大纲管理（WP-01/WP-10 考试锚定 · 教师重点为主 · 官方306补充） ---- */
 let SYL_DRAFTS = [];
 let SYL_LOADED = false;
-let SYL_STD = "teacher";   // 大纲标准二选一：teacher=教师重点(默认，即用户自供内容) / seed=官方大纲（内置种子或上传导入）
+let SYL_STD = "teacher";   // 大纲标准二选一：teacher=教师重点(主要依据) / seed=官方306(补充，内置种子或上传导入)
 /* C16：标准选择恢复（sylSetStd 写入 sessionStorage，此处首读；sylRender/首渲会用 SYL_STD） */
 (function () {
   try {
@@ -187,12 +196,12 @@ async function sylRender(subject) {
       <div class="syl-stat"><b>${pct}%</b><div class="hint">覆盖率</div></div>
     </div>`;
     if (!d.chapters || !d.chapters.length) {
-      const stdName = { teacher: "教师重点", seed: "官方大纲" }[SYL_STD] || SYL_STD;
+      const stdName = { teacher: "教师重点", seed: "官方 306（补充）" }[SYL_STD] || SYL_STD;
       body.innerHTML = `<div class="empty">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-target"></use></svg>
         <div class="sub">暂无${stdName}条目 — ${SYL_STD === "teacher"
           ? '在「新建课题」上传教师重点后自动同步；或下方「上传教师重点文件」/粘贴教师重点考点清单。'
-          : '点「导入内置大纲」加载教材/真题种子；或下方「上传官方大纲(md/txt)」一键导入官方条目。'}</div>
+          : '点「导入官方306种子」加载教材/真题种子；或下方「上传官方大纲(md/txt)」一键导入官方条目。'}</div>
         <button class="act gray" onclick="sylPaste()">粘贴/导入大纲 →</button>
       </div>`;
       return;
@@ -212,8 +221,8 @@ async function sylRender(subject) {
 }
 async function sylEnsure() {
   const r = await api("/api/syllabus/ensure", { method: "POST", body: JSON.stringify({ force: false }) });
-  if (r.note === "seed missing") {
-    toast("内置大纲文件缺失：请上传官方大纲(md/txt) 或改用「教师重点」标准", false);
+  if (r.note && r.note.includes("未内置大纲")) {
+    toast(r.note, false);
   } else if (!r.imported) {
     toast("内置大纲已导入过（幂等，无新增）");
   } else {
@@ -223,6 +232,24 @@ async function sylEnsure() {
 }
 function sylPaste() {
   document.getElementById("syl_paste_card").style.display = "";
+}
+async function sylStructurize() {
+  const text = document.getElementById("syl_paste_text").value;
+  if (!text.trim()) { toast("请先粘贴大纲原文", false); return; }
+  const subject = document.getElementById("syl_subject").value || "";
+  try {
+    const r = await api("/api/syllabus/outline/structurize", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, subject }) });
+    const d = r.diff || {};
+    document.getElementById("syl_paste_preview").innerHTML =
+      `<div class="hint">${esc(r.note || "")}</div>` +
+      `<div class="syl-chips"><div class="syl-stat"><b>${r.stats?.subjects?.length || 0}</b><div class="hint">科目</div></div>` +
+      `<div class="syl-stat"><b>${r.stats?.chapters || 0}</b><div class="hint">章</div></div>` +
+      `<div class="syl-stat"><b>${d.structured_items || 0}</b><div class="hint">结构化条目</div></div>` +
+      `<div class="syl-stat"><b>${d.missing || 0}</b><div class="hint">缺失</div></div></div>` +
+      (r.original_path ? `<div class="hint" style="margin-top:6px">原文已保存：${esc(r.original_path)}</div>` : "");
+  } catch (e) { toast(e.message, false); }
 }
 async function sylParse() {
   const text = document.getElementById("syl_paste_text").value;
@@ -315,7 +342,7 @@ async function sylTeacherImport() {
   }
   sylLoad();
 }async function sylSeedImport() {
-  // 官方大纲文件（md/txt）→ LLM 契约抽取 → source='seed' 幂等入库（一键导入）
+  // 官方 306 大纲文件（md/txt）→ LLM 契约抽取 → source='seed' 幂等入库（一键导入）
   const inp = document.getElementById("syl_seed_file");
   const f = inp.files && inp.files[0];
   inp.value = "";
@@ -325,10 +352,10 @@ async function sylTeacherImport() {
   try {
     const r = await api("/api/syllabus/seed/import-file", { method: "POST", body: fd });
     if (!r.drafts || !r.drafts.length) { toast(r.note || "未识别到条目", false); return; }
-    toast(`${r.note || "官方大纲导入"} · 入库新增 ${r.added ?? "?"} 条（共 ${r.total ?? r.drafts.length} 条，幂等）`);
+    toast(`${r.note || "官方 306 导入"} · 入库新增 ${r.added ?? "?"} 条（共 ${r.total ?? r.drafts.length} 条，幂等）`);
     SYL_DRAFTS = r.drafts;
     document.getElementById("syl_paste_preview").innerHTML =
-      `<div class="hint">官方大纲草稿 ${SYL_DRAFTS.length} 条（已入库 source=seed）：</div>` +
+      `<div class="hint">官方 306 草稿 ${SYL_DRAFTS.length} 条（已入库 source=seed）：</div>` +
       SYL_DRAFTS.slice(0, 30).map(d => `<div class="syl-item">
         <span class="learn-chip pending">${esc(d.subject || "?")}</span>
         <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span></div>`).join("");
@@ -344,7 +371,7 @@ async function sylReport() {
   qs.set("source", SYL_STD);
   try {
     const r = await api("/api/syllabus/report?" + qs.toString());
-    downloadText("大纲覆盖报告_" + (subject || "全部") + ".md", r.markdown);
+    downloadText("大纲管理-未覆盖清单_" + (subject || "全部") + ".md", r.markdown);
   } catch (e) { toast(e.message || "导出失败", false); }
 }
 
@@ -541,6 +568,47 @@ async function cachedMastery() {
   return r;
 }
 function invalidateLearnCache() { LEARN_CACHE.subjects = null; LEARN_CACHE.mastery = null; LEARN_CACHE.t = 0; }
+/* WP-8：手动解析 SSE 事件流（fetch ReadableStream）；并发事件逐帧回调 */
+async function consumeSSE(res, onEvent) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+      let event = "message", data = "";
+      raw.split("\n").forEach(l => {
+        if (l.startsWith("event:")) event = l.slice(6).trim();
+        else if (l.startsWith("data:")) data += l.slice(5).trim();
+      });
+      if (data) { try { onEvent(event, JSON.parse(data)); } catch (e) { /* 单帧解析失败跳过 */ } }
+    }
+  }
+}
+/* R4-02：流式 SSE（讲解/提问）的取消支持——AbortController +「停止生成」按钮 + 切视图/切 tab 即中断。
+   _sseAbort 保存当前在途流式的 AbortController；abort() 使 fetch/reader 抛 AbortError，
+   由消费方 catch 处理为「已停止生成（未保存）」。 */
+let _sseAbort = null;
+function sseAbortAll() {
+  if (_sseAbort) { try { _sseAbort.abort(); } catch (e) { /* ignore */ } _sseAbort = null; }
+  const sb = document.getElementById("sse_stop_btn");
+  if (sb) sb.remove();
+}
+function sseStopUI(anchorId) {
+  sseAbortAll();   // 清理上一处残留按钮/在途流式
+  const anchor = document.getElementById(anchorId);
+  if (!anchor || !anchor.parentElement) return;
+  const sb = document.createElement("button");
+  sb.id = "sse_stop_btn"; sb.className = "mini-btn danger";
+  sb.textContent = "■ 停止生成";
+  sb.title = "中止本次 AI 生成（未完成的内容不保存）";
+  sb.onclick = (e) => { e.preventDefault(); e.stopPropagation(); sseAbortAll(); };
+  anchor.parentElement.insertBefore(sb, anchor.nextSibling);
+}
 /* C12：讲解答题等操作后刷新概览（保持当前科目口径；失败静默） */
 function refreshOverviewIfAny() {
   if (typeof loadOverview !== "function") return;
@@ -696,7 +764,10 @@ function renderDashboard(d) {
       + `（${Object.entries(cw.by_subject || {}).map(([k, v]) => `${esc(k)} ${v}`).join("、") || "未分类"}）`
       + `——不影响最终门禁兜底，详见项目「质检报告」与「人工复核清单」</span></div>`
     : "";
-  $("dash_loop").innerHTML = dBanner + cwBanner + '<div class="loop-flow">' + stages.map(([k, v, cls], i) =>
+  const badgeNote = ((r.due || 0) || (t.in_progress || 0))
+    ? `<div class="databanner" style="border-color:var(--accent2)"><span>🔴 侧栏红点来源：<b>刷题</b>＝今日到期复习 ${r.due || 0} 张；<b>学习中心</b>＝进行中提问 ${t.in_progress || 0} 场。悬停红点可看明细，点击直达对应视图。</span></div>`
+    : "";
+  $("dash_loop").innerHTML = badgeNote + dBanner + cwBanner + '<div class="loop-flow">' + stages.map(([k, v, cls], i) =>
       (i ? '<div class="loop-arrow">→</div>' : "") +
       `<div class="loop-node ${cls}"><b>${v}</b><span>${k}</span></div>`).join("") +
     '</div>' +
@@ -746,14 +817,20 @@ async function loadStudySubjects() {
     (r.stats || []).forEach(s => { byName[s.subject] = s; });
     const card = (s, st) => `
       <button class="subj-card${rvSubject === s ? " on" : ""}" onclick="loadReviewCtx('${esc(s)}')" title="只看「${esc(s)}」的到期复习">
-        <div class="subj-name">${esc(s)}</div>
-        <div class="subj-row"><span>今日到期 <b>${st.review_due || 0}</b></span><span>总卡 <b>${st.review_total || 0}</b></span></div>
-        <div class="subj-row"><span>错题 <b>${st.mistakes || 0}</b></span><span>掌握率 <b>${st.mastered_rate || 0}%</b></span></div>
+        <div class="subj-avatar">${esc((s || "未分类").slice(0, 1))}</div>
+        <div class="subj-main">
+          <div class="subj-name">${esc(s)}</div>
+          <div class="subj-row"><span>今日到期 <b>${st.review_due || 0}</b></span><span>总卡 <b>${st.review_total || 0}</b></span></div>
+          <div class="subj-row"><span>错题 <b>${st.mistakes || 0}</b></span><span>掌握率 <b>${st.mastered_rate || 0}%</b></span></div>
+        </div>
       </button>`;
     const allCard = `
       <button class="subj-card${rvSubject === "" ? " on" : ""}" onclick="loadReviewCtx('')" title="查看全部科目的到期复习">
-        <div class="subj-name">全部科目</div>
-        <div class="subj-row"><span>共 <b>${subs.length}</b> 个科目</span><span>点卡片按科过滤</span></div>
+        <div class="subj-avatar all">📚</div>
+        <div class="subj-main">
+          <div class="subj-name">全部科目</div>
+          <div class="subj-row"><span>共 <b>${subs.length}</b> 个科目</span><span>点卡片按科过滤</span></div>
+        </div>
       </button>`;
     box.innerHTML = subs.length
       ? `<div class="subj-grid">` + allCard + subs.map(s => card(s, byName[s] || {})).join("") + `</div>`
@@ -761,6 +838,49 @@ async function loadStudySubjects() {
   } catch (e) {
     box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
+}
+/* WP-4：科目管理弹层（列表 + 各科统计 + 删除，删除前自动备份） */
+let _subjMgrBusy = false;
+async function subjectMgrOpen() {
+  if (_subjMgrBusy) return;
+  _subjMgrBusy = true;
+  try {
+    const r = await api("/api/library/subjects");
+    const stats = r.stats || [];
+    const body = !stats.length
+      ? `<div class="hint">暂无科目——先在错题本导入错题，或去「题库」生成题目。</div>`
+      : `<div class="subj-mgr">` + stats.map(s => `
+        <div class="subj-mgr-row">
+          <span class="subj-mgr-avatar">${esc((s.subject || "未分类").slice(0, 1))}</span>
+          <span class="grow"><b>${esc(s.subject)}</b>
+            <small class="hint">错题 ${s.mistakes || 0} · 知识点 ${s.knowledge || 0} · 复习卡 ${s.review_total || 0}</small>
+          </span>
+          <button class="mini-btn danger" data-subj="${esc(s.subject)}" onclick="subjectDelete(this)">删除</button>
+        </div>`).join("") + `</div>
+        <div class="hint" style="margin-top:8px">删除前会自动导出完整备份 JSON；删除后该科错题、知识点、复习卡、记忆卡、讲解与提问会话一并移除。</div>`;
+    confirmModal("科目管理", body, "关闭", () => loadStudy(), false);
+  } catch (e) {
+    toast(e.message, false);
+  } finally { _subjMgrBusy = false; }
+}
+async function subjectDelete(btn) {
+  const subject = (btn && btn.dataset.subj) || "";
+  if (!subject) return;
+  confirmModal("删除科目？",
+    `<p>将删除科目 <b>${esc(subject)}</b> 的：错题、知识点掌握度、复习卡、记忆卡、讲解产物、提问会话。<br>
+     删除前会自动导出完整备份到本地 exports 目录，删除后需手动恢复。</p>`,
+    "导出并删除", async () => {
+      try {
+        const r = await api("/api/library/subjects/delete",
+          { method: "POST", body: JSON.stringify({ subject }) });
+        const d = r.deleted || {};
+        toast(`已删除「${subject}」：错题 ${d.mistakes || 0} · 知识点 ${d.knowledge || 0} · 复习卡 ${d.review_cards || 0} · 记忆卡 ${d.memory_cards || 0} · 会话 ${d.sessions || 0} · 讲解 ${d.explains || 0}`);
+        if (typeof rvSubject !== "undefined" && rvSubject === subject) rvSubject = "";
+        loadStudy();       // 刷题 tab：科目卡片 + 复习计划刷新
+        loadLibrary();     // 学习中心：概览/dashboard/badge 刷新
+        subjectMgrOpen();  // 弹出已刷新的科目管理列表
+      } catch (e) { toast(e.message, false); }
+    });
 }
 function appliedSubject() {
   const el = $("exp_subject");
@@ -770,9 +890,11 @@ function appliedSubject() {
 let _libCache = { mistakes: [], my: null, recm: [] };
 let mkSubject = "";       // R3-22：错题本作用域（跟随概览科目过滤，可独立切回全部科目）
 let mkShowAll = false;     // D-14：错题分块渲染（首屏 100 条 + 「加载全部」按钮）
+let mkSelected = new Set();  // WP-5：错题多选集合（id）
 function renderLibrary(mistakes, my, recm) {
   _libCache = { mistakes: mistakes || [], my: my || null, recm: recm || [] };
   mkShowAll = false;       // 新数据到达 → 回到分块首屏
+  mkSelected.clear();      // WP-5：数据刷新后清空多选
   renderLibraryCurrent();
 }
 function renderLibraryCurrent() {
@@ -805,6 +927,7 @@ function renderLibraryCurrent() {
 
   // 错题本（增强版：→讲解 / →提问 / 详情展开 / 已掌握 / 删除）
   const shown = mkShowAll ? list : list.slice(0, 100);   // D-14：首屏约 100 条
+  updateMkToolbar(list);   // WP-5：工具栏随筛选/数据刷新
   $("learn_mk_count").textContent = `${list.length} 道`
     + (onlyUn && list.length !== scoped.length ? `（未掌握 ${list.length} / ${scoped.length}）` : "");
   if (!list.length) {
@@ -817,7 +940,7 @@ function renderLibraryCurrent() {
         : `错题本还是空的<br>粘贴一道错题入库，或点「拍题(图片 OCR)」「批量导入(JSON)」`}</div>
     </div>`;
   } else {
-    $("learn_mk").innerHTML = shown.map(mm => mkRowHTML(mm)).join("") +
+    $("learn_mk").innerHTML = mkGroupHTML(shown) +
       (list.length > shown.length
         ? `<div class="btns" style="justify-content:center;margin-top:10px"><button class="act gray" onclick="mkShowAllFn()">加载全部（共 ${list.length} 道）</button></div>`
         : "");
@@ -825,6 +948,130 @@ function renderLibraryCurrent() {
 }
 function mkShowAllFn() { mkShowAll = true; renderLibraryCurrent(); }
 window.mkShowAllFn = mkShowAllFn;
+/* WP-5：错题本多选/分组/批量操作 */
+function mkToggleRow(cb) {
+  const id = cb && cb.dataset.id;
+  if (!id) return;
+  if (cb.checked) mkSelected.add(id); else mkSelected.delete(id);
+  updateMkToolbar();
+  const ds = cb.closest("details");
+  if (ds) {
+    const head = ds.querySelector(".mk-group-count");
+    if (head) head.textContent = ds.querySelectorAll(".mkck").length + " 道";
+  }
+}
+function mkToggleGroup(cb) {
+  const ds = cb.closest("details");
+  if (!ds) return;
+  ds.querySelectorAll(".mkck").forEach(c => {
+    c.checked = cb.checked;
+    if (cb.checked) mkSelected.add(c.dataset.id); else mkSelected.delete(c.dataset.id);
+  });
+  updateMkToolbar();
+  const head = ds.querySelector(".mk-group-count");
+  if (head) head.textContent = ds.querySelectorAll(".mkck").length + " 道";
+}
+function mkToggleAllVisible() {
+  document.querySelectorAll("#learn_mk .mkck").forEach(c => {
+    c.checked = true; mkSelected.add(c.dataset.id);
+  });
+  updateMkToolbar();
+}
+function mkInvert() {
+  document.querySelectorAll("#learn_mk .mkck").forEach(c => {
+    c.checked = !c.checked;
+    if (c.checked) mkSelected.add(c.dataset.id); else mkSelected.delete(c.dataset.id);
+  });
+  updateMkToolbar();
+}
+function mkClearSel() {
+  mkSelected.clear();
+  document.querySelectorAll("#learn_mk .mkck").forEach(c => { c.checked = false; });
+  updateMkToolbar();
+}
+function updateMkToolbar(list) {
+  const bar = $("mk_bar");
+  if (!bar) return;
+  const total = list ? list.length : document.querySelectorAll("#learn_mk .mk-row").length;
+  bar.style.display = total ? "flex" : "none";
+  const cnt = $("mk_sel_count");
+  if (cnt) cnt.textContent = "已选 " + mkSelected.size;
+  const del = $("btn_mk_batch_del");
+  if (del) del.disabled = !mkSelected.size;
+}
+function mkGroupHTML(list) {
+  const groups = {};
+  list.forEach(mm => {
+    const key = [mm.subject || "未分类", mm.chapter || "未分章",
+                 (mm.know_tags || [])[0] || mm.topic || "未分组"].join("§");
+    (groups[key] = groups[key] || []).push(mm);
+  });
+  return Object.keys(groups).map(key => {
+    const arr = groups[key];
+    const parts = key.split("§");
+    const subj = parts[0] || "未分类", ch = parts[1] || "未分章", tag = parts[2] || "未分组";
+    const allChecked = arr.every(mm => mkSelected.has(mm.id));
+    return `<details class="mk-group" open>
+      <summary class="mk-group-head">
+        <span class="mk-group-title">${esc(subj)}<small>${esc(ch)}</small></span>
+        <span class="mk-group-tag">${esc(tag)}</span>
+        <span class="mk-group-count">${arr.length} 道</span>
+        <label class="chk mk-group-sel" onclick="event.stopPropagation()">
+          <input type="checkbox" ${allChecked ? "checked" : ""} onchange="mkToggleGroup(this)"> 本组全选
+        </label>
+      </summary>
+      <div class="mk-group-body">${arr.map(mm => mkRowHTML(mm)).join("")}</div>
+    </details>`;
+  }).join("");
+}
+async function mkBatchDel() {
+  if (!mkSelected.size) { toast("请先勾选错题", false); return; }
+  const n = mkSelected.size;
+  confirmModal(`批量删除 ${n} 道错题？`,
+    `<p style="margin:0;color:var(--dim)">删除前会自动导出所选错题 JSON 备份（~/.medkit/exports/），删除后对应知识点掌握度刷新。<br>
+     <span class="hint">已生成的讲解 / 提问会话 / 复习卡 / 记忆卡会保留。</span></p>`,
+    "导出并删除", async () => {
+      try {
+        const ids = [...mkSelected];
+        const r = await api("/api/library/mistakes/batch-delete",
+          { method: "POST", body: JSON.stringify({ ids }) });
+        toast(`已删除 ${r.deleted || 0} 道` + (r.backup ? "（已备份）" : ""));
+        mkSelected.clear();
+        loadLibrary();
+      } catch (e) { toast(e.message, false); }
+    });
+}
+async function mkBatchLearn(learned) {
+  if (!mkSelected.size) { toast("请先勾选错题", false); return; }
+  try {
+    const ids = [...mkSelected];
+    const r = await api("/api/library/mistakes/batch-learn",
+      { method: "POST", body: JSON.stringify({ ids, learned }) });
+    toast(`${learned ? "已标记" : "已取消"}已掌握 ${r.updated || 0} 道`);
+    mkSelected.clear();
+    loadLibrary();
+  } catch (e) { toast(e.message, false); }
+}
+async function mkBatchExport(fmt) {
+  if (!mkSelected.size) { toast("请先勾选错题", false); return; }
+  try {
+    const r = await api("/api/library/mistakes/batch-export",
+      { method: "POST", body: JSON.stringify({ ids: [...mkSelected], format: fmt }) });
+    const mime = fmt === "md" ? "text/markdown;charset=utf-8" : "application/json;charset=utf-8";
+    const blob = new Blob([r.data || ""], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = r.filename || ("medkit_mistakes_export." + fmt);
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast(`已导出 ${mkSelected.size} 道（${r.filename || fmt}）`);
+  } catch (e) { toast(e.message, false); }
+}
+window.mkToggleRow = mkToggleRow; window.mkToggleGroup = mkToggleGroup;
+window.mkToggleAllVisible = mkToggleAllVisible; window.mkInvert = mkInvert;
+window.mkClearSel = mkClearSel; window.mkBatchDel = mkBatchDel;
+window.mkBatchLearn = mkBatchLearn; window.mkBatchExport = mkBatchExport;
+
 /* R3-22：错题本科目下拉——选项随科目集刷新，切换与概览过滤联动 */
 function fillMkSubjectSelect() {
   const sel = $("mk_subject");
@@ -870,6 +1117,9 @@ function mkRowHTML(mm) {
     ${mm.analysis ? `<div><b>解析</b>：${hlKw(mm.analysis)}</div>` : ""}`;
   const kp = (mm.know_tags || [])[0] || mm.topic || "";
   return `<div class="mk-row">
+    <label class="mkck-wrap" title="选择该题">
+      <input type="checkbox" class="mkck" data-id="${esc(mm.id)}" ${mkSelected.has(mm.id) ? "checked" : ""} onchange="mkToggleRow(this)">
+    </label>
     <div class="mk-main">
       <div class="mk-q" onclick="mkDetailTgl('${esc(mm.id)}')" title="点击展开详情">${esc(mm.question || "(无题干)")}</div>
       <div class="mk-meta">${meta.join("")}</div>
@@ -992,6 +1242,30 @@ async function mkOcrFile(input) {
   } catch (e) { toast(e.message, false); }
   finally { btn.textContent = old; btn.disabled = false; input.value = ""; }
 }
+async function _siteImportItems(items) {
+  if (!items || !items.length) throw new Error("未找到 items 数组");
+  const r = await api("/api/library/mistakes/import-export", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }) });
+  toast(`站点数据导入：新增 ${r.added || 0} · 更新 ${r.updated || 0} · 跳过 ${r.skipped || 0}`
+    + (r.errors && r.errors.length ? `（${esc(r.errors[0])}…）` : ""));
+  loadLibrary();
+  return r;
+}
+function mkSiteImport() { $("mk_site_file").click(); }
+async function mkSiteFile(input) {
+  const f = input.files && input.files[0];
+  input.value = "";
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch (e) { toast("站点 JSON 解析失败", false); return; }
+  const items = Array.isArray(data) ? data : (data.items || []);
+  const btn = $("btn_mk_site"); const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "导入中…"; }
+  try { await _siteImportItems(items); }
+  catch (e) { toast(e.message, false); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
+}
 function mkBatchPick() { $("mk_json").click(); }
 async function mkBatchFile(input) {
   const f = input.files && input.files[0];
@@ -1003,13 +1277,20 @@ async function mkBatchFile(input) {
   const ext = name.includes(".") ? name.split(".").pop() : "txt";
   try {
     if (ext === "json") {
-      // D-06：JSON 也走 import-file 本地解析器——README 官方结构 options:[{label,text}] 不再 422，
-      // 与 csv/md/txt 同口径（BOM/表头别名/归一化都在服务端）
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await api("/api/library/mistakes/import-file", { method: "POST", body: fd });
-      toast(`已批量入库 ${r.added || 0} 道（共 ${r.total || 0} 条，跳过 ${r.skipped || 0} 条）`);
-      loadLibrary();
+      // WP-11：站点导出 JSON（含 items 数组）走 import-export 幂等导入；
+      // 其余 JSON 保持旧 import-file 本地解析器（options:[{label,text}] 等官方结构）
+      let data = null;
+      try { data = JSON.parse(await f.text()); } catch (e) { data = null; }
+      const items = data ? (Array.isArray(data) ? data : (data.items || null)) : null;
+      if (Array.isArray(items) && items.length) {
+        await _siteImportItems(items);
+      } else {
+        const fd = new FormData();
+        fd.append("file", f);
+        const r = await api("/api/library/mistakes/import-file", { method: "POST", body: fd });
+        toast(`已批量入库 ${r.added || 0} 道（共 ${r.total || 0} 条，跳过 ${r.skipped || 0} 条）`);
+        loadLibrary();
+      }
     } else {
       // csv / md / txt：统一走本地解析导入（多字段/多格式归一化）
       const fd = new FormData();
@@ -1028,6 +1309,7 @@ window.mkBatchPick = mkBatchPick;
 const LEARN_STATE_ORDER = { weak: 0, shaky: 1, solid: 2, mastered: 3 };
 /* C2：讲解 Markdown 渲染——在标题/列表/引用基础上补 GFM 表格与围栏代码块（医学对比表/数值表可读） */
 function expMd(md) {
+  if (window.mdRender) return mdRender(md);   // WP-9：统一本地富文本渲染（md.js）
   const raw = String(md || "");
   const inline = t => esc(t)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -1159,22 +1441,70 @@ async function expGenerate() {
   const btn = $("btn_exp_gen"); const old = btn.textContent;
   btn.textContent = "讲解中…"; btn.disabled = true;
   const useWeb = $("exp_web").checked;
-  $("exp_cost").textContent = (useWeb ? "正在检索教材切片（不足时联网补充）并精讲，请稍候… " : "正在结合教材切片精讲，请稍候… ") + "｜ " + estLlmCost(useWeb ? 2.2 : 1.4, 0.35);
+  const payload = { subject, kp_name: opt.value, kp_id: opt.dataset.id || "", use_web: useWeb };
+  $("exp_cost").textContent = (useWeb ? "正在检索教材切片（不足时联网补充）并流式精讲… " : "正在结合教材切片流式精讲… ") + "｜ " + estLlmCost(useWeb ? 2.2 : 1.4, 0.35);
+  const live = $("exp_live");
+  if (live) { live.style.display = "block"; live.innerHTML = '<div class="hint"><span class="spin"></span>连接流式接口…</div>'; }
+  let streamed = false;
   try {
-    const r = await api("/api/library/explain", {
+    // R4-02：AbortController +「停止生成」按钮；停止点触发 abort() → fetch 抛 AbortError
+    const abort = new AbortController(); _sseAbort = abort;
+    sseStopUI("btn_exp_gen");
+    const res = await fetch("/api/library/explain/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subject, kp_name: opt.value, kp_id: opt.dataset.id || "", use_web: useWeb }) });
-    toast("讲解已生成并沉淀到复习手册");
-    const v = r.explain && r.explain.grounded === false
-      ? "未命中教材原文 · 网络+模型知识生成"
-      : (r.explain && r.explain.via_web ? "含联网补充" : "基于教材切片");
-    $("exp_cost").textContent = `已生成：《${r.title}》· ${v}`;
-    loadExplains();
-    // C12：生成讲解 → 概览诊断/学习闭环同步刷新（受掌握的讲解产物计数变化）
-    invalidateLearnCache();
-    refreshOverviewIfAny();
-  } catch (e) { toast(e.message, false); $("exp_cost").textContent = ""; }
-  finally { btn.textContent = old; btn.disabled = false; }
+      body: JSON.stringify(payload), signal: abort.signal });
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || !ct.includes("text/event-stream")) throw new Error("stream-unavailable");
+    streamed = true;
+    let text = "", done = false;
+    try {
+      await consumeSSE(res, (ev, data) => {
+        if (ev === "delta") {
+          text += data.text || "";
+          if (live) { live.innerHTML = expMd(text) + '<span class="caret"></span>'; live.scrollTop = live.scrollHeight; }
+        } else if (ev === "done") {
+          done = true;
+          const v = data.explain && data.explain.grounded === false
+            ? "未命中教材原文 · 网络+模型知识生成"
+            : (data.explain && data.explain.via_web ? "含联网补充" : "基于教材切片");
+          $("exp_cost").textContent = `已生成：《${data.title}》· ${v}`;
+          toast("讲解已生成并沉淀到复习手册");
+          loadExplains();
+          invalidateLearnCache();
+          refreshOverviewIfAny();
+        } else if (ev === "error") {
+          done = true;
+          $("exp_cost").textContent = "流式生成失败：" + (data.msg || "");
+          toast(data.msg || "流式生成失败", false);
+        } else if (ev === "canceled") {
+          done = true; $("exp_cost").textContent = "已停止生成（未保存）";
+        }
+      });
+    } finally { sseAbortAll(); }   // 正常结束/断流/停止后统一清掉按钮与在途 controller
+    if (!done && !text) { $("exp_cost").textContent = "流式接口未返回内容"; }
+  } catch (e) {
+    // R4-03：断流/取消/出错一律【不再】回退非流式接口，避免与流式并发导致二次扣费；
+    // 仅当流式接口本身不可用（streamed 尚未置位，如旧代理剥掉 SSE）才降级非流式。
+    if (e.name === "AbortError") {
+      $("exp_cost").textContent = "已停止生成（未保存）";
+    } else if (streamed) {
+      $("exp_cost").textContent = "流式生成失败：" + (e.message || "未知错误");
+    } else {
+      try {
+        const r = await api("/api/library/explain", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload) });
+        toast("讲解已生成并沉淀到复习手册");
+        const v = r.explain && r.explain.grounded === false
+          ? "未命中教材原文 · 网络+模型知识生成"
+          : (r.explain && r.explain.via_web ? "含联网补充" : "基于教材切片");
+        $("exp_cost").textContent = `已生成：《${r.title}》· ${v}`;
+        loadExplains();
+        invalidateLearnCache();
+        refreshOverviewIfAny();
+      } catch (e2) { toast(e2.message, false); $("exp_cost").textContent = ""; }
+    }
+  } finally { btn.textContent = old; btn.disabled = false; if (live) live.style.display = "none"; }
 }
 async function expExport() {
   const subject = $("exp_subject").value;
@@ -1382,13 +1712,13 @@ function sessionItem(s) {
 function conversationHTML(s) {
   const path = tutorStatePath(s.state);
   const rounds = (s.rounds || []).map(r => `
-    <div class="tu-q"><span class="tu-badge">MedTutor · ${TUTOR_QTYPES[r.type] || r.type}提问 · 第${r.round}轮</span>${esc(r.question)}</div>
+    <div class="tu-q"><span class="tu-badge">MedTutor · ${TUTOR_QTYPES[r.type] || r.type}提问 · 第${r.round}轮</span>${window.mdRender ? mdRender(r.question) : esc(r.question)}</div>
     <div class="tu-a"><small>你 · 得分 <span class="tu-score" style="color:${r.score >= 2 ? "var(--good)" : "var(--bad)"}">${r.score}</span>/3</small>${esc(r.user_answer)}</div>
-    ${r.gap ? `<div class="tu-gap">${esc(r.gap) || ""}</div>` : ""}`).join("");
+    ${r.gap ? `<div class="tu-gap">${window.mdRender ? mdRender(r.gap) : esc(r.gap)}</div>` : ""}`).join("");
   let bottom;
   const cur = s.current || { type: "explain", text: "" };
   if (cur.text) {
-    bottom = `<div class="tu-q tu-next"><span class="tu-badge">MedTutor · ${TUTOR_QTYPES[cur.type] || cur.type}提问</span>${esc(cur.text)}</div>
+    bottom = `<div class="tu-q tu-next"><span class="tu-badge">MedTutor · ${TUTOR_QTYPES[cur.type] || cur.type}提问</span>${window.mdRender ? mdRender(cur.text) : esc(cur.text)}</div>
       <div class="tu-inputbar">
         <textarea id="tu_answer" placeholder="在文本框里作答…（写不下可先答要点，MedTutor 会追问细节）"></textarea>
         <button class="act" onclick="tutorSubmit()">提交作答</button>
@@ -1431,20 +1761,62 @@ async function tutorStart() {
   const subject = $("tu_subject").value || opt.dataset.subject || "";
   const btn = $("btn_tu_start"); const old = btn.textContent;
   btn.textContent = "出题中…"; btn.disabled = true; tutorState.busy = true;
-  $("tutor_cost").textContent = "正在结合教材切片生成第一问（按次记账）… ｜ " + estLlmCost(0.8, 0.05);
+  $("tutor_cost").textContent = "正在结合教材切片流式生成第一问（按次记账）… ｜ " + estLlmCost(0.8, 0.05);
+  const live = $("tu_live");
+  if (live) { live.style.display = "block"; live.innerHTML = '<div class="hint"><span class="spin"></span>连接流式接口…</div>'; }
+  const payload = { subject, kp_name: opt.value, kp_id: opt.dataset.id || "" };
+  let streamed = false;
   try {
-    const r = await api("/api/library/tutor/start", {
+    // R4-02：AbortController +「停止生成」按钮；停止→abort()→fetch 抛 AbortError（会话由后端兜底撤销）
+    const abort = new AbortController(); _sseAbort = abort;
+    sseStopUI("btn_tu_start");
+    const res = await fetch("/api/library/tutor/start/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subject, kp_name: opt.value }) });
-    tutorState.active = r.session.id;
-    await loadTutorSessions();
-    toast("已开启一场苏格拉底式对话");
-    $("tutor_cost").textContent = r.grounded === false
-      ? "第一问已就绪（⚠️ 未命中教材原文，基于网络素材与模型知识）——请作答。"
-      : "第一问已就绪，请作答。";
-    tutorShowConversation();
-  } catch (e) { toast(e.message, false); $("tutor_cost").textContent = ""; }
-  finally { btn.textContent = old; btn.disabled = false; tutorState.busy = false; }
+      body: JSON.stringify(payload), signal: abort.signal });
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || !ct.includes("text/event-stream")) throw new Error("stream-unavailable");
+    streamed = true;
+    let question = "", done = false;
+    try {
+      await consumeSSE(res, (ev, data) => {
+        if (ev === "delta") { question += data.text || ""; if (live) live.textContent = question; }
+        else if (ev === "done") {
+          done = true;
+          tutorState.active = data.session.id;
+          toast("已开启一场苏格拉底式对话");
+          $("tutor_cost").textContent = data.grounded === false
+            ? "第一问已就绪（⚠️ 未命中教材原文，基于网络素材与模型知识）——请作答。"
+            : "第一问已就绪，请作答。";
+          loadTutorSessions().then(() => tutorShowConversation());
+        } else if (ev === "error") {
+          done = true; $("tutor_cost").textContent = ""; toast(data.msg || "第一问生成失败", false);
+        } else if (ev === "canceled") {
+          done = true; $("tutor_cost").textContent = "已停止出题（会话已撤销）";
+        }
+      });
+    } finally { sseAbortAll(); }   // 正常/断流/停止后统一清掉按钮与在途 controller
+    if (!done && !question) { $("tutor_cost").textContent = "流式接口未返回内容"; }
+  } catch (e) {
+    // R4-03：断流/取消/出错【不再】回退非流式起点，避免二次扣费；仅流式接口本身不可用才回退
+    if (e.name === "AbortError") {
+      $("tutor_cost").textContent = "已停止出题（会话已撤销）";
+    } else if (streamed) {
+      $("tutor_cost").textContent = "第一问生成失败：" + (e.message || "未知错误");
+    } else {
+      try {
+        const r = await api("/api/library/tutor/start", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload) });
+        tutorState.active = r.session.id;
+        await loadTutorSessions();
+        toast("已开启一场苏格拉底式对话");
+        $("tutor_cost").textContent = r.grounded === false
+          ? "第一问已就绪（⚠️ 未命中教材原文，基于网络素材与模型知识）——请作答。"
+          : "第一问已就绪，请作答。";
+        tutorShowConversation();
+      } catch (e2) { toast(e2.message, false); $("tutor_cost").textContent = ""; }
+    }
+  } finally { btn.textContent = old; btn.disabled = false; tutorState.busy = false; if (live) live.style.display = "none"; }
 }
 async function tutorSubmit() {
   const ta = $("tu_answer"); const text = (ta && ta.value.trim()) || "";

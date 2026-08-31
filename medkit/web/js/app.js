@@ -376,7 +376,7 @@ async function loadStart() {
       <button class="big-start" onclick="showTab('study')">开始学习 →</button>
       <p class="hint" style="text-align:center;margin:8px 0 4px">先清掉今日到期，再去「题库」生成新题</p>
       <div class="card" style="margin-top:14px">
-        <div class="cardh"><h2>考试倒计时</h2><span class="hint">可设期末 / 考研日期</span></div>
+        <div class="cardh"><h2>考试计划</h2><span class="hint">支持多场：期末 / 考研 / 执业</span></div>
         <div id="exam_box"></div>
       </div>
       <div class="card" style="margin-top:14px">
@@ -389,7 +389,7 @@ async function loadStart() {
           </button>`).join("")
         : `<div class="hint">还没有课题——去「题库」上传教材，AI 帮你生成题库</div>`}
       </div>`;
-    renderExamCountdown();
+    renderExamPlans();
     /* 侧栏待办徽章：今日到期复习 → 刷题；进行中提问 → 学习中心（learn.js 实现） */
     if (typeof setLearnNavBadge === "function") {
       setLearnNavBadge((rv.due || 0) + ((d.tutor && d.tutor.in_progress) || 0),
@@ -399,29 +399,126 @@ async function loadStart() {
     box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
 }
-function renderExamCountdown() {
+/* ---- ① 考试计划（v0.10.0：多场考试，localStorage；兼容旧单场键） ---- */
+const EXAM_KEY = "medkit-exams";
+let _examSeq = 0;
+function examLoad() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(EXAM_KEY) || "[]"); } catch (e) { list = []; }
+  if (!Array.isArray(list)) list = [];
+  let legacy = "";
+  try { legacy = localStorage.getItem("medkit-exam-date") || ""; } catch (e) { /* ignore */ }
+  if (legacy) {
+    list = [{ id: "exam_legacy_0", title: "考试", date: legacy, tag: "", color: "",
+              remind_days: [3, 7, 14], created_at: new Date().toISOString() }, ...list];
+    try { localStorage.removeItem("medkit-exam-date"); } catch (e) { /* ignore */ }
+  }
+  list.forEach(e => {
+    e.remind_days = Array.isArray(e.remind_days) ? e.remind_days.filter(Number.isFinite) : [3, 7, 14];
+  });
+  return list;
+}
+function examSave(list) {
+  try { localStorage.setItem(EXAM_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
+  renderExamPlans();
+}
+function examCurr() {
+  return examLoad().slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+}
+function examFind(id) { return examLoad().find(e => e.id === id) || null; }
+function examDiff(e) {
+  const target = new Date((e.date || "") + "T23:59:59");
+  const diff = Math.ceil((target - new Date()) / 86400000);
+  return diff >= 0 ? `距考试还有 <b>${diff}</b> 天` : `考试已过 <b>${-diff}</b> 天`;
+}
+function renderExamPlans() {
   const box = $("exam_box");
   if (!box) return;
-  let d = "";
-  try { d = localStorage.getItem("medkit-exam-date") || ""; } catch (e) { /* ignore */ }
-  const input = `<input type="date" id="exam_date_input" value="${d}" onchange="setExamDate(this.value)" title="设置考试日期">`;
-  if (!d) {
-    box.innerHTML = `<div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">
-      <span class="hint">还没有设置考试日期：</span>${input}</div>`;
+  const add = `<button class="act exam-add" onclick="examFormOpen('')">＋ 添加考试</button>`;
+  const list = examCurr();
+  if (!list.length) {
+    box.innerHTML = `<div class="hint">还没有考试计划：可添加期末 / 考研 / 执业 / 规培等多场日期</div>${add}<div id="exam_form_slot"></div>`;
     return;
   }
-  const target = new Date(d + "T23:59:59");
-  const diff = Math.ceil((target - new Date()) / 86400000);
-  const txt = diff >= 0 ? `距考试还有 <b>${diff}</b> 天` : `考试已过 <b>${-diff}</b> 天`;
-  box.innerHTML = `<div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">
-    <span style="font-size:14px">${txt}</span>${input}
-    <span class="hint">考前 3 天起提示加大复习强度</span></div>`;
+  box.innerHTML = `<div class="exam-list">` + list.map(e => {
+    const remind = (e.remind_days || []).length
+      ? `考前 ${esc(e.remind_days.join("/"))} 天提醒加大复习` : "";
+    return `<div class="exam-card" data-id="${esc(e.id)}">
+      <div class="exam-main">
+        <div class="exam-name">${esc(e.title || "考试")}${e.tag ? `<span class="exam-tag">${esc(e.tag)}</span>` : ""}</div>
+        <div class="exam-meta">${esc(e.date || "")} · ${examDiff(e)}</div>
+        <div class="exam-remind">${esc(remind)}</div>
+      </div>
+      <div class="exam-actions">
+        <button class="mini-btn" onclick="examFormOpen('${esc(e.id)}')">编辑</button>
+        <button class="mini-btn" style="color:#f87171" onclick="examDelete('${esc(e.id)}')">删除</button>
+      </div>
+    </div>`;
+  }).join("") + `</div><div style="margin-top:10px">${add}</div><div id="exam_form_slot"></div>`;
 }
-function setExamDate(v) {
-  try { localStorage.setItem("medkit-exam-date", v || ""); } catch (e) { /* ignore */ }
-  renderExamCountdown();
-  toast(v ? "已设置考试日期（首页倒计时生效）" : "已清除考试日期");
+let _examEditId = "";
+function examFormOpen(id) {
+  const slot = $("exam_form_slot");
+  if (!slot) return;
+  _examEditId = id || "";
+  const e = _examEditId ? (examFind(_examEditId) || {}) : { title: "", date: "", tag: "", remind_days: [3, 7, 14] };
+  const days = [3, 7, 14, 30];
+  const checks = days.map(d =>
+    `<label><input type="checkbox" class="exam-rd" value="${d}" ${(e.remind_days || []).includes(d) ? "checked" : ""}> ${d} 天</label>`).join("");
+  slot.innerHTML = `<div class="exam-form">
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <div style="flex:1;min-width:130px"><label>名称</label><input id="exam_f_title" maxlength="30" placeholder="如：考研初试 / 期末" value="${esc(e.title || "")}"></div>
+      <div><label>日期</label><input type="date" id="exam_f_date" value="${esc(e.date || "")}"></div>
+      <div style="flex:1;min-width:100px"><label>标签</label><input id="exam_f_tag" maxlength="12" placeholder="考研 / 期末" value="${esc(e.tag || "")}"></div>
+    </div>
+    <div class="exam-reminds"><span>考前提醒</span>${checks}</div>
+    <div class="btns"><button class="act" id="exam_f_ok">保存</button><button class="act gray" onclick="examFormClose()">取消</button></div>
+  </div>`;
+  const ok = $("exam_f_ok");
+  if (ok) ok.onclick = examFormSave;
+  const t = $("exam_f_title"), dt = $("exam_f_date");
+  if (t) t.focus();
+  if (dt && !e.date) dt.min = new Date().toISOString().slice(0, 10);
 }
-window.setExamDate = setExamDate;
+function examFormSave() {
+  const t = $("exam_f_title"), dt = $("exam_f_date"), tg = $("exam_f_tag");
+  const title = (t && t.value.trim()) || "";
+  const date = (dt && dt.value.trim()) || "";
+  if (!title) { toast("请填写考试名称", false); if (t) t.focus(); return; }
+  if (!date) { toast("请选择考试日期", false); if (dt) dt.focus(); return; }
+  const rem = [...document.querySelectorAll(".exam-rd:checked")].map(x => Number(x.value)).sort((a, b) => a - b);
+  const list = examLoad();
+  const isEdit = !!_examEditId;
+  if (isEdit) {
+    const i = list.findIndex(x => x.id === _examEditId);
+    if (i >= 0) list[i] = { ...list[i], title, date, tag: (tg && tg.value.trim()) || "", remind_days: rem };
+  } else {
+    list.push({ id: "exam_" + Date.now() + "_" + (_examSeq++), title, date,
+                tag: (tg && tg.value.trim()) || "", color: "", remind_days: rem,
+                created_at: new Date().toISOString() });
+  }
+  _examEditId = "";
+  examSave(list);
+  toast(isEdit ? "已更新考试计划" : "已添加考试计划");
+}
+function examFormClose() {
+  _examEditId = "";
+  const slot = $("exam_form_slot");
+  if (slot) slot.innerHTML = "";
+}
+function examDelete(id) {
+  const e = examFind(id);
+  if (!e) return;
+  confirmModal("删除考试", `<p class="muted" style="margin:0">确定删除「${esc(e.title || "考试")}」（${esc(e.date || "")}）吗？<br>本操作为本地偏好，不影响学习数据。</p>`,
+    "删除", () => {
+      examSave(examLoad().filter(x => x.id !== id));
+      toast("已删除考试计划");
+    });
+}
+window.examFormOpen = examFormOpen;
+window.examFormSave = examFormSave;
+window.examFormClose = examFormClose;
+window.examDelete = examDelete;
+window.renderExamPlans = renderExamPlans;
 function openRecentProject(pid) { showTab("bank"); showProject(pid); }
 window.openRecentProject = openRecentProject;
