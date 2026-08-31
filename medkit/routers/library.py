@@ -7,7 +7,6 @@ OCR 复用 MinerU；掌握度/优先级纯本地）。错题结构从押题卷�
 import asyncio
 import json
 import tempfile
-import threading
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -724,32 +723,41 @@ def tutor_start_stream(body: TutorStartBody,
     messages = mt.build_start_messages(subject, kp_name, session["state"], qtype,
                                        slices_text, web_materials)
 
+    seeded = False  # R4-04：仅当 seed_first 落定后才保留会话
+
     def gen():
-        yield _sse("meta", {"session_id": sid, "type": qtype,
-                            "grounded": grounded, "kp_name": kp_name})
-        parts: list[str] = []
+        nonlocal seeded
         try:
-            for ev in client.chat_stream(messages, temperature=0.6):
-                if ev.get("canceled"):
-                    return
-                parts.append(ev.get("delta") or "")
-                if ev["delta"]:
-                    yield _sse("delta", {"text": ev["delta"]})
-        except Exception as e:  # noqa: BLE001
-            yield _sse("error", {"msg": str(e)})
-            return
-        question = "".join(parts).strip()
-        if not question:
-            yield _sse("error", {"msg": "模型返回为空，请重试"})
-            return
-        tut.seed_first(sid, qtype, question)
-        lib.log_knowledge_event(kp_name, "tutor",
-                                note=f"{subject} / start-stream / {qtype} / grounded={grounded}")
-        yield _sse("done", {"session": session, "question": question,
-                            "type": qtype, "state": session["state"],
-                            "subject": subject, "kp_name": kp_name,
-                            "grounded": grounded,
-                            "note": "" if grounded else "本知识点未在本地教材中检索到原文——问题由网络素材与模型知识生成（未经教材核实）。"})
+            yield _sse("meta", {"session_id": sid, "type": qtype,
+                                "grounded": grounded, "kp_name": kp_name})
+            parts: list[str] = []
+            try:
+                for ev in client.chat_stream(messages, temperature=0.6):
+                    if ev.get("canceled"):
+                        return
+                    parts.append(ev.get("delta") or "")
+                    if ev["delta"]:
+                        yield _sse("delta", {"text": ev["delta"]})
+            except Exception as e:  # noqa: BLE001
+                yield _sse("error", {"msg": str(e)})
+                return
+            question = "".join(parts).strip()
+            if not question:
+                yield _sse("error", {"msg": "模型返回为空，请重试"})
+                return
+            tut.seed_first(sid, qtype, question)
+            seeded = True
+            lib.log_knowledge_event(kp_name, "tutor",
+                                    note=f"{subject} / start-stream / {qtype} / grounded={grounded}")
+            yield _sse("done", {"session": session, "question": question,
+                                "type": qtype, "state": session["state"],
+                                "subject": subject, "kp_name": kp_name,
+                                "grounded": grounded,
+                                "note": "" if grounded else "本知识点未在本地教材中检索到原文——问题由网络素材与模型知识生成（未经教材核实）。"})
+        finally:
+            # R4-04：流未落定（错误/取消/空返回）→ 兜底删空会话，不留「无问题」残留
+            if not seeded:
+                tut.delete_session(sid)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
