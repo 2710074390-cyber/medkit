@@ -30,7 +30,11 @@ def test_search_settings_trusted_roundtrip(page, server_url):
         _save_ws(page, True, "who.int, nhc.gov.cn")
         page.reload()
         page.wait_for_selector("#tab-mine.show", timeout=15000)
-        assert page.locator("#t_web_trusted").is_checked() is True
+        # 设置表单经 GET /api/config 异步回填（未返回前是默认态）——等开关翻转为已保存值再断言，防时序竞态
+        page.wait_for_function(
+            "() => document.getElementById('t_web_trusted')?.checked === true",
+            timeout=15000,
+        )
         val = page.input_value("#ws_trusted_domains")
         assert "who.int" in val and "nhc.gov.cn" in val
     finally:
