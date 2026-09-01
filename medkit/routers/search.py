@@ -71,8 +71,13 @@ def search_test(body: SearchTestBody) -> dict[str, Any]:
     try:
         fn = ws.build_backend_fn(backend, key, cfg.load().get("model_gen", ""))
         results = fn(body.query[:60])
+        if results:
+            msg = f"{ws.BACKEND_LABELS.get(backend, backend)} 连通（{len(results)} 条结果）"
+        else:
+            # 2026-09-01：服务端已响应但未提取到链接 → 明确提示（此前「连通（0 条）」易被当作失败）
+            msg = (f"{ws.BACKEND_LABELS.get(backend, backend)} 已连通，但本次未提取到结果"
+                   f"——可重试、换关键词，或改选其它后端")
         return {"ok": True, "backend": backend, "count": len(results),
-                "samples": results[:3],
-                "msg": f"{ws.BACKEND_LABELS.get(backend, backend)} 连通（{len(results)} 条）"}
+                "samples": results[:3], "msg": msg}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "backend": backend, "msg": _search_error_hint(e)}

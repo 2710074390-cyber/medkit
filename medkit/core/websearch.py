@@ -31,7 +31,9 @@ QUERIES_PER_ROUND = 3
 QUERIES_ROUND2 = 2
 SNIPPET_LIMIT = 300
 MATERIALS_LIMIT = 12          # 进入出题管线的素材条数上限
-MAX_HTTP_TIMEOUT = 25.0
+# 2026-09-01 实测：DeepSeek Responses web_search（服务端托管搜索）单次 20~60s
+# （2 次检索词调用 + 推理），25s 必超 → 「测试后端」偶发 ReadTimeout。放宽到 75s。
+MAX_HTTP_TIMEOUT = 75.0
 
 BANNED_HOSTS = ("bilibili.com", "douyin.com", "youtube.com", "weibo.com",
                 "tieba.baidu.com", "xiaohongshu.com", "kuaishou.com",
@@ -214,10 +216,28 @@ def _normalize_deepseek_model(model: Optional[str]) -> str:
     return model if model and str(model).startswith("deepseek-v4") else "deepseek-v4-flash"
 
 
+def _push(out: list[dict[str, Any]], url: str, title: str = "",
+          snippet: str = "") -> None:
+    """去重追加一条素材（拦截空/非 http/被禁域名）。"""
+    url = (url or "").strip().rstrip(".,;")
+    if not url.startswith("http") or _banned(url):
+        return
+    if any(o.get("url") == url for o in out):
+        return
+    out.append({"title": _clip(title or "", 80), "url": url,
+                "snippet": _clip(snippet or "")})
+
+
 def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") -> list[dict[str, Any]]:
     """DeepSeek 内置联网搜索（2026-08 官方文档核查）：
     官方 Responses API（POST https://api.deepseek.com/responses）web_search 工具，
     服务端托管搜索，无需第三方搜索 Key；仅 deepseek-v4 系列。
+
+    2026-09-01 实测响应结构（补强提取）：
+    - output[] 项 type=web_search_call → action:{type, url?} —— 带结果 URL（#ws_call_id 片段）；
+      部分 call 的 action 仅有 queries（检索规划记录，无结果）；
+    - type=message → content[] output_text（annotations[].url_citation 或正文 URL）。
+    对消息段扫描注解与正文 URL（去重），不再只依赖「首个无结果的消息」兜底。
     """
     if not api_key:
         raise SearchError("未配置 DeepSeek API Key")
@@ -249,15 +269,33 @@ def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") 
     for it in items:
         if it.get("type") == "web_search_call":
             _collect_urls(it.get("action") or {}, out)
-        elif it.get("type") == "message" and not out:
-            text = "".join(p.get("text", "") for p in (it.get("content") or []))
-            for url in _urls_from_text(text):
-                if _banned(url):
+        elif it.get("type") == "message":
+            # ① annotations（annotations[].url_citation → url/title/snippet）
+            for p in (it.get("content") or []):
+                if not isinstance(p, dict):
                     continue
-                out.append({"title": _clip(query, 60), "url": url.rstrip(".,;"),
-                            "snippet": _clip(text)})
-                break
-    return out
+                for an in (p.get("annotations") or []):
+                    if isinstance(an, dict) and str(an.get("url") or "").startswith("http"):
+                        _push(out, an.get("url"),
+                              an.get("title") or an.get("url_text") or "",
+                              an.get("snippet") or an.get("text") or "")
+            # ② 正文中的裸 URL（不含被禁域名；差量去重）
+            text = "".join(str(p.get("text", "")) for p in (it.get("content") or [])
+                           if isinstance(p, dict))
+            for url in _urls_from_text(text):
+                _push(out, url, query, text)
+    # 去重兜底：action.url 带 #ws_call_id 片段、message 正文引用无片段——
+    # 按「去片段」URL 合并（存储也一并去除 API 追踪片段），避免同一结果重复展示
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for m in out:
+        key = (m.get("url") or "").split("#")[0].rstrip(".,;")
+        if key in seen:
+            continue
+        seen.add(key)
+        m["url"] = key
+        merged.append(m)
+    return merged
 
 
 def search_qwen(query: str, api_key: str, model: str = "qwen-plus") -> list[dict[str, Any]]:
