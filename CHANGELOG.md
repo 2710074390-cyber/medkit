@@ -6,6 +6,17 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
+## [0.10.1] - Unreleased
+
+### 网络检索后端连通性修复（2026-09-01）
+
+#### Fixed
+
+- **搜索超时 25s → 75s**（`core/websearch.py MAX_HTTP_TIMEOUT`）：实测 DeepSeek Responses web_search 单次 20~60s（两次检索词调用 + 推理），旧值必超——「测试后端」与出题管线网络检索频发 `ReadTimeout`，界面显示「连接超时」（用户实测「网络检索后端测试依然失败」的根因）。同步放宽全部检索后端单次超时。
+- **DeepSeek 结果提取补强**（`search_deepseek`）：按 2026-09-01 实测响应结构解析——`web_search_call.action.url`（含 `#ws_call_id` 追踪片段，存储时去除）、`message` 的 `annotations[].url_citation` 与正文裸 URL，按「去片段」URL 去重合并；不再只依赖「首个 message 兜底」。
+- **0 结果提示明确化**：`/api/search/test` 服务端已连通但未提取到结果时，msg 改为「已连通，但本次未提取到结果——可重试、换关键词，或改选其它后端」（此前「连通（0 条）」易被误认为失败）。
+- 测试：`tests/test_websearch.py::test_search_deepseek_parses_real_responses_shape`（真实响应结构 mock：action.url / annotations / 正文去重）；实机验证 `POST /api/search/test` → `ok=True count=5~7`。
+
 ## [0.10.0] - 2026-08-31
 
 ### PR-1 开始页多场考试计划 + 红点来源可感知（2026-08-30）
