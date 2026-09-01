@@ -14,10 +14,20 @@
     return s;
   }
   function inline(t) {
-    return highlight(t)
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
+    // R4-26：代码段（`...`）先提取保护——外围 keyword 高亮/粗斜体不嵌套进 <code>，
+    // 代码内容只转义（先 esc 后解析，XSS 安全不变）。
+    const codes = [];
+    const segs = String(t == null ? "" : t).split("`");
+    let raw = "";
+    segs.forEach((seg, i) => {
+      if (i % 2 === 1) { codes.push(seg); raw += "\u0001" + (codes.length - 1) + "\u0001"; }
+      else raw += seg;
+    });
+    let s = highlight(raw)
       .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
       .replace(/\*([^*]+)\*/g, "<i>$1</i>");
+    s = s.replace(/\u0001(\d+)\u0001/g, (m, n) => "<code>" + esc(codes[+n]) + "</code>");
+    return s;
   }
   function mdRender(src) {
     const raw = String(src || "");

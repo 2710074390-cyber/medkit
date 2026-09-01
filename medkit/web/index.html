@@ -454,7 +454,7 @@ try {
         </div>
         <label class="chk" style="margin:4px 0 8px"><input type="checkbox" id="mk_filter_unlearned" onchange="renderLibraryCurrent()"> 只看未掌握（隐藏已归档「已掌握」错题）</label>
         <div class="mk-bar" id="mk_bar" style="display:none">
-          <button class="mini-btn" onclick="mkToggleAllVisible()">全选可见</button>
+          <button class="mini-btn" id="btn_mk_all" onclick="mkToggleAllVisible()">全选可见</button>
           <button class="mini-btn" onclick="mkInvert()">反选</button>
           <button class="mini-btn" onclick="mkClearSel()">清空</button>
           <span class="hint" id="mk_sel_count">已选 0</span>

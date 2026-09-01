@@ -431,6 +431,17 @@ function examDiff(e) {
   const diff = Math.ceil((target - new Date()) / 86400000);
   return diff >= 0 ? `距考试还有 <b>${diff}</b> 天` : `考试已过 <b>${-diff}</b> 天`;
 }
+/* R4-20：「考前 N 天提醒」从死数据变成真触达——进入最近一个提醒窗口时在卡片上醒目提示 */
+function examRemindInfo(e) {
+  const target = new Date((e.date || "") + "T23:59:59");
+  const days = Math.ceil((target - new Date()) / 86400000);
+  if (days < 0) return null;
+  const rds = (e.remind_days || []).slice().sort((a, b) => a - b);
+  const hit = rds.find(d => days <= d);
+  if (hit == null) return null;
+  return days === 0 ? `今天考试 · 「${hit} 天」提醒生效`
+                    : `考前 ${days} 天 · 已进入「${hit} 天」备考冲刺提醒`;
+}
 function renderExamPlans() {
   const box = $("exam_box");
   if (!box) return;
@@ -443,11 +454,12 @@ function renderExamPlans() {
   box.innerHTML = `<div class="exam-list">` + list.map(e => {
     const remind = (e.remind_days || []).length
       ? `考前 ${esc(e.remind_days.join("/"))} 天提醒加大复习` : "";
+    const active = examRemindInfo(e);
     return `<div class="exam-card" data-id="${esc(e.id)}">
       <div class="exam-main">
         <div class="exam-name">${esc(e.title || "考试")}${e.tag ? `<span class="exam-tag">${esc(e.tag)}</span>` : ""}</div>
         <div class="exam-meta">${esc(e.date || "")} · ${examDiff(e)}</div>
-        <div class="exam-remind">${esc(remind)}</div>
+        <div class="exam-remind${active ? " hot" : ""}">${active ? "📌 " + esc(active) : esc(remind)}</div>
       </div>
       <div class="exam-actions">
         <button class="mini-btn" onclick="examFormOpen('${esc(e.id)}')">编辑</button>

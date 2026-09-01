@@ -138,7 +138,9 @@ def test_config_keep_key_on_empty():
         view = m.put_config(body)
         assert resolve_key(captured["api_key"]) == "sk-keep1234", "空 Key 应保留旧值"
         assert resolve_key(captured["mineru"]["api_key"]) == "mr-keep", "空 MinerU Key 应保留旧值"
-        assert view["api_key_masked"].startswith("sk-k")
+        # R4-18：短 Key（<12）只露前 2 后 2——中段明文（keep）不再可见
+        masked = view["api_key_masked"]
+        assert masked.startswith("sk") and masked.endswith("34") and "keep" not in masked
     finally:
         m.cfg.load, m.cfg.save = orig_load, orig_save
 

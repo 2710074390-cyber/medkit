@@ -438,7 +438,7 @@ def test_r3_19_subjects_aggregation_matches_old(monkeypatch, tmp_path):
     lib.add_mistake({"question": "q3", "subject": "外科学", "know_tags": ["骨折"]})
     rev.enqueue("肺通气", "内科学", "kp1")
     rev.enqueue("骨折", "外科学", "kp2")
-    rev.enqueue("空科目卡", "", "kp3")          # 未分类卡应计入每科
+    rev.enqueue("空科目卡", "", "kp3")          # 未分类卡：R4-16 分区互斥——不再计入任何单科
     expl.save_explain({"id": "e1", "subject": "内科学", "kp_name": "肺通气",
                        "content": "x", "created_at": "2026-08-29T00:00:00"})
 

@@ -929,6 +929,10 @@ function renderLibraryCurrent() {
 
   // 错题本（增强版：→讲解 / →提问 / 详情展开 / 已掌握 / 删除）
   const shown = mkShowAll ? list : list.slice(0, 100);   // D-14：首屏约 100 条
+  // R4-21：明示「全选可见」实际选中范围（首屏 N/共 M），未加载全部时不再误导
+  const btnAll = $("btn_mk_all");
+  if (btnAll) btnAll.textContent = list.length > shown.length
+    ? `全选已加载（${shown.length}/${list.length}）` : "全选全部";
   updateMkToolbar(list);   // WP-5：工具栏随筛选/数据刷新
   $("learn_mk_count").textContent = `${list.length} 道`
     + (onlyUn && list.length !== scoped.length ? `（未掌握 ${list.length} / ${scoped.length}）` : "");
@@ -1026,7 +1030,14 @@ function mkGroupHTML(list) {
     </details>`;
   }).join("");
 }
+/* R4-22：错题批处理在途互斥——连点不再重复发请求（与站内其它批量「禁用」范式一致） */
+let mkBatchBusy = false;
+function _mkBatchSetBusy(on) {
+  mkBatchBusy = on;
+  document.querySelectorAll("#mk_bar button").forEach(b => { b.disabled = on; });
+}
 async function mkBatchDel() {
+  if (mkBatchBusy) return;
   if (!mkSelected.size) { toast("请先勾选错题", false); return; }
   const n = mkSelected.size;
   confirmModal(`批量删除 ${n} 道错题？`,
@@ -1034,6 +1045,7 @@ async function mkBatchDel() {
      <span class="hint">已生成的讲解 / 提问会话 / 复习卡 / 记忆卡会保留。</span></p>`,
     "导出并删除", async () => {
       try {
+        _mkBatchSetBusy(true);
         const ids = [...mkSelected];
         const r = await api("/api/library/mistakes/batch-delete",
           { method: "POST", body: JSON.stringify({ ids }) });
@@ -1041,11 +1053,14 @@ async function mkBatchDel() {
         mkSelected.clear();
         loadLibrary();
       } catch (e) { toast(e.message, false); }
+      finally { _mkBatchSetBusy(false); }
     });
 }
 async function mkBatchLearn(learned) {
+  if (mkBatchBusy) return;
   if (!mkSelected.size) { toast("请先勾选错题", false); return; }
   try {
+    _mkBatchSetBusy(true);
     const ids = [...mkSelected];
     const r = await api("/api/library/mistakes/batch-learn",
       { method: "POST", body: JSON.stringify({ ids, learned }) });
@@ -1053,10 +1068,13 @@ async function mkBatchLearn(learned) {
     mkSelected.clear();
     loadLibrary();
   } catch (e) { toast(e.message, false); }
+  finally { _mkBatchSetBusy(false); }
 }
 async function mkBatchExport(fmt) {
+  if (mkBatchBusy) return;
   if (!mkSelected.size) { toast("请先勾选错题", false); return; }
   try {
+    _mkBatchSetBusy(true);
     const r = await api("/api/library/mistakes/batch-export",
       { method: "POST", body: JSON.stringify({ ids: [...mkSelected], format: fmt }) });
     const mime = fmt === "md" ? "text/markdown;charset=utf-8" : "application/json;charset=utf-8";
@@ -1068,6 +1086,7 @@ async function mkBatchExport(fmt) {
     URL.revokeObjectURL(url);
     toast(`已导出 ${mkSelected.size} 道（${r.filename || fmt}）`);
   } catch (e) { toast(e.message, false); }
+  finally { _mkBatchSetBusy(false); }
 }
 window.mkToggleRow = mkToggleRow; window.mkToggleGroup = mkToggleGroup;
 window.mkToggleAllVisible = mkToggleAllVisible; window.mkInvert = mkInvert;
@@ -1086,10 +1105,11 @@ function fillMkSubjectSelect() {
 }
 function mkScopeChange(v) {
   mkSubject = v || "";
-  syncMkScope();
+  // R4-23：先用缓存即时按新科目重渲染列表（syncMkScope 在 renderLibraryCurrent 内）——
+  // 避免「标签已切、列表还是旧态」的短暂错位；异步刷新数据随后跟上
+  renderLibraryCurrent();
   // 与概览过滤联动：按新作用域刷新概览数据（与切换 dash_subject 行为一致）
   if (typeof loadOverview === "function") { loadOverview(mkSubject); return; }
-  renderLibraryCurrent();
 }
 function syncMkScope() {
   const scope = $("learn_mk_scope");
@@ -1131,6 +1151,7 @@ function mkRowHTML(mm) {
       ${kp ? `<button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 讲解</button>
       <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 提问</button>` : ""}
       ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" onclick="mkLearn('${esc(mm.id)}',true)">已掌握</button>`}
+      ${mm.learned && kp ? `<button class="act gray" style="padding:5px 11px;font-size:12px" onclick="mkPurgeSameCards('${esc(mm.subject || "")}','${esc(kp)}')">清同名卡</button>` : ""}
       <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" onclick="mkDel('${esc(mm.id)}')">删除</button>
     </div>
   </div>`;
@@ -1201,11 +1222,27 @@ async function mkLearn(id, learned) {
     await api(`/api/library/mistakes/${id}/learn`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ learned: learned }) });
-    // R3-27：明确告知「仅归档标记」——同名复习卡/记忆卡仍在到期队列，不静默删卡
-    toast(learned ? "已标记为已掌握：仅归档标记。同名复习卡/记忆卡仍在到期队列，可到复习计划移出"
+    // R3-27：明确告知「仅归档标记」——同名复习卡/记忆卡仍在到期队列（R4-24：可用「清同名卡」移出）
+    toast(learned ? "已标记为已掌握：仅归档标记。同名卡可点「清同名卡」移出队列"
                   : "已取消已掌握标记"); loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
+/* R4-24：标记「已掌握」后的显式清理——移出同名复习卡/记忆卡（带确认，不静默删） */
+async function mkPurgeSameCards(subject, kpName) {
+  confirmModal("移出同名卡？",
+    `<p style="margin:0;color:var(--dim)">将移出 <b>${esc(kpName)}</b> 的同名复习卡 / 记忆卡（${esc(subject || "未分类")}）。<br>
+     <span class="hint">删除后该卡的 SM-2/FSRS 排期数据一并清除；确认知识点已掌握时再操作。</span></p>`,
+    "移出同名卡", async () => {
+      try {
+        const r = await api("/api/library/review/purge-same", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subject: subject || "", kp_name: kpName }) });
+        toast(`已移出复习卡 ${r.review_removed || 0} · 记忆卡 ${r.memory_removed || 0}`);
+        await Promise.all([loadReviewCtx(rvSubject), loadLibrary()]);
+      } catch (e) { toast(e.message, false); }
+    }, false);
+}
+window.mkPurgeSameCards = mkPurgeSameCards;
 async function mkDel(id) {
   confirmModal("删除错题", `<p style="margin:0;color:var(--dim)">确定删除这道错题吗？对应知识点掌握度会随之刷新。<br>
     <span class="hint">已生成的讲解 / 提问会话 / 复习卡 / 记忆卡会<b>保留</b>；如不再需要请到对应视图删除。</span></p>`,
@@ -2137,7 +2174,12 @@ async function rvGrade(cid, q, label = null) {
     await Promise.all([loadReviewCtx(rvSubject), loadLibrary()]);
   } catch (e) {
     toast(e.message, false);
-    if (cardEl && document.body.contains(cardEl)) cardEl.querySelectorAll("button").forEach(b => { b.disabled = false; });
+    if (cardEl && document.body.contains(cardEl)) {
+      cardEl.querySelectorAll("button").forEach(b => { b.disabled = false; });
+    } else {
+      // R4-19：卡片已被「出卡动效」移除 → 失败时重渲恢复（否则本次会话卡片消失且从未判分）
+      loadReviewCtx(rvSubject).catch(() => {});
+    }
   } finally { gradeBusy.delete(cid); }
 }
 async function rvQueueAll() {
@@ -2235,7 +2277,12 @@ async function memGrade(cid, q, label = null) {
     loadReviewCtx(rvSubject);
   } catch (e) {
     toast(e.message, false);
-    if (cardEl && document.body.contains(cardEl)) cardEl.querySelectorAll("button").forEach(b => { b.disabled = false; });
+    if (cardEl && document.body.contains(cardEl)) {
+      cardEl.querySelectorAll("button").forEach(b => { b.disabled = false; });
+    } else {
+      // R4-19：记忆卡同款——被出卡动效移除后失败 → 重渲恢复
+      loadReviewCtx(rvSubject).catch(() => {});
+    }
   } finally { gradeBusy.delete(cid); }
 }
 async function memDel(cid) {

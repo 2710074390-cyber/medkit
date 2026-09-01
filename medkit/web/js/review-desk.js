@@ -586,8 +586,15 @@ function renderChips(r) {
     const c = document.createElement("button");
     c.className = "chip" + (p.builtin ? " builtin" : "");
     c.title = p.desc || "";
-    c.innerHTML = `${p.builtin ? "◆" : "◇"} ${esc(p.name)}`
-      + (p.builtin ? "" : `<span class="x" onclick="event.stopPropagation();delPreset('${p.id}')">✕</span>`);
+    c.innerHTML = `${p.builtin ? "◆" : "◇"} ${esc(p.name)}`;
+    if (!p.builtin) {
+      // R4-25：删除入口不再拼接行内 onclick（p.id 含撇号会击穿 JS）——事件绑定 + DOM 挂载
+      const x = document.createElement("span");
+      x.className = "x";
+      x.textContent = "✕";
+      x.onclick = (ev) => { ev.stopPropagation(); delPreset(p.id); };
+      c.appendChild(x);
+    }
     c.onclick = () => confirmModal("应用预设？",
       `「${esc(p.name)}」将<b>覆盖当前参数</b>（'科目'不覆盖）。<br><span class="hint">${esc(p.desc || "")}</span>`,
       "应用", () => { fillPayload(p.payload); toast("预设已应用：" + p.name); }, false);
@@ -1301,8 +1308,8 @@ function renderStepper(stage, progress) {
         + (progress.updated ? ` · 更新 ${fmtClock(progress.updated)}` : "") + `</div>
       </div>` : "");
 }
-const SUBSTEP_LABEL = {pending:"排队中", running:"进行中", done:"完成", failed:"失败", retry:"重试"};
-const SUBSTEP_ICON = {pending:"•", running:"⏳", done:"✓", failed:"✗", retry:"↻"};
+const SUBSTEP_LABEL = {pending:"排队中", running:"进行中", done:"完成", failed:"失败", retry:"重试", cancelled:"已取消"};
+const SUBSTEP_ICON = {pending:"•", running:"⏳", done:"✓", failed:"✗", retry:"↻", cancelled:"⏹"};
 function renderSubsteps(rows, stage) {
   // 终态（done/error/cancelled）展示全部最近事件，运行中按当前阶段过滤
   const isTerminal = ["done", "error", "cancelled"].includes(stage);
@@ -1313,7 +1320,8 @@ function renderSubsteps(rows, stage) {
     <div class="substeps">` + list.map(s => {
       const st = s.status || "pending";
       const cls = st === "running" ? " running" : st === "done" ? " done"
-        : st === "failed" ? " failed" : st === "retry" ? " retry" : "";
+        : st === "failed" ? " failed" : st === "retry" ? " retry"
+        : st === "cancelled" ? " cancelled" : "";
       return `<details class="substep${cls}"${st === "running" ? " open" : ""}>
         <summary><span class="ss-ico">${SUBSTEP_ICON[st] || "•"}</span> ${esc(s.label || s.step)}
           <small class="hint">${esc(SUBSTEP_LABEL[st] || st)}${s.detail ? " · " + esc(s.detail) : ""}</small></summary>

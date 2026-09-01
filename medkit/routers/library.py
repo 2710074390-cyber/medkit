@@ -232,6 +232,10 @@ async def import_image(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(400, "请先在「① 连接服务商」配置 MinerU OCR API Key")
     suffix = Path(file.filename or "").suffix.lower()
     data = await file.read()
+    # R4-13：读后即判上限（200MB）——超限 400 不落盘/不触发 OCR（与 ocr_start 口径一致）
+    from ._common import MAX_FILE_SIZE
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(400, "图片超过 200 MB，请压缩或裁剪后重试")
     if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
         raise HTTPException(400, f"不支持的类型 {suffix}（仅图片）")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
@@ -368,7 +372,7 @@ def subjects() -> dict[str, Any]:
                 solid += 1
             elif st == "mastered":
                 mastered += 1
-        subj_cards = cards_by.get(s, []) + cards_by.get("", [])   # rev.list_cards 口径：含未分类卡
+        subj_cards = cards_by.get(s, [])   # R4-16：分区互斥——未分类卡不再计入每个科目
         stats_out.append({
             "subject": s,
             "mistakes": mis_by.get(s, 0),
@@ -942,13 +946,40 @@ def cards_generate(body: CardsGenerateBody) -> dict[str, Any]:
     rec = expl.get_explain(eid)
     if not rec:
         raise HTTPException(404, "讲解产物不存在")
-    drafts = medcards.generate_cards(medcards.make_client(), rec)   # LLMError → 502
-    if not drafts:
-        raise HTTPException(502, "未能从该讲解生成记忆卡（建议重试或选择更聚焦的知识点）")
-    added = cardlib.create_from_drafts(drafts, rec.get("subject", ""),
-                                       rec.get("kp_name", ""), eid)
+    from ..core import dedupe
+
+    key = f"cards:generate:{eid}"
+    # R4-17：复用 R3-21 在飞去重——连点/双标签不再重复调用 LLM（双倍扣费）
+    if dedupe.begin(key):
+        raise HTTPException(409, "该讲解的记忆卡正在生成，请稍候（勿重复提交）")
+    try:
+        drafts = medcards.generate_cards(medcards.make_client(), rec)   # LLMError → 502
+        if not drafts:
+            raise HTTPException(502, "未能从该讲解生成记忆卡（建议重试或选择更聚焦的知识点）")
+        added = cardlib.create_from_drafts(drafts, rec.get("subject", ""),
+                                           rec.get("kp_name", ""), eid)
+    finally:
+        dedupe.end(key)
     return {"ok": True, "added": len(added), "cards": added,
             "total": len(cardlib.list_cards())}
+
+
+class PurgeSameBody(BaseModel):
+    subject: str = ""
+    kp_name: str = ""
+
+
+@router.post("/api/library/review/purge-same")
+def review_purge_same(body: PurgeSameBody) -> dict[str, Any]:
+    """R4-24：把与某知识点同名的复习卡/记忆卡移出队列（标记「已掌握」后的显式清理，
+    不静默删）。分区口径：subject 精确匹配（空 subject 匹配未分类卡）+ kp_name 相等。"""
+    kp = (body.kp_name or "").strip()
+    if not kp:
+        raise HTTPException(400, "缺少知识点名称")
+    subject = (body.subject or "").strip()
+    return {"ok": True,
+            "review_removed": rev.delete_by_kp(subject, kp),
+            "memory_removed": cardlib.delete_by_kp(subject, kp)}
 
 
 @router.get("/api/library/cards")

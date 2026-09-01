@@ -157,6 +157,32 @@
 - 两项均为基础层（learn.js）缺陷，整个浏览器层 34 用例重跑全绿。
 - **测试文件重名冲突**：`tests/browser/test_syllabus_manage.py` 与 `tests/test_syllabus_manage.py` 同名——pytest 全量收集（`verify.cmd`/CI verify job）报 `import file mismatch` 收集错误。浏览器层重命名为 `test_syllabus_manage_ui.py`，验证口径恢复「全量收集无冲突」。
 
+### R4 批次 3（打磨 · 2026-08-31）
+
+#### Added
+
+- **R4-24 一键清同名卡**：错题本「已掌握」行新增「清同名卡」显式入口（带确认，不静默删）——`POST /api/library/review/purge-same {subject,kp_name}` 移出同名复习卡/记忆卡并返回计数；`core/review.py`/`core/cards.py` 新增 `delete_by_kp`（分区口径：subject 精确匹配，空 subject 匹配未分类卡）。
+- **R4-20 考前提醒真触达**：开始页考试计划进入「考前 N 天」窗口时卡片醒目提示「📌 考前 X 天 · 已进入「N 天」备考冲刺提醒」（`app.js examRemindInfo` + `.exam-remind.hot`）——`remind_days` 数据不再无任何触发。
+- **R4-21 全选范围明示**：错题本「全选」按钮按实际选中范围显示「全选全部 / 全选已加载（100/共 N）」，未加载全部时不再误导。
+- 测试：`tests/test_r4_batch3.py`（R4-09/13/14/15/16/17/18/24 后端侧 10 用例）+ 浏览器 `test_start_exam_reminder_window_active` / `test_mistakes_batch` 全选标签断言。
+
+#### Fixed
+
+- **R4-09 子步骤终态缺失**：在飞子步骤登记表（`_SUBSTEP_INFLIGHT`）；`_cancel_out`/`run_project` 异常出口统一补 `cancelled`/`failed` 终态——不再出现「子步骤面板永久运行中」（K8S Job 式状态机口径）。前端 `renderSubsteps` 支持 `cancelled` 图标/文案/样式。
+- **R4-10 超时僵尸线程共享污染**：门禁① MedFix / MedQC / 质检 MedFix 三处输入改 `copy.deepcopy(questions)` 快照——超时放弃后僵尸 daemon 线程只能污染副本，不再与主流程共享 `questions`（继续烧 token 是已发出的请求，属已知边界）。
+- **R4-13 图片导入无上限**：`/api/library/mistakes/import-image` 读后即判 `MAX_FILE_SIZE`（200MB）→ 400，不落盘/不进 OCR（与 `ocr_start` 口径一致）。
+- **R4-14 meta 非 dict 500**：`_read_meta_checked` 增加 `isinstance(data, dict)`——`[]`/字符串等解析成功但类型异常 → 422（不再调用方 `.get` 崩 500）。
+- **R4-15 异常串回显**：`/api/llm/models` 复用 `LLMClient._test_error_hint` 归一化——失败响应不再回显可能含 base_url/响应片段的原始异常串（与 `llm_test` 同口径）。
+- **R4-16 未分类卡重复计数**：`rev.list_cards(subject)`/`cards.list_cards(subject)` 指定科目时不再混入 `subject=""` 未分类卡，`subjects()` 单科统计去除 `+ cards_by.get("",[])`——分区互斥，「未分类卡不重复计入每科」。
+- **R4-17 记忆卡无 LLM 去重**：`cards_generate` 复用 R3-21 在飞去重（`cards:generate:{eid}`）——连点/双标签不再重复调用生成 LLM（双倍扣费），在飞期间第二次 409。
+- **R4-18 短 Key 掩码泄露**：`mask_api_key` 对 `len<12` 一律只露前 2 后 2（旧逻辑 9~11 位只藏 1~3 位，中段几乎全露）。
+- **R4-19 自评失败卡消失**：复习卡/记忆卡三按钮自评失败时（卡片已被出卡动效移除）→ `loadReviewCtx` 重渲恢复，不再「本次会话卡片消失且从未判分」。
+- **R4-22 批处理连点竞态**：批删除/批已掌握/批导出在途互斥（`mkBatchBusy` + 工具栏按钮禁用），连点不再重复发请求。
+- **R4-23 作用域标签错位**：切科目先 `renderLibraryCurrent()` 用缓存即时重渲染列表，再异步刷新概览——不再「标签已切、列表还是旧态」。
+- **R4-25 delPreset 撇号击穿**：预设删除入口从行内 `onclick`（id 含 `'` 会击穿 JS）改为事件绑定 + DOM 挂载（`review-desk.js renderChips`）。
+- **R4-26 code 内嵌套高亮**：`md.js` 行内渲染先提取保护 `` `代码` `` 段，关键词高亮/粗斜体不再嵌套进 `<code>`（代码内容只转义，XSS 安全不变）。
+- **R4-11 冗余写已消除**：structurize 原文重复写为 R4-05 重构时顺手消除（当前实现仅一次 `write_text` + 双存储回读，经查证无需再次修改）。
+
 ## [0.9.0] - 2026-08-29
 
 ### R3 全链路 UX 审查修复（2026-08-29，批次0/1/2 合流：数据正确性 → 链路闭环 → 打磨）

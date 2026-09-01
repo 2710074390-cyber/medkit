@@ -57,6 +57,21 @@ def test_start_multi_exam_add_sort_delete(page, server_url):
     assert "考研初试" in page.locator(".exam-card").first.inner_text()
 
 
+def test_start_exam_reminder_window_active(page, server_url):
+    """R4-20：进入「考前 N 天」提醒窗口 → 卡片醒目提示（死数据变真触达）。"""
+    _goto_start_clear(page, server_url)
+    page.wait_for_selector(".exam-add", timeout=15000)
+    date = page.evaluate(
+        """() => { const d = new Date(Date.now() + 86400000);
+                   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'),
+                         dd = String(d.getDate()).padStart(2, '0');
+                   return y + '-' + m + '-' + dd; }"""
+    )
+    _add_exam(page, "冲刺测试", date)
+    txt = page.locator(".exam-card").first.inner_text()
+    assert "备考冲刺提醒" in txt, f"进入提醒窗口应显示冲刺提示：{txt}"
+
+
 def test_start_exam_legacy_migration(page, server_url):
     _goto_start_clear(page, server_url)
     page.evaluate("() => localStorage.setItem('medkit-exam-date', '2099-06-01')")

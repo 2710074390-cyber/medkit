@@ -12,6 +12,7 @@ U6：查重门禁（n-gram Jaccard >0.8 → warn → MedFix 改写）。
 """
 
 import contextvars
+import copy
 import json
 import random
 import threading
@@ -126,18 +127,27 @@ _PROG_LOCK = threading.Lock()
 # WP-3：子步骤事件流（{project}/substeps.jsonl），保留最近 200 行
 _SUBSTEP_LOCK = threading.Lock()
 _SUBSTEP_KEEP = 200
+# R4-09：在飞子步骤登记（running 写入，done/failed/cancelled 清除）——
+# 取消/异常出口据此补终态，杜绝子步骤面板永久「运行中」。
+_SUBSTEP_INFLIGHT: dict[str, dict[str, str]] = {}
 
 
 def _substep(base: Path, stage: str, step: str, label: str,
              status: str, detail: str = "") -> None:
-    """WP-3：追加写一条子步骤事件（status ∈ pending/running/done/failed/retry）。
+    """WP-3：追加写一条子步骤事件（status ∈ pending/running/done/failed/retry/cancelled）。
 
     写入失败（磁盘只读等）静默跳过——事件流是辅助可视化，不阻断管线。
     """
-    record = {"stage": stage, "step": step, "label": label,
-              "status": status, "detail": detail,
-              "ts": datetime.now().isoformat()}
+    key = f"{stage}:{step}"
     with _SUBSTEP_LOCK:
+        if status == "running":
+            _SUBSTEP_INFLIGHT[key] = {"stage": stage, "step": step, "label": label,
+                                      "detail": detail}
+        elif status in ("done", "failed", "cancelled"):
+            _SUBSTEP_INFLIGHT.pop(key, None)
+        record = {"stage": stage, "step": step, "label": label,
+                  "status": status, "detail": detail,
+                  "ts": datetime.now().isoformat()}
         path = base / "substeps.jsonl"
         try:
             with open(path, "a", encoding="utf-8") as f:
@@ -147,6 +157,19 @@ def _substep(base: Path, stage: str, step: str, label: str,
                 path.write_text("\n".join(lines[-_SUBSTEP_KEEP:]) + "\n", encoding="utf-8")
         except OSError:
             pass
+
+
+def _substeps_terminate(base: Path, status: str, detail: str = "") -> None:
+    """R4-09：给仍在飞（running）的子步骤补终态（cancelled/failed）。
+
+    状态机口径（K8S Job / CI 构建）：每个 in-flight 状态必须有 done/failed/cancelled
+    至少一个出口；取消/异常出口调用本函数后再写 stage，与终态一致。
+    """
+    with _SUBSTEP_LOCK:
+        items = list(_SUBSTEP_INFLIGHT.values())
+        _SUBSTEP_INFLIGHT.clear()
+    for it in items:
+        _substep(base, it["stage"], it["step"], it["label"], status, detail)
 
 
 def _append_manual_section(base: Path, title: str, lines: list[str]) -> None:
@@ -399,6 +422,7 @@ def _review_slice_digest(slices: list[dict[str, Any]], per_slice: int = 1200,
 def _cancel_out(base: Path, meta_path: Path, done_sids: set[str],
                 questions: list[dict[str, Any]], msg: str = "题目已保留") -> dict[str, Any]:
     """B24：后段各阶段取消出口——标 cancelled、落断点、返回部分结果（usage 由外层记账）。"""
+    _substeps_terminate(base, "cancelled", "管线已取消（未完成子步骤终止）")
     _set_stage(base, meta_path, "cancelled", f"⏹ 已取消（{msg}）")
     _save_checkpoint(base, done_sids, questions)
     return {"stage": "cancelled", "questions": len(questions), "partial": True}
@@ -445,6 +469,12 @@ def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[s
         try:
             res = _run_project_impl(pid, seed, overrides, cancel)
         except BaseException:
+            # R4-09：异常出口也补子步骤终态（failed），再记账并上抛
+            try:
+                _substeps_terminate(Path(cfg.load()["projects_dir"]) / pid,
+                                    "failed", "管线异常退出（未完成子步骤终止）")
+            except Exception:  # noqa: BLE001  终态补写失败不掩盖主异常
+                pass
             _record_usage_on_exit(pid, cancelled=False)
             raise
         if res.get("stage") == "cancelled":
@@ -842,7 +872,9 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                          f"第 {round_i} 轮 · {str(iss.get('reason', ''))[:80]}")
             fixed, fix_err = _run_substep(
                 base, "gate1", "medfix", "MedFix 批量修复",
-                lambda qs=questions, tf=to_fix: medfix.fix_questions(
+                # R4-10：输入深拷贝快照——超时放弃后僵尸 daemon 线程只能污染副本，
+                # 不再与主流程共享 questions（继续烧 token 仍是已知边界：客户端已发出请求）
+                lambda qs=copy.deepcopy(questions), tf=to_fix: medfix.fix_questions(
                     fix_client, qs, tf, text_by_sid),
                 ttl=300, retries=1,
                 detail=f"第 {round_i} 轮 · {len(to_fix)} 条问题")
@@ -890,7 +922,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _substep(base, "qc", "batch1", f"质检批次 1/{total_batches}", "running", "提交中…")
     qc_report, qc_err = _run_substep(
         base, "qc", "medqc", "MedQC 质检",
-        lambda: medqc.qc_batch(qc_client, questions, text_by_sid,
+        # R4-10：快照隔离（see gate1 medfix）
+        lambda: medqc.qc_batch(qc_client, copy.deepcopy(questions), text_by_sid,
                                on_progress=_qc_step, cancel=cancel),
         ttl=600, retries=1, detail=f"{total_batches} 批")
     if qc_err:
@@ -927,7 +960,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                      str(iss.get("reason", ""))[:80])
         fixed, fix_err = _run_substep(
             base, "fixing", "medfix", "MedFix 质检修复",
-            lambda: medfix.fix_questions(fix_client, questions,
+            # R4-10：快照隔离（see gate1 medfix）
+            lambda: medfix.fix_questions(fix_client, copy.deepcopy(questions),
                                          qc_report["issues"], text_by_sid),
             ttl=300, retries=1, detail=f"{len(qc_report['issues'])} 条问题")
         if fix_err:

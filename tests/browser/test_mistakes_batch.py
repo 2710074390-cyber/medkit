@@ -57,6 +57,10 @@ def test_mistakes_group_and_batch_delete(page, server_url):
         _seed(page, subject, 3)
         _goto_mistakes(page, server_url)
 
+        # R4-21：全选按钮明示选中范围（数据 <100 → 「全选全部」）
+        assert page.locator("#btn_mk_all").is_visible()
+        assert page.locator("#btn_mk_all").inner_text() == "全选全部"
+
         # 分组渲染：<details> 默认展开，头部含科目与计数
         assert page.locator("#learn_mk .mk-group").count() >= 1
         first_group = page.locator("#learn_mk .mk-group").first

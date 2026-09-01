@@ -180,8 +180,8 @@ def get_card(cid: str) -> Optional[dict[str, Any]]:
 def list_cards(subject: str = "") -> list[dict[str, Any]]:
     cards = _load()
     if subject:
-        cards = [c for c in cards if c.get("subject") == subject
-                 or c.get("subject") == ""]
+        # R4-16：分区互斥——指定科目时不再混入未分类（subject=""）卡，杜绝跨科目重复计数
+        cards = [c for c in cards if c.get("subject") == subject]
     cards.sort(key=lambda c: (c.get("due") or ""))
     return cards
 
@@ -229,6 +229,24 @@ def delete_by_subject(subject: str) -> int:
     with _store() as st:
         cards = st["cards"]
         remain = [c for c in cards if c.get("subject") != subject]
+        n = len(cards) - len(remain)
+        if n:
+            st["cards"] = remain
+            st["dirty"] = True
+    return n
+
+
+def delete_by_kp(subject: str, kp_name: str) -> int:
+    """R4-24：删除与知识点同名的复习卡（显式清理入口），返回删除数量。
+
+    分区口径与 list_cards 一致：subject 精确匹配；空 subject 匹配未分类卡。
+    """
+    if not kp_name:
+        return 0
+    with _store() as st:
+        cards = st["cards"]
+        remain = [c for c in cards
+                  if not (c.get("kp_name") == kp_name and (c.get("subject") or "") == subject)]
         n = len(cards) - len(remain)
         if n:
             st["cards"] = remain

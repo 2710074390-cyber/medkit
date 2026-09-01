@@ -277,6 +277,8 @@
   .substep.failed > summary{color:var(--bad)}
   .substep.retry{border-color:var(--warn);background:rgba(251,191,36,.10)}
   .substep.retry > summary{color:var(--warn)}
+  .substep.cancelled{border-color:var(--dim);background:rgba(120,120,140,.10)}
+  .substep.cancelled > summary{color:var(--dim)}
   @keyframes ss_pulse{0%,100%{opacity:.55}50%{opacity:1}}
   .substep.running .ss-ico{animation:ss_pulse 1s ease-in-out infinite}
   #toasts{position:fixed;right:24px;bottom:24px;display:flex;flex-direction:column;gap:10px;z-index:300;max-width:400px}
@@ -512,6 +514,7 @@
   .exam-tag{font-size:11px;color:var(--accent2);border:1px solid var(--accent2);border-radius:6px;padding:0 6px}
   .exam-meta{font-size:12.5px;color:var(--dim);margin-top:2px}
   .exam-remind{font-size:11px;color:var(--warn);margin-top:2px}
+  .exam-remind.hot{color:#f97316;font-weight:600}
   .exam-actions{display:flex;gap:6px;flex:none}
   .exam-add{margin-top:8px}
   .exam-form{margin-top:10px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;background:var(--card2)}

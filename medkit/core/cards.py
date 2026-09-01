@@ -145,7 +145,8 @@ def list_cards(subject: str = "", due_only: bool = False) -> list[dict[str, Any]
     _ensure_schema()
     cards = _load()
     if subject:
-        cards = [c for c in cards if c.get("subject") == subject or c.get("subject") == ""]
+        # R4-16：分区互斥——指定科目时不再混入未分类（subject=""）卡（与 review.list_cards 同口径）
+        cards = [c for c in cards if c.get("subject") == subject]
     if due_only:
         today = _today()
         cards = [c for c in cards if (str(c.get("due") or "")[:10]) <= today]
@@ -220,6 +221,24 @@ def delete_by_subject(subject: str) -> int:
     _ensure_schema()
     with _store() as st:
         remain = [c for c in st["cards"] if c.get("subject") != subject]
+        n = len(st["cards"]) - len(remain)
+        if n:
+            st["cards"] = remain
+            st["dirty"] = True
+    return n
+
+
+def delete_by_kp(subject: str, kp_name: str) -> int:
+    """R4-24：删除与知识点同名的记忆卡（显式清理入口），返回删除数量。
+
+    分区口径与 list_cards 一致：subject 精确匹配；空 subject 匹配未分类卡。
+    """
+    if not kp_name:
+        return 0
+    _ensure_schema()
+    with _store() as st:
+        remain = [c for c in st["cards"]
+                  if not (c.get("kp_name") == kp_name and (c.get("subject") or "") == subject)]
         n = len(st["cards"]) - len(remain)
         if n:
             st["cards"] = remain

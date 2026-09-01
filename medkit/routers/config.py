@@ -200,4 +200,6 @@ def llm_models(body: ModelsBody) -> dict[str, Any]:
         models = client.list_models(raise_on_error=True)
         return {"ok": True, "models": models}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "models": [], "msg": str(e)}
+        # R4-15：复用 _test_error_hint 归一化——不回显可能含 base_url/响应片段的原始异常串
+        # （与 llm_test 的 client.test() 同口径：Key 错/地址错/超时给可操作中文原因）
+        return {"ok": False, "models": [], "msg": LLMClient._test_error_hint(e)}

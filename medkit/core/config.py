@@ -164,8 +164,11 @@ def save(cfg: dict[str, Any]) -> None:
 def mask_api_key(key: str) -> str:
     if not key:
         return ""
-    if len(key) <= 8:
-        return key[:2] + "*" * (len(key) - 2)
+    if len(key) < 12:
+        # R4-18：短 Key 只露前 2 后 2（9~11 位旧逻辑只藏 1~3 位，中段几乎全露）
+        if len(key) <= 4:
+            return key[:2] + "*" * (len(key) - 2)
+        return key[:2] + "*" * (len(key) - 4) + key[-2:]
     return key[:4] + "*" * (len(key) - 8) + key[-4:]
 
 

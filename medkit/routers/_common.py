@@ -47,10 +47,15 @@ def _read_meta_checked(base: Path) -> dict[str, Any]:
     if not p.exists():
         raise HTTPException(404, "项目不存在")
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         raise HTTPException(
             422, "项目元数据损坏（可能因中途断电写坏）；可删除该项目后重新生成")
+    # R4-14：解析成功但内容不是 dict（[]/字符串/数字等）→ 同样按损坏 422，
+    # 否则调用方 .get(...) 抛 AttributeError → 全局 500（OWASP：对外读入强制类型校验）
+    if not isinstance(data, dict):
+        raise HTTPException(422, "项目元数据损坏（内容异常）；可删除该项目后重新生成")
+    return data
 
 
 def _write_meta_atomic(base: Path, meta: dict[str, Any]) -> None:
