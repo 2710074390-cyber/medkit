@@ -6,7 +6,7 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
-## [0.10.1] - Unreleased
+## [0.10.1] - 2026-09-01
 
 ### 网络检索后端连通性修复（2026-09-01）
 
