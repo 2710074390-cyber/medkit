@@ -19,3 +19,18 @@ markers = [
     # IMP-10：存储迁移升级/回滚/导入幂等测试（CI 单独跑 -m migration）
     "migration: 存储迁移升级/回滚/备份/JSON 幂等导入测试",
 ]
+
+# U-12（R6-07）：覆盖率度量。2026-09-15 实测基线 82%（8558 语句 / 1502 未覆盖）；
+# CI 门槛取 80%（留 2 点余量防抖动）——「只升不降」，不得为通过而调低。
+# 说明：不放进 addopts，避免每次本地 pytest 都跑覆盖率拖慢迭代；由 CI / 需要时显式传 --cov。
+[tool.coverage.run]
+source = ["medkit"]
+omit = ["medkit/web/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+show_missing = true

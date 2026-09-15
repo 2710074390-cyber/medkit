@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 import time
@@ -81,24 +80,10 @@ class _FakeUpload:
         return self._data
 
 
-def _run_async(coro_fn):
-    """在独立线程执行协程——兼容浏览器层同进程（主线程可能已有事件循环运行，
-    直接 asyncio.run 会抛「cannot be called from a running event loop」）。
+# U-21：协程驱动统一到 `tests/conftest.py` 的 `run_coro` fixture（此前本文件另有一份
+# `_run_async`（线程池实现）——同一问题两种写法，正是审查批评的「口径不一致」，已删除）。
 
-    R6-01：同一机制的规范入口已收敛到 `tests/conftest.py` 的 `run_coro` fixture
-    （见 `_run_coro_in_thread` 的成因说明）。新用例请优先用 fixture；本函数保留以
-    避免改动既有调用点，后续统一时删除。
-    """
-    import concurrent.futures as cf
-
-    def _target():
-        return asyncio.run(coro_fn())
-
-    with cf.ThreadPoolExecutor(max_workers=1) as ex:
-        return ex.submit(_target).result(timeout=120)
-
-
-def test_import_image_size_limit(monkeypatch, tmp_path):
+def test_import_image_size_limit(monkeypatch, tmp_path, run_coro):
     import medkit.core.config as cfg
 
     cfg_file = tmp_path / "config.json"
@@ -108,12 +93,12 @@ def test_import_image_size_limit(monkeypatch, tmp_path):
     # R4-13/B-02：读后即判——图片走独立上限 MAX_IMAGE_BYTES（20MB）；此处压到 8 字节模拟超限
     monkeypatch.setattr(_common, "MAX_IMAGE_BYTES", 8)
     with pytest.raises(HTTPException) as ei:
-        _run_async(lambda: lib_router.import_image(_FakeUpload(b"x" * 100)))
+        run_coro(lib_router.import_image(_FakeUpload(b"x" * 100)))
     assert ei.value.status_code == 400
     assert "20 MB" in str(ei.value.detail)
 
 
-def test_import_image_rejects_bad_suffix(monkeypatch, tmp_path):
+def test_import_image_rejects_bad_suffix(monkeypatch, tmp_path, run_coro):
     import medkit.core.config as cfg
 
     cfg_file = tmp_path / "config.json"
@@ -121,7 +106,7 @@ def test_import_image_rejects_bad_suffix(monkeypatch, tmp_path):
                         encoding="utf-8")
     monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
     with pytest.raises(HTTPException) as ei:
-        _run_async(lambda: lib_router.import_image(_FakeUpload(b"x" * 10, filename="a.txt")))
+        run_coro(lib_router.import_image(_FakeUpload(b"x" * 10, filename="a.txt")))
     assert ei.value.status_code == 400
 
 

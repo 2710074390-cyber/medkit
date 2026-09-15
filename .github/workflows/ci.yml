@@ -48,7 +48,8 @@ jobs:
         # R6-01：显式排除浏览器层——本 job 未装 chromium 时 tests/browser 会整体 skip，
         # 一旦装上 chromium 就会因 session 级 Playwright 同步上下文占住事件循环而令
         # asyncio.run() 用例失败。显式 --ignore 使本地 verify.cmd 与 CI 闸门定义等价。
-        run: python -m pytest -q --timeout=300 --ignore=tests/browser
+        # U-12：覆盖率门槛 80%（2026-09-15 实测基线 82%；「只升不降」，不得为通过而调低）。
+        run: python -m pytest -q --timeout=300 --ignore=tests/browser --cov=medkit --cov-report=term-missing --cov-fail-under=80
       - name: Migration tests (IMP-10)
         run: python -m pytest -q -m migration
       - name: Dependency integrity (IMP-10)

@@ -136,13 +136,35 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
    → **立即停手取证，不要继续写**。实测（2026-09-15）：两个会话同时做仓库恢复，导致
    `refs/remotes/origin/*` 被反复删除、悬空对象面临被二次 gc 的风险——同一 `.git` 只能有一条恢复线。
 
+15. **修复类改动必须「先红后绿」（U-12，verify-the-test-fails）**：写修复代码**之前**先写出一个
+    会失败的用例（或断言），跑出红；再改代码到绿。理由见第 11 条——R5-02 的失实正是「测试按
+    修复版写法写」，红都没红过就无法证明它在测缺陷。对关键接缝（去重锁、取消事件、门禁剔除、
+    打包纯净）另加**结构性防丢断言**（断言源码里存在该结构，而非断言行为）：见
+    `tests/test_stream_wiring.py`。反向验证同样适用于改进项：临时回退该修复，用例必须变红。
+
 ## 5. 常用开发入口
 
 - 测试：`python -m pytest tests/ --ignore=tests/browser -q`（单元）· `python -m pytest tests/browser -q`（浏览器，需先 `pip install playwright && playwright install chromium`）。
 - 总闸：`verify.cmd`（Windows）。
+- 覆盖率（U-12）：`python -m pytest -q --ignore=tests/browser --cov=medkit --cov-report=term-missing`；
+  2026-09-15 实测基线 **82%**，CI 门槛 `--cov-fail-under=80`（只升不降）。
 - 单测隔离：`tests/conftest.py` 把 `dbs.DB_PATH` 等指向 tmp；新增库表/迁移需同时覆盖 `tests/test_db.py`（migration 标记）。
 - 打包：`pack/build.bat`（PyInstaller，`medkit.spec`；version 单源 `medkit/__init__.py`）。
 - 规划（0.10.0）：需求整理 `docs/0.10.0-requirement-analysis.md` · 任务拆分 `docs/0.10.0-task-split.md` · 工作包细化 `docs/0.10.0-work-breakdown.md` · 工程借鉴规则 `docs/engineering/borrow-rules.md`。
+
+### 5.1 本地总闸 与 CI 步骤对应表（U-12，消除「CI 绿 / 本地红」分叉）
+
+| # | 本地 `verify.cmd` | CI verify job | 说明 |
+|---|---|---|---|
+| 1 | `python -m ruff check .` | `Lint` | 静态检查 |
+| 2 | `python -m pytest -q --ignore=tests/browser` | `Test`（+ `--cov --cov-fail-under=80`） | **两侧都必须显式 `--ignore=tests/browser`**；否则本地会因 session 级 Playwright 同步上下文占住事件循环而必红（R6-01） |
+| 3 | `python -m pytest tests/browser -q`（可 `SKIP_BROWSER=1`） | 独立 `browser` job（ubuntu + chromium） | 浏览器层单独进程/单独 job |
+| 4 | `python pack/check-package.py` | `Package purity check` | 打包纯净检查（R6-11） |
+| 5 | — | `Migration tests`（`-m migration`） | 迁移升级/回滚/幂等 |
+| 6 | — | `Dependency integrity`（`pip check`） | 依赖冲突 |
+| 7 | — | `Dependency vulnerability audit`（`pip-audit --strict`，U-16） | 已知 CVE |
+
+> 判据：**任一步在本地与 CI 的定义不一致即为分叉**。新增闸门步骤时，本表两侧必须同批更新。
 
 ## 6. 产品方向（2026-08-29 交接 · 已拍板决策）
 

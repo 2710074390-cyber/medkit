@@ -117,6 +117,31 @@
   自相矛盾**。许可选择与 PyMuPDF 的 AGPL 决策耦合，须先定案依赖策略再写 `LICENSE`，
   不宜由工程侧单方面选定（详见 `THIRD_PARTY_NOTICES.md` §需注意的许可证）。
 
+### 测试可信度（三报告整合 · U 批次 4）
+
+#### Added
+
+- **U-12 覆盖率度量与门槛**：新增 `pytest-cov`（dev 依赖）与 `[tool.coverage.*]` 配置；
+  CI Test 步加 `--cov=medkit --cov-report=term-missing --cov-fail-under=80`。
+  **实测基线 82.45%（8558 语句 / 1502 未覆盖）**，门槛取 80%（留 2 点余量防抖动，只升不降）。
+  此前仓库无任何覆盖率配置——489 个用例无法回答「改动是否被任何用例触达」。
+- **U-12 结构性「防丢断言」`tests/test_stream_wiring.py`**：断言**实现结构**而非行为——
+  讲解/提问两条流式接缝必须含 `cancel_ev = threading.Event()`、`dedupe.begin(` 在首帧之前、
+  且 `dedupe.end(` 与 `cancel_ev.set()` 位于 `finally` 块内；去重键来自 `_explain_key`/`_tutor_key`。
+  这是 R5-02 的直接教训（`CHANGELOG`/handoff/R4 报告三处记载「已落地」而代码从未提交、测试却全绿
+  ——因为用例把缺陷接缝整个 mock 掉了）。**已做反向验证**：把 `dedupe.end` 移出 `finally` 后
+  用例必红，恢复后复绿。
+- **`docs/AGENT_HANDOFF.md` §5.1「本地总闸 与 CI 步骤对应表」**：7 步逐一对应，判据为
+  「任一步两侧定义不一致即为分叉」，消除 R6-01 那类「CI 绿 / 本地红」的判定分叉。
+
+#### Changed
+
+- **U-21 协程驱动统一**：删除 `tests/test_r4_batch3.py` 自有的 `_run_async`（线程池实现）——
+  同一问题两种写法（另一种是 `conftest.py` 的 `run_coro` fixture），正是本轮批评的「口径不一致」；
+  两个调用点改走 `run_coro` fixture。
+- **`docs/AGENT_HANDOFF.md` §4 新增第 15 条「先红后绿」纪律**：修复类改动必须先写出会失败的用例、
+  跑红后再改到绿（verify-the-test-fails）。
+
 ### 工程与闸门（2026-09-15，R6 审查批次 1·3）
 
 #### Fixed
