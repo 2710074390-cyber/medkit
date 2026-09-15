@@ -570,8 +570,14 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
 </noscript>
 <div id="quiz"><span class="spin"></span>加载中…</div>
 <script>
-let QUESTIONS = {qs};
+/* B-17：无选项题在 JS 侧彻底过滤（防御层——判分后改题/重渲染若带进无选项题，
+   页面上不再出现「可见题数与计数不一致 / 编号跳号」；Python 侧导出前已过滤一次） */
+let QUESTIONS = ({qs}).filter(function(q){{return q && q.options && q.options.length;}});
 const ORIG = QUESTIONS.slice();
+/* B-09：错题重练沿用原卷题号——ORIG_NO 记录 id→原卷序号；qNo(q,i) 重练时回原号 */
+const ORIG_NO = {{}};
+ORIG.forEach((q,j)=>{{ if(q&&q.id) ORIG_NO[String(q.id)]=j+1; }});
+function qNo(q,i){{ return ORIG_NO[String((q&&q.id)||"")] || (i+1); }}
 const LETTERS = "ABCDEFGHIJ";
 const TL = {{A1:"A1 单选",A2:"A2 病例",X:"X 多选",B1:"B1 选项组",A3:"A3 案例",A4:"A4 案例"}};
 const PAPER_PID = {pid_json};
@@ -594,7 +600,8 @@ function clearState(){{try{{localStorage.removeItem(KEY);}}catch(e){{}}}}
 /* R3S-04：状态按题目 id 建模（答案/旗标均以 q.id 为键）；卷面指纹 = 全卷 id 序列 */
 const FP = QUESTIONS.map(q=>String(q.id||"")).join(",");
 function qid(i){{ const q=QUESTIONS[i]; return String((q&&q.id)||("Q"+(i+1))); }}
-function freshState(){{ return {{fp:FP, answers:{{}}, marked:[], t0:null, judged:false}}; }}
+function freshState(){{ return {{fp:FP, answers:{{}}, marked:[], t0:null, judged:false,
+  showCt:false, ctMin:60, manualStart:null}}; }}
 function getState(){{
   const st=loadState();
   if(!st||st.fp!==FP) return freshState();   // 旧版按下标存（无 fp）或卷面已变 → 不套旧答案
@@ -602,7 +609,9 @@ function getState(){{
   const ids=new Set(QUESTIONS.map(q=>String(q.id||"")));
   Object.keys(st.answers||{{}}).forEach(k=>{{ if(ids.has(k)) answers[k]=st.answers[k]; }});
   const marked=Array.isArray(st.marked)?st.marked.filter(m=>ids.has(m)):[];
-  return {{fp:FP, answers:answers, marked:marked, t0:st.t0||null, judged:!!st.judged}};
+  // B-10：限时开关/分钟与「手动起始时间」一并持久化（重开回溯）
+  return {{fp:FP, answers:answers, marked:marked, t0:st.t0||null, judged:!!st.judged,
+    showCt:!!st.showCt, ctMin:st.ctMin||60, manualStart:st.manualStart||null}};
 }}
 judged = getState().judged;   // R3-13：已判分后重开页面 → judged=true（计时冻结）
 function invalidateIfStale(){{
@@ -649,8 +658,8 @@ function render(){{
     h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(TL[q.type]||q.type)+'</span>'
       +'<span class="tag b">'+esc(q.bloom)+'</span>'
       +(q.source_type==='真题'?'<span class="tag src">'+esc(q.source_year?q.source_year+' ':'')+'真题</span>':'')
-      +' <b>'+(i+1)+'.</b> '+esc(q.question)+'</p>';
-    h+='<fieldset class="optfs"><legend class="sr">第 '+(i+1)+' 题选项</legend>';
+      +' <b>'+qNo(q,i)+'.</b> '+esc(q.question)+'</p>';
+    h+='<fieldset class="optfs"><legend class="sr">第 '+qNo(q,i)+' 题选项</legend>';
     q.options.forEach((o,j)=>{{
       const t=q.type==="X"?"checkbox":"radio";
       const oid='oid'+i+'_'+LETTERS[j];
@@ -740,8 +749,8 @@ function buildGrid(){{
   QUESTIONS.forEach((q,i)=>{{
     const a=st.answers[qid(i)];
     const mk=st.marked.includes(qid(i));
-    const tip='第 '+(i+1)+' 题 · '+(a?'已答':'未答')+(mk?' · 已标记':'');
-    h+='<span class="cell'+(a?' done':'')+(mk?' mk':'')+'" title="'+tip+'" aria-label="'+tip+'" role="button" tabindex="0" onclick="jump('+i+')">'+(i+1)+'</span>';
+    const tip='第 '+qNo(q,i)+' 题 · '+(a?'已答':'未答')+(mk?' · 已标记':'');
+    h+='<span class="cell'+(a?' done':'')+(mk?' mk':'')+'" title="'+tip+'" aria-label="'+tip+'" role="button" tabindex="0" onclick="jump('+i+')">'+qNo(q,i)+'</span>';
   }});
   g.innerHTML=h;
 }}
@@ -792,7 +801,7 @@ function grade(){{
     .filter(k=>k && caseScore[k].n>1)
     .map(k=>'案例 '+k+'：'+caseScore[k].t+'/'+caseScore[k].n)
     .join(' · ');
-  const wrongNums=wrong.map(q=>QUESTIONS.indexOf(q)+1);
+  const wrongNums=wrong.map(q=>qNo(q,QUESTIONS.indexOf(q)));   // B-09：错题回顾沿用原卷题号
   document.getElementById('res').innerHTML=
     '<div class="score">得分 '+score+'/'+total+'（'+(total?Math.round(score*100/total):0)+' 分）· 用时 '+fmtT(secs)+'</div>'+
     (caseLines?'<div class="hint">分组判分：'+esc(caseLines)+'</div>':'')+
@@ -847,7 +856,7 @@ function retryWrong(){{
   clearState(); clearPool(); t0Reset(); judged=false; document.getElementById('res').innerHTML='';
   render();
   document.getElementById('res').innerHTML=
-    '<div class="hint good">错题重练：'+QUESTIONS.length+' 题 · '+
+    '<div class="hint good">错题重练：'+QUESTIONS.length+' 题（题号沿用原卷）· '+
     '<button class="mini" onclick="backToAll()">返回全卷</button></div>';
 }}
 function backToAll(){{QUESTIONS=ORIG.slice(); clearState(); clearPool(); t0Reset(); judged=false; render();}}
@@ -902,8 +911,15 @@ async function syncWrong(manual){{
 }}
 
 const _st0=getState();
-// R3-13：已判分 → T0=Date.now()（不再按首开时间戳累计）；未判分才续接旧 t0
-const T0_START=(_st0.judged?Date.now():(_st0.t0||Date.now()));
+/* B-10：恢复限时模式开关与分钟数（持久化）；已判分 → T0=Date.now()（不再按首开时间戳累计）；
+   未判分且曾手动起始 → 沿用手动起始基线（重开计时不复位、不回溯到更早的首答时间） */
+showCt = !!_st0.showCt;
+(function(){{
+  const cb=document.getElementById('ctMode'), m=document.getElementById('ctMin');
+  if(cb) cb.checked=showCt;
+  if(m && _st0.ctMin) m.value=_st0.ctMin;
+}})();
+const T0_START=(_st0.judged?Date.now():(_st0.manualStart||_st0.t0||Date.now()));
 let T0 = T0_START;
 function t0Reset(){{ T0=Date.now(); secs=0; autoGrading=false; }}   // C-08：重做重置自动判分防重入标志
 function fmtT(s){{const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}}
@@ -915,6 +931,11 @@ function ctToggle(){{
   if(judged) return;   // R3-13：已判分 → 限时开关无效（计时冻结）
   const el=document.getElementById('ctMode');
   showCt=!!(el&&el.checked);
+  const st=getState();
+  st.showCt=showCt;
+  st.ctMin=Math.max(5,Math.min(240,parseInt((document.getElementById('ctMin')||{{}}).value||'60',10)||60));
+  if(showCt){{ st.manualStart=st.manualStart||Date.now(); st.t0=st.manualStart; }}   // B-10：手动起始入作答状态
+  saveState(st);
   if(showCt && secs>=ctLimit()){{ grade(); return; }}
   tick();
 }}

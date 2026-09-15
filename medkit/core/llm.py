@@ -121,6 +121,12 @@ class LLMClient:
         """WP-8：流式生成器——yield {delta, usage, canceled}，支持取消事件。
 
         与 chat() 的取消语义一致：取消时不等待整段回复烧完 token。
+        R5-C-02：usage 记账改为「chunk 累计 → 结束/取消/异常处一次落账」——
+        取消/异常路径补记**已见**的部分 token（此前只在 chunk.usage 存在时逐块记账，
+        取消时收不到末块 usage（DeepSeek 仅末块携带）→ 该请求 prompt 整段漏记；
+        现在只要中途/异常块带过 usage，即按已见部分快照落账）。
+        R5-03：无论结束/取消/异常/断连（生成器被 close），finally 关闭 provider 流——
+        断连时立即中止 HTTP 连接，不再让服务端继续生成烧 token。
         """
         if self._cancel is not None and self._cancel.is_set():
             yield {"delta": "", "usage": None, "canceled": True}
@@ -132,11 +138,16 @@ class LLMClient:
         }
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
+        acc = {"prompt_tokens": 0, "completion_tokens": 0}
+        seen = False  # 是否收到过任何 usage 块（取消/异常时据此决定补记）
+        stream: Any = None
         try:
             stream = self._client.chat.completions.create(**kwargs, stream=True)
             for chunk in stream:
                 if self._cancel is not None and self._cancel.is_set():
-                    yield {"delta": "", "usage": None, "canceled": True}
+                    if seen:
+                        usage.add(**acc)   # C-02：取消路径快照补记
+                    yield {"delta": "", "usage": dict(acc) if seen else None, "canceled": True}
                     return
                 delta = ""
                 try:
@@ -144,17 +155,24 @@ class LLMClient:
                         delta = chunk.choices[0].delta.content
                 except Exception:  # noqa: BLE001  部分服务商终止块结构差异
                     pass
-                usage_data = None
                 if getattr(chunk, "usage", None) is not None:
-                    usage_data = {"prompt_tokens": getattr(chunk.usage, "prompt_tokens", 0),
-                                  "completion_tokens": getattr(chunk.usage, "completion_tokens", 0)}
-                    usage.add(**usage_data)
-                yield {"delta": delta, "usage": usage_data, "canceled": False}
+                    acc["prompt_tokens"] += int(getattr(chunk.usage, "prompt_tokens", 0) or 0)
+                    acc["completion_tokens"] += int(getattr(chunk.usage, "completion_tokens", 0) or 0)
+                    seen = True
+                yield {"delta": delta, "usage": dict(acc) if seen else None, "canceled": False}
+            if seen:
+                usage.add(**acc)   # 正常结束：整段记账（此前逐块记账，总量不变）
         except Exception as e:  # noqa: BLE001
+            if seen:
+                usage.add(**acc)   # C-02：异常路径也补记已见部分
             if self._cancel is not None and self._cancel.is_set():
-                yield {"delta": "", "usage": None, "canceled": True}
+                yield {"delta": "", "usage": dict(acc) if seen else None, "canceled": True}
                 return
             raise LLMError(f"流式调用失败({self.model}): {e}") from e
+        finally:
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()   # R5-03：结束/取消/异常/断连全路径关闭 provider 连接
 
     def chat_json(self, messages: list[dict[str, str]], temperature: float = 0.7,
                   max_tokens: Optional[int] = None,

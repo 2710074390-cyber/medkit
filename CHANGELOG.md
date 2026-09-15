@@ -6,6 +6,62 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
+## [Unreleased] - 2026-09-01
+
+### R5 全链路复核修复（2026-09-01，批次 0/1/2：数据安全 + 流式主路径 + 流程信任链）
+
+#### Fixed
+
+- **R5-01 测试套件不再污染真实 `~/.medkit`**：`tests/conftest.py` 的 autouse 隔离此前只重定向
+  `DB_PATH/DB_FILE`——tmp db 不存在时各模块回落 JSON 路径，直接原子写真实
+  `~/.medkit/library/*.json`（R5 实机两轮复现：mistakes 4→8 条、knowledge 被整体替换）。
+  现把 `MISTAKES_FILE/KNOWLEDGE_FILE/REVIEW_QUEUE_FILE/EXPLAINS_FILE/SLICE_INDEX_FILE/
+  TUTOR_SESSIONS_FILE/CARDS_FILE` 全部文件常量一并重定向到 tmp，并新增 session 级
+  **防污染哨兵**（套件前后对真实家目录全量哈希，任何触碰即失败并列出变更文件）。
+- **R5-04 用户学习数据恢复（取证修订）**：`pack/recover-user-data.py`——实机取证发现备份目录
+  顶层 `mistakes.json`（113KB/182 行）与 `knowledge.json`（6.3KB/3 行）**全部为 08-27 20:43 后
+  的测试垃圾**（subject 全空、题目=测试题甲/乙/肺通气题/心绞痛题），不能作恢复源；真实数据在
+  **污染前**产物中：1 条错题（m_1787812464960，儿科学·支气管肺炎）+ 4 条知识点（含 DKA 等）+
+  1 张复习卡 + 1 个提问会话，经脚本按「缺失才插入、id 幂等、绝不过覆盖」回库（先全量快照
+  `~/.medkit` 可回退）。
+- **R5-02 流式「在飞去重」真绑定流生命周期**：`routers/library.py` 两个流式端点
+  `explain_stream`/`tutor_start_stream` 的 `dedupe.begin` 移入 `gen()` 首帧前、`end` 入
+  `finally`（覆盖 done/error/canceled/断连 GeneratorExit）；Depends 守卫降级为
+  `dedupe.is_active` 窥视式早拦截（实验证实本 FastAPI 版本 Depends teardown 在流完成后才执行，
+  守卫持锁会与 gen 内锁同请求自锁）。并发双击/双标签同名请求：流进行中 409/error 帧，
+  流结束锁即释放。
+- **R5-03 服务端取消接线**：两流式端点创建 `cancel_ev` 并经
+  `_explain_client(cancel=…)`/`_tutor_client(cancel=…)` 传入 client；`gen()` `finally`
+  置位；`LLMClient.chat_stream` 在结束/取消/异常/断连（生成器被 close）时 `stream.close()`
+  立即中止 provider 连接——前端「■ 停止生成」不再只断 fetch，服务端 token 真停。
+- **R5-C-02 流式 usage 记账取消/异常补记**：`core/llm.py` `chat_stream` 改为「chunk 累计 →
+  结束/取消/异常处一次落账（`UsageContext` 快照）」，取消/异常前已见的 token 不再整段漏记。
+- **R5-A-01 项目模板键绑 pid**：`review-desk.js` 模板 localStorage 键 `medkit-tpl-project` →
+  `medkit-tpl-<pid>`（新建课题表单用 `__new__` 作用域）——A 项目模板不再污染 B 项目表单。
+- **R5-B-01 assets 累计容量上限**：`routers/projects.py` 新增 `_MAX_ASSETS_TOTAL`（600MB/项目），
+  写入前统计 `assets/` 总字节，超限 400 并附「当前占用/上限」，超限零磁盘副作用。
+- **R5-B-05/15 项目删除复核**：`delete_project` 删后 `base.exists()` 复核——rmtree 静默跳过的
+  残留/异常显式 500 报错并提示手动清理，不再返回 `{"ok": true}` 假装成功；`list_projects`
+  孤儿项标注「残留目录，可清理」。
+- 测试：`tests/test_explain_stream.py` +6、`tests/test_tutor_stream.py` +2、
+  `tests/test_dedupe.py`（`is_active`）、`tests/test_wp04.py` +2、`tests/test_r3_batch3.py`
+  断言更新；离线全量基线不回归（见下）。
+
+#### Changed
+
+- **R4-05 产品决策定稿**：结构化大纲行为定为「**校验通过即自动入库**」——「AI 结构化」返回
+  `source/added` 即幂等写入官方大纲（`source='seed'`），前端只展示统计预览，**无二步「预览→确认」**；
+  如需人工把关请在结构化前自行核对粘贴原文（原文 sha1 存 `~/.medkit/outline_originals/` 可审计）。
+  该行为自 R4-05 起稳定，本条目为其正式明示（对应 R5 审复核 §3.1 决策项，关闭）。
+- `medkit` 修复类提交工程规则（AGENT_HANDOFF §4.11「提交自查三步」）：① 提交前
+  `git diff --cached` 关键标识 grep；② CHANGELOG/handoff 条目引用「已验证的 file:line」；
+  ③ 批次提交后 `git show HEAD` + 关键行抽查。
+
+> **⚠️ 勘误（2026-09-01 · R5 复核）**：本文件上面「R4 全链路复核修复」中的 **R4-01/R4-02 条目
+> 与提交不符**——`8e603a0` 实际只引入了 FastAPI Depends 守卫（`gen()` 内无 dedupe，路由未创建
+> `cancel_ev`，服务端 `canceled` 分支为死代码），「已落地」为失实记载；两项已由本版 R5-02/R5-03
+> 真落地（git show 关键行可验）。R4-03/R4-04 经核对确已落地，不受影响。
+
 ## [0.10.1] - 2026-09-01
 
 ### 网络检索后端连通性修复（2026-09-01）

@@ -99,3 +99,71 @@ def test_search_deepseek_parses_real_responses_shape(monkeypatch):
     assert len(out) == 2, f"正文重复 URL 应去重：{urls}"
     # 非 v4 模型回退不改动
     assert ws._normalize_deepseek_model("deepseek-chat") == "deepseek-v4-flash"
+
+
+def test_search_deepseek_400_falls_back_legacy_tool(monkeypatch):
+    """C-05：DeepSeek 400（工具版本变体）→ 用 web_search_2025_08_26 重试——有测试锁定。"""
+    calls: list[dict] = []
+
+    class FakeResp:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, **kw):
+            # 注意：tools 的 body dict 会被原地改写（重试复用同一 body）——记录调用时的工具名
+            calls.append(kw["json"]["tools"][0]["type"])
+            if len(calls) == 1:
+                r = FakeResp({})
+                r.status_code = 400
+                return r
+            return FakeResp({"output": [
+                {"type": "web_search_call",
+                 "action": {"type": "web_search", "url": "https://who.int/x#c1"}}]})
+
+    monkeypatch.setattr(ws.httpx, "Client", FakeClient)
+    out = ws.search_deepseek("儿科学 考试大纲", "sk-x", "deepseek-v4-flash")
+    assert len(calls) == 2, "400 后应重试一次"
+    assert calls[0] == ws.SEARCH_TOOL_CURRENT
+    assert calls[1] == ws.SEARCH_TOOL_LEGACY, "回退体应使用 2025 版工具名"
+    assert [m["url"] for m in out] == ["https://who.int/x"]
+
+
+def test_run_search_rounds_cancel_discards_inflight(monkeypatch):
+    """C-03：在途检索被取消 → 本轮结果不采用（logs 留痕），不再当作素材。"""
+    import threading
+
+    ev = threading.Event()
+    called = []
+
+    class QC:
+        def chat_json(self, messages, **kwargs):
+            return {"queries": ["q1"]}
+
+    def fn(q):
+        called.append(q)
+        ev.set()   # 检索进行中取消
+        return [{"title": "后到结果", "url": "https://x.example.com/a", "snippet": "s"}]
+
+    res = ws.run_search_rounds(QC(), "儿科", "生长发育", "关键词", "bocha",
+                               search_fn=fn, cancel=ev, max_rounds=2)
+    assert called, "检索函数应被调用（在途取消的模拟前提）"
+    assert res["materials"] == [], f"取消后的在途结果不应采用：{res['materials']}"
+    assert any("已取消" in lg for lg in res["logs"]), res["logs"]

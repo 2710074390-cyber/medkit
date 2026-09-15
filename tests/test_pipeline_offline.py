@@ -373,6 +373,64 @@ def test_playability_inject(isolated_cfg):
     assert "40% / 40% / 15% / 5%" in sys0, "Bloom 自定义配比应替换占位符"
 
 
+def test_gate_exhaustion_drops_unfixable_and_flags_bloom(isolated_cfg):
+    """B-14/B-18：修复轮用尽（2 轮）——可定向 fail 题（Q001 选项数错）剔除入人工复核清单；
+    比例级 Bloom fail（q_id='BLOOM' 哨兵）只留痕一次、不触发 MedFix 空转。"""
+    pid = build_project("_gate_drop_test")
+    tmp = Path(cfgmod.CONFIG_DIR) / "projects" / pid
+
+    class GenAllMemory(FakeLLM):
+        """全记忆（触发比例级 Bloom fail）+ 首题固定 3 选项（保持 5 选项才能过 R1，此处 3 项必 fail）。"""
+
+        def chat_json(self, messages, **kwargs):
+            if self.role != "gen":
+                return super().chat_json(messages, **kwargs)
+            self.calls += 1
+            self._bill(messages, 2400)
+            self.systems.append(messages[0] and messages[0].get("content", ""))
+            qs = []
+            for i in range(8):
+                bad = (i == 0)
+                qs.append({
+                    "type": "A1", "bloom": "记忆",
+                    "subtopic": "生长发育规律",
+                    "question": f"关于生长发育，下列正确的是{i}？",
+                    "options": ["选项A", "选项B", "选项C"] if bad
+                    else [f"选项{i}A", "选项B", "选项C", "选项D", "选项E"],
+                    "answer": "B",
+                    "analysis": f"机制解析{i}。【源:切片S001】",
+                })
+            return {"questions": qs}
+
+    class FixNoop(FakeLLM):
+        """修复回原样（模拟 LLM 修复无效）→ 2 轮后仍 fail → 触发 B-14 剔除。"""
+
+        def chat_json(self, messages, **kwargs):
+            if self.role != "fix":
+                return super().chat_json(messages, **kwargs)
+            self.calls += 1
+            self._bill(messages, 1600)
+            return {"questions": [{
+                "id": "Q001", "type": "A1", "bloom": "记忆", "subtopic": "生长发育规律",
+                "question": "关于生长发育，下列正确的是0？",
+                "options": ["选项A", "选项B", "选项C"],   # 仍 3 项 → R1 fail
+                "answer": "B", "analysis": "解析【源:切片S001】"}]}
+
+    res = run_project(pid, overrides={
+        "gen": GenAllMemory("gen"), "qc": FakeLLM("qc"),
+        "fix": FixNoop("fix"), "review": FakeLLM("review")})
+    assert res["stage"] == "done", res
+    final = json.loads((tmp / "最终产物" / "questions_final.json").read_text(encoding="utf-8"))
+    ids = [q.get("id") for q in final]
+    assert "Q001" not in ids, f"修复轮用尽后 Q001 应被剔除：{ids}"
+    review = (tmp / "人工复核清单.md").read_text(encoding="utf-8")
+    assert "fail 题剔除" in review and "Q001" in review, "剔除应写入人工复核清单（B-14）"
+    assert "非定向核查项" in review, "比例级 Bloom 应留痕（B-18）"
+    # 其余题目保留，产物完整
+    for name in ("qbank.md", "押题卷.html", "复习手册.md"):
+        assert (tmp / "最终产物" / name).exists(), f"缺产物 {name}"
+
+
 def test_websearch_rounds_offline():
     """§5.4 离线：多轮循环（注入 search_fn）+ conflict 标记 + manual 解析。"""
     from medkit.core import websearch as wsmod
@@ -457,7 +515,8 @@ def test_render_precheck_drop_e2e(isolated_cfg):
     final = json.loads((tmp / "最终产物" / "questions_final.json").read_text(encoding="utf-8"))
     assert all(len(q.get("options", [])) <= 6 for q in final), "产物中不应保留超限题"
     review = (tmp / "人工复核清单.md").read_text(encoding="utf-8")
-    assert "渲染前剔除" in review and "选项数 7 > 6" in review, "超限原因应写入复核清单"
+    assert "fail 题剔除" in review, "B-14：修复轮用尽后超限题应在门禁①剔除（不再流入渲染）"
+    assert "选项数 7" in review, "超限原因应写入复核清单"
     assert re.search(r"\*\*Q\d{3}\*\*", review), "复核清单应记录被剔除题目的 id"
     # 其余产物正常生成
     for name in ("qbank.md", "qbank.html", "押题卷.html", "复习手册.md", "anki_export.txt"):

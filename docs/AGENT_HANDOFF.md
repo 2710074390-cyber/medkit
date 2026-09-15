@@ -8,6 +8,7 @@
 
 | 日期 | commit | 变更 |
 | - | - | - |
+| 2026-09-01 | 本批 | **R5 全链路复核批次 0/1/2（P0/P1）**：① **数据安全** `tests/conftest.py` 补全 7 个 JSON 文件常量隔离 + session 级家目录哈希哨兵（R5-01；此前测试回落 JSON 直接写真实 `~/.medkit`，实机两次复现）；R5-04 取证修订——备份目录顶层 113KB mistakes.json 实为 08-27 20:43 后测试垃圾，真实数据（1 错题/4 知识点/1 复习卡/1 提问会话）从**污染前**备份 + WAL 回放恢复（`pack/recover-user-data.py`，先快照可回退）· ② **流式主路径** R5-02 dedupe 移入 gen() 首帧前/finally + 守卫降级 `dedupe.is_active` 窥视（实验证实本 FastAPI 版本 Depends teardown 在流完成后执行，守卫持锁会与 gen 内锁自锁）；R5-03 两流式端点 `cancel_ev` 上传 client + gen finally 置位 + `LLMClient.chat_stream` finally `stream.close()` 中止 provider 连接；R5-C-02 usage 累计→取消/异常处快照落账 · ③ **流程信任链** R5-05 提交自查三步（见 §4.11）；CHANGELOG/R4 报告 R4-01/R4-02 失实条目加勘误注 · ④ 体验兜底 R5-A-01 模板键 `medkit-tpl-<pid>`、R5-B-01 assets 累计 600MB 上限、R5-B-05/15 删除复核（残留即 500）+ 孤儿项「残留目录，可清理」；测试 18+2+2 新增，离线全量基线不回归（R5-01 哨兵同时守卫后续每次全量测试） |
 | 2026-08-31 | 本批 | **R4 审查批次 3 落地（打磨，18 项 ✅）**：R4-09 子步骤 in-flight 登记 + 取消/异常出口补 cancelled/failed 终态 · R4-10 MedFix/MedQC 输入深拷贝快照隔离超时僵尸线程 · R4-11 冗余写已被 R4-05 重构消除（查证无改动）· R4-13 import-image 200MB 读后即判 400 · R4-14 meta 非 dict → 422 · R4-15 llm/models 复用 `_test_error_hint` 归一 · R4-16 未分类卡分区互斥（rev/cards list_cards + subjects 口径）· R4-17 cards_generate 复用 R3-21 去重 409 · R4-18 短 Key 掩码只露前2后2 · R4-19 自评失败卡重渲恢复 · R4-20 考前提醒真触达（窗口冲刺提示）· R4-21 全选范围明示 · R4-22 批处理在途互斥 · R4-23 切科目前置重渲 · R4-24「清同名卡」显式入口（`POST /api/library/review/purge-same`，review/cards 增 `delete_by_kp`）· R4-25 delPreset 改事件绑定 · R4-26 md.js code 段不再嵌套高亮；测试 `tests/test_r4_batch3.py`（10 例）+ 浏览器 2 例新增；离线 434 · 浏览器 36 全绿 |
 | 2026-08-31 | 本批 | **R4 审查批次 2 落地（5 缺陷）**：R4-05 `structurize_outline` 完整性通过即 `add_seed_items` 幂等落库官方大纲（返回 `source`/`added`，付费产物可回读）· R4-06 资产上传 200MB 上限（`_MAX_ASSET_BYTES`，超限 400 不落盘）· R4-07 `config.save` 统一 `write_json_atomic` 原子写 · R4-08 `syllabus._rows`/`list_subjects` 切 `tx(write=False)` 纯读事务 · R4-12 `official_quota` 越界由静默钳制改 400（口径与 web_ref_quota/bloom 一致）；测试 `test_s1_backend.py`/`test_syllabus_manage.py`/`test_wp04.py`，离线 424 passed · ruff 干净 |
 | 2026-08-31 | 本批 | **R4 审查批次 1 落地（流式主路径 P0/P1，4 缺陷）**：R4-01 去重锁改绑流生命周期（`dedupe.begin/end` 移入 `gen()` finally，覆盖断连 GeneratorExit）· R4-02 流式取消全链路（前端 `AbortController`+`sseStopUI`「停止生成」+切view/tab abort；服务端 `cancel_ev` 传 client、断开 set）· R4-03 断流不再自动回退非流式（仅流式接口不可用才降级，杜绝双扣费）· R4-04 tutor 流未落定空会话 finally 兜底删除；流式端口统一经 `_explain_client(cancel=...)`/`_tutor_client(cancel=...)` 注入 client（单一 mock 触点）；测试 `test_dedupe.py`/`test_explain_stream.py`/`test_tutor_stream.py`，离线 421 passed · ruff 干净 |
@@ -112,6 +113,13 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
    `SET SKIP_BROWSER=1` 跳过浏览器层（CI 不含浏览器层，仅本地门）。
 9. **教师重点文件处理**：extract.py 对「扫描件 PDF（无文本层）」直接拒绝（mode='error' 提示先
    OCR）；本机未下载 MinerU 通道前，扫描件走外部转换（如 WPS/OCR）再上传 md/txt。
+11. **修复类提交自查三步（R5-05，2026-09-01 血泪）**：R4-01/R4-02「已落地」记载被 R5 复核
+    实锤为从未进入提交（`8e603a0` 提交信息写着「dedupe 移入 gen() finally」，diff 实际引入的是
+    FastAPI Depends 守卫；CHANGELOG/AGENT_HANDOFF/R4 报告三处同步失实，用户以为已修）。
+    此后每个修复提交必须：① 提交前 `git diff --cached` 对关键标识 grep（如 `dedupe.begin`
+    应出现在 `gen()` 邻域；`cancel_ev` 应出现在端点函数内）；② CHANGELOG/handoff 条目只引用
+    「已 diff 验证的 file:line」，引用意图=失实源头；③ 批量提交后立即 `git show HEAD` 抽查关键行
+    （配合本节第 7 条「改完立即提交」——批次全部落库前不要宣布落地）。
 
 ## 5. 常用开发入口
 

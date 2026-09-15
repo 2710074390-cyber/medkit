@@ -22,6 +22,8 @@ from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir, requ
 
 _ALLOW_IMG = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 _MAX_ASSET_BYTES = 200 * 1024 * 1024   # R4-06：单图上传体积上限 200MB（超限 400，不落盘）
+# R5-B-01：单项目 assets/ 累计容量上限（单文件拦不住“小文件无限堆积写满磁盘”——进与出的总量也要关门）
+_MAX_ASSETS_TOTAL = 600 * 1024 * 1024
 _IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webp": "image/webp", ".gif": "image/gif"}
 
@@ -205,20 +207,23 @@ def list_projects() -> dict[str, Any]:
             meta_path = d / "meta.json"
             if not meta_path.exists():
                 # R3-20：无 meta 的目录 → 孤儿条目（前端可显示可删除，不再永久残留）
+                # R5-B-05：孤儿项明确标注「残留目录，可清理」——与“删了又冒出来”的用户困惑对齐
                 items.append({"pid": d.name,
                               "subject": "（元数据缺失）",
                               "exam": "", "target": 0, "stage": "",
-                              "running": False, "stage_label": "孤儿项目",
+                              "running": False, "stage_label": "残留目录，可清理",
                               "created": "", "meta_missing": True})
                 continue
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001  损坏 meta 同样按孤儿处理（可删除）
+                # B-16：与单项目接口 422 口径对齐——列表虽不能抛错（断一个坏项目不该拖垮列表），
+                # 但明确标记损坏原因，前端可区分「缺失」与「损坏」并提示手动清理
                 items.append({"pid": d.name,
                               "subject": "（元数据缺失）",
                               "exam": "", "target": 0, "stage": "",
-                              "running": False, "stage_label": "孤儿项目",
-                              "created": "", "meta_missing": True})
+                              "running": False, "stage_label": "残留目录，可清理",
+                              "created": "", "meta_missing": True, "meta_error": "corrupt"})
                 continue
             stage_raw = meta.get("stage", "")
             pkey = meta.get("pid", d.name)
@@ -321,7 +326,17 @@ def delete_project(pid: str) -> dict[str, Any]:
     if RUNNING.get(pid):
         raise HTTPException(400, "项目正在生成中：请先「停止」后再删除")
     meta_missing = not (base / "meta.json").exists()
-    shutil.rmtree(base, ignore_errors=True)
+    try:
+        shutil.rmtree(base, ignore_errors=True)
+    except Exception as e:  # noqa: BLE001
+        # R5-B-15：删除失败不再吞掉——显式上抛
+        raise HTTPException(500, f"项目删除失败：{e}") from e
+    if base.exists():
+        # R5-B-05/15：删后复核——部分文件被占用时 rmtree 会静默跳过（ignore_errors=True），
+        # 此时绝不能返回 {"ok": true}（用户看到“删了又冒出来”）；显式报错并提示手动清理
+        raise HTTPException(
+            500, "项目目录未能完全删除（部分文件可能被占用）——请关闭占用该目录的程序后重试，"
+                 f"或手动删除残留目录「{pid}」")
     if meta_missing:
         # R3-20：base 存在但 meta 缺失 → 无条件删目录，并明确提示
         return {"ok": True, "msg": "元数据缺失，已直接删除目录"}
@@ -430,15 +445,32 @@ async def upload_asset(pid: str, file: UploadFile = File(...),
     # R3-17：slices.json 读-改-原子写 整段 per-pid RLock（并发上传两图不丢索引）
     with _asset_lock(pid):
         asset_dir = base / "assets"
+        # R5-B-01：累计容量检查在创建目录/写文件/改索引**之前**——超限 400 且零磁盘副作用；
+        # 附当前占用/上限，让用户知道差多少（单文件上限之外的“总量”视角）
+        cur = sum(p.stat().st_size for p in asset_dir.iterdir() if p.is_file()) \
+            if asset_dir.is_dir() else 0
+        if cur + len(raw) > _MAX_ASSETS_TOTAL:
+            raise HTTPException(
+                400, f"图片素材总容量超限（当前占用 {cur / 1048576:.1f}MB / 上限 "
+                     f"{_MAX_ASSETS_TOTAL / 1048576:.0f}MB），请删除部分素材或压缩图片后重试")
         asset_dir.mkdir(parents=True, exist_ok=True)
         n = _next_fig_no(base)
         fname = f"fig_{n}{ext}"
         (asset_dir / fname).write_bytes(raw)
         sid = f"IMG{n}"
         cap = (caption or "").strip() or file.filename or f"图{n}"
-        try:
-            slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
+        # B-04：slices.json 读失败（损坏/非 JSON）不再静默重置为空表再追加——
+        # 那会把已有有效索引覆盖为「只剩新图」；缺失文件（首次上传）才允许初始化 []
+        sp = base / "slices.json"
+        if sp.exists():
+            try:
+                slices = json.loads(sp.read_text(encoding="utf-8"))
+                if not isinstance(slices, list):
+                    raise ValueError("根节点不是数组")
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(500, "项目切片索引损坏（slices.json 无法解析）——"
+                                         "请勿继续上传；可在开发者工具/slices.json 恢复或重建项目") from e
+        else:
             slices = []
         slices.append({"sid": sid, "role": "image", "title": cap, "text": cap,
                        "image": {"path": f"assets/{fname}", "name": file.filename or fname,
@@ -494,9 +526,17 @@ def delete_asset(pid: str, sid: str) -> dict[str, Any]:
             raise HTTPException(404, "图片不存在")
         f = base / str((s.get("image") or {}).get("path") or "")
         f.unlink(missing_ok=True)
-        try:
-            slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
+        # B-04：读失败同样显式 5xx（不静默重置）
+        sp = base / "slices.json"
+        if sp.exists():
+            try:
+                slices = json.loads(sp.read_text(encoding="utf-8"))
+                if not isinstance(slices, list):
+                    raise ValueError("根节点不是数组")
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(500, "项目切片索引损坏（slices.json 无法解析）——"
+                                         "删除操作已中止，请先修复索引后重试") from e
+        else:
             slices = []
         write_json_atomic(base / "slices.json",
                           [x for x in slices if x.get("sid") != sid])

@@ -477,7 +477,7 @@ def test_r3_20_orphan_project_list_and_delete(proj_cfg):
     c = _client()
     items = {p["pid"]: p for p in c.get("/api/projects").json()["projects"]}
     assert items["孤儿目录"]["meta_missing"] is True
-    assert items["孤儿目录"]["stage_label"] == "孤儿项目"
+    assert items["孤儿目录"]["stage_label"] == "残留目录，可清理", "R5-B-05：孤儿项应标注残留目录"
     assert "meta_missing" not in items["正常项目"]
 
     r = c.delete("/api/projects/孤儿目录")

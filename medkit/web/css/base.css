@@ -17,7 +17,7 @@
   :root[data-theme=light]{
     --bg1:#ffffff; --bg2:#ffffff; --card:#ffffff; --card2:#f5f5f5;
     --line:#e5e5e5; --accent:#2A6B5A; --accent2:#1f5144; --good:#4a8f45;
-    --warn:#a16207; --bad:#d64545; --text:#2E3440; --dim:#6a6a6a;   /* 正文 #2E3440（PRD 7.2）；dim 对比度 4.96:1 */
+    --warn:#a16207; --bad:#d64545; --text:#2E3440; --dim:#4a4a4a;   /* 正文 #2E3440（PRD 7.2）；R5-A-04：dim 加深 #6a6a6a→#4a4a4a（4.96:1→约8.6:1，超 WCAG AA 小文本） */
     --link:#2563eb;
     --info:#2563eb; --infobg:rgba(37,99,235,.08);
     --card3:#ececec;
@@ -522,3 +522,18 @@
   .exam-reminds{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--dim)}
   .exam-reminds label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
   @media (max-width:640px){.exam-card{flex-wrap:wrap}.exam-actions{width:100%;justify-content:flex-end}}
+
+  /* R5-A-05：390px 专属断点——现有最窄 480；390 目标机型（浏览器走查实测下限 443 无法覆盖）
+     侧栏已按 ≤860 收成图标态；这里再收表单/按钮/卡片，避免 390 上挤压与横向滚动 */
+  @media (max-width:420px){
+    main{padding:0 12px 36px}
+    .card{padding:12px}
+    .cardh .hint{white-space:normal;text-align:left}
+    .ratioinputs{grid-template-columns:1fr;gap:6px}
+    .revtool{flex-wrap:wrap}
+    .revtool input[type=search]{width:100%}
+    .act,.inlineBtn{width:100%}
+    .btns{flex-direction:column;align-items:stretch}
+    .btns .act,.btns .inlineBtn{width:100%}
+    .learnnav button{min-width:84px;padding:7px 6px;font-size:12px}
+  }

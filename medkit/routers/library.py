@@ -7,6 +7,7 @@ OCR 复用 MinerU；掌握度/优先级纯本地）。错题结构从押题卷�
 import asyncio
 import json
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -30,6 +31,13 @@ router = APIRouter()
 def _sse(event: str, data: Any) -> str:
     """WP-8：SSE 帧序列化（event + data JSON）。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _stream_error_msg(e: Exception) -> str:
+    """C-06：流式 error 帧统一中文归因——不直出端点/响应片段（与 llm_test 同口径）。"""
+    from ..core.llm import LLMClient
+
+    return LLMClient._test_error_hint(e) if isinstance(e, Exception) else str(e)
 
 
 # ---------------------------------------------------------------- 错题导入 / CRUD
@@ -232,10 +240,12 @@ async def import_image(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(400, "请先在「① 连接服务商」配置 MinerU OCR API Key")
     suffix = Path(file.filename or "").suffix.lower()
     data = await file.read()
-    # R4-13：读后即判上限（200MB）——超限 400 不落盘/不触发 OCR（与 ocr_start 口径一致）
-    from ._common import MAX_FILE_SIZE
-    if len(data) > MAX_FILE_SIZE:
-        raise HTTPException(400, "图片超过 200 MB，请压缩或裁剪后重试")
+    # R4-13/B-02：读后即判上限——图片独立 20MB（OCR 读图），超限 400 不落盘/不触发 OCR
+    from ._common import MAX_IMAGE_BYTES
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(400, "图片超过 20 MB，请压缩或裁剪后重试")
+    if not data.strip():
+        raise HTTPException(400, "文件为空（0 字节或仅空白）——请确认上传了照片/截图")
     if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
         raise HTTPException(400, f"不支持的类型 {suffix}（仅图片）")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
@@ -295,9 +305,14 @@ class ExplainBody(BaseModel):
     use_web: bool = True
 
 
-def _explain_client():
+def _explain_client(cancel: threading.Event | None = None):
     from ..agents import get_client as _gc
-    return _gc("gen")
+    return _gc("gen", cancel=cancel)
+
+
+def _explain_key(body: ExplainBody) -> str:
+    """讲解去重键（guard 早拦截与 gen() 流生命周期锁共用同一把锁）。"""
+    return f"explain:{body.subject}|{body.kp_name}|{body.kp_id}"
 
 
 def _resolve_subject_kp(body: ExplainBody) -> tuple[str, str, list[dict[str, Any]]]:
@@ -461,7 +476,7 @@ def _explain_guard(body: ExplainBody) -> Iterator[None]:
     """R3-21：同知识点「在飞」去重——连点/双标签重复生成 → 409，防双扣费。"""
     from ..core import dedupe
 
-    key = f"explain:{body.subject}|{body.kp_name}|{body.kp_id}"
+    key = _explain_key(body)
     if dedupe.begin(key):
         raise HTTPException(409, "该知识点的讲解正在生成，请稍候查看产物，勿重复提交")
     try:
@@ -521,16 +536,19 @@ def explain(body: ExplainBody, _guard: None = Depends(_explain_guard)) -> dict[s
 
 
 def _explain_start_guard(body: ExplainBody) -> Iterator[None]:
-    """同知识点同契入「在飞」去重（防连点双讲解并发双扣费）。"""
+    """R3-21：同知识点同契入「在飞」去重（防连点双讲解并发双扣费）。
+
+    R5-02/鉴 R4-01：本守卫只做**请求级早拦截**——**窥视**（不登记、不占锁）后 409；
+    真正的「锁持有期 ≡ 流生命周期」由 explain_stream 的 gen() begin/end 保证。
+    不用 begin/end 的原因：本 FastAPI 版本 Depends(yield) 的 teardown 在流完成后才执行，
+    守卫若持锁会与 gen() 内同 key 锁互斥（同一请求自锁）——守卫占锁还会依赖
+    FastAPI 版本行为（把锁放在响应消费侧之外的机制里是脆弱设计）。
+    """
     from ..core import dedupe
 
-    key = f"explain:{body.subject}|{body.kp_name}|{body.kp_id}"
-    if dedupe.begin(key):
+    if dedupe.is_active(_explain_key(body)):
         raise HTTPException(409, "该知识点的讲解正在生成，请稍候查看产物，勿重复提交")
-    try:
-        yield
-    finally:
-        dedupe.end(key)
+    yield
 
 
 @router.post("/api/library/explain/stream")
@@ -539,6 +557,8 @@ def explain_stream(body: ExplainBody,
     """WP-8：SSE 流式讲解（meta → delta* → done/error）；完成才落盘 explains。
 
     保留非流式 /api/library/explain 作为旧客户端/降级路径。
+    R5-02：dedupe 锁在 gen() 首帧前获取、finally 释放（含断连 GeneratorExit）；
+    R5-03：cancel_ev 贯穿「断开 → LLMClient → provider 流」——前端断开即服务端真停。
     """
     from ..agents.medexplain import prepare_explain
 
@@ -547,47 +567,60 @@ def explain_stream(body: ExplainBody,
     hits = expl.retrieve(subject=subject, query=f"{kp_name} {_query_extra(related)}")
     slices_text = expl.slice_text_of(hits)
     search_fn = _resolve_search_fn() if body.use_web else None
-    client = _explain_client()
+    cancel_ev = threading.Event()   # R5-03：断连/结束时置位 → LLMClient 截断 provider 流
+    client = _explain_client(cancel_ev)
     messages, meta = prepare_explain(
         subject, kp_name, slices_text,
         related[0] if related else None,
         web_materials=[], search_fn=search_fn, use_web=body.use_web)
+    key = _explain_key(body)
 
     def gen():
-        yield _sse("meta", {"kp_name": kp_name, "subject": subject,
-                            "grounded": meta["grounded"], "via_web": meta["via_web"]})
-        parts: list[str] = []
+        from ..core import dedupe  # noqa: PLC0415  与 guard 一样的局部导入（惰性）
+
+        # R5-02：锁必须在首帧之前获取——请求级守卫在响应对象返回时已释放，
+        # 这里才是「流正在生成」的真正持有者（R4-01 原方案）。
+        if dedupe.begin(key):
+            yield _sse("error", {"msg": "该知识点的讲解正在生成，请稍候查看产物，勿重复提交"})
+            return
         try:
-            for ev in client.chat_stream(messages, temperature=0.5):
-                if ev.get("canceled"):
-                    yield _sse("canceled", {})
-                    return
-                parts.append(ev.get("delta") or "")
-                if ev["delta"]:
-                    yield _sse("delta", {"text": ev["delta"]})
-        except Exception as e:  # noqa: BLE001  流式失败 → SSE error，不保存产物
-            yield _sse("error", {"msg": str(e)})
-            return
-        content = "".join(parts).strip()
-        if not content:
-            yield _sse("error", {"msg": "模型返回为空，请重试"})
-            return
-        rec = {
-            "id": f"ex_{_new_milli()}",
-            "subject": subject, "kp_name": kp_name,
-            "kp_id": body.kp_id or "",
-            "created_at": _now_iso(), "content": content,
-            "sources": meta.get("sources") or [],
-            "via_web": bool(meta["via_web"]),
-            "grounded": bool(meta["grounded"]),
-            "web_materials": meta.get("web_materials") or [],
-            "related_mistake": (related[0].get("id") if related else "") or "",
-            "slices_used": [h.get("sid") for h in hits],
-        }
-        expl.save_explain(rec)
-        lib.log_knowledge_event(kp_name, "explain",
-                                note=f"{subject} / via_web={rec['via_web']} / stream")
-        yield _sse("done", {"explain": rec, "title": kp_name})
+            yield _sse("meta", {"kp_name": kp_name, "subject": subject,
+                                "grounded": meta["grounded"], "via_web": meta["via_web"]})
+            parts: list[str] = []
+            try:
+                for ev in client.chat_stream(messages, temperature=0.5):
+                    if ev.get("canceled"):
+                        yield _sse("canceled", {})
+                        return
+                    parts.append(ev.get("delta") or "")
+                    if ev["delta"]:
+                        yield _sse("delta", {"text": ev["delta"]})
+            except Exception as e:  # noqa: BLE001  流式失败 → SSE error，不保存产物
+                yield _sse("error", {"msg": _stream_error_msg(e)})   # C-06
+                return
+            content = "".join(parts).strip()
+            if not content:
+                yield _sse("error", {"msg": "模型返回为空，请重试"})
+                return
+            rec = {
+                "id": f"ex_{_new_milli()}",
+                "subject": subject, "kp_name": kp_name,
+                "kp_id": body.kp_id or "",
+                "created_at": _now_iso(), "content": content,
+                "sources": meta.get("sources") or [],
+                "via_web": bool(meta["via_web"]),
+                "grounded": bool(meta["grounded"]),
+                "web_materials": meta.get("web_materials") or [],
+                "related_mistake": (related[0].get("id") if related else "") or "",
+                "slices_used": [h.get("sid") for h in hits],
+            }
+            expl.save_explain(rec)
+            lib.log_knowledge_event(kp_name, "explain",
+                                    note=f"{subject} / via_web={rec['via_web']} / stream")
+            yield _sse("done", {"explain": rec, "title": kp_name})
+        finally:
+            dedupe.end(key)
+            cancel_ev.set()   # R5-03：done/error/canceled/断连 GeneratorExit 全路径置位
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -638,9 +671,14 @@ class TutorAnswerBody(BaseModel):
     user_answer: str = ""
 
 
-def _tutor_client():
+def _tutor_client(cancel: threading.Event | None = None):
     from ..agents import get_client as _gc
-    return _gc("gen")
+    return _gc("gen", cancel=cancel)
+
+
+def _tutor_key(body: TutorStartBody) -> str:
+    """提问会话去重键（guard 早拦截与 gen() 流生命周期锁共用）。"""
+    return f"tutor-start:{body.subject}|{body.kp_name}|{body.kp_id or body.mistake_id}"
 
 
 def _tutor_grounding(subject: str, kp_name: str) -> tuple[str, bool, list[dict[str, Any]]]:
@@ -664,16 +702,16 @@ def _tutor_grounding(subject: str, kp_name: str) -> tuple[str, bool, list[dict[s
 
 
 def _tutor_start_guard(body: TutorStartBody) -> Iterator[None]:
-    """R3-21：同知识点同契入「在飞」去重（防连点双开会话双扣费）。"""
+    """R3-21：同知识点同契入「在飞」去重（防连点双开会话双扣费）。
+
+    R5-02/鉴 R4-01：同 _explain_start_guard——窥视式早拦截，流生命周期锁由
+    tutor_start_stream 的 gen() begin/end 持有（原因见 _explain_start_guard 注释）。
+    """
     from ..core import dedupe
 
-    key = f"tutor-start:{body.subject}|{body.kp_name}|{body.kp_id or body.mistake_id}"
-    if dedupe.begin(key):
+    if dedupe.is_active(_tutor_key(body)):
         raise HTTPException(409, "该知识点的提问会话正在创建，请稍候或直接进入会话，勿重复提交")
-    try:
-        yield
-    finally:
-        dedupe.end(key)
+    yield
 
 
 @router.post("/api/library/tutor/start")
@@ -720,17 +758,27 @@ def tutor_start_stream(body: TutorStartBody,
     subject, kp_name, _ = _resolve_subject_kp(body)
     from ..agents import medtutor as mt
     slices_text, grounded, web_materials = _tutor_grounding(subject, kp_name)
-    client = _tutor_client()
+    cancel_ev = threading.Event()   # R5-03：断连/结束时置位 → LLMClient 截断 provider 流
+    client = _tutor_client(cancel_ev)
     session = tut.start_session(subject, kp_name, body.kp_id or "")
     sid = session["id"]
     qtype = session["current"]["type"]
     messages = mt.build_start_messages(subject, kp_name, session["state"], qtype,
                                        slices_text, web_materials)
+    key = _tutor_key(body)
 
     seeded = False  # R4-04：仅当 seed_first 落定后才保留会话
 
     def gen():
+        from ..core import dedupe  # noqa: PLC0415  与 guard 一样的局部导入（惰性）
+
         nonlocal seeded
+        # R5-02：锁在首帧前获取、finally 释放（含断连 GeneratorExit）——防双会话双扣费
+        if dedupe.begin(key):
+            if not seeded:
+                tut.delete_session(sid)   # 本请求已建会话而未落定（R4-04 同规）→ 清理
+            yield _sse("error", {"msg": "该知识点的提问会话正在创建，请稍候或直接进入会话，勿重复提交"})
+            return
         try:
             yield _sse("meta", {"session_id": sid, "type": qtype,
                                 "grounded": grounded, "kp_name": kp_name})
@@ -743,7 +791,7 @@ def tutor_start_stream(body: TutorStartBody,
                     if ev["delta"]:
                         yield _sse("delta", {"text": ev["delta"]})
             except Exception as e:  # noqa: BLE001
-                yield _sse("error", {"msg": str(e)})
+                yield _sse("error", {"msg": _stream_error_msg(e)})   # C-06
                 return
             question = "".join(parts).strip()
             if not question:
@@ -759,6 +807,8 @@ def tutor_start_stream(body: TutorStartBody,
                                 "grounded": grounded,
                                 "note": "" if grounded else "本知识点未在本地教材中检索到原文——问题由网络素材与模型知识生成（未经教材核实）。"})
         finally:
+            dedupe.end(key)
+            cancel_ev.set()   # R5-03：done/error/canceled/断连 GeneratorExit 全路径置位
             # R4-04：流未落定（错误/取消/空返回）→ 兜底删空会话，不留「无问题」残留
             if not seeded:
                 tut.delete_session(sid)
@@ -956,11 +1006,12 @@ def cards_generate(body: CardsGenerateBody) -> dict[str, Any]:
         drafts = medcards.generate_cards(medcards.make_client(), rec)   # LLMError → 502
         if not drafts:
             raise HTTPException(502, "未能从该讲解生成记忆卡（建议重试或选择更聚焦的知识点）")
-        added = cardlib.create_from_drafts(drafts, rec.get("subject", ""),
-                                           rec.get("kp_name", ""), eid)
+        added, skipped = cardlib.create_from_drafts(drafts, rec.get("subject", ""),
+                                                    rec.get("kp_name", ""), eid)
     finally:
         dedupe.end(key)
-    return {"ok": True, "added": len(added), "cards": added,
+    return {"ok": True, "added": len(added), "skipped": skipped,   # C-09：重复/无效草稿数量反馈
+            "cards": added,
             "total": len(cardlib.list_cards())}
 
 
@@ -1030,7 +1081,11 @@ def cards_export_txt(subject: str = "") -> Any:
 
 @router.get("/api/library/cards/export/apkg")
 def cards_export_apkg(subject: str = "") -> FileResponse:
-    """记忆卡 → Anki 真包（独立「MedKit 记忆卡」牌组；稳定 id 防重复导入）。"""
+    """记忆卡 → Anki 真包（独立「MedKit 记忆卡」牌组；稳定 id 防重复导入）。
+    B-12（查证）: deck_key 用 subject 是**设计决策**——记忆卡是跨项目的个人学习资产
+    （讲解产物→卡，非某项目产物），同名科目跨项目归同一牌组正是复习库视角；
+    去重靠 note guid（含卡 id），无重复导入风险。题库 .apkg（export_apkg）按 pid
+    绑定牌组/guid，项目间天然隔离（测试 test_apkg_same_subject_different_pid_decks）。"""
     cards = cardlib.list_cards(subject)
     if not cards:
         raise HTTPException(404, "暂无记忆卡可导出（先在「讲解与学习产物」生成记忆卡）")

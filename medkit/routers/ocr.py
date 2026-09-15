@@ -16,7 +16,13 @@ from ..core import mineru as mineru_mod
 from ..core.config import resolve_key
 from ..core.mineru import MinerUError
 from ..state import OCR_JOB_DIR, OCR_JOBS, OCR_LOCK, OCR_SEM
-from ._common import MAX_FILE_SIZE, TEXT_SUFFIXES, _mineru_to_result
+from ._common import (
+    IMAGE_SUFFIXES,
+    MAX_FILE_SIZE,
+    MAX_IMAGE_BYTES,
+    TEXT_SUFFIXES,
+    _mineru_to_result,
+)
 
 router = APIRouter()
 
@@ -146,8 +152,14 @@ async def ocr_start(file: UploadFile = File(...),
     if suffix not in TEXT_SUFFIXES:
         raise HTTPException(400, f"不支持的类型 {suffix}（PDF/DOCX/MD/TXT/图片）")
     data = await file.read()
-    if len(data) > MAX_FILE_SIZE:
-        raise HTTPException(400, "文件超过 200 MB，请按章节拆分后重试")
+    if not data.strip():
+        raise HTTPException(400, "文件为空（0 字节或仅空白）——请上传有内容的文档")
+    # B-02：图片独立上限（20MB）——OCR 读图场景与 PDF/DOCX 的 200MB 分开
+    limit = MAX_IMAGE_BYTES if suffix in IMAGE_SUFFIXES else MAX_FILE_SIZE
+    if len(data) > limit:
+        mb = limit // (1024 * 1024)
+        raise HTTPException(400, f"{'图片' if suffix in IMAGE_SUFFIXES else '文件'}超过 {mb} MB"
+                                 f"{'，请压缩或裁剪后重试' if suffix in IMAGE_SUFFIXES else '，请按章节拆分后重试'}")
 
     OCR_JOB_DIR.mkdir(parents=True, exist_ok=True)
     jid = uuid.uuid4().hex[:12]

@@ -152,6 +152,43 @@ def test_paper_answers_declaration_note():
     assert "答案内嵌于本页源码" in out
 
 
+def test_export_paper_xss_escaped_all_fields():
+    """B-11：押题卷全字段统一转义——LLM 产出/审核台改题文本不可注入：
+    ① DOM 拼接层出现转义形态（noscript 列表 / casebar data-case）；
+    ② 脚本数据层不得出现「</script> 逃逸序列」（`</` → `<\\/` 替换生效）。"""
+    payload = '<script>alert(1)</script>'
+    brk = '</script><script>alert(9)</script>'
+    q = {"id": "Q001", "type": "A1", "bloom": "记忆",
+         "question": "最可能的诊断是？" + brk,
+         "options": ["<b>甲</b>" + payload, "乙", "丙", "丁", "戊"],
+         "answer": "A", "analysis": "解析" + payload,
+         "case_id": 'c"><img src=x onerror=alert(2)>', "case_label": "案例" + payload,
+         "source_year": "20" + payload, "subtopic": "考点" + payload}
+    html_ = qb.export_paper_html([q], "押题卷Test", pid="p1")
+    # ① noscript 静态列表：题干/答案转义形态（DOM 层安全；运行时渲染层同样走 esc()）
+    assert "&lt;/script&gt;&lt;script&gt;alert(9)&lt;/script&gt;" in html_, "noscript 应保留转义后的题干"
+    # ② 脚本数据层：'</script>' 逃逸序列（`</` → `<\/`）——原始序列不得完整出现
+    assert "</script><script>alert(9)" not in html_, "脚本数据层不得出现可逃逸的 </script> 序列"
+    assert "<\\/script>" in html_, "`</` 应替换为 `<\\/`（JSON 内嵌防御）"
+    # ③ 首页 title 转义
+    assert "<title>押题卷Test · MedKit</title>" in html_
+
+
+def test_export_paper_filters_no_option_questions():
+    """B-17：判分后改题/重渲染带入无选项题 → 页面数据剔除（JS 侧另有防御过滤），
+    仅提示区保留题号说明。"""
+    bad = {"id": "Q009", "type": "A1", "bloom": "记忆", "subtopic": "x",
+           "question": "无选项题？", "options": [], "answer": "A", "analysis": "a"}
+    html_ = qb.export_paper_html([bad, {"id": "Q001", "type": "A1", "bloom": "记忆", "subtopic": "x",
+                                        "question": "正常题？", "options": ["A", "B", "C", "D", "E"],
+                                        "answer": "A", "analysis": "a"}],
+                                 "押题卷", pid="p1")
+    data_chunk = html_.split('let QUESTIONS = (', 1)[-1].split('];', 1)[0]
+    assert '"Q009"' not in data_chunk, "无选项题不应出现在页面数据（Q009 仅在提示区）"
+    assert '"Q001"' in data_chunk, "正常题应在页面数据中"
+    assert "已从本卷剔除" in html_ and "Q009" in html_, "应提示剔除了无选项题（含题号）"
+
+
 def test_asset_upload_size_limit(tmp_path, monkeypatch):
     """R4-06：上传超限 → 400，且不落盘/不进切片索引（体积限界前置）。"""
     from fastapi.testclient import TestClient
@@ -173,3 +210,69 @@ def test_asset_upload_size_limit(tmp_path, monkeypatch):
     assert "图片过大" in r.json()["detail"], r.text
     assert not (p_root / "demo" / "assets").exists(), "超限上传不应落盘"
     assert not (p_root / "demo" / "slices.json").exists(), "超限上传不应进切片索引"
+
+
+def test_asset_dir_total_quota(tmp_path, monkeypatch):
+    """R5-B-01：assets 累计容量超限 → 400 + 附当前占用/上限；且零磁盘副作用（不建目录/不改索引）。"""
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    from medkit.core import config as cfg
+    from medkit.routers import projects as proj
+
+    p_root = tmp_path / "projects"
+    (p_root / "demo").mkdir(parents=True)
+    real = cfg.load()
+    monkeypatch.setattr(cfg, "load", lambda: {**real, "projects_dir": str(p_root)})
+    # 累计上限压到 PNG 大小 + 2（第一张可入，第二张累计超限）
+    monkeypatch.setattr(proj, "_MAX_ASSETS_TOTAL", len(PNG) + 2)
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+
+    r1 = c.post("/api/projects/demo/assets",
+                files={"file": ("a.png", PNG, "image.png")}, data={"caption": "图1"})
+    assert r1.status_code == 200, r1.text
+    assert (p_root / "demo" / "assets" / "fig_1.png").exists()
+    before = (p_root / "demo" / "slices.json").read_text(encoding="utf-8")
+
+    r2 = c.post("/api/projects/demo/assets",
+                files={"file": ("b.png", PNG, "image.png")}, data={"caption": "图2"})
+    assert r2.status_code == 400, r2.text
+    detail = r2.json()["detail"]
+    assert "总容量超限" in detail and "上限" in detail, detail
+    assert (p_root / "demo" / "assets" / "fig_2.png").exists() is False, "超累计配额不应落盘"
+    assert (p_root / "demo" / "slices.json").read_text(encoding="utf-8") == before, \
+        "超累计配额不应改切片索引"
+
+
+def test_project_delete_failure_is_explicit(tmp_path, monkeypatch):
+    """R5-B-05/15：删除失败（目录残留）→ 显式 500 报错 + 手动清理提示，绝不静默 ok。"""
+    import shutil as sh
+
+    from fastapi.testclient import TestClient
+
+    from medkit import main as m
+    from medkit.core import config as cfg
+    from medkit.routers import projects as proj
+
+    p_root = tmp_path / "projects"
+    (p_root / "p1").mkdir(parents=True)
+    (p_root / "p1" / "meta.json").write_text(
+        '{"pid": "p1", "subject": "儿科"}', encoding="utf-8")
+    real = cfg.load()
+    monkeypatch.setattr(cfg, "load", lambda: {**real, "projects_dir": str(p_root)})
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+
+    real_rmtree = sh.rmtree
+
+    def failing_rmtree(path, ignore_errors=False):  # 模拟删除被打断但未删除
+        raise OSError("拒绝访问")
+
+    monkeypatch.setattr(proj.shutil, "rmtree", failing_rmtree)
+    r = c.delete("/api/projects/p1")
+    assert r.status_code == 500, f"删除失败应显式报错（实为 {r.status_code}: {r.text}）"
+    assert "手动清理" in r.json()["detail"] or "删除失败" in r.json()["detail"], r.json()
+    assert (p_root / "p1").exists(), "失败场景目录应保留（未误删）"
+    monkeypatch.setattr(proj.shutil, "rmtree", real_rmtree)
+    r2 = c.delete("/api/projects/p1")
+    assert r2.status_code == 200 and r2.json()["ok"] is True
+    assert not (p_root / "p1").exists()

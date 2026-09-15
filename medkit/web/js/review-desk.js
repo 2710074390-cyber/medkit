@@ -642,6 +642,12 @@ $("f_preset_import").onchange = async () => {
 const ROLE_LABEL = { textbook: "教材", teacher: "教师重点", exam: "真题", extra: "资料" };
 /* B1：上传类型白名单与后端 TEXT_SUFFIXES 对齐（.bmp 后端支持但 accept 未列 → 补上；.doc 不支持） */
 const UP_OK_EXT = ["pdf", "docx", "md", "markdown", "txt", "text", "png", "jpg", "jpeg", "webp", "bmp"];
+/* A-11：MIME 白名单（拖拽/选择共用）——扩展名只防「类型不对」，MIME 再挡一层
+   「改扩展名的伪文件」（如 exe 改名 .png）；octet-stream/空 MIME 视为未知放行（部分浏览器不给） */
+const UP_OK_MIME = new Set(["application/pdf", "text/markdown", "text/plain", "text/x-markdown",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif",
+  "application/octet-stream"]);
 ["textbook", "teacher", "exam", "extra"].forEach(role => {
   const dz = $("dz_" + role), input = $("f_" + role);
   input.onchange = () => { addFiles(role, [...input.files]); input.value = ""; };
@@ -664,6 +670,12 @@ function addFiles(role, files) {
     const ext = (f.name || "").split(".").pop().toLowerCase();
     if (ext && !UP_OK_EXT.includes(ext)) {
       toast(`「${f.name}」类型不支持（支持 PDF/DOCX/MD/TXT/图片 png·jpg·webp·bmp），已跳过`, false);
+      continue;
+    }
+    // A-11：MIME 检查（扩展名之外的伪文件防线；未知/缺省 MIME 放行，不误伤）
+    const mime = (f.type || "").toLowerCase();
+    if (mime && !UP_OK_MIME.has(mime) && !mime.startsWith("text/")) {
+      toast(`「${f.name}」文件内容类型可疑（${f.type}），已跳过——请确认是支持的文档/图片后重试`, false);
       continue;
     }
     list.push({ name: f.name, size: f.size, file: f });
@@ -1034,7 +1046,10 @@ $("btn_sess").onclick = async () => {
     loadSessions();
   } catch (e) { toast(e.message, false); }
 };
-/* 项目配置模板：subject/exam/target/题型配比/Bloom/旋钮/附加要求 一键存/取 */
+/* 项目配置模板：subject/exam/target/题型配比/Bloom/旋钮/附加要求 一键存/取
+   A-01（R5）：键必须含作用域（本仓库「localStorage 键含 pid」约定）——medkit-tpl-<pid>，
+   避免 A 项目存的模板被应用到 B 项目（跨项目参数污染）；新建课题表单用 __new__ 作用域 */
+function tplKey() { return "medkit-tpl-" + (currentPid || "__new__"); }
 $("btn_tpl_save").onclick = () => {
   try {
     const tpl = {
@@ -1044,14 +1059,14 @@ $("btn_tpl_save").onclick = () => {
       knobs: { difficulty: $("k_difficulty").value, analysis_style: $("k_analysis").value, stem_style: $("k_stem").value },
       requirements: $("requirements").value,
     };
-    localStorage.setItem("medkit-tpl-project", JSON.stringify(tpl));
-    toast("已存为项目模板（配比/Bloom/旋钮/附加要求）");
+    localStorage.setItem(tplKey(), JSON.stringify(tpl));
+    toast(currentPid ? "已存为项目模板（仅作用于本项目）" : "已存为项目模板（仅作用于新建课题）");
   } catch (e) { toast(e.message, false); }
 };
 $("btn_tpl_apply").onclick = async () => {
   try {
-    const t = JSON.parse(localStorage.getItem("medkit-tpl-project") || "null");
-    if (!t) { toast("还没有保存过模板", false); return; }
+    const t = JSON.parse(localStorage.getItem(tplKey()) || "null");
+    if (!t) { toast(currentPid ? "本项目还没有模板" : "还没有新建课题模板", false); return; }
     if (t.subject) $("subject").value = t.subject;
     if (t.exam) $("exam").value = t.exam;
     if (t.target) { $("target").value = t.target; }
@@ -1290,9 +1305,10 @@ function fmtClock(iso) {
 }
 function renderStepper(stage, progress) {
   const cur = stepIdx(stage);
+  // A-02：pct 钳制到 0~100（NaN/负数/超 100 的异常进度值不再画出超宽/负宽进度条）
+  const pct = progress ? Math.min(100, Math.max(0, Number(progress.pct) || 0)) : 0;
   let subStr = "", desc = "";
   if (progress) {
-    const pct = progress.pct || 0;
     subStr = progress.sub_total
       ? ` · ${esc(progress.sub || "子任务")} ${progress.sub_done || 0}/${progress.sub_total}`
       : (progress.sub ? ` · ${esc(progress.sub)}` : "");
@@ -1303,8 +1319,8 @@ function renderStepper(stage, progress) {
     `<span class="stp ${i === cur ? "cur" : i < cur ? "done" : ""}">${s[1]}</span>`).join("")
     + `<span class="stp ${cur >= STEPS.length ? "done" : ""}">完成</span>`
     + (progress ? `<div style="flex:1;min-width:180px">
-        <div class="pvbar"><i style="width:${progress.pct || 0}%"></i></div>
-        <div id="pvtext">${desc} · ${progress.pct || 0}%${subStr}`
+        <div class="pvbar"><i style="width:${pct}%"></i></div>
+        <div id="pvtext">${desc} · ${pct}%${subStr}`
         + (progress.updated ? ` · 更新 ${fmtClock(progress.updated)}` : "") + `</div>
       </div>` : "");
 }
@@ -1569,8 +1585,11 @@ $("btn_delete").onclick = () => {
 /* ---- 迭代4：逐题审核台 */
 $("btn_review").onclick = () => openReview();
 let reviewState = { questions: [], keep: null, drop: new Set(), edits: {}, dirty: false,
-                    select: new Set(),
+                    select: new Set(), hideDropped: false,
                     filter: { q: "", type: "", bloom: "", year: "" } };
+let revSaving = false;   // A-03：保存中标志（跨越 openReview 重渲染窗口，防双击双保存）
+/* A-06：「隐藏已剔除」视图偏好——随 pid 持久化（刷新/重开不再回弹），不入 dirty（不影响产物） */
+function revHideKey() { return "medkit-rev-hide-" + (currentPid || "__new__"); }
 /* 审核台脏状态守卫：切主 tab / 换项目 / 刷新关闭都要确认（防未保存修改静默丢失） */
 function reviewDirtyGuard() {
   if (reviewState.dirty && !confirm("审核台有未保存的修改（剔除/编辑/重掷尚未保存），确定离开？修改将丢失。")) return false;
@@ -1686,16 +1705,22 @@ function renderReview(scrollToId = null) {
       </span>
       <button class="act gray" id="rev_keepall" style="padding:8px 14px;font-size:12.5px">全部保留</button>
       <button class="act gray" id="rev_dropall" style="padding:8px 14px;font-size:12.5px;color:#f87171">全部剔除</button>
-      <button class="act" id="rev_save" ${reviewState.dirty ? "" : "disabled"} style="margin-left:auto">保存并重渲染</button>
+      <button class="act" id="rev_save" style="margin-left:auto">保存并重渲染</button>
       <button class="act gray" id="rev_refresh">刷新</button>
       <button class="act gray" id="rev_hide">隐藏已剔除</button>
     </div>
     <div id="rev_list"></div>
   </div>`;
   const list = $("rev_list");
+  // A-06：恢复本项目的「隐藏已剔除」偏好（刷新/重开持久化；默认未隐藏）
+  try { reviewState.hideDropped = localStorage.getItem(revHideKey()) === "1"; }
+  catch (e) { /* ignore */ }
+  if (reviewState.hideDropped) list.classList.add("hide-dropped");
+  $("rev_hide").textContent = reviewState.hideDropped ? "显示已剔除" : "隐藏已剔除";
   $("rev_hide").onclick = () => {
-    const hidden = list.classList.toggle("hide-dropped");
-    $("rev_hide").textContent = hidden ? "显示已剔除" : "隐藏已剔除";
+    reviewState.hideDropped = list.classList.toggle("hide-dropped");
+    $("rev_hide").textContent = reviewState.hideDropped ? "显示已剔除" : "隐藏已剔除";
+    try { localStorage.setItem(revHideKey(), reviewState.hideDropped ? "1" : "0"); } catch (e) { /* ignore */ }
   };
   $("rev_refresh").onclick = () => {
     if (reviewState.dirty) {
@@ -1968,48 +1993,60 @@ function renderReview(scrollToId = null) {
     updBatch();
   };
   updBatch();
+  // A-13：按钮禁用态统一以「运行时状态」为准（模板不再内联 disabled——模板与运行时可能不同步）
+  $("rev_save").disabled = !reviewState.dirty;
   $("rev_save").onclick = async () => {
-    // B10：答案键校验未通过的编辑不允许保存（防单选/多选键错乱污染产物与判分）
-    const bad = Object.entries(reviewState.edits)
-      .filter(([k, v]) => v._answerInvalid && !reviewState.drop.has(k));
-    if (bad.length) {
-      const first = bad[0][0];
-      toast(`答案键校验未通过（如 ${first}），请修正后再保存`, false);
-      const el = document.querySelector(`.revq[data-qid="${CSS.escape(first)}"]`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-    const keep = qs.map(x => x.id).filter(id => !reviewState.drop.has(id));
-    // C-10/R3-14：保留 0 题 → 弹确认说明并中止（后端拒绝保存空题库；剔除意图不再静默蒸发）
-    if (qs.length && !keep.length) {
-      confirmModal("无法保存空题库",
-        "<p>你将剔除全部题目（后端拒绝保存空题库）。<br>请至少保留一题；整卷作废请到「我的项目」删除项目。</p>",
-        "知道了", null, false);
-      return;
-    }
-    const edits = Object.entries(reviewState.edits).filter(([k, v]) => k !== "drop" && v && Object.keys(v).some(x => !x.startsWith("_")) && !reviewState.drop.has(k))
-      .map(([id, v]) => {
-        const clean = { id };
-        ["question", "options", "answer", "analysis", "bloom", "type", "subtopic"].forEach(f => {
-          if (v[f] !== undefined) clean[f] = (f === "answer" ? normAnswer(v[f]) : v[f]);   // C-11：存紧凑形式 BD
-        });
-        return clean;
-      });
-    const btn = $("rev_save");
-    btn.disabled = true; btn.textContent = "保存中…";
+    // A-03：保存中标志——双保存窗口不只看按钮 disabled（重渲染会重建按钮），
+    // 模块级 saving 从点击一直守到 showProject 完成后才能再次点击
+    if (revSaving) return;
+    revSaving = true;
     try {
+      // B10：答案键校验未通过的编辑不允许保存（防单选/多选键错乱污染产物与判分）
+      const bad = Object.entries(reviewState.edits)
+        .filter(([k, v]) => v._answerInvalid && !reviewState.drop.has(k));
+      if (bad.length) {
+        const first = bad[0][0];
+        toast(`答案键校验未通过（如 ${first}），请修正后再保存`, false);
+        const el = document.querySelector(`.revq[data-qid="${CSS.escape(first)}"]`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      const keep = qs.map(x => x.id).filter(id => !reviewState.drop.has(id));
+      // C-10/R3-14：保留 0 题 → 弹确认说明并中止（后端拒绝保存空题库；剔除意图不再静默蒸发）
+      if (qs.length && !keep.length) {
+        confirmModal("无法保存空题库",
+          "<p>你将剔除全部题目（后端拒绝保存空题库）。<br>请至少保留一题；整卷作废请到「我的项目」删除项目。</p>",
+          "知道了", null, false);
+        return;
+      }
+      const edits = Object.entries(reviewState.edits).filter(([k, v]) => k !== "drop" && v && Object.keys(v).some(x => !x.startsWith("_")) && !reviewState.drop.has(k))
+        .map(([id, v]) => {
+          const clean = { id };
+          ["question", "options", "answer", "analysis", "bloom", "type", "subtopic"].forEach(f => {
+            if (v[f] !== undefined) clean[f] = (f === "answer" ? normAnswer(v[f]) : v[f]);   // C-11：存紧凑形式 BD
+          });
+          return clean;
+        });
+      const btn = $("rev_save");
+      btn.disabled = true; btn.textContent = "保存中…";
       // B15：明示重渲染范围（题库/押题卷/手册/Anki/.apkg），避免大批量保存时误以为卡死
       $("rev_filter_cnt").textContent = "正在重渲染 5 项产物（题库 MD/HTML · 押题卷 · 复习手册 · Anki）…";
       await api("/api/projects/" + currentPid + "/questions/review", { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keep: keep, drop: [], edits: edits }) });
       toast("已保存并重渲染全部产物");
-      await openReview();
+      await openReview();       // 重建审核台（新按钮按 A-13 以 !dirty 状态还原）
       await showProject(currentPid);
+      // A-03：重渲染全部完成后才允许再次保存
+      const b2 = $("rev_save");
+      if (b2) { b2.disabled = !reviewState.dirty; }
     } catch (e) {
       toast(e.message, false);
-      btn.disabled = false; btn.textContent = "保存并重渲染";
+      const btn = $("rev_save");
+      if (btn) { btn.disabled = false; btn.textContent = "保存并重渲染"; }
       applyReviewFilter();   // B33：失败后还原「正在重渲染…」状态文案（恢复筛选计数）
+    } finally {
+      revSaving = false;
     }
   };
   applyReviewFilter();

@@ -23,6 +23,12 @@ def begin(key: str) -> bool:
         return False
 
 
+def is_active(key: str) -> bool:
+    """非持有式窥视：key 当前是否在飞（供请求级早拦截——不登记、不占锁）。"""
+    with _GUARD:
+        return key in _ACTIVE
+
+
 def end(key: str) -> None:
     with _GUARD:
         _ACTIVE.discard(key)

@@ -534,6 +534,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                     syllabus_text = (syllabus_text + "\n\n# 官方 306 补充大纲（仅补充，考点以教师重点为准）\n"
                                      + official_text)[:1200]
                     official_note = f" + 官方306补充 {len(official_text)} 字"
+            if not syllabus_text.strip():
+                # B-08：仅官方大纲、无教师重点 → 以官方大纲为主锚（否则生成零锚定，考点全凭模型）
+                fallback = syl.chapter_items_text(subject, limit=800, source="seed")
+                if fallback.strip():
+                    syllabus_text = fallback
+                    official_note = "（教师重点为空，以官方 306 大纲为主锚）"
     except Exception:  # noqa: BLE001  大纲引擎故障不阻塞出题
         syllabus_text = ""
     if syllabus_text:
@@ -799,6 +805,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     if dropped_img:
         _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题"
              f"（image_ref 不在素材清单：{'、'.join(str(x) for x in dropped_img[:5])}）")
+    non_action_flagged = False   # B-18：非定向核查项只留痕一次（避免每轮重复写清单）
     for round_i in range(1, FIX_ROUNDS_GATE + 2):
         if cancel.is_set():   # B24：门禁循环轮次间可取消
             return _cancel_out(base, meta_path, done_sids, questions)
@@ -858,14 +865,28 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         (base / "质检报告").mkdir(exist_ok=True)
         (base / "质检报告" / f"gate1_round{round_i}.json").write_text(
             json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not fails and not dup_issues:
-            _log(base, f"  门禁① 通过（warn {len(all_issues)} 条）")
+        # B-18：区分「可定向修复」（有真实 q_id）与「非定向核查项」（比例级 Bloom
+        # q_id='BLOOM' 等哨兵——MedFix 按 issue 序号找不到原题，修复必然是空转白烧 token）：
+        # 非定向项只留痕一次（人工复核清单 + log），不参与 MedFix 循环与后续剔除
+        _qids = {q.get("id") for q in questions if q.get("id")}
+        actionable = [x for x in fails + dup_issues if x.get("q_id") in _qids]
+        non_action = [x for x in fails + dup_issues if x.get("q_id") not in _qids]
+        if non_action and not non_action_flagged:
+            non_action_flagged = True
+            _log(base, f"  门禁① {len(non_action)} 条非定向核查项（比例级/无 q_id），"
+                       f"不触发 MedFix，转人工复核："
+                       f"{'、'.join(str(x.get('code', '?')) for x in non_action[:6])}")
+            _append_manual_section(base, "门禁① 非定向核查项（B-18）",
+                                   [f"第 {round_i} 轮「{x.get('code', '?')}」：{x.get('reason', '')}"
+                                    for x in non_action[:10]])
+        if not actionable:
+            _log(base, f"  门禁① 可定向问题已清除（warn {len(all_issues)} 条 / 非定向 {len(non_action)} 条）")
             break
-        to_fix = fails + dup_issues
+        to_fix = actionable
         if round_i <= FIX_ROUNDS_GATE:
             if cancel.is_set():   # B24：修复轮开始前可取消（单次修复调用期间的取消由 LLM 层流式退出接管）
                 return _cancel_out(base, meta_path, done_sids, questions)
-            _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} → MedFix 修复第 {round_i} 轮…")
+            _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} → MedFix 修复第 {round_i} 轮…（可定向 {len(to_fix)} 条）")
             for _i, iss in enumerate(to_fix):
                 _qid = str(iss.get("q_id") or f"issue{_i + 1}")
                 _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}", "running",
@@ -896,7 +917,33 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                     by_id[fq["id"]] = fq
             questions = list(by_id.values())
         else:
-            _log(base, f"  门禁① 修复轮次用尽，仍剩 {len(fails)} fail → 保留并转人工复核清单")
+            # B-14：修复轮次用尽——未达标（可定向 fail）题不再随流进入产物：
+            # 剔除 + 人工复核清单留痕（产物计数随 questions 长度自然同步）；
+            # 极端情形（全剔空题库）→ 显式豁免留痕，避免空题库死循环
+            drop_ids = sorted({x["q_id"] for x in actionable
+                               if x.get("severity") == "fail"})
+            alive = [q for q in questions if q.get("id") not in set(drop_ids)]
+            if drop_ids and alive:
+                _substep(base, "gate1", "fail-drop", f"剔除 {len(drop_ids)} 道未修复 fail 题",
+                         "done", f"修复 {FIX_ROUNDS_GATE} 轮用尽后仍未达标 → 转人工复核（B-14）")
+                _reasons = {x.get("q_id"): x.get("reason", "") for x in actionable
+                            if x.get("severity") == "fail"}
+                _append_manual_section(
+                    base, "门禁① fail 题剔除（B-14）",
+                    [f"修复 {FIX_ROUNDS_GATE} 轮后仍未达标：{len(drop_ids)} 道",
+                     f"题号：{'、'.join(f'**{x}**' for x in drop_ids[:20])}"
+                     + ("…" if len(drop_ids) > 20 else ""),
+                     "未通过原因：",
+                     *[f"  {qid}：{_reasons.get(qid, '')}" for qid in drop_ids[:10]],
+                     "已从产物剔除；如需保留请人工修改题干/选项后重新生成。"])
+                _log(base, f"  门禁① 修复轮次用尽，{len(drop_ids)} 道 fail 已剔除并转人工复核")
+                questions = alive
+            else:
+                _append_manual_section(
+                    base, "门禁① 未达标保留（B-14 豁免留痕）",
+                    [f"修复轮用尽仍有 {len(drop_ids)} 道未达标——全部剔除将致空题库，"
+                     "保留并留痕待人工复核。", "人工复核修改后再重新生成。"])
+                _log(base, f"  门禁① 修复轮次用尽，{len(drop_ids)} 道 fail 豁免保留（空题库保护）")
             break
     (base / "中间产物" / "questions_gate1.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")

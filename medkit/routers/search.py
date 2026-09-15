@@ -41,7 +41,8 @@ def _search_error_hint(e: Exception) -> str:
     if "403" in s or "forbidden" in s:
         return "无权限（403）——请检查 Key 权限/账户状态"
     if "timeout" in s or "timed out" in s:
-        return "连接超时——网络不可达或后端响应慢，请稍后重试"
+        # C-08：明确单次上限（2026-09-01 已放宽到 75s——DeepSeek Responses 实测 20~60s）
+        return "连接超时（单次网络检索上限 75 秒）——网络不可达或后端响应慢，请稍后重试"
     if "connection" in s or "getaddrinfo" in s or "connect" in s or "network" in s:
         return "网络不可达——请检查本机网络或后端地址"
     if "400" in s:

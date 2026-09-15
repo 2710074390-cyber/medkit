@@ -212,6 +212,10 @@ def grade(cid: str, quality: int) -> Optional[dict[str, Any]]:
 
 
 def delete_card(cid: str) -> bool:
+    """删除一张复习卡（仅移出复习队列；C-14：**不影响**知识点掌握度计数——
+    掌握度由错题/判分事件驱动（lib.record_review/record_quiz），复习卡只是「排期视图」；
+    知识点计数口径见 lib 掌握度状态机，删除卡不会回退 score/attempts。
+    需要整卡清理走 delete_by_subject（科目删除）/delete_by_kp（已掌握清同名）。"""
     with _store() as st:
         cards = st["cards"]
         remains = [c for c in cards if c.get("id") != cid]

@@ -48,22 +48,24 @@ def _drafts(n: int = 4) -> list[dict]:
 
 # ---------------------------------------------------------------- 入库与幂等
 def test_create_from_drafts_idempotent(iso):
-    added = cardlib.create_from_drafts(_drafts(4), "儿科学", "生长发育", "exp_1")
-    assert len(added) == 4
+    added, skipped = cardlib.create_from_drafts(_drafts(4), "儿科学", "生长发育", "exp_1")
+    assert len(added) == 4 and skipped == 0
     for c in added:
         assert c["kind"] == "value" and c["sched"] == "fsrs"
         assert c["state"] == "new" and c["review_log"] == []
-    # 幂等：同 source+kp+front 不再新增
-    assert cardlib.create_from_drafts(_drafts(4), "儿科学", "生长发育", "exp_1") == []
+    # 幂等：同 source+kp+front 不再新增（C-09：skipped 反馈重复数）
+    added2, skipped2 = cardlib.create_from_drafts(_drafts(4), "儿科学", "生长发育", "exp_1")
+    assert added2 == [] and skipped2 == 4
     # 不同 explain（source 不同）→ 新卡
-    assert len(cardlib.create_from_drafts(_drafts(4), "儿科学", "生长发育", "exp_2")) == 4
+    added3, _ = cardlib.create_from_drafts(_drafts(4), "儿科学", "生长发育", "exp_2")
+    assert len(added3) == 4
     assert len(cardlib.list_cards()) == 8
     assert len(cardlib.list_cards(due_only=True)) == 8       # new 卡 today due
     assert len(cardlib.list_cards(subject="内科学")) == 0
 
 
 def test_create_from_drafts_sm2_binding(iso):
-    added = cardlib.create_from_drafts(_drafts(2), "生理学", "体液", "exp_3", sched="sm2")
+    added, skipped = cardlib.create_from_drafts(_drafts(2), "生理学", "体液", "exp_3", sched="sm2")
     assert all(c["sched"] == "sm2" for c in added)
 
 
@@ -71,7 +73,7 @@ def test_create_from_drafts_sm2_binding(iso):
 def test_fsrs_grade_advances_due(iso, monkeypatch):
     from freezegun import freeze_time
 
-    cards = cardlib.create_from_drafts(_drafts(1), "内科学", "心衰", "exp_4")
+    cards, _ = cardlib.create_from_drafts(_drafts(1), "内科学", "心衰", "exp_4")
     cid = cards[0]["id"]
     with freeze_time("2026-08-27 09:00:00"):
         c1 = cardlib.grade_card(cid, 3)      # Good
@@ -115,8 +117,10 @@ def test_sm2_legacy_parity(iso):
 
 
 def test_switch_algo_affects_new_cards_only(iso):
-    c_fsrs = cardlib.create_from_drafts(_drafts(1), "内科学", "心衰", "exp_5", sched="fsrs")[0]
-    c_sm2 = cardlib.create_from_drafts(_drafts(1), "内科学", "心衰", "exp_6", sched="sm2")[0]
+    c_fsrs, _ = cardlib.create_from_drafts(_drafts(1), "内科学", "心衰", "exp_5", sched="fsrs")
+    c_sm2, _ = cardlib.create_from_drafts(_drafts(1), "内科学", "心衰", "exp_6", sched="sm2")
+    c_fsrs = c_fsrs[0]
+    c_sm2 = c_sm2[0]
     cardlib.grade_card(c_fsrs["id"], 3)
     cardlib.grade_card(c_sm2["id"], 3)
     a = cardlib.get_card(c_fsrs["id"])

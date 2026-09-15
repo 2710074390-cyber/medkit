@@ -183,7 +183,9 @@ def llm_test(body: TestBody) -> dict[str, Any]:
         ok, msg = client.test()
         return {"ok": ok, "msg": msg}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "msg": str(e)}
+        # C-07：llm_test 异常分支统一归一（与 llm_models/R4-15 同口径）——
+        # 不回显可能含 base_url/响应片段的原始异常串，给可操作中文原因
+        return {"ok": False, "msg": LLMClient._test_error_hint(e)}
 
 
 class ModelsBody(BaseModel):

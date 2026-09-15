@@ -83,7 +83,12 @@ class _FakeUpload:
 
 def _run_async(coro_fn):
     """在独立线程执行协程——兼容浏览器层同进程（主线程可能已有事件循环运行，
-    直接 asyncio.run 会抛「cannot be called from a running event loop」）。"""
+    直接 asyncio.run 会抛「cannot be called from a running event loop」）。
+
+    R6-01：同一机制的规范入口已收敛到 `tests/conftest.py` 的 `run_coro` fixture
+    （见 `_run_coro_in_thread` 的成因说明）。新用例请优先用 fixture；本函数保留以
+    避免改动既有调用点，后续统一时删除。
+    """
     import concurrent.futures as cf
 
     def _target():
@@ -100,12 +105,12 @@ def test_import_image_size_limit(monkeypatch, tmp_path):
     cfg_file.write_text(json.dumps({"mineru": {"api_key": "k"}}, ensure_ascii=False),
                         encoding="utf-8")
     monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
-    # R4-13：读后即判（上限常量在 _common 单源；此处压缩到 8 字节模拟超限）
-    monkeypatch.setattr(_common, "MAX_FILE_SIZE", 8)
+    # R4-13/B-02：读后即判——图片走独立上限 MAX_IMAGE_BYTES（20MB）；此处压到 8 字节模拟超限
+    monkeypatch.setattr(_common, "MAX_IMAGE_BYTES", 8)
     with pytest.raises(HTTPException) as ei:
         _run_async(lambda: lib_router.import_image(_FakeUpload(b"x" * 100)))
     assert ei.value.status_code == 400
-    assert "200 MB" in str(ei.value.detail)
+    assert "20 MB" in str(ei.value.detail)
 
 
 def test_import_image_rejects_bad_suffix(monkeypatch, tmp_path):

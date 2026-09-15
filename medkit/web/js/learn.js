@@ -1,7 +1,9 @@
 /* ---- ④ 学习中心（v0.7 M1/M2：错题本 + 掌握度诊断） ---- */
-/* R4-02 流式取消：在途 AbortController（声明前置——showLearnView 在脚本求值期即可能被
-   initLearnView 调用，置于声明行前会触发 let TDZ ReferenceError，中断整个学习中心脚本） */
-let _sseAbort = null;
+/* R4-02 流式取消：在途 AbortController 按入口（anchorId）登记——A-16：讲解/提问可并发生成时
+   互不误杀（旧实现单 _sseAbort + 全局单按钮，sseStopUI 先清上一处=先杀并发流；且声明前置
+   （showLearnView 在脚本求值期即可能被 initLearnView 调用，置于声明行前会触发 let TDZ
+   ReferenceError，中断整个学习中心脚本）——Map 为 const，无 TDZ 问题 */
+const sseAborts = new Map();   // anchorId → AbortController（在途流式）
 const LEARN_STATE = { weak: "待加强", shaky: "需复习", solid: "较熟练", mastered: "已掌握" };
 function learnChip(state) {
   const txt = LEARN_STATE[state] || state || "未知";
@@ -593,22 +595,30 @@ async function consumeSSE(res, onEvent) {
   }
 }
 /* R4-02：流式 SSE（讲解/提问）的取消支持——AbortController +「停止生成」按钮 + 切视图/切 tab 即中断。
-   _sseAbort 保存当前在途流式的 AbortController（声明见文件头，初始化前置防 TDZ）；
-   abort() 使 fetch/reader 抛 AbortError，由消费方 catch 处理为「已停止生成（未保存）」。 */
+   A-16：按 anchorId 登记在途 AbortController——多个入口可并发生成：sseAbort(anchorId) 只杀本入口，
+   sseAbortAll()（切视图/切 tab）杀全部并清全部按钮；abort() 使 fetch/reader 抛 AbortError，
+   由消费方 catch 处理为「已停止生成（未保存）」。 */
 function sseAbortAll() {
-  if (_sseAbort) { try { _sseAbort.abort(); } catch (e) { /* ignore */ } _sseAbort = null; }
-  const sb = document.getElementById("sse_stop_btn");
+  for (const [, c] of sseAborts) { try { c.abort(); } catch (e) { /* ignore */ } }
+  sseAborts.clear();
+  document.querySelectorAll(".sse_stop_btn").forEach(b => b.remove());
+}
+function sseAbort(anchorId) {
+  const c = sseAborts.get(anchorId);
+  if (c) { try { c.abort(); } catch (e) { /* ignore */ } }
+  sseAborts.delete(anchorId);
+  const sb = document.getElementById("sse_stop_btn_" + anchorId);
   if (sb) sb.remove();
 }
 function sseStopUI(anchorId) {
-  sseAbortAll();   // 清理上一处残留按钮/在途流式
+  sseAbort(anchorId);   // 只清同入口残留（并发入口互不误杀：A-16）
   const anchor = document.getElementById(anchorId);
   if (!anchor || !anchor.parentElement) return;
   const sb = document.createElement("button");
-  sb.id = "sse_stop_btn"; sb.className = "mini-btn danger";
+  sb.id = "sse_stop_btn_" + anchorId; sb.className = "mini-btn danger sse_stop_btn";
   sb.textContent = "■ 停止生成";
   sb.title = "中止本次 AI 生成（未完成的内容不保存）";
-  sb.onclick = (e) => { e.preventDefault(); e.stopPropagation(); sseAbortAll(); };
+  sb.onclick = (e) => { e.preventDefault(); e.stopPropagation(); sseAbort(anchorId); };
   anchor.parentElement.insertBefore(sb, anchor.nextSibling);
 }
 /* C12：讲解答题等操作后刷新概览（保持当前科目口径；失败静默） */
@@ -1487,11 +1497,11 @@ async function expGenerate() {
   let streamed = false;
   try {
     // R4-02：AbortController +「停止生成」按钮；停止点触发 abort() → fetch 抛 AbortError
-    // 注意顺序：sseStopUI 内部先 sseAbortAll() 清理上一处残留——必须【先清后挂】，
+    // 注意顺序：sseStopUI 先清本入口残留（sseAbort）——必须【先清后挂】，
     // 否则新建的 controller 会被自己立即 abort（fetch 未发出即 AbortError）。
     const abort = new AbortController();
     sseStopUI("btn_exp_gen");
-    _sseAbort = abort;
+    sseAborts.set("btn_exp_gen", abort);   // A-16：按入口登记（多入口并发生成互不误杀）
     const res = await fetch("/api/library/explain/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload), signal: abort.signal });
@@ -1499,8 +1509,8 @@ async function expGenerate() {
     if (!res.ok || !ct.includes("text/event-stream")) throw new Error("stream-unavailable");
     streamed = true;
     let text = "", done = false;
-    try {
-      await consumeSSE(res, (ev, data) => {
+    // A-08：内层不再 finally 清 UI——按钮/controller 清理统一在外层 finally
+    await consumeSSE(res, (ev, data) => {
         if (ev === "delta") {
           text += data.text || "";
           if (live) { live.innerHTML = expMd(text) + '<span class="caret"></span>'; live.scrollTop = live.scrollHeight; }
@@ -1522,7 +1532,6 @@ async function expGenerate() {
           done = true; $("exp_cost").textContent = "已停止生成（未保存）";
         }
       });
-    } finally { sseAbortAll(); }   // 正常结束/断流/停止后统一清掉按钮与在途 controller
     if (!done && !text) { $("exp_cost").textContent = "流式接口未返回内容"; }
   } catch (e) {
     // R4-03：断流/取消/出错一律【不再】回退非流式接口，避免与流式并发导致二次扣费；
@@ -1546,7 +1555,10 @@ async function expGenerate() {
         refreshOverviewIfAny();
       } catch (e2) { toast(e2.message, false); $("exp_cost").textContent = ""; }
     }
-  } finally { btn.textContent = old; btn.disabled = false; if (live) live.style.display = "none"; }
+  } finally {
+    sseAbortAll();   // A-08：统一清理（按钮 + 在途 controller）
+    btn.textContent = old; btn.disabled = false; if (live) live.style.display = "none";
+  }
 }
 async function expExport() {
   const subject = $("exp_subject").value;
@@ -1599,8 +1611,8 @@ async function expCards(btnOrEid, subject) {
     const r = await api("/api/library/cards/generate", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ explain_id: eid }) });
-    toast(r.added ? `已生成 ${r.added} 张医学记忆卡（复习计划「🧠 医学记忆卡」可见）`
-                  : "记忆卡已存在（幂等，未新增）");
+    toast(r.added ? `已生成 ${r.added} 张医学记忆卡${r.skipped ? `（跳过重复/无效 ${r.skipped} 张）` : ""}（复习计划「🧠 医学记忆卡」可见）`
+                  : `记忆卡已存在（幂等，未新增${r.skipped ? `；跳过重复/无效 ${r.skipped} 张` : ""}）`);
     // C19：用「生成卡时的讲解科目」刷新（复习视图过滤可能不含新卡 → 切到对应科目可见）
     const target = subject || rvSubject;
     if (typeof loadReviewCtx === "function") loadReviewCtx(target);
@@ -1810,10 +1822,10 @@ async function tutorStart() {
   let streamed = false;
   try {
     // R4-02：AbortController +「停止生成」按钮；停止→abort()→fetch 抛 AbortError（会话由后端兜底撤销）
-    // 顺序同 expGenerate：sseStopUI 先清上一处残留（sseAbortAll），再挂新 controller。
+    // 顺序同 expGenerate：sseStopUI 先清本入口残留，再挂新 controller（A-16 按入口登记）。
     const abort = new AbortController();
     sseStopUI("btn_tu_start");
-    _sseAbort = abort;
+    sseAborts.set("btn_tu_start", abort);
     const res = await fetch("/api/library/tutor/start/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload), signal: abort.signal });
@@ -1821,8 +1833,8 @@ async function tutorStart() {
     if (!res.ok || !ct.includes("text/event-stream")) throw new Error("stream-unavailable");
     streamed = true;
     let question = "", done = false;
-    try {
-      await consumeSSE(res, (ev, data) => {
+    // A-08：清理统一在外层 finally
+    await consumeSSE(res, (ev, data) => {
         if (ev === "delta") { question += data.text || ""; if (live) live.textContent = question; }
         else if (ev === "done") {
           done = true;
@@ -1838,7 +1850,6 @@ async function tutorStart() {
           done = true; $("tutor_cost").textContent = "已停止出题（会话已撤销）";
         }
       });
-    } finally { sseAbortAll(); }   // 正常/断流/停止后统一清掉按钮与在途 controller
     if (!done && !question) { $("tutor_cost").textContent = "流式接口未返回内容"; }
   } catch (e) {
     // R4-03：断流/取消/出错【不再】回退非流式起点，避免二次扣费；仅流式接口本身不可用才回退
@@ -1860,7 +1871,10 @@ async function tutorStart() {
         tutorShowConversation();
       } catch (e2) { toast(e2.message, false); $("tutor_cost").textContent = ""; }
     }
-  } finally { btn.textContent = old; btn.disabled = false; tutorState.busy = false; if (live) live.style.display = "none"; }
+  } finally {
+    sseAbortAll();   // A-08：统一清理（按钮 + 在途 controller）
+    btn.textContent = old; btn.disabled = false; tutorState.busy = false; if (live) live.style.display = "none";
+  }
 }
 async function tutorSubmit() {
   const ta = $("tu_answer"); const text = (ta && ta.value.trim()) || "";
@@ -2054,17 +2068,19 @@ function qcardFlip(cardEl, ev) {
   cardEl.classList.toggle("flipped");
 }
 window.qcardFlip = qcardFlip;
-/* 三按钮评级：播放出卡动效后按映射质量走原 rvGrade 管线 */
+/* 三按钮评级：按映射质量走原 rvGrade 管线；
+   A-12：不再「先删卡再调 API」——API 成功后由 loadReviewCtx 重渲自然移除；
+   失败时卡片保留（按钮恢复可重试），R4-19 的「失败重渲恢复」仅作兜底不再常态触发 */
 async function rvGrade3(cid, key) {
   const q = GRADE3_MAP[key];
-  const cardEl = document.querySelector('.qcard[data-card="' + cid + '"]');
-  if (cardEl) { cardEl.classList.add("graded"); setTimeout(() => cardEl.remove(), 260); }
   await rvGrade(cid, q, { forget: "忘了", fuzzy: "模糊", got: "记住" }[key]);
 }
 window.rvGrade3 = rvGrade3;
 /* 键盘 1/2/3：刷题 tab 下对当前卡（已翻面优先）执行 忘了/模糊/记住。
-   D-10：未翻面卡仅翻面不评分——避免误触给首卡打 0 分（污染排期+掌握度）。 */
-window.addEventListener("keydown", e => {
+   D-10：未翻面卡仅翻面不评分——避免误触给首卡打 0 分（污染排期+掌握度）。
+   A-15：命名函数 + showTab 配对绑定/移除（进入刷题页挂、离开卸），
+   不再常驻 window（避免在其他视图/子视图残留监听）。 */
+function rvStudyKeys(e) {
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   if (e.ctrlKey || e.metaKey || e.altKey || !(e.key >= "1" && e.key <= "3")) return;
@@ -2078,7 +2094,7 @@ window.addEventListener("keydown", e => {
     return;
   }
   rvGrade3(card.dataset.card, ["forget", "fuzzy", "got"][+e.key - 1]);
-});
+}
 /* 复习卡「查看提示」：懒加载教材原文切片（零 LLM，纯本地检索） */
 /* C20：切片原文「展开全文」——默认截断保护版面，需完整阅读时一键展开 */
 function rvSliceExpand(btn) {
@@ -2258,8 +2274,7 @@ function memCard(c) {
   </div>`;
 }
 async function memGrade3(cid, key) {
-  const cardEl = document.querySelector('.memq[data-card="' + cid + '"]');
-  if (cardEl) { cardEl.classList.add("graded"); setTimeout(() => cardEl.remove(), 260); }
+  // A-12：先成功后移除（API 成功 → loadReviewCtx 重渲移除；失败卡片保留可重试）
   await memGrade(cid, MEM_GRADE3[key], { forget: "忘了", fuzzy: "模糊", got: "记住" }[key]);
 }
 window.memGrade3 = memGrade3;

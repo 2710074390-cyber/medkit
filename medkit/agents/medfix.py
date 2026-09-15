@@ -36,6 +36,9 @@ def fix_questions(client: Any, questions: list[dict[str, Any]],
 
     payload = [{
         "id": q.get("id", ""), "type": q.get("type", ""), "bloom": q.get("bloom", ""),
+        # B-13：prompt 输出契约要求 subtopic（medfix.md 输出格式含该字段）——
+        # 此前 payload 未传，LLM 只能按分析文本猜，修复后 subtopic 易丢失/错位
+        "subtopic": q.get("subtopic", ""),
         "question": q.get("question", ""), "options": q.get("options", []),
         "answer": q.get("answer", ""), "analysis": q.get("analysis", ""),
         # B23：图/表引用随 payload 带给 LLM（可回传保留；不传则合并回原题字段）

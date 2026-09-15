@@ -73,6 +73,8 @@ def _log_project(base: Path, msg: str) -> None:
 
 # ---------------------------------------------------------------- 素材解析（共享）
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB（对齐 MinerU 精准 API 上限）
+# B-02：图片独立上限——图片只做 OCR 读图，无文本层可解析；20MB 已远高于正文扫描页
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 TEXT_SUFFIXES = {".pdf", ".docx", ".md", ".markdown", ".txt"} | IMAGE_SUFFIXES
 
@@ -124,10 +126,17 @@ def _mineru_to_result(name: str, markdown: str, via: str) -> dict[str, Any]:
 
 def _parse_bytes(name: str, data: bytes, suffix: str) -> dict[str, Any]:
     """单文件本地解析（同步，由调用方放入线程池）。返回 result dict。"""
+    if not data.strip():
+        # B-03：0 字节/仅空白文件前置拒绝——不写临时文件、不落到「空切片」入库
+        return {"name": name, "error": "文件为空（0 字节或仅空白）——请上传有内容的文档"}
     if len(data) > MAX_FILE_SIZE:
         return {"name": name,
                 "error": "文件超过 200 MB。建议按章节拆分成多个文件（也符合“一次一章”的推荐做法）"}
     if suffix in IMAGE_SUFFIXES:
+        # B-02：图片走 OCR 且独立上限（20MB 已远超正文扫描页；与文件级 200MB 区分）
+        if len(data) > MAX_IMAGE_BYTES:
+            return {"name": name,
+                    "error": f"图片超过 {MAX_IMAGE_BYTES // (1024 * 1024)} MB——请压缩或裁剪后重试"}
         return {"name": name, "error": "图片文件需要「扫描件自动识别（MinerU OCR）」；"
                                         "开启后将自动识别并加入输入",
                 "ocr_needed": True, "ocr_reason": "image"}
@@ -141,5 +150,9 @@ def _parse_bytes(name: str, data: bytes, suffix: str) -> dict[str, Any]:
         return {"name": name, "ok": True, "via": "local", **info}
     except ex.ExtractError as e:
         return {"name": name, "error": str(e), "ocr_needed": True, "ocr_reason": "scan"}
+    except Exception as e:  # noqa: BLE001  B-03：损坏 DOCX/加密 PDF 等解析异常 → 明确原因，不 500
+        return {"name": name,
+                "error": f"文件解析失败（可能已损坏或加密）：{type(e).__name__}——"
+                         "请用 WPS/Office 另存后再上传"}
     finally:
         Path(tmp_path).unlink(missing_ok=True)

@@ -51,16 +51,23 @@ window.addEventListener("unhandledrejection", ev => {
   ev.preventDefault();
 });
 
+/* A-09：toast 定时器集中管理——记录到 toastTimers，toast 被上限逐出/手动点击关闭时同步清除，
+   避免对已移除节点的悬挂 setTimeout 触发（低优先但防扩展泄漏的既有约定） */
+const toastTimers = new Set();
+function toastClear(t) {
+  if (t) { t.remove(); clearTimeout(t._timer); if (t._timer) toastTimers.delete(t._timer); }
+}
 function toast(msg, ok = true) {
   const box = $("toasts");
   const t = document.createElement("div");
   t.className = "toast " + (ok ? "good" : "bad");
   t.textContent = msg;
   t.title = "点击关闭";
-  t.onclick = () => t.remove();
+  t.onclick = () => toastClear(t);
   box.appendChild(t);
-  while (box.children.length > 4) box.removeChild(box.firstChild);
-  setTimeout(() => { t.remove(); }, 3800);
+  while (box.children.length > 4) toastClear(box.firstChild);
+  t._timer = setTimeout(() => { t.remove(); toastTimers.delete(t._timer); }, 3800);
+  toastTimers.add(t._timer);
 }
 async function api(path, opts = {}) {
   const o = { ...opts };
@@ -326,10 +333,17 @@ function showTab(name) {
   }
   /* v0.8.1：5 Tab 分发（开始/刷题/题库/学习中心/我的） */
   if (name === "start") loadStart();
-  if (name === "study") loadStudy();
+  if (name === "study") { loadStudy(); setStudyKeys(true); }   // A-15：进入刷题页挂拼键监听
   if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
   if (name === "learn") loadLibrary();
   if (name === "mine") loadPrompts();
+  if (name !== "study") setStudyKeys(false);   // A-15：离开刷题页移除（配对卸载，防残留监听）
+}
+/* A-15：复习卡快捷键 1/2/3 的 window 监听——只在刷题页存在（showTab 配对挂/卸） */
+function setStudyKeys(on) {
+  if (typeof rvStudyKeys !== "function") return;   // learn.js 尚未求值（初始化期）→ 跳过
+  if (on) window.addEventListener("keydown", rvStudyKeys);
+  else window.removeEventListener("keydown", rvStudyKeys);
 }
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   location.hash = b.dataset.tab;

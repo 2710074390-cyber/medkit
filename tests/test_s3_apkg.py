@@ -83,6 +83,25 @@ def test_apkg_deck_model_id_stable():
     con2.close()
 
 
+def test_apkg_same_subject_different_pid_decks():
+    """B-12（查证）：同名科目、不同 pid 的两个项目 → 牌组 id 不同（项目间隔离）；
+    同 pid 重导出 → 相同（重复导入不重复卡）。"""
+    p_a1 = TMP / "pa1.apkg"
+    p_a2 = TMP / "pa2.apkg"
+    p_b = TMP / "pb.apkg"
+    export_apkg(_qs(), "儿科学", "项目A", p_a1)
+    export_apkg(_qs(), "儿科学", "项目A", p_a2)
+    export_apkg(_qs(), "儿科学", "项目B", p_b)
+    ca1, ca2, cb = _read_anki2(p_a1), _read_anki2(p_a2), _read_anki2(p_b)
+    da1 = ca1.execute("select decks from col").fetchone()[0]
+    da2 = ca2.execute("select decks from col").fetchone()[0]
+    db = cb.execute("select decks from col").fetchone()[0]
+    assert da1 == da2, "同 pid 重导出牌组 id 应一致"
+    assert da1 != db, "同名科目不同 pid 的牌组 id 必须不同（B-12）"
+    for con in (ca1, ca2, cb):
+        con.close()
+
+
 def test_apkg_special_chars_and_case_prefix():
     p = TMP / "chars.apkg"
     export_apkg(_qs(), "儿科学", "特殊字符", p)

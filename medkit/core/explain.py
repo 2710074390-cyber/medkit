@@ -337,6 +337,25 @@ def export_subject_md(subject: str = "") -> str:
             lines.append("**来源**：教材切片 + 网络补充")
         else:
             lines.append("**来源**：教材切片")
+        # C-12：讲解产物元数据随导出（grounded/slices_used/sources/web_materials）——
+        # 此前 MD 只含正文，读者无法知道该篇是否命中教材原文、依据哪些切片/网络来源
+        grounded = r.get("grounded")
+        used = r.get("slices_used") or []
+        if grounded is False:
+            lines.append("**教材原文**：未命中（网络素材 + 模型知识生成，未经教材核实）")
+        elif grounded:
+            lines.append(f"**教材原文**：命中 {len(used)} 个切片")
+        if used:
+            lines.append(f"**引用切片**：{'、'.join(str(u) for u in used[:20])}" + ("…" if len(used) > 20 else ""))
+        for name, key in (("**依据来源**", "sources"), ("**网络素材**", "web_materials")):
+            mats = r.get(key) or []
+            if mats:
+                bits = []
+                for m in mats[:10]:
+                    title = str(m.get("title") or m.get("name") or m.get("url") or "").strip()
+                    url = str(m.get("url") or "").strip()
+                    bits.append(f"[{title}]({url})" if title and url else (title or url))
+                lines.append(f"{name}：{'；'.join(b for b in bits if b)}")
         lines.append("")
         lines.append(r.get("content") or "")
         lines.append("")

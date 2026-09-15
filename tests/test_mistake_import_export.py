@@ -57,3 +57,21 @@ def test_import_export_route(iso):
     assert len(data["errors"]) == 1
     # 空 items → 400
     assert c.post("/api/library/mistakes/import-export", json={"items": []}).status_code == 400
+
+
+def test_import_site_items_boundaries(iso):
+    """C-11：字段白名单/默认值边界——未知字段不落库、非 dict 单条跳过、坏值有默认。"""
+    st = lib.import_site_items([
+        {"question": "正常题？", "subject": "儿科", "answer": "A",
+         "onclick": "alert(1)", "<script>": "x",          # 未知字段：白名单外一律丢弃
+         "miss_count": -3, "options": ["A", "B"], "tags": "不应这样传"},
+        "not-a-dict",                                      # 非 dict → 单条跳过（不阻断整体）
+        {"question": "   ", "answer": "B"},                # 空白题干 → skipped
+    ])
+    assert st["added"] == 1, st
+    assert st["skipped"] == 2, st
+    rec = lib.list_mistakes()[0]
+    assert rec["subject"] == "儿科" and rec["answer"] == "A"
+    assert "onclick" not in rec and "<script>" not in rec, "白名单外字段不应落库"
+    assert rec["miss_count"] == 1, "miss_count 负数应钳制为 1（缺省口径）"
+    assert any(str(e).startswith("#2") for e in st["errors"]), "非 dict 单条应留痕（#2）"

@@ -102,16 +102,18 @@ def _store() -> Iterator[dict[str, Any]]:
 
 # ---------------------------------------------------------------- CRUD
 def create_from_drafts(drafts: list[dict[str, Any]], subject: str, kp_name: str,
-                       source: str, sched: str = DEFAULT_SCHED) -> list[dict[str, Any]]:
+                       source: str, sched: str = DEFAULT_SCHED) -> tuple[list[dict[str, Any]], int]:
     """讲解产物 → 记忆卡入库（幂等：同 source+kp_name+front 已存在则跳过）。
 
     ``source`` 为生成来源（讲解产物 id）；``sched`` 创建时绑定调度算法（切换只影响新卡）。
+    C-09：返回 (added, skipped)——skipped = 契约不通过 + 同键已存在的重复草稿（前端可提示）。
     """
     from .schema import CARD_KIND_LABELS, CardDraft
 
     _ensure_schema()
     sched = sched if sched in ("fsrs", "sm2") else DEFAULT_SCHED
     added: list[dict[str, Any]] = []
+    skipped = 0
     with _store() as st:
         existing = {(c.get("source"), c.get("kp_name"), c.get("front"))
                     for c in st["cards"]}
@@ -119,9 +121,11 @@ def create_from_drafts(drafts: list[dict[str, Any]], subject: str, kp_name: str,
             try:
                 draft = CardDraft.model_validate(d)
             except Exception:  # noqa: BLE001  契约不通过的草稿不与入库（调用方已用 CardDrafts 校验）
+                skipped += 1
                 continue
             key = (source, kp_name, draft.front)
             if key in existing:
+                skipped += 1
                 continue
             cid = f"mcm_{int(time.time() * 1000)}_{next(_SEQ)}"
             card = {
@@ -138,7 +142,7 @@ def create_from_drafts(drafts: list[dict[str, Any]], subject: str, kp_name: str,
             st["dirty"] = True
             added.append(card)
             existing.add(key)
-    return added
+    return added, skipped
 
 
 def list_cards(subject: str = "", due_only: bool = False) -> list[dict[str, Any]]:

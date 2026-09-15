@@ -56,6 +56,31 @@ def test_search_test_error_hint_chinese(iso, monkeypatch):
     assert "超时" in data["msg"], data
 
 
+def test_search_test_error_hint_branches(iso, monkeypatch):
+    """C-04：_search_error_hint 分支全覆盖（401/403/400/网络）——此前只测了 timeout。"""
+    cases = [
+        (PermissionError("401 Unauthorized: invalid api key"), "401"),
+        (PermissionError("403 Forbidden: not authorized"), "403"),
+        (ValueError("400 Bad Request: unsupported model"), "请求参数"),
+        (ConnectionRefusedError("connection refused"), "网络"),
+    ]
+    c = _client()
+    for exc, expect in cases:
+        monkeypatch.setattr(ws, "search_deepseek", lambda q, k, model="", _e=exc: (_ for _ in ()).throw(_e))
+        r = c.post("/api/search/test", json={"backend": "deepseek_tool"})
+        data = r.json()
+        assert data["ok"] is False, data
+        assert expect in data["msg"], f"{expect} 应命中中文归因：{data['msg']}"
+
+
+def test_search_test_zero_results_hint(iso, monkeypatch):
+    """C-04：服务端连通但 0 结果 → 明确提示（「已连通但未提取」而非失败）。"""
+    monkeypatch.setattr(ws, "search_deepseek", lambda q, k, model="": [])
+    data = _client().post("/api/search/test", json={"backend": "deepseek_tool"}).json()
+    assert data["ok"] is True and data["count"] == 0
+    assert "已连通" in data["msg"] and "未提取到结果" in data["msg"], data
+
+
 def test_config_trusted_fields_roundtrip(iso):
     c = _client()
     r = c.put("/api/config", json={

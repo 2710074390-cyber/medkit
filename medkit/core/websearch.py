@@ -34,6 +34,9 @@ MATERIALS_LIMIT = 12          # 进入出题管线的素材条数上限
 # 2026-09-01 实测：DeepSeek Responses web_search（服务端托管搜索）单次 20~60s
 # （2 次检索词调用 + 推理），25s 必超 → 「测试后端」偶发 ReadTimeout。放宽到 75s。
 MAX_HTTP_TIMEOUT = 75.0
+# C-13：DeepSeek 检索工具名集中常量（曾散落在 body 与 400 回退两处——改一处忘另一处即回归）
+SEARCH_TOOL_CURRENT = "web_search"             # 现行工具名（2026-09 官方文档）
+SEARCH_TOOL_LEGACY = "web_search_2025_08_26"   # 400 回退：2025 版工具名（官方兼容变体）
 
 BANNED_HOSTS = ("bilibili.com", "douyin.com", "youtube.com", "weibo.com",
                 "tieba.baidu.com", "xiaohongshu.com", "kuaishou.com",
@@ -247,7 +250,7 @@ def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") 
         "model": model or "deepseek-v4-flash",
         "input": [{"type": "message", "role": "user",
                    "content": [{"type": "input_text", "text": query}]}],
-        "tools": [{"type": "web_search", "name": "web_search"}],
+        "tools": [{"type": SEARCH_TOOL_CURRENT, "name": "web_search"}],
         "tool_choice": {"type": "web_search"},
         "stream": False,
     }
@@ -256,8 +259,8 @@ def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") 
                    headers={"Authorization": f"Bearer {api_key}",
                             "Content-Type": "application/json"},
                    json=body)
-        if r.status_code == 400:  # 兼容工具版本变体
-            body["tools"] = [{"type": "web_search_2025_08_26", "name": "web_search"}]
+        if r.status_code == 400:  # 兼容工具版本变体（C-05：有测试覆盖）
+            body["tools"] = [{"type": SEARCH_TOOL_LEGACY, "name": "web_search"}]
             r = c.post(DEEPSEEK_RESPONSES_URL,
                        headers={"Authorization": f"Bearer {api_key}",
                                 "Content-Type": "application/json"},
@@ -463,12 +466,19 @@ def run_search_rounds(client: Any, subject: str, chapter: str, keywords: str,
             return {"materials": [], "logs": [str(e)], "errors": [str(e)]}
 
     def _do_search(query: str) -> list[dict[str, Any]]:
+        if cancel is not None and cancel.is_set():
+            return []
         try:
-            return fn(query) or []
+            out = fn(query) or []
         except Exception as e:  # noqa: BLE001 单后端错误隔离
             errors.append(f"[{backend}] 检索失败：{e}")
             logs.append(f"  ⚠️ 检索失败：{e}")
             return []
+        # C-03：在途检索期间被取消 → 本轮结果不采用（否则取消后仍把 60s 级结果当作素材）
+        if cancel is not None and cancel.is_set():
+            logs.append("⏹ 检索中已取消（本轮结果未采用）")
+            return []
+        return out
 
     # Round 1：考纲/真题/指南 三路检索词
     q1 = _gen_queries(client, subject, chapter, keywords, 1, "")
