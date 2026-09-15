@@ -109,11 +109,12 @@
 
 - **U-01 发布产物重新出包（0.10.2 两件套）**：`pack/build.bat` 同款流程重跑——
   PyInstaller onedir 绿色版 → `pack/check-package.py` 纯净检查**通过** → Inno Setup 出安装包。
-  产出 `dist-installer/MedKit-Setup-0.10.2.exe` 与 `MedKit-0.10.2-portable.zip`（均为 09-15 19:47）。
+  产出 `dist-installer/MedKit-Setup-0.10.2.exe` 与 `MedKit-0.10.2-portable.zip`。
   **产物冒烟实测**（隔离 `USERPROFILE`，不触碰真实 `~/.medkit`）：
   `GET /api/health` → `{"ok":true,"version":"0.10.2","stage":"ready"}`（版本确为 0.10.2）；
   `GET /api/diagnostics/errors` → `{"counts":{},"total":0,"recent":[]}`（U-15 新端点在产物中生效）；
   静态资源 200。包内前端资源已核验含 U-02/U-03/U-19 修复。
+  **U-10 拆分完成后已再次出包**（产物与最终源码一致，2026-09-15 20:37/20:38）。
 
 ### 依赖与合规（三报告整合 · U 批次 3）
 
