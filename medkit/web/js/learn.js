@@ -1129,7 +1129,7 @@ function syncMkScope() {
 }
 window.mkScopeChange = mkScopeChange;
 window.renderLibraryCurrent = renderLibraryCurrent;
-const ERR_LABEL = { concept_gap: "概念缺失", confusion: "易混", calculation: "计算失误", misread: "误读题干", reasoning: "推理断链" };
+const ERR_LABEL = { concept_gap: "概念缺失", confusion: "易混", calculation: "计算失误", misread: "误读题干", reasoning: "推理断链", unanswered: "未作答", unknown: "未标注" };
 function mkRowHTML(mm) {
   const meta = [];
   const loc = [mm.subject, mm.chapter, mm.topic].filter(Boolean).join(" · ");
@@ -1465,7 +1465,7 @@ async function loadExplains() {
           <div class="rv-hintbody exp-slices" id="exps_${esc(e.id)}"><span class="hint">展开后自动检索教材切片…</span></div></details>` : ""}
         <div class="btns" style="margin-top:10px">
           ${e.kp_name ? `<button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(e.subject || "")}" data-name="${esc(e.kp_name)}">→ 提问练习</button>` : ""}
-          ${(window.FEATURES && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards(this)" data-eid="${esc(e.id)}" data-subject="${esc(e.subject || "")}">🧠 生成记忆卡</button>` : ""}
+          ${(typeof FEATURES !== "undefined" && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards(this)" data-eid="${esc(e.id)}" data-subject="${esc(e.subject || "")}">🧠 生成记忆卡</button>` : ""}
           <button class="mini-btn primary" onclick="expRegen(this)" data-id="${esc(e.id)}" data-subject="${esc(e.subject || "")}" data-kp="${esc(e.kp_name || "")}">↻ 重新生成</button>
           <button class="mini-btn" onclick="expCopy('${esc(e.id)}',this)">复制</button>
           <button class="mini-btn danger" onclick="expDel('${esc(e.id)}')">删除</button>
@@ -2202,7 +2202,7 @@ async function rvQueueAll() {
   if (queueBusy) return;   // R3-03：铺卡防重入（连点不再重复入队）
   queueBusy = true;
   try {
-    const r = await api("/api/library/review/queue-all?subject=" + encodeURIComponent(rvSubject));
+    const r = await api("/api/library/review/queue-all?subject=" + encodeURIComponent(rvSubject), { method: "POST" });   // U-02：后端为 POST 路由，缺 method 会 405
     toast(r.added ? `已入队 ${r.added} 张薄弱卡片` : "没有新的薄弱知识点需要入队");
     loadReviewCtx(rvSubject);
   } catch (e) { toast(e.message, false); }
@@ -2223,7 +2223,7 @@ window.loadReviewCtx = loadReviewCtx; window.rvQueueAll = rvQueueAll; window.rvG
 async function renderMemoryCards() {
   const sec = $("mem_area");
   if (!sec) return;
-  if (!(window.FEATURES && FEATURES.cards)) { sec.innerHTML = ""; return; }
+  if (!(typeof FEATURES !== "undefined" && FEATURES.cards)) { sec.innerHTML = ""; return; }
   try {
     const r = await api("/api/library/cards?subject=" + encodeURIComponent(rvSubject) + "&due=1");
     const cards = r.cards || [];

@@ -587,9 +587,20 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             _set_stage(base, meta_path, "websearch", "⓪ 多轮网络检索（考纲/真题/指南）…")
             _set_progress(base, "websearch", 0, 1, "检索中…（首次约 1~3 分钟）", sub="多轮检索", sub_done=0, sub_total=3)
             ws_cfg = cfg.load().get("web_search", {}) or {}
+            _cfg = cfg.load()
+            # U-06：检索 Key 解析对齐 routers/search.py 的回退口径——
+            # 非 bocha 后端（内置 deepseek_tool/zhipu_tool/qwen_tool）复用服务商 LLM Key，
+            # 消除「就绪清单显示已开启、实跑却必然失败」的静默失败。
+            _ws_bocha_key = resolve_key(ws_cfg.get("api_key", ""))
+            _provider_key = resolve_key(_cfg.get("api_key", ""))
             backend = ws.resolve_backend(meta.get("web_backend", "auto") or "auto",
-                                         cfg.load().get("provider", "deepseek"),
-                                         resolve_key(ws_cfg.get("api_key", "")))
+                                         _cfg.get("provider", "deepseek"),
+                                         _ws_bocha_key)
+            _search_key = _ws_bocha_key if backend == "bocha" else _provider_key
+            if backend != "manual" and not _search_key:
+                # 生成前给出明确告警（不再只在跑完 3 轮后写复核清单里体现，UX A4）
+                _log(base, "  ⚠️ 网络检索：未检测到可用 Key——若本次检索失败，"
+                           "请到「我的 → 连接服务商」配置服务商 Key 后重新生成")
             chapter = next((s.get("title", "") for s in textbook_slices), "")
             keywords = teacher_text[:500]
             if backend == "manual":
@@ -602,8 +613,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                     return {"stage": "cancelled", "questions": 0, "partial": True}
                 res_search = ws.run_search_rounds(
                     gen_client, subject, chapter, keywords, backend,
-                    api_key=resolve_key(ws_cfg.get("api_key", "")),
-                    model=cfg.load().get("model_gen", ""),
+                    api_key=_search_key,
+                    model=_cfg.get("model_gen", ""),
                     slices_digest="\n\n".join(
                         f"【{s.get('title','')}】\n{s.get('text','')[:600]}"
                         for s in textbook_slices[:4]),
@@ -806,6 +817,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题"
              f"（image_ref 不在素材清单：{'、'.join(str(x) for x in dropped_img[:5])}）")
     non_action_flagged = False   # B-18：非定向核查项只留痕一次（避免每轮重复写清单）
+    _dup_marks: dict[str, str] = {}   # U-07：查重未消除题的留痕（q_id → reason）
     for round_i in range(1, FIX_ROUNDS_GATE + 2):
         if cancel.is_set():   # B24：门禁循环轮次间可取消
             return _cancel_out(base, meta_path, done_sids, questions)
@@ -859,6 +871,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _set_progress(base, "gate1", round_i, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮完成",
                       sub="门禁检查", sub_done=4, sub_total=4)
         dup_issues = [x for x in gate["dup"]["issues"] if x.get("severity") in ("fail", "warn")]
+        # U-07：按轮刷新查重留痕（最后一轮仍命中的 = 修复轮用尽仍未消除）
+        _dup_marks = {x["q_id"]: x.get("reason", "") for x in dup_issues if x.get("q_id")}
         all_issues = (gate["options"]["issues"] + gate["bloom"]["issues"]
                       + gate["trace"]["issues"] + dup_issues)
         fails = [x for x in all_issues if x["severity"] == "fail"]
@@ -945,6 +959,20 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                      "保留并留痕待人工复核。", "人工复核修改后再重新生成。"])
                 _log(base, f"  门禁① 修复轮次用尽，{len(drop_ids)} 道 fail 豁免保留（空题库保护）")
             break
+    # U-07：查重（DUP，warn 级）修复轮用尽仍未消除——不剔除（避免误伤题库规模），
+    # 但在题目上打可见标记 + 人工复核清单留痕，产物页对疑似重复题显示「⚠ 疑似重复」。
+    _dup_hit = [q for q in questions if q.get("id") in _dup_marks]
+    if _dup_hit:
+        for _q in _dup_hit:
+            _q["_dup_warn"] = _dup_marks[_q["id"]]
+        _log(base, f"  ⚠️ 门禁① 查重未通过 {len(_dup_hit)} 道（修复轮用尽仍未消除）"
+                   f"→ 产物已标记「疑似重复」并留痕人工复核清单")
+        _append_manual_section(
+            base, "门禁① 查重未通过（已标记 · 未剔除，U-07）",
+            [f"{len(_dup_hit)} 道题与其它题题干高度相似，修复轮用尽仍未消除。",
+             "已在产物中对这些题显示「⚠ 疑似重复」标记；如影响复习体验，"
+             "可在逐题审核台改写题干或直接剔除后「保存并重渲染」。",
+             *[f"  {qid}：{_dup_marks[qid]}" for qid in list(_dup_marks)[:10]]])
     (base / "中间产物" / "questions_gate1.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
 

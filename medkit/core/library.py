@@ -350,7 +350,7 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None) 
             "bloom": q.get("bloom") or "",
             "image_ref": str(q.get("image_ref") or "").strip(),
             "case_stem": str(q.get("case_stem") or "").strip(),   # C-04：案例子题共享题干入库
-            "error_reason": str(q.get("error_reason") or "").strip() or "reasoning",
+            "error_reason": str(q.get("error_reason") or "").strip() or "unknown",   # U-19：缺省不再伪造「推理断链」
             "correct": False,
         })
     return batch_add(rows)

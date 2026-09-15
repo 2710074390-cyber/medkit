@@ -177,6 +177,15 @@ def _src_tag(q: dict[str, Any]) -> str:
     return f'<span class="tag src">{html_mod.escape(label)}</span>'
 
 
+def _dup_badge(q: dict[str, Any]) -> str:
+    """U-07：查重未通过（修复轮用尽仍未消除）的可见标记——让考生知道该题疑似重复。"""
+    reason = q.get("_dup_warn")
+    if not reason:
+        return ""
+    return ('<span class="tag" style="color:var(--warn);border-color:var(--warn)" '
+            f'title="{html_mod.escape(str(reason))}">⚠ 疑似重复</span>')
+
+
 def _src_text(q: dict[str, Any]) -> str:
     """来源文本（MD / Anki 行内标记，无标签样式环境）。"""
     if str(q.get("source_type") or "") != "真题":
@@ -298,6 +307,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
     year_opts = "".join(f'<option value="{html_mod.escape(y)}">{html_mod.escape(y)} 年</option>'
                         for y in years)
     for b in _case_blocks(questions):
+        _dbb = next((_dup_badge(x) for x in b["items"] if x.get("_dup_warn")), "")   # U-07：组内任一题疑似重复即标记
         if b["kind"] == "case":
             first = b["items"][0]
             kw = (str(first.get("id", "")) + " " + str(b["stem"]) + " " +
@@ -307,7 +317,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 f'data-group="case" data-blm="{html_mod.escape(str(first.get("bloom", "")))}" '
                 f'data-yr="{html_mod.escape(str(first.get("source_year") or "")[:4])}" '
                 f'data-kw="{html_mod.escape(kw.lower())}">'
-                f'<summary class="qs">{_src_tag(first)}<span class="tag">📋 案例 '
+                f'<summary class="qs">{_src_tag(first)}{_dbb}<span class="tag">📋 案例 '
                 f'{html_mod.escape(str(b["key"][1]))}</span> '
                 f'{html_mod.escape(TYPE_LABELS.get(str(first.get("type", "")), ""))} · '
                 f'{len(b["items"])} 道子题 · 点击展开案例题干</summary>'
@@ -327,7 +337,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 f'data-blm="{html_mod.escape(str(first.get("bloom", "")))}" '
                 f'data-yr="{html_mod.escape(str(first.get("source_year") or "")[:4])}" '
                 f'data-kw="{html_mod.escape(kw.lower())}">'
-                f'<summary class="qs">{_src_tag(first)}<span class="tag">🧩 选项组（B1）</span>'
+                f'<summary class="qs">{_src_tag(first)}{_dbb}<span class="tag">🧩 选项组（B1）</span>'
                 f'（{len(b["items"])} 题共享下列选项）</summary>'
                 f'<div class="qb">{shared}'
                 + "".join(_html_sub(q, show_options=False) for q in b["items"]) + '</div></details>',
@@ -345,7 +355,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 f'data-yr="{html_mod.escape(str(q.get("source_year") or "")[:4])}" '
                 f'data-kw="{html_mod.escape(kw.lower())}">'
                 f'<summary class="qs">'
-                f'{_src_tag(q)}'
+                f'{_src_tag(q)}{_dup_badge(q)}'
                 f'<span class="tag">{html_mod.escape(str(q.get("type", "")))}</span> '
                 f'<span class="tag b">{html_mod.escape(str(q.get("bloom", "")))}</span> '
                 f'{html_mod.escape(str(q.get("question", ""))[:60])}…</summary>'
@@ -370,9 +380,14 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
         f'<div class="qpage" data-pg="{i}" style="display:{"block" if i == 0 else "none"}">'
         + "".join(p) + '</div>' for i, p in enumerate(pages))
     pid_json = json.dumps(pid or "")
+    # U-18：头部题数与筛选计数（按卡计）口径统一——案例/选项组多道子题共享一张卡，
+    # 直接写 len(questions) 会与筛选合计不符（考生会怀疑「是不是丢了题」）。
+    _qn, _cn = len(questions), len(items)
+    _count_meta = (f"共 {_qn} 题" if _qn == _cn
+                   else f"共 {_qn} 题（{_cn} 张卡，其中组内子题 {_qn - _cn} 道）")
     return _page(title, f"""
 <h1>{html_mod.escape(title)}</h1>
-<p class="meta">共 {len(questions)} 题 · 每页最多 50 题 · 答案默认隐藏，点击题目展开查看 · <button class="mini" onclick="window.print()">🖨 打印</button> ·
+<p class="meta">{_count_meta} · 每页最多 50 题 · 答案默认隐藏，点击题目展开查看 · <button class="mini" onclick="window.print()">🖨 打印</button> ·
 <span id="qcount" role="status" aria-live="polite"></span></p>
 <div class="filters" role="group" aria-label="筛选工具">
   <span role="group" aria-label="按题型过滤">
@@ -473,9 +488,9 @@ function setCounts(){{
     const k=d.dataset.group==='case'?'case':d.dataset.group==='og'?'og':(d.dataset.type||'');
     c[k]=(c[k]||0)+1;
   }});
-  document.querySelectorAll('.filters button').forEach(b=>{{
+  document.querySelectorAll('.filters button[data-t]').forEach(b=>{{   /* U-08：只处理带 data-t 的筛选按钮，避免 #qreset 被写成 null */
     const k=b.getAttribute('data-t');
-    b.textContent=b.getAttribute('data-label')+(c[k]?(' · '+c[k]):'');
+    b.textContent=(b.getAttribute('data-label')||'')+(c[k]?(' · '+c[k]):'');
   }});
 }}
 setCounts();
@@ -781,6 +796,7 @@ function grade(){{
         sid: q.sid||"", question: q.question||"", options: q.options||[],
         answer: q.answer||"", analysis: q.analysis||"",
         subtopic: q.subtopic||"", bloom: q.bloom||"", user_answer: a,
+        error_reason: a ? "" : "unanswered",   /* U-19：未作答与选错可区分，不再恒为「推理断链」 */
         case_stem: q.case_stem||"", image_ref: q.image_ref||"", data_table: q.data_table||""
       }};
     }}
