@@ -559,32 +559,34 @@ def explain_stream(body: ExplainBody,
     """WP-8：SSE 流式讲解（meta → delta* → done/error）；完成才落盘 explains。
 
     保留非流式 /api/library/explain 作为旧客户端/降级路径。
-    R5-02：dedupe 锁在 gen() 首帧前获取、finally 释放（含断连 GeneratorExit）；
+    R5-02：dedupe 锁在**响应对象创建之前**（端点体内部）获取、finally 释放（含断连 GeneratorExit）；
     R5-03：cancel_ev 贯穿「断开 → LLMClient → provider 流」——前端断开即服务端真停。
     """
     from ..agents.medexplain import prepare_explain
+    from ..core import dedupe
 
-    subject, kp_name, related = _resolve_subject_kp(body)
-    expl.index_slices()
-    hits = expl.retrieve(subject=subject, query=f"{kp_name} {_query_extra(related)}")
-    slices_text = expl.slice_text_of(hits)
-    search_fn = _resolve_search_fn() if body.use_web else None
-    cancel_ev = threading.Event()   # R5-03：断连/结束时置位 → LLMClient 截断 provider 流
-    client = _explain_client(cancel_ev)
-    messages, meta = prepare_explain(
-        subject, kp_name, slices_text,
-        related[0] if related else None,
-        web_materials=[], search_fn=search_fn, use_web=body.use_web)
+    # R5-02 加固：在飞锁在「响应对象创建之前」获取并 finally 释放。
+    # 原 gen() 首帧持有会留「标头已回 / 锁未持」窗口，并发第二请求可钻空拿 200（CI 实证）。
     key = _explain_key(body)
+    if dedupe.begin(key):
+        raise HTTPException(409, "该知识点的讲解正在生成，请稍候查看产物，勿重复提交")
+    try:
+        subject, kp_name, related = _resolve_subject_kp(body)
+        expl.index_slices()
+        hits = expl.retrieve(subject=subject, query=f"{kp_name} {_query_extra(related)}")
+        slices_text = expl.slice_text_of(hits)
+        search_fn = _resolve_search_fn() if body.use_web else None
+        cancel_ev = threading.Event()   # R5-03：断连/结束时置位 → LLMClient 截断 provider 流
+        client = _explain_client(cancel_ev)
+        messages, meta = prepare_explain(
+            subject, kp_name, slices_text,
+            related[0] if related else None,
+            web_materials=[], search_fn=search_fn, use_web=body.use_web)
+    except Exception:
+        dedupe.end(key)
+        raise
 
     def gen():
-        from ..core import dedupe  # noqa: PLC0415  与 guard 一样的局部导入（惰性）
-
-        # R5-02：锁必须在首帧之前获取——请求级守卫在响应对象返回时已释放，
-        # 这里才是「流正在生成」的真正持有者（R4-01 原方案）。
-        if dedupe.begin(key):
-            yield _sse("error", {"msg": "该知识点的讲解正在生成，请稍候查看产物，勿重复提交"})
-            return
         try:
             yield _sse("meta", {"kp_name": kp_name, "subject": subject,
                                 "grounded": meta["grounded"], "via_web": meta["via_web"]})

@@ -1,8 +1,8 @@
-# 开发/测试依赖（运行与打包无需）：pip install -r requirements-dev.txt
+# Dev/test deps (not needed at runtime/package): pip install -r requirements-dev.txt
 pytest>=8
 pytest-timeout>=2
-playwright>=1.44   # IMP-05 浏览器测试基座；装依赖后还需 `playwright install chromium`（缺浏览器时用例自动 skip）
-freezegun>=1.5     # IMP-09：时间相关测试时钟冻结（SM-2 due / 24h 幂等窗 / 掌握度衰减）
-setuptools<81      # NX-08（R-6）：jieba 0.42.1 依赖 pkg_resources（deprecation；setuptools≥81 将移除，新版发布前锁定）
-pip-audit>=2.7     # U-16：依赖 CVE 审计（CI 步骤 `pip-audit -r requirements.txt`）；仅查已知漏洞，不查冲突（冲突由 pip check 管）
-pytest-cov>=5      # U-12：覆盖率度量（CI `--cov=medkit --cov-fail-under=80`；本地可选）
+playwright>=1.44   # IMP-05 browser-test base; also run `playwright install chromium` (tests auto-skip if absent)
+freezegun>=1.5     # IMP-09: freeze clock for time tests (SM-2 due / 24h idempotent window / mastery decay)
+setuptools<81      # NX-08(R-6): jieba 0.42.1 depends on pkg_resources (deprecated; dropped in setuptools>=81; pin until new release)
+pip-audit>=2.7     # U-16: dependency CVE audit (CI step `pip-audit -r requirements.txt`); known vulns only, no conflicts (pip check handles those)
+pytest-cov>=5      # U-12: coverage (CI `--cov=medkit --cov-fail-under=80`; optional locally)
