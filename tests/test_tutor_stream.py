@@ -83,3 +83,84 @@ def test_tutor_start_stream_canceled_session_cleaned(iso, monkeypatch):
                        json={"subject": "儿科学", "kp_name": "生长发育"})
     assert "event: done" not in r.text
     assert tut.list_sessions() == []   # 未落定会话被清理
+
+
+# ---------------------------------------------------------------- R5-02/03 tutor 流生命周期
+def test_tutor_gen_close_sets_cancel_and_releases(iso, monkeypatch, run_coro):
+    """R5-02/03（tutor 侧确定性验证）：gen() 关闭（断连 GeneratorExit）→
+    cancel_ev 置位 + 流锁释放 + 未落定空会话兜底删除。
+
+    R6-01：协程经 `run_coro`（新线程）驱动，免疫 browser 层占住的主线程事件循环。
+    """
+    import time
+
+    import medkit.routers.library as rl
+
+    body = rl.TutorStartBody(subject="儿科学", kp_name="生长发育")
+    captured = {}
+
+    class SlowClient:
+        def __init__(self):
+            self.cancel = None
+
+        def chat_stream(self, messages, temperature=0.6, max_tokens=None):
+            yield {"delta": "先想想：", "usage": None, "canceled": False}
+            time.sleep(3)
+            yield {"delta": "最可能的机制是？", "usage": None, "canceled": False}
+
+    def make_client(cancel=None):
+        cl = SlowClient()
+        cl.cancel = cancel
+        captured["cancel"] = cancel
+        return cl
+
+    monkeypatch.setattr(rl, "_tutor_client", make_client)
+    resp = rl.tutor_start_stream(body, _guard=None)
+    it = resp.body_iterator
+
+    async def drive():
+        first = await it.__anext__()
+        assert "event: meta" in first, first
+        assert captured["cancel"] is not None and not captured["cancel"].is_set()
+        assert len(tut.list_sessions()) == 1, "流开始后会话应已创建（落定前由 finally 兜底）"
+        await it.aclose()   # 模拟断连
+
+    run_coro(drive())
+    assert captured["cancel"].is_set(), "断连后 cancel_ev 应被置位（R5-03）"
+    from medkit.core import dedupe
+
+    key = rl._tutor_key(body)
+    assert dedupe.begin(key) is False, "断连后流锁应已释放（R5-02）"
+    dedupe.end(key)
+    assert tut.list_sessions() == [], "未落定空会话应被兜底删除（R4-04）"
+
+
+def test_tutor_gen_dup_error_frame_and_session_cleanup(iso, monkeypatch, run_coro):
+    """R5-02（tutor 侧）：gen 首帧前发现同 key 已在飞 → error 帧 + 清理本请求空会话。
+
+    R6-01：协程经 `run_coro`（新线程）驱动。
+    """
+    import medkit.routers.library as rl
+
+    body = rl.TutorStartBody(subject="儿科学", kp_name="生长发育")
+
+    class QuickClient:
+        def chat_stream(self, messages, temperature=0.6, max_tokens=None):
+            yield {"delta": "问题", "usage": None, "canceled": False}
+
+    monkeypatch.setattr(rl, "_tutor_client", lambda cancel=None: QuickClient())
+    from medkit.core import dedupe
+
+    key = rl._tutor_key(body)
+    assert dedupe.begin(key) is False   # 先持有锁 → 模拟另一请求正在流
+    resp = rl.tutor_start_stream(body, _guard=None)
+    it = resp.body_iterator
+
+    async def drive():
+        first = await it.__anext__()
+        assert "event: error" in first and "正在创建" in first, first
+        assert tut.list_sessions() == [], "重复请求创建的空会话应被清理"
+        await it.aclose()
+
+    run_coro(drive())
+    dedupe.end(key)

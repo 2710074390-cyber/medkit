@@ -9,6 +9,13 @@
    本就放行回环地址。
 3. 可旁路：SKIP_BROWSER=1 置位、或未装 playwright、或未装 chromium → 全部用例
    pytest.skip（退出码 0，不卡死）。chrome 探测只在首次运行一次并缓存。
+4. **必须与单测分进程收集（R6-01，2026-09-15）**：本层的 `browser` fixture 是 session 级，
+   `sync_playwright()` 上下文在整个会话期间保持打开；Playwright 同步 API 在 greenlet 中运行
+   自己的事件循环，会把当前线程的 asyncio running-loop 标记置位——此后同进程内任何
+   `asyncio.run()` 都抛 `RuntimeError: asyncio.run() cannot be called from a running event loop`。
+   因此单测一律 `pytest -q --ignore=tests/browser`（verify.cmd 第 [2/3] 步与 CI verify job
+   已显式如此），本层单独 `pytest tests/browser -q`。单测中需要驱动协程时用
+   `tests/conftest.py` 的 `run_coro` fixture（在新线程里跑），不要直接 `asyncio.run()`。
 """
 
 from __future__ import annotations
