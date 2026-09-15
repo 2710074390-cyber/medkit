@@ -210,29 +210,42 @@ def _md_media(q: dict[str, Any]) -> list[str]:
     return out
 
 
+def _esc_md(s: Any) -> str:
+    """U-13：Markdown 文本上下文转义（HTML 显著字符 → 实体）。
+
+    应用内 `web/js/md.js` 渲染时已做 HTML 转义（`test_render_markdown.py` 有断言），
+    本函数是**纵深防御**：产物 `.md` 常被用户用第三方 Markdown 阅读器打开（部分允许原始 HTML），
+    转义后在任何渲染器下都不会把题目内容当标签执行；且实体在渲染时被解码，显示原文不变。
+    """
+    t = str(s if s is not None else "")
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = True) -> list[str]:
     src = _src_text(q)
-    out = [f"{prefix} {q.get('id')} · {TYPE_LABELS.get(q.get('type'), q.get('type', ''))} · {q.get('bloom', '')}"
-           + (f" · {src}" if src else "")]
-    out.append(f"**{q.get('subtopic', '')}**")
-    out.append(q.get("question", ""))
+    out = [f"{prefix} {_esc_md(q.get('id'))} · "
+           f"{_esc_md(TYPE_LABELS.get(q.get('type'), q.get('type', '')))} · "
+           f"{_esc_md(q.get('bloom', ''))}"
+           + (f" · {_esc_md(src)}" if src else "")]
+    out.append(f"**{_esc_md(q.get('subtopic', ''))}**")
+    out.append(_esc_md(q.get("question", "")))
     if show_options:
         for i, opt in enumerate(_effective_options(q)):
-            out.append(f"- {LETTERS[i]}. {opt}")
+            out.append(f"- {LETTERS[i]}. {_esc_md(opt)}")
     out += _md_media(q)
-    out.append(f"**✅ 答案：{q.get('answer', '')}**")
-    out.append(f"💡 {q.get('analysis', '')}")
+    out.append(f"**✅ 答案：{_esc_md(q.get('answer', ''))}**")
+    out.append(f"💡 {_esc_md(q.get('analysis', ''))}")
     out.append("")
     return out
 
 
 def export_md(questions: list[dict[str, Any]], title: str = "题库") -> str:
     """Markdown：案例/选项组按组折叠（案例题干只出现一次）；单题平铺。"""
-    lines = [f"# {title}", ""]
+    lines = [f"# {_esc_md(title)}", ""]
     for b in _case_blocks(questions):
         if b["kind"] == "case":
-            lines.append(f"## 📋 案例 {b['key'][1]}")
-            lines.append(f"**案例题干**：{b['stem']}")
+            lines.append(f"## 📋 案例 {_esc_md(b['key'][1])}")
+            lines.append(f"**案例题干**：{_esc_md(b['stem'])}")
             lines.append(f"> 本案例 {len(b['items'])} 道子题")
             lines.append("")
             for q in b["items"]:
@@ -240,7 +253,7 @@ def export_md(questions: list[dict[str, Any]], title: str = "题库") -> str:
         elif b["kind"] == "option_group":
             lines.append("## 🧩 选项组（B1 共享选项）")
             for i, o in enumerate(b["options"]):
-                lines.append(f"- {LETTERS[i]}. {o}")
+                lines.append(f"- {LETTERS[i]}. {_esc_md(o)}")
             lines.append("")
             for q in b["items"]:
                 lines += _md_question(q, prefix="###", show_options=False)
@@ -266,7 +279,7 @@ def export_anki(questions: list[dict[str, Any]], title: str = "题库") -> str:
         elif q.get("data_table"):
             media_note = "⚠️ 本题含表格数据——表格不在 Anki 卡内，请回 题库.html 查看。"
         src = _src_text(q)
-        front = [f"<b>Q{q.get('id', '')}</b> · {_esc_anki(q.get('type', ''))}型 · {_esc_anki(q.get('bloom', ''))} · "
+        front = [f"<b>Q{_esc_anki(q.get('id', ''))}</b> · {_esc_anki(q.get('type', ''))}型 · {_esc_anki(q.get('bloom', ''))} · "
                  f"{_esc_anki(q.get('subtopic', ''))}"
                  + (f" · {_esc_anki(src)}" if src else ""),
                  _esc_anki(front_question)]
