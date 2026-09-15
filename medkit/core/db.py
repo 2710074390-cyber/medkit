@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from . import config as cfg
+from . import errors as _errs
 
 # 模块级常量（调用时读取 → 测试可 monkeypatch 到临时目录，不影响真实 ~/.medkit）
 LIBRARY_DIR = cfg.CONFIG_DIR / "library"
@@ -139,7 +140,26 @@ _V6_UP: list[str] = [
 
 _V6_DOWN: list[str] = []
 
-MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6]  # 版本列表（只增不改）
+# v7（2026-09-15 · U-14）：v1 五张表补齐索引。
+# v1 建表时数据量极小（百级）故未建索引，而后续 v2/v3/v5 的新表都补了索引、旧表未回补 →
+# 学习中心列表/掌握度/推荐按 subject/state/due 过滤时全表扫描（错题到千级后每次打开都重扫全库）。
+_V7_UP: list[str] = [
+    "CREATE INDEX IF NOT EXISTS idx_mk_subject_state ON mistakes(subject, state, learned)",
+    "CREATE INDEX IF NOT EXISTS idx_kn_subject_state ON knowledge(subject, state)",
+    "CREATE INDEX IF NOT EXISTS idx_ex_subject ON explains(subject)",
+    "CREATE INDEX IF NOT EXISTS idx_rc_subject_due ON review_cards(subject, due, state)",
+    "CREATE INDEX IF NOT EXISTS idx_ts_subject_state ON tutor_sessions(subject, state)",
+]
+
+_V7_DOWN: list[str] = [
+    "DROP INDEX IF EXISTS idx_mk_subject_state",
+    "DROP INDEX IF EXISTS idx_kn_subject_state",
+    "DROP INDEX IF EXISTS idx_ex_subject",
+    "DROP INDEX IF EXISTS idx_rc_subject_due",
+    "DROP INDEX IF EXISTS idx_ts_subject_state",
+]
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -170,6 +190,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         if "year" not in cols:
             cur.execute("ALTER TABLE realexam_freq ADD COLUMN year TEXT")
         return
+    if ver == 7:
+        for stmt in _V7_UP:
+            cur.execute(stmt)
+        return
     raise ValueError(f"未知迁移版本 {ver}")
 
 
@@ -196,6 +220,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 6:
         for stmt in _V6_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 7:
+        for stmt in _V7_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")
@@ -443,8 +471,8 @@ def fts_tokens(text: str) -> list[str]:
             t = t.strip().lower()
             if t:
                 toks.append(t)
-    except Exception:  # noqa: BLE001  NX-02：jieba 不可用 → 依赖下方 bigram 兜底
-        pass
+    except Exception as e:  # noqa: BLE001  NX-02：jieba 不可用 → 依赖下方 bigram 兜底
+        _errs.record("db.fts_tokens", "静默容错（U-15 留痕）", e=e)
     for seg in _CJK_SEG.findall((text or "").lower()):
         toks.extend(seg[i:i + 2] for i in range(len(seg) - 1))
     return toks

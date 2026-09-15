@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..core import config as cfg
+from ..core import errors as _errs
 from ..core import projects as core_projects
 from ..core.fsutil import safe_filename, write_json_atomic
 from ..state import CANCELLING, RUNNING
@@ -168,8 +169,8 @@ def get_project(pid: str) -> dict[str, Any]:
     if progress_path.exists():
         try:
             meta["progress"] = json.loads(progress_path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            _errs.record("projects.get_project", "静默容错（U-15 留痕）", e=e)
     meta["substeps"] = _read_substeps(base)
     return meta
 

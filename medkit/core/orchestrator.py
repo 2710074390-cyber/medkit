@@ -29,6 +29,7 @@ from ..core import websearch as ws
 from ..core.config import resolve_key
 from ..gates import bloom_check, dedup_check, options_check, trace_check
 from ..render import qbank_html, review_html
+from . import errors as _errs
 
 FIX_ROUNDS_GATE = 2
 PAPER_DEFAULT = 50
@@ -225,8 +226,8 @@ def _run_substep(base: Path, stage: str, step: str, label: str, fn,
     if on_fail is not None:
         try:
             on_fail(last_err)
-        except Exception:  # noqa: BLE001  降级回执失败不阻断
-            pass
+        except Exception as e:  # noqa: BLE001  降级回执失败不阻断
+            _errs.record("orchestrator._run_substep", "静默容错（U-15 留痕）", e=e)
     return None, last_err
 
 
@@ -452,8 +453,8 @@ def _record_usage_on_exit(pid: str, *, cancelled: bool) -> None:
         _log(base, f"  💰 {label}实际消耗：输入 {snap['prompt_tokens']} token + "
                    f"输出 {snap['completion_tokens']} token"
                    + (f" ≈ ¥{est_cost:.2f}" if est_cost is not None else ""))
-    except Exception:  # noqa: BLE001  记账失败不掩盖主流程结果
-        pass
+    except Exception as e:  # noqa: BLE001  记账失败不掩盖主流程结果
+        _errs.record("orchestrator._record_usage_on_exit", "静默容错（U-15 留痕）", e=e)
 
 
 def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[str, Any]] = None,
@@ -473,8 +474,8 @@ def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[s
             try:
                 _substeps_terminate(Path(cfg.load()["projects_dir"]) / pid,
                                     "failed", "管线异常退出（未完成子步骤终止）")
-            except Exception:  # noqa: BLE001  终态补写失败不掩盖主异常
-                pass
+            except Exception as e:  # noqa: BLE001  终态补写失败不掩盖主异常
+                _errs.record("orchestrator.run_project", "静默容错（U-15 留痕）", e=e)
             _record_usage_on_exit(pid, cancelled=False)
             raise
         if res.get("stage") == "cancelled":
@@ -1216,5 +1217,5 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
 def _set_progress_clear(base: Path) -> None:
     try:
         (base / "progress.json").unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        _errs.record("orchestrator._set_progress_clear", "静默容错（U-15 留痕）", e=e)

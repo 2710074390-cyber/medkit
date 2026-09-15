@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import config as cfg
+from . import errors as _errs
 from . import library as lib
 from . import realexams as rex
 from .cost import estimate_cny, estimate_run, format_estimate
@@ -120,8 +121,8 @@ def pick_source_project(subject: str = "") -> Optional[str]:
         slices = []
         try:
             slices = json.loads((d / "slices.json").read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            _errs.record("gap.pick_source_project", "静默容错（U-15 留痕）", e=e)
         if not any(s.get("role") == "teacher" and s.get("text") for s in slices):
             continue
         done = meta.get("stage") == "done"

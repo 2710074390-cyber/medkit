@@ -45,6 +45,52 @@
 - **U-18 题库页题数口径统一**：头部「共 N 题」与筛选计数（按卡计）不一致（B1 选项组多道子题共享
   一张卡，19 题只显示 17）。现头部改为「共 N 题（M 张卡，其中组内子题 K 道）」。
 
+### 架构与工程品质（三报告整合 · U 批次 2）
+
+#### Fixed
+
+- **U-05 异步端点内执行阻塞重活（单进程事件循环被整体冻结）**：`async def` 端点内同步执行
+  秒级~分钟级操作——官方大纲导入**逐科同步调 LLM**（单科 20~60s × 最多 6 科）、教师重点文件
+  pymupdf/docx 解析、错题批量导入、单图 200MB 落盘、真题全量词典匹配。期间**整站无响应**
+  （静态资源 / `/api/health` / 其余 API 全部挂起），与 0.9.0 用户反馈「体感特别慢」同源。
+  现全部改为 `await asyncio.to_thread(...)`（同仓库 `library.py`/`parse.py`/`ocr.py` 早有正确写法）。
+- **U-15 静默吞异常无可观测面**：`medkit/` 内 31 处 `except Exception: pass`（用户表现为
+  「按钮点了没反应」）全部改为经 `core/errors.py` **留痕 + 计数**；新增只读诊断端点
+  `GET /api/diagnostics/errors`（计数 + 最近 50 条摘要），用户可自查失败原因。
+- **U-15 / R6-19 错误体回显模型原始输出**：`core/llm.py` 的 JSON 解析失败与契约校验失败
+  异常串内嵌模型输出片段（`t[:80]!r` / `ValidationError` 详情），会经错误体回显给用户；
+  现原文**只写日志**，对外统一为中文可读提示。
+- **U-15 / R6-20 日志与回显无敏感字段过滤器**：新增 `errors.redact()`（掩码 `sk-***` 与
+  `Authorization/api_key: ***`，限制长度），`record()`、`_err_response()`、日志输出统一过一遍。
+
+#### Changed
+
+- **U-09 分层修复：消除 `core → routers` 反向依赖 + SQL 回归 core**
+  - 新建 `core/projects.py`：`project_dir` / `subject_lock` / `read_meta` / `write_meta_atomic` /
+    `create_project_record`（**建课能力下沉**，含 R3-08 幂等、F3 同秒不合并、F4 sid 重编号语义）；
+  - `core/gap.py` 删除 `from ..routers._common` / `from ..routers.projects` 两行反向依赖
+    （违反项目自定 P1「单向 routers → core」），改用 core 层原语；
+  - **顺带修掉一个潜在 bug**：`core/gap.py` 内 `from ._common import _write_meta_atomic`
+    ——`medkit/core/_common.py` 并不存在，「一键刷薄弱」走到该行必然 `ImportError`；
+  - 路由层 `DELETE FROM syllabus_items` 下沉为 `syl.replace_teacher_chapters`；
+    路由层 8 处 `dbs.migrate()` 删除（core 域函数本就按需迁移，另为 `list_subjects`/`coverage` 补齐）。
+- **U-14 迁移 v7：v1 五张表补齐索引**：`mistakes(subject,state,learned)` /
+  `knowledge(subject,state)` / `explains(subject)` / `review_cards(subject,due,state)` /
+  `tutor_sessions(subject,state)`。v1 建表时数据量小未建索引，而 v2/v3/v5 新表都补了索引、
+  旧表未回补 → 学习中心列表/掌握度/推荐按 subject/state/due 过滤时全表扫描。
+
+#### Docs
+
+- **U-11 新增 `docs/adr/ADR-006-retire-json-store.md`**：JSON/SQLite 双轨的**退役条件、步骤、
+  回滚方案与影响文件清单**。ADR-001 早已决策 SQLite，但 JSON 回落分支长期无退役时间表，
+  而「DB 不存在即回落 JSON 并原子写真实路径」正是 R5-01（测试污染真实用户库）的机制根因。
+
+#### Tests
+
+- 新增 `tests/test_u_batch2_engine.py`：AST 守卫 async 端点阻塞调用 / `core→routers` 反向依赖 /
+  路由层直写 SQL 与迁移 / 静默 `pass` 收敛（≤5）/ 迁移 v7 升级回滚 / 脱敏与诊断端点 /
+  LLM 异常不回显模型输出。
+
 ### 工程与闸门（2026-09-15，R6 审查批次 1·3）
 
 #### Fixed

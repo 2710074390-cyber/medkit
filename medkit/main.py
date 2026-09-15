@@ -22,12 +22,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .core import errors as errs
 from .core.llm import LLMError
 from .core.mineru import MinerUError
 from .core.orchestrator import PipelineError
 from .core.websearch import SearchError
 from .logging_setup import setup_logging
 from .routers import config as r_config
+from .routers import diagnostics as r_diagnostics
 from .routers import gap as r_gap
 from .routers import library as r_library
 from .routers import ocr as r_ocr
@@ -69,14 +71,14 @@ async def _lifespan(_app: FastAPI):
     """lifespan：启动（日志初始化 + 开浏览器）/ 关闭（预留清理）。"""
     try:
         setup_logging()
-    except Exception:  # noqa: BLE001  日志失败不阻塞启动
-        pass
+    except Exception as e:  # noqa: BLE001  日志失败不阻塞启动
+        errs.record("main._lifespan", "静默容错（U-15 留痕）", e=e)
     # B34：启动时恢复 OCR 任务记录（jobs.json）并清理无记录的孤儿 tmp 文件
     try:
         from .routers.ocr import restore_ocr_persistence
         restore_ocr_persistence()
-    except Exception:  # noqa: BLE001  持久化恢复失败不阻塞启动
-        pass
+    except Exception as e:  # noqa: BLE001  持久化恢复失败不阻塞启动
+        errs.record("main._lifespan", "静默容错（U-15 留痕）", e=e)
     if os.environ.get("MEDKIT_NO_BROWSER") != "1":
         port = _local_port()
 
@@ -90,8 +92,8 @@ async def _lifespan(_app: FastAPI):
                                 f"http://127.0.0.1:{port}/api/health", timeout=1) as resp:
                             if resp.status == 200:
                                 break
-                    except Exception:  # noqa: BLE001  服务未就绪 → 继续轮询
-                        pass
+                    except Exception as e:  # noqa: BLE001  服务未就绪 → 继续轮询
+                        errs.record("main._open", "静默容错（U-15 留痕）", e=e)
                     time.sleep(0.3)
                 webbrowser.open(f"http://127.0.0.1:{port}")
             except Exception as e:  # noqa: BLE001
@@ -125,8 +127,10 @@ async def _guard_local(request: Request, call_next):
 
 # ---------------------------------------------------------------- 统一异常体系（S2）
 def _err_response(status: int, exc: Exception, code: str) -> JSONResponse:
+    # U-15：留痕 + 计数（原始信息进日志/诊断，对外回显前统一脱敏）
+    errs.record(code, str(exc))
     return JSONResponse(status_code=status,
-                        content={"detail": str(exc), "error_code": code})
+                        content={"detail": errs.redact(str(exc)), "error_code": code})
 
 
 app.add_exception_handler(LLMError, lambda _r, e: _err_response(502, e, "LLM_ERROR"))
@@ -141,6 +145,9 @@ app.add_exception_handler(PipelineError, lambda _r, e: _err_response(500, e, "PI
 async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
     logging.getLogger("medkit.main").exception(
         "未捕获异常（%s %s）: %s", request.method, request.url.path, exc)
+    # U-15：进入错误计数与诊断清单（用户可查「按钮点了没反应」的原因）
+    errs.record("INTERNAL_ERROR", str(exc),
+                path=request.url.path, method=request.method)
     return JSONResponse(status_code=500, content={
         "detail": f"服务器内部错误（{exc.__class__.__name__}），详情已写入日志，可查看 ~/.medkit/logs/medkit.log",
         "error_code": "INTERNAL_ERROR",
@@ -149,6 +156,7 @@ async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse
 
 # ---------------------------------------------------------------- 路由装配
 app.include_router(r_config.router)
+app.include_router(r_diagnostics.router)
 app.include_router(r_gap.router)
 app.include_router(r_library.router)
 app.include_router(r_ocr.router)

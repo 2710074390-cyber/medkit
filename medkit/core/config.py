@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import errors as _errs
 from .fsutil import write_json_atomic
 from .providers import get_provider
 
@@ -74,8 +75,8 @@ def _protect(data: str) -> str:
                 return _DPAPI_PREFIX + base64.b64encode(blob).decode("ascii")
             finally:
                 ctypes.windll.kernel32.LocalFree(out_blob.pbData)
-    except Exception:  # noqa: BLE001  回退明文，不阻塞保存
-        pass
+    except Exception as e:  # noqa: BLE001  回退明文，不阻塞保存
+        _errs.record("config._protect", "静默容错（U-15 留痕）", e=e)
     return data
 
 
@@ -96,8 +97,8 @@ def _unprotect(value: str) -> str:
                 return ctypes.string_at(out_blob.pbData, out_blob.cbData).decode("utf-8")
             finally:
                 ctypes.windll.kernel32.LocalFree(out_blob.pbData)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        _errs.record("config._unprotect", "静默容错（U-15 留痕）", e=e)
     return value
 
 
@@ -136,8 +137,8 @@ def load() -> dict[str, Any]:
                     f"{CONFIG_FILE.name}.corrupt-{int(time.time())}.bak")
                 bak.write_bytes(CONFIG_FILE.read_bytes())
                 logger.warning("config.json 解析失败，已备份至 %s，回退默认值：%s", bak, e)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                _errs.record("config.load", "静默容错（U-15 留痕）", e=e)
     # provider 无效（如旧版本 ollama 配置）→ 回退 DeepSeek；base_url/模型随 provider 同步
     prov = get_provider(cfg.get("provider", ""))
     if prov is None:

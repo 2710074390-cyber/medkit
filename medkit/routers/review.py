@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from ..agents import medgen
 from ..core import config as cfg
+from ..core import errors as _errs
 from ..core import usage as usage_mod
 from ..core.config import resolve_key
 from ..core.fsutil import safe_filename, write_json_atomic
@@ -49,8 +50,8 @@ def project_questions(pid: str) -> dict[str, Any]:
     from ..core import realexams as _rex
     try:
         _rex.annotate_questions(questions, meta.get("subject", ""))
-    except Exception:  # noqa: BLE001  标注失败不阻断题目读取
-        pass
+    except Exception as e:  # noqa: BLE001  标注失败不阻断题目读取
+        _errs.record("review.project_questions", "静默容错（U-15 留痕）", e=e)
     return {"questions": questions}
 
 
@@ -71,8 +72,8 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
     try:
         from ..core import realexams as _rex
         _rex.annotate_questions(questions, subject)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        _errs.record("review._rerender_project", "静默容错（U-15 留痕）", e=e)
     out_dir = base / "最终产物"
     out_dir.mkdir(exist_ok=True)
     # R3S-02：从 slices.json 重建 image_index（初跑管线传索引，重渲染必须同口径，否则图题全丢图）
@@ -95,8 +96,8 @@ def _rerender_project(base, questions: list[dict[str, Any]], meta: dict[str, Any
                     _p.unlink(missing_ok=True)
             for _name, _data in snap.items():
                 (out_dir / _name).write_bytes(_data)
-        except Exception:  # noqa: BLE001  回滚失败：不吞原始异常
-            pass
+        except Exception as e:  # noqa: BLE001  回滚失败：不吞原始异常
+            _errs.record("review._rerender_project", "静默容错（U-15 留痕）", e=e)
         raise
 
 
@@ -294,8 +295,8 @@ def _review_questions_locked(pid: str, body: ReviewBody) -> dict[str, Any]:
         if bak.exists():
             try:
                 write_json_atomic(f, json.loads(bak.read_text(encoding="utf-8")))
-            except Exception:  # noqa: BLE001  回滚失败：保留备份文件供手工恢复
-                pass
+            except Exception as e:  # noqa: BLE001  回滚失败：保留备份文件供手工恢复
+                _errs.record("review._review_questions_locked", "静默容错（U-15 留痕）", e=e)
         raise HTTPException(500, f"重渲染失败，已回滚本次修改：{type(e).__name__}（见日志；可稍后重试）") from e
     finally:
         bak.unlink(missing_ok=True)
@@ -411,8 +412,8 @@ def _regen_question_locked(pid: str, qid: str) -> dict[str, Any]:
         if bak.exists():
             try:
                 write_json_atomic(f, json.loads(bak.read_text(encoding="utf-8")))
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                _errs.record("review._regen_question_locked", "静默容错（U-15 留痕）", e=e)
         raise HTTPException(500, f"重掷后重渲染失败，已回滚：{type(e).__name__}（见日志）") from e
     finally:
         bak.unlink(missing_ok=True)

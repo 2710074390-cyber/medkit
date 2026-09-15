@@ -66,6 +66,77 @@ def test_u09_core_does_not_import_routers():
     assert not problems, "U-09 违规（core→routers 反向依赖）：\n" + "\n".join(problems)
 
 
+def test_u14_v7_indexes_created_and_rollback():
+    """U-14：迁移 v7 为 v1 五张表补齐索引（可升级、可回滚）。"""
+    from medkit.core import db as dbs
+
+    def idx_names() -> set[str]:
+        return {r[0] for r in dbs.get_conn().execute(
+            "SELECT name FROM sqlite_master WHERE type='index'")}
+
+    dbs.reset_conn()
+    assert dbs.migrate() == 7, "MIGRATIONS 末位应为 7"
+    expected = ("idx_mk_subject_state", "idx_kn_subject_state", "idx_ex_subject",
+                "idx_rc_subject_due", "idx_ts_subject_state")
+    names = idx_names()
+    for idx in expected:
+        assert idx in names, f"v7 应创建索引 {idx}"
+    # 回滚路径：`downgrade_to` 仅支持整库归零，故直接验证 v7 的 DOWN 语句
+    with dbs.tx(write=True) as cur:
+        dbs._downgrade_from(cur, 7)
+    after = idx_names()
+    for idx in expected:
+        assert idx not in after, f"v7 回滚应删除索引 {idx}"
+    assert dbs.migrate() == 7   # 幂等重升级（IF NOT EXISTS）
+
+
+def test_u15_silent_pass_converged():
+    """U-15：静默 `except Exception: pass` 收敛（原 31 处 → ≤5）。"""
+    import re as _re
+    root = ROOT / "medkit"
+    n = 0
+    for p in root.rglob("*.py"):
+        lines = p.read_text(encoding="utf-8").splitlines()
+        for i, ln in enumerate(lines):
+            if _re.match(r"^\s*except Exception\b.*:\s*(#.*)?$", ln):
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j < len(lines) and lines[j].strip() == "pass":
+                    n += 1
+    assert n <= 5, f"仍有 {n} 处静默 except-pass（应 ≤5）"
+
+
+def test_u15_redact_and_diagnostics_endpoint():
+    """U-15：错误留痕前脱敏 + 只读诊断端点可用。"""
+    from fastapi.testclient import TestClient
+
+    from medkit.core import errors as errs
+    from medkit.main import app
+
+    errs.reset()
+    errs.record("TEST_CODE", "出错了 sk-abcdef123456 Authorization: Bearer xyz")
+    snap = errs.snapshot()
+    assert snap["counts"].get("TEST_CODE") == 1
+    assert "sk-abcdef123456" not in snap["recent"][-1]["msg"]
+    assert "sk-***" in snap["recent"][-1]["msg"]
+    r = TestClient(app, base_url="http://127.0.0.1").get("/api/diagnostics/errors")
+    assert r.status_code == 200
+    assert "counts" in r.json()
+    errs.reset()
+
+
+def test_u15_llm_error_does_not_echo_model_output():
+    """U-15 / R6-19：LLM JSON 解析失败的异常串不得含模型原始输出片段。"""
+    import pytest as _pytest
+
+    from medkit.core import llm
+
+    with _pytest.raises(llm.LLMError) as ei:
+        llm._extract_json("这不是合法 JSON 的模型原始输出片段")
+    assert "这不是合法 JSON" not in str(ei.value)
+
+
 def test_u09_routers_have_no_raw_sql_or_migrate():
     """U-09：路由层不得直写 SQL / 调用迁移（SQL 与事务边界归 core）。"""
     problems: list[str] = []

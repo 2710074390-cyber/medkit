@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import ValidationError
 
+from ..core import errors as _errs
 from ..core.schema import QcVerdict, validate_or_repair
 from . import load_prompt
 
@@ -148,8 +149,8 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
         if on_progress:
             try:
                 on_progress(done, len(batches))
-            except Exception:  # noqa: BLE001  进度回调失败不阻断质检
-                pass
+            except Exception as e:  # noqa: BLE001  进度回调失败不阻断质检
+                _errs.record("medqc._call_progress", "静默容错（U-15 留痕）", e=e)
 
     if len(batches) <= 1 or concurrency <= 1:
         for i, b in enumerate(batches):

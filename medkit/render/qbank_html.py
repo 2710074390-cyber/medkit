@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+from ..core import errors as _errs
+
 TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "X": "X 型 · 多选",
                "B1": "B1 型 · 共用选项", "A3": "A3 型 · 案例单选", "A4": "A4 型 · 案例单选"}
 LETTERS = "ABCDEFGHIJ"  # 渲染上限 10 个选项，超出部分由渲染前终检剔除（D2）
@@ -57,8 +59,8 @@ def _image_html(data: bytes, mime: str, ref: str, cap: str, max_edge: int = 1000
                     out = pix.tobytes("jpg")
                 if 0 < len(out) < len(data):   # 仅重编码明显变小时采用
                     data, mime = out, "image/jpeg"
-        except Exception:  # noqa: BLE001  无 PyMuPDF/解码失败 → 保持原图
-            pass
+        except Exception as e:  # noqa: BLE001  无 PyMuPDF/解码失败 → 保持原图
+            _errs.record("qbank_html._image_html", "静默容错（U-15 留痕）", e=e)
     if len(data) > _MAX_EMBED_BYTES:
         return ""   # 超限仍未缩小 → 不内嵌（调用方渲染占位说明）
     b64 = base64.b64encode(data).decode("ascii")
@@ -94,8 +96,8 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
                 kb = 0
                 try:
                     kb = round(Path(p).stat().st_size / 1024)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    _errs.record("qbank_html.render_media", "静默容错（U-15 留痕）", e=e)
                 out.append(f'<p class="hint">⚠️ 本题含图（{ref}'
                            + (f"，约 {kb}KB" if kb else "")
                            + "）——体积过大未嵌入本页，请回 MedKit「项目详情 → 图片素材」查看原图。</p>")
@@ -107,8 +109,8 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
             from .review_html import sanitize_html
 
             out.append(sanitize_html(_md.markdown(tbl, extensions=["tables"])))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            _errs.record("qbank_html.render_media", "静默容错（U-15 留痕）", e=e)
     return "".join(out)
 
 

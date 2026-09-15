@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..core import config as cfg
+from ..core import errors as _errs
 from ..core import mineru as mineru_mod
 from ..core.config import resolve_key
 from ..core.mineru import MinerUError
@@ -53,8 +54,8 @@ def _save_jobs_to_disk() -> None:
         tmp = _jobs_file().with_suffix(".json.tmp")
         tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(_jobs_file())
-    except Exception:  # noqa: BLE001  落盘失败不阻断 OCR 主流程（下次启动仅丢失本次记录）
-        pass
+    except Exception as e:  # noqa: BLE001  落盘失败不阻断 OCR 主流程（下次启动仅丢失本次记录）
+        _errs.record("ocr._save_jobs_to_disk", "静默容错（U-15 留痕）", e=e)
 
 
 def _restore_jobs_from_disk() -> None:
@@ -84,8 +85,8 @@ def _cleanup_orphan_tmp() -> None:
                 continue
             if p.is_file() and p.stem not in known:
                 p.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001  清理失败不阻断启动
-        pass
+    except Exception as e:  # noqa: BLE001  清理失败不阻断启动
+        _errs.record("ocr._cleanup_orphan_tmp", "静默容错（U-15 留痕）", e=e)
 
 
 def restore_ocr_persistence() -> None:

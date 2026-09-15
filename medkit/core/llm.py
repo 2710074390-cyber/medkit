@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 import re
 import threading
 import time
@@ -12,7 +13,10 @@ from typing import Any, Optional
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
+from . import errors as _errs
 from . import usage
+
+_logger = logging.getLogger("medkit.llm")
 
 
 class LLMError(Exception):
@@ -47,7 +51,9 @@ def _extract_json(text: str) -> Any:
             return json.loads(c)
         except json.JSONDecodeError:
             continue
-    raise LLMError(f"JSON 解析失败: {t[:80]!r} …")
+    # R6-19：不把模型原始输出片段放进异常串（会经错误体回显给用户）——原文只进日志
+    _logger.warning("JSON 解析失败，模型原始输出（前 200 字符）：%r", t[:200])
+    raise LLMError("JSON 解析失败：模型返回内容不是合法 JSON（原始输出已写入日志供排查）")
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -96,8 +102,8 @@ class LLMClient:
                         try:
                             if chunk.choices and chunk.choices[0].delta                                     and chunk.choices[0].delta.content:
                                 parts.append(chunk.choices[0].delta.content)
-                        except Exception:  # noqa: BLE001  部分服务商终止块结构差异
-                            pass
+                        except Exception as e:  # noqa: BLE001  部分服务商终止块结构差异
+                            _errs.record("llm.chat", "静默容错（U-15 留痕）", e=e)
                         if getattr(chunk, "usage", None) is not None:
                             usage.add(getattr(chunk.usage, "prompt_tokens", 0),
                                       getattr(chunk.usage, "completion_tokens", 0))
@@ -153,8 +159,8 @@ class LLMClient:
                 try:
                     if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                         delta = chunk.choices[0].delta.content
-                except Exception:  # noqa: BLE001  部分服务商终止块结构差异
-                    pass
+                except Exception as e:  # noqa: BLE001  部分服务商终止块结构差异
+                    _errs.record("llm.chat_stream", "静默容错（U-15 留痕）", e=e)
                 if getattr(chunk, "usage", None) is not None:
                     acc["prompt_tokens"] += int(getattr(chunk.usage, "prompt_tokens", 0) or 0)
                     acc["completion_tokens"] += int(getattr(chunk.usage, "completion_tokens", 0) or 0)
@@ -195,7 +201,10 @@ class LLMClient:
             try:
                 return schema.model_validate(parsed)
             except ValidationError as e:
-                raise LLMError(f"LLM 输出未通过 {schema.__name__} 契约: {e}") from e
+                # R6-19：契约校验失败的详情（含模型输出值）只进日志，不回显
+                _logger.warning("LLM 输出未通过 %s 契约：%s", schema.__name__, e)
+                raise LLMError(
+                    f"LLM 输出未通过 {schema.__name__} 契约校验（详情已写入日志）") from e
         return parsed
 
     def list_models(self, raise_on_error: bool = False) -> list[str]:

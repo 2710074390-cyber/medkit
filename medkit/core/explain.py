@@ -17,6 +17,7 @@ from typing import Any, Iterator, Optional
 
 from . import config as cfg
 from . import db as dbs
+from . import errors as _errs
 from .fsutil import read_json_list, write_json_atomic
 from .library import LIBRARY_DIR
 
@@ -94,8 +95,8 @@ def _load_index() -> dict[str, Any]:
         if isinstance(data, dict) and isinstance(data.get("subjects"), dict):
             data.setdefault("scanned_at", None)
             return data
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        _errs.record("explain._load_index", "静默容错（U-15 留痕）", e=e)
     return {"subjects": {}, "scanned_at": None}
 
 
@@ -175,8 +176,8 @@ def index_slices(force: bool = False) -> dict[str, Any]:
     try:
         dbs.reindex_slices([{"subject": subj, "text": s["text"], "title": s.get("title") or ""}
                             for subj, lst in index.items() for s in lst])
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        _errs.record("explain.index_slices", "静默容错（U-15 留痕）", e=e)
     out = {"subjects": index, "scanned_at": datetime.now().isoformat(timespec="seconds")}
     write_json_atomic(SLICE_INDEX_FILE, out)
     _INDEX_CACHE["key"] = key

@@ -18,6 +18,7 @@ from typing import Any, Iterator, Optional
 
 from . import config as cfg
 from . import db as dbs
+from . import errors as _errs
 from .fsutil import read_json_list, write_json_atomic
 
 LIBRARY_DIR = cfg.CONFIG_DIR / "library"
@@ -206,8 +207,8 @@ def grade(cid: str, quality: int) -> Optional[dict[str, Any]]:
         lib.log_knowledge_event(card.get("kp_name") or "",
                                 "review",
                                 note=f"{card.get('subject', '')} / q={int(quality)} / 下次 {card.get('due')}")
-    except Exception:  # noqa: BLE001  知识点不存在/写盘失败不阻塞复习
-        pass
+    except Exception as e:  # noqa: BLE001  知识点不存在/写盘失败不阻塞复习
+        _errs.record("review.grade", "静默容错（U-15 留痕）", e=e)
     return card
 
 

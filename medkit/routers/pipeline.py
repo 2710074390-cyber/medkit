@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ..agents import medgen
 from ..agents import medgen as _mg
 from ..core import config as cfg
+from ..core import errors as _errs
 from ..core import usage as usage_mod
 from ..core.config import resolve_key
 from ..core.cost import estimate_run
@@ -78,8 +79,8 @@ def _run_pipeline_thread(pid: str, cancel_ev: threading.Event) -> None:
             meta = _read_meta_checked(base)
             meta["stage"] = "error"
             _write_meta_atomic(base, meta)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            _errs.record("pipeline._run_pipeline_thread", "静默容错（U-15 留痕）", e=e)
     finally:
         with RUN_LOCK:
             RUNNING.pop(pid, None)

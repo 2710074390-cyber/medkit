@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from .. import state
 from ..core import config as cfg
+from ..core import errors as _errs
 from ..core import extract as ex
 from ..core.cost import CHARS_PER_TOKEN  # 单源：见 core/cost.py
 from ..core.fsutil import write_json_atomic
@@ -67,8 +68,8 @@ def _log_project(base: Path, msg: str) -> None:
     try:
         with open(base / "run.log", "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        _errs.record("_common._log_project", "静默容错（U-15 留痕）", e=e)
 
 
 # ---------------------------------------------------------------- 素材解析（共享）
