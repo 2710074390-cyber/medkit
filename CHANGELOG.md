@@ -91,6 +91,20 @@
   路由层直写 SQL 与迁移 / 静默 `pass` 收敛（≤5）/ 迁移 v7 升级回滚 / 脱敏与诊断端点 /
   LLM 异常不回显模型输出。
 
+#### Changed
+
+- **U-10 上帝函数拆分（超项目自定 400 行判据）**：AST 实测两个超限函数已全部拆到判据内。
+  - `core/orchestrator.py::_run_project_impl` **727 → 342 行**，按阶段抽为 4 个函数：
+    `_stage_websearch`（⓪ 多轮网络检索，98 行）· `_stage_generate`（① MedGen 出题：并发/串行
+    两路 + 断点续跑 + 可取消，含原嵌套闭包 `gen_one`）· `_stage_gate1`（② 门禁① 修复循环，
+    173 行）· `_stage_qc_fix`（④ 质检 BLOCKED 定向修复，59 行）。
+    取消路径统一改为「阶段返回 `cancel_out` 标志、调用方单一出口」，不再在函数中部散落
+    `return 管线结果字典`；阶段边界即回滚边界，可单独测试。
+  - `render/qbank_html.py::export_paper_html` **440 → 35 行**，抽为 `_paper_head` /
+    `_paper_js_state` / `_paper_js_grade` 三个片段函数；拆分经**逐字节等价校验**
+    （14 个用例 × 2 个导出函数，拆分前后输出完全一致）。
+  - 新增 `tests/test_u_batch2_engine.py` 两条 AST 守卫：**无 ≥400 行函数** + 四个阶段函数存在且各自 <400 行。
+
 ### 发布产物（U-01 重新出包）
 
 - **U-01 发布产物重新出包（0.10.2 两件套）**：`pack/build.bat` 同款流程重跑——

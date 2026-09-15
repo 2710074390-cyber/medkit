@@ -137,6 +137,41 @@ def test_u15_llm_error_does_not_echo_model_output():
     assert "这不是合法 JSON" not in str(ei.value)
 
 
+def test_u10_no_god_function_over_400_lines():
+    """U-10：无 ≥400 行的上帝函数（项目自定判据）。
+
+    历史：`_run_project_impl` 699→727 行、`export_paper_html` 440 行。现拆为
+    4 个管线阶段函数 + 3 个渲染片段函数，最大函数 <400 行。
+    """
+    import ast as _ast
+    bad: list[tuple[int, str, str]] = []
+    for p in sorted((ROOT / "medkit").rglob("*.py")):
+        tree = _ast.parse(p.read_text(encoding="utf-8"))
+        for n in _ast.walk(tree):
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                ln = n.end_lineno - n.lineno + 1
+                if ln >= 400:
+                    bad.append((ln, str(p.relative_to(ROOT)), n.name))
+    assert not bad, f"存在 ≥400 行函数（应拆分）：{bad}"
+
+
+def test_u10_pipeline_stages_are_extracted():
+    """U-10：管线四阶段已抽为独立函数（可单独测试/局部回滚），且各自 <400 行。"""
+    import ast as _ast
+    import inspect
+
+    from medkit.core import orchestrator as orch
+    for name in ("_stage_websearch", "_stage_generate", "_stage_gate1", "_stage_qc_fix"):
+        fn = getattr(orch, name, None)
+        assert fn is not None, f"缺少阶段函数 {name}"
+        src = inspect.getsource(fn)
+        assert len(src.splitlines()) < 400, f"{name} 仍超 400 行"
+    # `_run_project_impl` 只做编排：不含内联的 SQL/校验实现细节（按体量粗判）
+    impl = inspect.getsource(orch._run_project_impl)
+    assert len(impl.splitlines()) < 400, "_run_project_impl 应仅做阶段编排"
+    assert _ast.parse(impl)  # 语法健全
+
+
 def test_u09_routers_have_no_raw_sql_or_migrate():
     """U-09：路由层不得直写 SQL / 调用迁移（SQL 与事务边界归 core）。"""
     problems: list[str] = []

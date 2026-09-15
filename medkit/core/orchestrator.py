@@ -822,98 +822,21 @@ def _stage_gate1(*, base: Path, meta_path: Path,
     return questions, None
 
 
-def _run_project_impl(pid: str, seed: Optional[int] = None,
-                      overrides: Optional[dict[str, Any]] = None,
-                      cancel: Optional[threading.Event] = None) -> dict[str, Any]:
-    cancel = cancel or threading.Event()
-    base = Path(cfg.load()["projects_dir"]) / pid
-    meta_path = base / "meta.json"
-    if not meta_path.exists():
-        raise PipelineError("项目不存在")
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    if meta.get("stage") == "done":
-        return {"stage": "done", "questions": meta.get("final_count", 0), "resumed": True}
-    if seed is None:
-        seed = int(meta.get("seed") or 42)
-    random.seed(seed)
+def _stage_generate(*, base: Path, meta_path: Path, cancel: threading.Event,
+                    quota: list[dict[str, Any]],
+                    slice_by_sid: dict[str, dict[str, Any]], gen_client: Any,
+                    subject: str, exam: str, ratios: dict[str, int],
+                    teacher_text: str, requirements: str, knobs: dict[str, str],
+                    bloom: dict[str, int], web_materials_text: str,
+                    web_ref_quota: int, exam_text: str, extra_text: str,
+                    syllabus_text: str, image_sections: list[dict[str, Any]],
+                    ) -> tuple[list[dict[str, Any]], bool, list[int], set[str]]:
+    """① MedGen 出题（按章节切片并发 + 断点续跑 + 可取消）。
 
-    slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
-    textbook_slices = [s for s in slices if s.get("role") == "textbook"]
-    teacher_slices = [s for s in slices if s.get("role") == "teacher"]
-    teacher_text = "\n".join(s.get("text", "") for s in teacher_slices)
-    # v0.5.2：自备真题 / 补充资料（可选角色，仅考点/风格校准与补充上下文）
-    exam_text = "\n".join(filter(None, (s.get("text", "") for s in slices if s.get("role") == "exam")))
-    extra_text = "\n".join(filter(None, (s.get("text", "") for s in slices if s.get("role") == "extra")))
-    slice_by_sid = {s["sid"]: s for s in textbook_slices}
-    text_by_sid = {sid: s.get("text", "") for sid, s in slice_by_sid.items()}
-    known_sids = set(slice_by_sid)
-
-    # R3-09/B24：cancel 下透到 LLM 层（流式读取提前退出，停止后不再烧完整回复）
-    gen_client = (overrides or {}).get("gen") or medgen.make_client(cancel=cancel)
-    qc_client = (overrides or {}).get("qc") or medqc.make_client(cancel=cancel)
-    fix_client = (overrides or {}).get("fix") or medfix.make_client(cancel=cancel)
-    rev_client = (overrides or {}).get("review") or medreview.make_client(cancel=cancel)
-
-    subject = meta.get("subject", "")
-    exam = meta.get("exam", "期末")
-    toggles = meta.get("toggles", {})
-    # WP-01/WP-10：大纲锚定注入——教师重点为主（source=teacher），官方 306 仅作补充
-    syllabus_text = ""
-    official_note = ""
-    try:
-        from . import syllabus as syl
-        if dbs.enabled() and syl.list_subjects():
-            syllabus_text = syl.chapter_items_text(subject, limit=800, source="teacher")
-            official_quota = int(meta.get("official_quota") or 0)
-            if official_quota > 0:
-                official_text = syl.chapter_items_text(
-                    subject, limit=min(400, official_quota * 10), source="seed")
-                if official_text:
-                    syllabus_text = (syllabus_text + "\n\n# 官方 306 补充大纲（仅补充，考点以教师重点为准）\n"
-                                     + official_text)[:1200]
-                    official_note = f" + 官方306补充 {len(official_text)} 字"
-            if not syllabus_text.strip():
-                # B-08：仅官方大纲、无教师重点 → 以官方大纲为主锚（否则生成零锚定，考点全凭模型）
-                fallback = syl.chapter_items_text(subject, limit=800, source="seed")
-                if fallback.strip():
-                    syllabus_text = fallback
-                    official_note = "（教师重点为空，以官方 306 大纲为主锚）"
-    except Exception:  # noqa: BLE001  大纲引擎故障不阻塞出题
-        syllabus_text = ""
-    if syllabus_text:
-        _log(base, f"📋 大纲锚定注入 {len(syllabus_text)} 字（教师重点为主{official_note}，subtopic 对齐考点条目）")
-    # WP-04：图像素材（图/表题）——清单注入提示词 + 渲染用索引（R3S-02：与审核台重渲染共用构建函数）
-    image_index, image_sections = build_image_index(base, slices)
-    if image_sections:
-        _log(base, f"🖼 图像素材 {len(image_index)} 个注入（鼓励出图题，image_ref 门禁校验）")
-    ratios = _effective_ratios(meta.get("ratios", {}))
-    quota = meta.get("quota", [])
-    requirements = meta.get("requirements", "")     # 可玩性 1A
-    knobs = meta.get("knobs", {})                   # 可玩性 2A
-    bloom = meta.get("bloom") or None               # 可玩性 2B（空 → 默认）
-    bloom_target = None
-    if isinstance(bloom, dict) and sum(int(v or 0) for v in bloom.values()) > 0:
-        bloom_target = {k: float(v) / 100.0 for k, v in bloom.items() if v}
-    web_ref_quota = int(meta.get("web_ref_quota") or 0)
-
-    if len(teacher_text) > TEACHER_CHAR_LIMIT:
-        _log(base, f"⚠️ 教师重点过长（{len(teacher_text)} 字），仅前 {TEACHER_CHAR_LIMIT} 字参与考点锚定")
-    if exam_text:
-        cut = "（超长截断）" if len(exam_text) > medgen.EXAM_CHAR_LIMIT else ""
-        _log(base, f"📎 自备真题 {len(exam_text)} 字参与考点/风格校准{cut}（严禁照抄原题）")
-    if extra_text:
-        cut = "（超长截断）" if len(extra_text) > medgen.EXTRA_CHAR_LIMIT else ""
-        _log(base, f"📎 自备资料 {len(extra_text)} 字作为补充上下文{cut}（与教材冲突以教材为准）")
-
-    # ---------------- ⓪ 多轮网络检索（§5.4，默认关；同项目缓存）
-    web_materials, web_materials_text, _ws_cancelled = _stage_websearch(
-        base=base, meta_path=meta_path, meta=meta, cancel=cancel,
-        gen_client=gen_client, textbook_slices=textbook_slices,
-        teacher_text=teacher_text, subject=subject, web_ref_quota=web_ref_quota)
-    if _ws_cancelled:
-        return {"stage": "cancelled", "questions": 0, "partial": True}
-
-    # ---------------- ① MedGen 出题（并发 + 断点续跑 + 可取消）
+    返回 `(questions, cancelled_midway, contract_bad, done_sids)`。
+    U-10：从 727 行的 `_run_project_impl` 抽出的第四个阶段函数——原 120+ 行内联块
+    （含嵌套闭包 `gen_one` 与并发/串行两路出题、checkpoint 落盘）。
+    """
     _set_stage(base, meta_path, "generating", "① MedGen 出题（按章节切片并发）…")
     done_sids, done_questions = _load_checkpoint(base)
     if done_sids:
@@ -1035,6 +958,109 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     _set_progress(base, "generating", progress_done, total_slices,
                   "出题完成" if not cancelled_midway else "已取消",
                   sub="切片出题", sub_done=progress_done, sub_total=total_slices)
+    return questions, cancelled_midway, contract_bad, done_sids
+
+
+def _run_project_impl(pid: str, seed: Optional[int] = None,
+                      overrides: Optional[dict[str, Any]] = None,
+                      cancel: Optional[threading.Event] = None) -> dict[str, Any]:
+    cancel = cancel or threading.Event()
+    base = Path(cfg.load()["projects_dir"]) / pid
+    meta_path = base / "meta.json"
+    if not meta_path.exists():
+        raise PipelineError("项目不存在")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta.get("stage") == "done":
+        return {"stage": "done", "questions": meta.get("final_count", 0), "resumed": True}
+    if seed is None:
+        seed = int(meta.get("seed") or 42)
+    random.seed(seed)
+
+    slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
+    textbook_slices = [s for s in slices if s.get("role") == "textbook"]
+    teacher_slices = [s for s in slices if s.get("role") == "teacher"]
+    teacher_text = "\n".join(s.get("text", "") for s in teacher_slices)
+    # v0.5.2：自备真题 / 补充资料（可选角色，仅考点/风格校准与补充上下文）
+    exam_text = "\n".join(filter(None, (s.get("text", "") for s in slices if s.get("role") == "exam")))
+    extra_text = "\n".join(filter(None, (s.get("text", "") for s in slices if s.get("role") == "extra")))
+    slice_by_sid = {s["sid"]: s for s in textbook_slices}
+    text_by_sid = {sid: s.get("text", "") for sid, s in slice_by_sid.items()}
+    known_sids = set(slice_by_sid)
+
+    # R3-09/B24：cancel 下透到 LLM 层（流式读取提前退出，停止后不再烧完整回复）
+    gen_client = (overrides or {}).get("gen") or medgen.make_client(cancel=cancel)
+    qc_client = (overrides or {}).get("qc") or medqc.make_client(cancel=cancel)
+    fix_client = (overrides or {}).get("fix") or medfix.make_client(cancel=cancel)
+    rev_client = (overrides or {}).get("review") or medreview.make_client(cancel=cancel)
+
+    subject = meta.get("subject", "")
+    exam = meta.get("exam", "期末")
+    toggles = meta.get("toggles", {})
+    # WP-01/WP-10：大纲锚定注入——教师重点为主（source=teacher），官方 306 仅作补充
+    syllabus_text = ""
+    official_note = ""
+    try:
+        from . import syllabus as syl
+        if dbs.enabled() and syl.list_subjects():
+            syllabus_text = syl.chapter_items_text(subject, limit=800, source="teacher")
+            official_quota = int(meta.get("official_quota") or 0)
+            if official_quota > 0:
+                official_text = syl.chapter_items_text(
+                    subject, limit=min(400, official_quota * 10), source="seed")
+                if official_text:
+                    syllabus_text = (syllabus_text + "\n\n# 官方 306 补充大纲（仅补充，考点以教师重点为准）\n"
+                                     + official_text)[:1200]
+                    official_note = f" + 官方306补充 {len(official_text)} 字"
+            if not syllabus_text.strip():
+                # B-08：仅官方大纲、无教师重点 → 以官方大纲为主锚（否则生成零锚定，考点全凭模型）
+                fallback = syl.chapter_items_text(subject, limit=800, source="seed")
+                if fallback.strip():
+                    syllabus_text = fallback
+                    official_note = "（教师重点为空，以官方 306 大纲为主锚）"
+    except Exception:  # noqa: BLE001  大纲引擎故障不阻塞出题
+        syllabus_text = ""
+    if syllabus_text:
+        _log(base, f"📋 大纲锚定注入 {len(syllabus_text)} 字（教师重点为主{official_note}，subtopic 对齐考点条目）")
+    # WP-04：图像素材（图/表题）——清单注入提示词 + 渲染用索引（R3S-02：与审核台重渲染共用构建函数）
+    image_index, image_sections = build_image_index(base, slices)
+    if image_sections:
+        _log(base, f"🖼 图像素材 {len(image_index)} 个注入（鼓励出图题，image_ref 门禁校验）")
+    ratios = _effective_ratios(meta.get("ratios", {}))
+    quota = meta.get("quota", [])
+    requirements = meta.get("requirements", "")     # 可玩性 1A
+    knobs = meta.get("knobs", {})                   # 可玩性 2A
+    bloom = meta.get("bloom") or None               # 可玩性 2B（空 → 默认）
+    bloom_target = None
+    if isinstance(bloom, dict) and sum(int(v or 0) for v in bloom.values()) > 0:
+        bloom_target = {k: float(v) / 100.0 for k, v in bloom.items() if v}
+    web_ref_quota = int(meta.get("web_ref_quota") or 0)
+
+    if len(teacher_text) > TEACHER_CHAR_LIMIT:
+        _log(base, f"⚠️ 教师重点过长（{len(teacher_text)} 字），仅前 {TEACHER_CHAR_LIMIT} 字参与考点锚定")
+    if exam_text:
+        cut = "（超长截断）" if len(exam_text) > medgen.EXAM_CHAR_LIMIT else ""
+        _log(base, f"📎 自备真题 {len(exam_text)} 字参与考点/风格校准{cut}（严禁照抄原题）")
+    if extra_text:
+        cut = "（超长截断）" if len(extra_text) > medgen.EXTRA_CHAR_LIMIT else ""
+        _log(base, f"📎 自备资料 {len(extra_text)} 字作为补充上下文{cut}（与教材冲突以教材为准）")
+
+    # ---------------- ⓪ 多轮网络检索（§5.4，默认关；同项目缓存）
+    web_materials, web_materials_text, _ws_cancelled = _stage_websearch(
+        base=base, meta_path=meta_path, meta=meta, cancel=cancel,
+        gen_client=gen_client, textbook_slices=textbook_slices,
+        teacher_text=teacher_text, subject=subject, web_ref_quota=web_ref_quota)
+    if _ws_cancelled:
+        return {"stage": "cancelled", "questions": 0, "partial": True}
+
+    # ---------------- ① MedGen 出题（并发 + 断点续跑 + 可取消）
+    questions, cancelled_midway, contract_bad, done_sids = _stage_generate(
+        base=base, meta_path=meta_path, cancel=cancel, quota=quota,
+        slice_by_sid=slice_by_sid, gen_client=gen_client, subject=subject,
+        exam=exam, ratios=ratios, teacher_text=teacher_text,
+        requirements=requirements, knobs=knobs, bloom=bloom,
+        web_materials_text=web_materials_text, web_ref_quota=web_ref_quota,
+        exam_text=exam_text, extra_text=extra_text,
+        syllabus_text=syllabus_text, image_sections=image_sections)
 
     if cancelled_midway:
         _save_checkpoint(base, done_sids, questions)
