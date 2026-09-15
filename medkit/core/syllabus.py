@@ -374,6 +374,7 @@ def chapter_items_text(subject: str = "", limit: int = 800,
 
 def list_subjects(source: str = "all") -> list[dict[str, Any]]:
     """有大纲条目的科目清单（含章/条目计数；source 限定 all|seed|teacher）。"""
+    dbs.migrate()   # U-09：schema 按需确保（原由路由层调用，收敛到 core）
     where, params = "", ()
     if source != "all":
         where, params = "WHERE source = ?", (source,)
@@ -549,6 +550,25 @@ def import_teacher_text(text: str, subject: str = "",
             "note": f"按要点行提取（{len(items)} 条，归入「{chapter_hint}」章）"}
 
 
+def replace_teacher_chapters(pairs: list[tuple[str, str]]) -> int:
+    """删除指定 (subject, chapter) 的 teacher 行（不动内置大纲 seed 行）；返回删除行数。
+
+    U-09：此前该 DELETE 直写在路由层（routers/syllabus.py），事务边界散落在路由；
+    现下沉到 core，路由只调用并返回计数（分层单向 routers → core）。
+    """
+    dbs.migrate()
+    replaced = 0
+    if not pairs:
+        return 0
+    with dbs.tx(write=True) as cur:
+        for subject, chapter in pairs:
+            cur.execute(
+                "DELETE FROM syllabus_items WHERE subject=? AND chapter=? AND source='teacher'",
+                (subject, chapter))
+            replaced += cur.rowcount
+    return replaced
+
+
 def add_teacher_items(drafts: list[dict[str, str]]) -> dict[str, Any]:
     """教师重点草稿 → 落库（source='teacher'，幂等 IDOR 更新）。返回统计。"""
     dbs.migrate()
@@ -694,6 +714,7 @@ def match_status(item: str, pool: list[str],
 
 def coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
     """科目覆盖度报表（树 + 计数）。零 LLM。source 限定 all|seed|teacher。"""
+    dbs.migrate()   # U-09：schema 按需确保（原由路由层调用，收敛到 core）
     from . import library as lib
     rows = _rows(subject, source)
     # D-12：一次加载知识点/错题全表，循环内复用（原实现每条目重载全表）

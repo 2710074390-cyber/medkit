@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,6 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from ..core import db as dbs
 from ..core import syllabus as syl
 from ._common import require_flag
 
@@ -62,7 +62,6 @@ class TeacherImportBody(BaseModel):
 @router.get("/api/syllabus/status")
 def syllabus_status() -> dict[str, Any]:
     require_flag("syllabus")
-    dbs.migrate()
     return {"seed": syl.seed_info(),
             "subjects": syl.list_subjects(),
             "teacher": {"items": sum(s["items"] for s in syl.list_subjects("teacher")),
@@ -73,7 +72,6 @@ def syllabus_status() -> dict[str, Any]:
 def syllabus_ensure(body: SeedBody) -> dict[str, Any]:
     """导入/重建软件内置西综306 大纲种子（source='seed'，幂等）。"""
     require_flag("syllabus")
-    dbs.migrate()
     return syl.ensure_seed(force=body.force)
 
 
@@ -165,8 +163,10 @@ async def syllabus_teacher_import_file(file: UploadFile = File(...),
         tmp.flush()
         if preview:
             # R3-25：草稿模式——只解析不落库，确认由前端 /api/syllabus/confirm 完成
-            return syl.import_teacher_file_preview(tmp.name, subject=subject)
-        return syl.import_teacher_file(tmp.name, subject=subject)
+            # U-05：pymupdf/python-docx 解析为秒级阻塞操作，放线程池避免冻结单进程事件循环
+            return await asyncio.to_thread(
+                syl.import_teacher_file_preview, tmp.name, subject=subject)
+        return await asyncio.to_thread(syl.import_teacher_file, tmp.name, subject=subject)
     finally:
         tmp.close()
         try:
@@ -221,7 +221,9 @@ async def syllabus_seed_parse_file(file: UploadFile = File(...)) -> dict[str, An
     text = _decode_text(raw).strip()
     if not text:
         raise HTTPException(400, "文件内容为空")
-    return _seed_parse(text)
+    # U-05：逐科同步 LLM 契约抽取（单科 20~60s × 最多 6 科）——必须放线程池，
+    # 否则整个单进程 uvicorn 事件循环被占满，全站（含 /api/health）无响应
+    return await asyncio.to_thread(_seed_parse, text)
 
 
 @router.post("/api/syllabus/seed/import-file")
@@ -231,7 +233,7 @@ async def syllabus_seed_import_file(file: UploadFile = File(...)) -> dict[str, A
     drafts = parsed.get("drafts") or []
     if not drafts:
         return parsed
-    saved = syl.add_seed_items(drafts)
+    saved = await asyncio.to_thread(syl.add_seed_items, drafts)   # U-05：同步入库移出事件循环
     parsed.update(added=saved["added"], total=saved["total"], source="seed")
     return parsed
 # ---------------------------------------------------------------- 确认落库（merge/订正，source='teacher'）
@@ -247,14 +249,10 @@ def syllabus_confirm(body: ConfirmBody) -> dict[str, Any]:
         raise HTTPException(400, "无条目")
     replaced = 0
     if body.replace:
-        with dbs.tx(write=True) as cur:
-            targets = {(i.subject.strip(), (i.chapter or "教师重点").strip())
-                       for i in body.items}
-            for subject, chapter in targets:
-                cur.execute(
-                    "DELETE FROM syllabus_items WHERE subject=? AND chapter=? AND source='teacher'",
-                    (subject, chapter))
-                replaced += cur.rowcount
+        # U-09：DELETE 下沉 core（syl.replace_teacher_chapters），路由只传参并取计数
+        targets = sorted({(i.subject.strip(), (i.chapter or "教师重点").strip())
+                          for i in body.items})
+        replaced = syl.replace_teacher_chapters(targets)
     drafts = [{"subject": i.subject, "chapter": i.chapter or "教师重点",
                "item": i.item, "weight": i.weight} for i in body.items]
     res = syl.add_teacher_items(drafts)
@@ -265,7 +263,6 @@ def syllabus_confirm(body: ConfirmBody) -> dict[str, Any]:
 @router.get("/api/syllabus/tree")
 def syllabus_tree(subject: str = "", source: str = "all") -> dict[str, Any]:
     require_flag("syllabus")
-    dbs.migrate()
     return syl.coverage(subject, source)
 
 
@@ -273,7 +270,6 @@ def syllabus_tree(subject: str = "", source: str = "all") -> dict[str, Any]:
 def syllabus_coverage(subject: str = "", source: str = "all") -> dict[str, Any]:
     """覆盖度：source 限定 seed（内置大纲）/ teacher（教师重点）；all 供出题锚定等内部聚合。"""
     require_flag("syllabus")
-    dbs.migrate()
     return syl.coverage(subject, source)
 
 
@@ -289,5 +285,4 @@ def syllabus_item_delete(item_id: str) -> dict[str, Any]:
 @router.get("/api/syllabus/report")
 def syllabus_report(subject: str = "", source: str = "all") -> dict[str, str]:
     require_flag("syllabus")
-    dbs.migrate()
     return {"markdown": syl.report_md(subject, source)}

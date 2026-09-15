@@ -125,10 +125,11 @@ async def import_file(file: UploadFile = File(...)) -> dict[str, Any]:
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else "txt"
     if ext not in ("json", "csv", "md", "txt"):
         raise HTTPException(400, f"不支持的文件类型 .{ext}（支持 json / csv / md / txt）")
-    rows = lib.parse_import_text(text, ext)
+    # U-05：文本解析 + 批量入库为秒级同步操作，放线程池避免冻结事件循环
+    rows = await asyncio.to_thread(lib.parse_import_text, text, ext)
     if not rows:
         raise HTTPException(400, "未解析出题目——请检查文件格式（JSON 数组 / CSV 带表头 / 每题带题号与答案）")
-    added = lib.batch_add(rows)
+    added = await asyncio.to_thread(lib.batch_add, rows)
     return {"ok": True, "added": added, "total": len(rows), "skipped": len(rows) - added, "file": name}
 
 

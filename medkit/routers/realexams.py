@@ -3,12 +3,12 @@
 命名空间 /api/library/realexams/*。红线：未确认数据不进权重；任何输出不含真题原文。
 """
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from ..core import db as dbs
 from ..core import realexams as rex
 from ._common import require_flag
 
@@ -54,13 +54,13 @@ async def rex_analyze_file(file: UploadFile = File(...)) -> dict[str, Any]:
             raise HTTPException(400, "文件编码无法识别（请用 UTF-8）")
     if not text.strip():
         raise HTTPException(400, "文件为空")
-    return rex.analyze(text, "")
+    # U-05：全量词典匹配为 CPU 密集型同步操作（秒级）→ 放线程池避免冻结事件循环
+    return await asyncio.to_thread(rex.analyze, text, "")
 
 
 @router.get("/api/library/realexams")
 def rex_list(subject: str = "", confirmed: bool = False) -> dict[str, Any]:
     require_flag("realexams")
-    dbs.migrate()
     return {"drafts": rex.list_drafts(subject, confirmed=confirmed),
             "all": rex.list_drafts(subject, confirmed=None)}
 
@@ -84,12 +84,10 @@ def rex_delete(rid: str) -> dict[str, Any]:
 @router.get("/api/library/realexams/freq")
 def rex_freq(subject: str = "") -> dict[str, Any]:
     require_flag("realexams")
-    dbs.migrate()
     return rex.freq_view(subject)
 
 
 @router.get("/api/library/realexams/report")
 def rex_report(subject: str = "") -> dict[str, str]:
     require_flag("realexams")
-    dbs.migrate()
     return {"markdown": rex.report_md(subject)}

@@ -197,15 +197,21 @@ def recent_gap_done_project(subject: str = "") -> Optional[str]:
 def create_gap_project(subject: str = "", count: int = 50, w_freq: float = 0.15,
                        source_pid: str = "") -> dict[str, Any]:
     """一键刷薄弱：配题 → 复制来源项目切片 → 追加薄弱清单 → 走 create_project 通道。"""
-    from ..routers._common import _read_meta_checked, proj_dir
-    from ..routers.projects import ProjectBody, _subject_lock, create_project
+    # U-09：分层修复——改用 core 层原语（此前 `from ..routers.*` 构成 core → routers 反向依赖）
+    from .projects import (
+        create_project_record,
+        project_dir,
+        read_meta,
+        subject_lock,
+        write_meta_atomic,
+    )
 
     plan_data = plan(subject, count, w_freq)
     if not plan_data["plan"]:
         return {"ok": False, "pid": "", "plan": plan_data,
                 "msg": "当前没有可刷的薄弱知识点（priority≥0.3）——先做错题/复习积累，或调低阈值"}
     # R3-08：幂等判定与创建进同一把 per-subject 锁（RLock——create_project 同线程可重入）
-    with _subject_lock(subject):
+    with subject_lock(subject):
         reused = recent_gap_project(subject)
         if reused:
             return {"ok": True, "pid": reused, "reused": True, "plan": plan_data,
@@ -230,26 +236,25 @@ def create_gap_project(subject: str = "", count: int = 50, w_freq: float = 0.15,
         teacher_text = "\n".join(s.get("text", "") or "" for s in teachers)
         teacher_text += f"\n【本次薄弱点清单（优先覆盖，单知识点≤3题）】\n{weak_list}"
 
-        body = ProjectBody(
-            subject=subject or _read_meta_checked(proj_dir(src)).get("subject", ""),
-            exam="薄弱专项",
-            target=count,
-            toggles={"qbank": True, "paper": True, "review": True},
-            textbook_slices=textbooks,
-            teacher_slices=teachers,
-            teacher_text=teacher_text,
-            requirements=f"优先覆盖薄弱点：{weak_list}；同一知识点不超过 3 题；卷面标注「薄弱点专项」",
-            knobs={"k_realexam_weight": str(w_freq), "k_gap": "1"},
-            web_search=False,
-        )
-        created = create_project(body)
+        payload = {
+            "subject": subject or read_meta(project_dir(src)).get("subject", ""),
+            "exam": "薄弱专项",
+            "target": count,
+            "toggles": {"qbank": True, "paper": True, "review": True},
+            "textbook_slices": textbooks,
+            "teacher_slices": teachers,
+            "teacher_text": teacher_text,
+            "requirements": f"优先覆盖薄弱点：{weak_list}；同一知识点不超过 3 题；卷面标注「薄弱点专项」",
+            "knobs": {"k_realexam_weight": str(w_freq), "k_gap": "1"},
+            "web_search": False,
+        }
+        created = create_project_record(payload)
     pid = created["pid"]
-    meta = _read_meta_checked(proj_dir(pid))
+    meta = read_meta(project_dir(pid))
     meta["scope"] = "gap"
     meta["gap_plan"] = plan_data
     meta["gap_source"] = src
-    from ._common import _write_meta_atomic
-    _write_meta_atomic(proj_dir(pid), meta)
+    write_meta_atomic(project_dir(pid), meta)
 
     chars_t = sum(len(s.get("text", "") or "") for s in textbooks)
     chars_k = sum(len(s.get("text", "") or "") for s in teachers)
