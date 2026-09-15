@@ -485,6 +485,106 @@ def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[s
         usage.deactivate(token)
 
 
+def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
+                     cancel: threading.Event, gen_client: Any,
+                     textbook_slices: list[dict[str, Any]], teacher_text: str,
+                     subject: str, web_ref_quota: int,
+                     ) -> tuple[list[dict[str, Any]], str, bool]:
+    """⓪ 多轮网络检索（§5.4，默认关；同项目缓存）。返回 `(materials, materials_text, cancelled)`。
+
+    U-10：从 727 行的 `_run_project_impl` 抽出的第一个阶段函数。此前该段 80+ 行内联在管线
+    函数中、与 102 个局部变量共享作用域，无法单独测试或局部回滚；抽为纯函数后
+    输入 = meta / 切片 / 取消事件，输出 = 素材 + 取消标志，不再触碰其它管线状态。
+    """
+    web_enabled = bool(meta.get("web_search"))
+    web_materials_text = ""
+    web_materials: list[dict[str, Any]] = []
+    if web_enabled:
+        ckpt_file = base / "网络参考素材.json"
+        inc_flag = base / "网络参考素材.incomplete"  # F2（v0.5）：取消留下的不完整标记
+        if ckpt_file.exists() and not inc_flag.exists():  # 同项目缓存：重复批跑不再扣费
+            try:
+                web_materials = json.loads(ckpt_file.read_text(encoding="utf-8"))
+                web_materials_text = ws.digest_for_prompt(web_materials)
+                _log(base, f"  网络检索：使用项目缓存（{len(web_materials)} 条）")
+            except Exception:  # noqa: BLE001
+                web_materials = []
+        elif inc_flag.exists():
+            _log(base, "  网络检索：上一轮被取消（结果不完整）→ 续跑重新检索")
+        if not web_materials:
+            _set_stage(base, meta_path, "websearch", "⓪ 多轮网络检索（考纲/真题/指南）…")
+            _set_progress(base, "websearch", 0, 1, "检索中…（首次约 1~3 分钟）", sub="多轮检索", sub_done=0, sub_total=3)
+            ws_cfg = cfg.load().get("web_search", {}) or {}
+            _cfg = cfg.load()
+            # U-06：检索 Key 解析对齐 routers/search.py 的回退口径——
+            # 非 bocha 后端（内置 deepseek_tool/zhipu_tool/qwen_tool）复用服务商 LLM Key，
+            # 消除「就绪清单显示已开启、实跑却必然失败」的静默失败。
+            _ws_bocha_key = resolve_key(ws_cfg.get("api_key", ""))
+            _provider_key = resolve_key(_cfg.get("api_key", ""))
+            backend = ws.resolve_backend(meta.get("web_backend", "auto") or "auto",
+                                         _cfg.get("provider", "deepseek"),
+                                         _ws_bocha_key)
+            _search_key = _ws_bocha_key if backend == "bocha" else _provider_key
+            if backend != "manual" and not _search_key:
+                # 生成前给出明确告警（不再只在跑完 3 轮后写复核清单里体现，UX A4）
+                _log(base, "  ⚠️ 网络检索：未检测到可用 Key——若本次检索失败，"
+                           "请到「我的 → 连接服务商」配置服务商 Key 后重新生成")
+            chapter = next((s.get("title", "") for s in textbook_slices), "")
+            keywords = teacher_text[:500]
+            if backend == "manual":
+                materials = ws.parse_manual(meta.get("web_manual_text", ""))
+                logs_list = [f"手动粘贴素材 {len(materials)} 条"]
+                err_list: list[str] = []
+            else:
+                if cancel.is_set():
+                    _set_stage(base, meta_path, "cancelled", "⏹ 已取消（未开始生成）")
+                    return web_materials, web_materials_text, True
+                res_search = ws.run_search_rounds(
+                    gen_client, subject, chapter, keywords, backend,
+                    api_key=_search_key,
+                    model=_cfg.get("model_gen", ""),
+                    slices_digest="\n\n".join(
+                        f"【{s.get('title','')}】\n{s.get('text','')[:600]}"
+                        for s in textbook_slices[:4]),
+                    cancel=cancel,
+                    trusted_only=bool(ws_cfg.get("trusted_only", False)),
+                    trusted_domains=ws_cfg.get("trusted_domains") or [])
+                materials = res_search["materials"]
+                logs_list = res_search["logs"]
+                err_list = res_search["errors"]
+                for e in err_list:
+                    _log(base, f"  {e}")
+            for ln in logs_list:
+                _log(base, f"  {ln}")
+            web_materials = materials
+            web_materials_text = ws.digest_for_prompt(materials)
+            (base / "网络参考素材.json").write_text(
+                json.dumps(materials, ensure_ascii=False, indent=2), encoding="utf-8")
+            if cancel.is_set():
+                # F2：检索中途取消 → 落盘结果标记 incomplete，续跑将重新检索而非复用残缺结果
+                inc_flag.write_text("incomplete", encoding="utf-8")
+                _set_stage(base, meta_path, "cancelled",
+                           "⏹ 已取消（网络检索未完成；续跑将重新检索）")
+                return web_materials, web_materials_text, True
+            inc_flag.unlink(missing_ok=True)
+            conflicts = [m for m in materials if m.get("conflict")]
+            if err_list:
+                _append_manual_section(base, "网络检索失败（已降级继续）",
+                                       [str(e) for e in err_list])
+                _log(base, f"  ⚠️ 网络检索 {len(err_list)} 项失败 → 人工复核清单.md")
+            if conflicts:
+                lines = ["# 人工复核清单（网络检索冲突项）", "",
+                         "> 下列网络素材与教材切片结论/数值直接矛盾，已**标记不自动改写**；"
+                         "引用题不得以其为正确答案依据：", ""]
+                for m in conflicts:
+                    lines.append(f"- {m.get('title', '')} · {m.get('url', '')}\n"
+                                 f"  {m.get('snippet', '')[:200]}")
+                (base / "人工复核清单.md").write_text("\n".join(lines), encoding="utf-8")
+                _log(base, f"  ⚠️ {len(conflicts)} 条素材与教材冲突 → 人工复核清单.md")
+            _log(base, f"  网络检索完成：{len(materials)} 条素材（引用配额 {web_ref_quota}%）")
+    return web_materials, web_materials_text, False
+
+
 def _run_project_impl(pid: str, seed: Optional[int] = None,
                       overrides: Optional[dict[str, Any]] = None,
                       cancel: Optional[threading.Event] = None) -> dict[str, Any]:
@@ -557,7 +657,6 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     bloom_target = None
     if isinstance(bloom, dict) and sum(int(v or 0) for v in bloom.values()) > 0:
         bloom_target = {k: float(v) / 100.0 for k, v in bloom.items() if v}
-    web_enabled = bool(meta.get("web_search"))      # §5.4
     web_ref_quota = int(meta.get("web_ref_quota") or 0)
 
     if len(teacher_text) > TEACHER_CHAR_LIMIT:
@@ -570,91 +669,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _log(base, f"📎 自备资料 {len(extra_text)} 字作为补充上下文{cut}（与教材冲突以教材为准）")
 
     # ---------------- ⓪ 多轮网络检索（§5.4，默认关；同项目缓存）
-    web_materials_text = ""
-    web_materials: list[dict[str, Any]] = []
-    if web_enabled:
-        ckpt_file = base / "网络参考素材.json"
-        inc_flag = base / "网络参考素材.incomplete"  # F2（v0.5）：取消留下的不完整标记
-        if ckpt_file.exists() and not inc_flag.exists():  # 同项目缓存：重复批跑不再扣费
-            try:
-                web_materials = json.loads(ckpt_file.read_text(encoding="utf-8"))
-                web_materials_text = ws.digest_for_prompt(web_materials)
-                _log(base, f"  网络检索：使用项目缓存（{len(web_materials)} 条）")
-            except Exception:  # noqa: BLE001
-                web_materials = []
-        elif inc_flag.exists():
-            _log(base, "  网络检索：上一轮被取消（结果不完整）→ 续跑重新检索")
-        if not web_materials:
-            _set_stage(base, meta_path, "websearch", "⓪ 多轮网络检索（考纲/真题/指南）…")
-            _set_progress(base, "websearch", 0, 1, "检索中…（首次约 1~3 分钟）", sub="多轮检索", sub_done=0, sub_total=3)
-            ws_cfg = cfg.load().get("web_search", {}) or {}
-            _cfg = cfg.load()
-            # U-06：检索 Key 解析对齐 routers/search.py 的回退口径——
-            # 非 bocha 后端（内置 deepseek_tool/zhipu_tool/qwen_tool）复用服务商 LLM Key，
-            # 消除「就绪清单显示已开启、实跑却必然失败」的静默失败。
-            _ws_bocha_key = resolve_key(ws_cfg.get("api_key", ""))
-            _provider_key = resolve_key(_cfg.get("api_key", ""))
-            backend = ws.resolve_backend(meta.get("web_backend", "auto") or "auto",
-                                         _cfg.get("provider", "deepseek"),
-                                         _ws_bocha_key)
-            _search_key = _ws_bocha_key if backend == "bocha" else _provider_key
-            if backend != "manual" and not _search_key:
-                # 生成前给出明确告警（不再只在跑完 3 轮后写复核清单里体现，UX A4）
-                _log(base, "  ⚠️ 网络检索：未检测到可用 Key——若本次检索失败，"
-                           "请到「我的 → 连接服务商」配置服务商 Key 后重新生成")
-            chapter = next((s.get("title", "") for s in textbook_slices), "")
-            keywords = teacher_text[:500]
-            if backend == "manual":
-                materials = ws.parse_manual(meta.get("web_manual_text", ""))
-                logs_list = [f"手动粘贴素材 {len(materials)} 条"]
-                err_list: list[str] = []
-            else:
-                if cancel.is_set():
-                    _set_stage(base, meta_path, "cancelled", "⏹ 已取消（未开始生成）")
-                    return {"stage": "cancelled", "questions": 0, "partial": True}
-                res_search = ws.run_search_rounds(
-                    gen_client, subject, chapter, keywords, backend,
-                    api_key=_search_key,
-                    model=_cfg.get("model_gen", ""),
-                    slices_digest="\n\n".join(
-                        f"【{s.get('title','')}】\n{s.get('text','')[:600]}"
-                        for s in textbook_slices[:4]),
-                    cancel=cancel,
-                    trusted_only=bool(ws_cfg.get("trusted_only", False)),
-                    trusted_domains=ws_cfg.get("trusted_domains") or [])
-                materials = res_search["materials"]
-                logs_list = res_search["logs"]
-                err_list = res_search["errors"]
-                for e in err_list:
-                    _log(base, f"  {e}")
-            for ln in logs_list:
-                _log(base, f"  {ln}")
-            web_materials = materials
-            web_materials_text = ws.digest_for_prompt(materials)
-            (base / "网络参考素材.json").write_text(
-                json.dumps(materials, ensure_ascii=False, indent=2), encoding="utf-8")
-            if cancel.is_set():
-                # F2：检索中途取消 → 落盘结果标记 incomplete，续跑将重新检索而非复用残缺结果
-                inc_flag.write_text("incomplete", encoding="utf-8")
-                _set_stage(base, meta_path, "cancelled",
-                           "⏹ 已取消（网络检索未完成；续跑将重新检索）")
-                return {"stage": "cancelled", "questions": 0, "partial": True}
-            inc_flag.unlink(missing_ok=True)
-            conflicts = [m for m in materials if m.get("conflict")]
-            if err_list:
-                _append_manual_section(base, "网络检索失败（已降级继续）",
-                                       [str(e) for e in err_list])
-                _log(base, f"  ⚠️ 网络检索 {len(err_list)} 项失败 → 人工复核清单.md")
-            if conflicts:
-                lines = ["# 人工复核清单（网络检索冲突项）", "",
-                         "> 下列网络素材与教材切片结论/数值直接矛盾，已**标记不自动改写**；"
-                         "引用题不得以其为正确答案依据：", ""]
-                for m in conflicts:
-                    lines.append(f"- {m.get('title', '')} · {m.get('url', '')}\n"
-                                 f"  {m.get('snippet', '')[:200]}")
-                (base / "人工复核清单.md").write_text("\n".join(lines), encoding="utf-8")
-                _log(base, f"  ⚠️ {len(conflicts)} 条素材与教材冲突 → 人工复核清单.md")
-            _log(base, f"  网络检索完成：{len(materials)} 条素材（引用配额 {web_ref_quota}%）")
+    web_materials, web_materials_text, _ws_cancelled = _stage_websearch(
+        base=base, meta_path=meta_path, meta=meta, cancel=cancel,
+        gen_client=gen_client, textbook_slices=textbook_slices,
+        teacher_text=teacher_text, subject=subject, web_ref_quota=web_ref_quota)
+    if _ws_cancelled:
+        return {"stage": "cancelled", "questions": 0, "partial": True}
 
     # ---------------- ① MedGen 出题（并发 + 断点续跑 + 可取消）
     _set_stage(base, meta_path, "generating", "① MedGen 出题（按章节切片并发）…")
