@@ -558,31 +558,10 @@ def _questions_json_for_page(questions: list[dict[str, Any]],
     return json.dumps(compact, ensure_ascii=False).replace("</", "<\\/")
 
 
-def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷", *,
-                      pid: str = "", subject: str = "",
-                      image_index: Optional[dict[str, Any]] = None) -> str:
-    """交互押题卷（I3 练习化）：
-    - X 型 checkbox + 集合判分（A1 修复）
-    - localStorage 实时保存作答 + 重开续答 + 答题卡 + 计时器（练习计时；可开启限时模式→到点自动判分）
-    - 判分后「错题重练」（localStorage 错题集，可返回全卷）
-    - 判分后「同步错题到学习中心错题本」（v0.7，POST /api/library/mistakes/sync-paper）
-    - 所有插值经 esc()（A4 修复）
-    - 无选项题剔除（防御：不参与判分与计数，页面提示数量）
-    """
-    no_opt = [q for q in questions if not _effective_options(q)]
-    questions = [q for q in questions if _effective_options(q)]
-    dropped_n = len(no_opt)
-    # D2：noscript 静态兜底——全部题目题干+答案文本（启用 JS 才能计时/判分）
-    noscript_items = "".join(
-        "<li><b>" + html_mod.escape(str(q.get("id") or "")) + "</b> · "
-        + html_mod.escape(str(q.get("type") or "")) + " · "
-        + html_mod.escape(str(q.get("question") or ""))
-        + "（答案：" + html_mod.escape(str(q.get("answer") or "")) + "）</li>"
-        for q in questions)
-    qs = _questions_json_for_page(questions, image_index)
-    pid_json = json.dumps(pid or "")
-    subj_json = json.dumps(subject or "")
-    return _page(title, f"""
+def _paper_head(title: str, questions: list[dict[str, Any]], dropped_n: int,
+                no_opt: list[dict[str, Any]], noscript_items: str) -> str:
+    """押题卷页头：标题 / 计时条 / 缺选项提示 / 练习自测说明 / noscript 静态兜底 + `<script>` 开标签。"""
+    return f"""
 <h1>{html_mod.escape(title)}</h1>
 <p class="meta">共 {len(questions)} 题 · 作答自动保存 · <button class="mini" onclick="window.print()">🖨 打印</button>
   <label style="margin-left:12px;font-size:12.5px"><input type="checkbox" id="ctMode" onchange="ctToggle()"> 限时模式</label>
@@ -602,7 +581,12 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
 <script>
 /* B-17：无选项题在 JS 侧彻底过滤（防御层——判分后改题/重渲染若带进无选项题，
    页面上不再出现「可见题数与计数不一致 / 编号跳号」；Python 侧导出前已过滤一次） */
-let QUESTIONS = ({qs}).filter(function(q){{return q && q.options && q.options.length;}});
+"""
+
+
+def _paper_js_state(qs: str, pid_json: str, subj_json: str) -> str:
+    """押题卷内联 JS（一）：常量与状态机、作答读写、渲染与答题卡。"""
+    return f"""let QUESTIONS = ({qs}).filter(function(q){{return q && q.options && q.options.length;}});
 const ORIG = QUESTIONS.slice();
 /* B-09：错题重练沿用原卷题号——ORIG_NO 记录 id→原卷序号；qNo(q,i) 重练时回原号 */
 const ORIG_NO = {{}};
@@ -786,7 +770,15 @@ function buildGrid(){{
 }}
 function jump(i){{document.getElementById('q'+i)?.scrollIntoView({{behavior:'smooth',block:'center'}});}}
 
-function grade(){{
+"""
+
+
+def _paper_js_grade() -> str:
+    """押题卷内联 JS（二）：判分、错题重练、同步错题本、键盘导航与初始化。
+
+    本段无 Python 插值，但仍是 f-string——保持 `{{`/`}}` 转义语义不变（U-10 拆分要求）。
+    """
+    return f"""function grade(){{
   if(judged) return;   // 判分防重入
   // 未答提醒：防漏答（有未答时确认后再判）
   const st0=getState();
@@ -997,7 +989,41 @@ function gridKeys(e){{const c=e.target;
   }}}}
 document.addEventListener('keydown',gridKeys);
 render();
-</script>""", extras="paper")
+</script>"""  # noqa: F541  必须保留 f 前缀——JS 花括号在 f-string 中写作 {{/}}
+
+
+def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷", *,
+                      pid: str = "", subject: str = "",
+                      image_index: Optional[dict[str, Any]] = None) -> str:
+    """交互押题卷（I3 练习化）：
+    - X 型 checkbox + 集合判分（A1 修复）
+    - localStorage 实时保存作答 + 重开续答 + 答题卡 + 计时器（练习计时；可开启限时模式→到点自动判分）
+    - 判分后「错题重练」（localStorage 错题集，可返回全卷）
+    - 判分后「同步错题到学习中心错题本」（v0.7，POST /api/library/mistakes/sync-paper）
+    - 所有插值经 esc()（A4 修复）
+    - 无选项题剔除（防御：不参与判分与计数，页面提示数量）
+
+    U-10：本函数原 440 行（含一个 400+ 行模板字符串），现拆为
+    `_paper_head` + `_paper_js_state` + `_paper_js_grade` 三个片段函数。
+    """
+    no_opt = [q for q in questions if not _effective_options(q)]
+    questions = [q for q in questions if _effective_options(q)]
+    dropped_n = len(no_opt)
+    # D2：noscript 静态兜底——全部题目题干+答案文本（启用 JS 才能计时/判分）
+    noscript_items = "".join(
+        "<li><b>" + html_mod.escape(str(q.get("id") or "")) + "</b> · "
+        + html_mod.escape(str(q.get("type") or "")) + " · "
+        + html_mod.escape(str(q.get("question") or ""))
+        + "（答案：" + html_mod.escape(str(q.get("answer") or "")) + "）</li>"
+        for q in questions)
+    qs = _questions_json_for_page(questions, image_index)
+    pid_json = json.dumps(pid or "")
+    subj_json = json.dumps(subject or "")
+    return _page(title,
+                 _paper_head(title, questions, dropped_n, no_opt, noscript_items)
+                 + _paper_js_state(qs, pid_json, subj_json)
+                 + _paper_js_grade(),
+                 extras="paper")
 
 
 def _page(title: str, body: str, extras: str = "") -> str:
