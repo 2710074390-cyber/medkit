@@ -647,6 +647,181 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
     return questions, trace_md, None
 
 
+def _stage_gate1(*, base: Path, meta_path: Path,
+                 questions: list[dict[str, Any]], cancel: threading.Event,
+                 done_sids: set[str], fix_client: Any,
+                 text_by_sid: dict[str, str],
+                 bloom_target: Optional[dict[str, float]],
+                 known_sids: set[str],
+                 ) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]]]:
+    """② 门禁① 修复循环：选项 / Bloom / 溯源 / 查重 四类校验 → MedFix 定向修复 → 兜底处置。
+
+    返回 `(questions, cancel_out)`；`cancel_out` 非 None 表示管线需提前结束。
+    兜底口径（B-14 / U-07）：fail 与查重（warn）修复轮用尽后一律**剔除**并留痕；
+    极端情形（全剔空题库）豁免保留；查重另在产物页打「⚠ 疑似重复」标记。
+
+    U-10：从 727 行的 `_run_project_impl` 抽出的第三个阶段函数（原 150+ 行内联循环）。
+    """
+    non_action_flagged = False   # B-18：非定向核查项只留痕一次（避免每轮重复写清单）
+    _dup_marks: dict[str, str] = {}   # U-07：查重未消除题的留痕（q_id → reason）
+    for round_i in range(1, FIX_ROUNDS_GATE + 2):
+        if cancel.is_set():   # B24：门禁循环轮次间可取消
+            return questions, _cancel_out(base, meta_path, done_sids, questions)
+        _set_stage(base, meta_path, "gate1", f"② 门禁① 第 {round_i} 轮…")
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="选项校验", sub_done=0, sub_total=4)
+        _opt_issues, opt_err = _run_substep(
+            base, "gate1", "options", "选项校验",
+            lambda qs=questions: options_check.check_all(qs)["issues"],
+            detail=f"第 {round_i} 轮")
+        if opt_err:
+            _append_manual_section(base, "门禁① 选项校验",
+                                   [f"第 {round_i} 轮失败：{opt_err}", "已按无问题继续，建议人工复核。"])
+            _opt_issues = []
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="Bloom 校验", sub_done=1, sub_total=4)
+        _bloom_issues, bloom_err = _run_substep(
+            base, "gate1", "bloom", "Bloom 校验",
+            lambda qs=questions: bloom_check.check_bloom(qs, bloom_target)["issues"],
+            detail=f"第 {round_i} 轮")
+        if bloom_err:
+            _append_manual_section(base, "门禁① Bloom 校验",
+                                   [f"第 {round_i} 轮失败：{bloom_err}", "已按无问题继续，建议人工复核。"])
+            _bloom_issues = []
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="溯源回查", sub_done=2, sub_total=4)
+        _trace_issues, trace_err = _run_substep(
+            base, "gate1", "trace", "溯源回查",
+            lambda qs=questions: trace_check.check_trace(qs, known_sids)["issues"],
+            detail=f"第 {round_i} 轮")
+        if trace_err:
+            _append_manual_section(base, "门禁① 溯源回查",
+                                   [f"第 {round_i} 轮失败：{trace_err}", "已按无问题继续，建议人工复核。"])
+            _trace_issues = []
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="查重", sub_done=3, sub_total=4)
+        _dup, dup_err = _run_substep(
+            base, "gate1", "dup", "查重",
+            lambda qs=questions: dedup_check.check_dup(qs),
+            detail=f"第 {round_i} 轮")
+        if dup_err:
+            _append_manual_section(base, "门禁① 查重",
+                                   [f"第 {round_i} 轮失败：{dup_err}", "已按无问题继续，建议人工复核。"])
+            _dup = {"issues": []}
+        gate = {
+            "options": {"issues": _opt_issues},
+            "bloom": {"issues": _bloom_issues},
+            "trace": {"issues": _trace_issues},
+            "dup": _dup,
+        }
+        _set_progress(base, "gate1", round_i, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮完成",
+                      sub="门禁检查", sub_done=4, sub_total=4)
+        dup_issues = [x for x in gate["dup"]["issues"] if x.get("severity") in ("fail", "warn")]
+        # U-07：按轮刷新查重留痕（最后一轮仍命中的 = 修复轮用尽仍未消除）
+        _dup_marks = {x["q_id"]: x.get("reason", "") for x in dup_issues if x.get("q_id")}
+        all_issues = (gate["options"]["issues"] + gate["bloom"]["issues"]
+                      + gate["trace"]["issues"] + dup_issues)
+        fails = [x for x in all_issues if x["severity"] == "fail"]
+        (base / "质检报告").mkdir(exist_ok=True)
+        (base / "质检报告" / f"gate1_round{round_i}.json").write_text(
+            json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
+        # B-18：区分「可定向修复」（有真实 q_id）与「非定向核查项」（比例级 Bloom
+        # q_id='BLOOM' 等哨兵——MedFix 按 issue 序号找不到原题，修复必然是空转白烧 token）：
+        # 非定向项只留痕一次（人工复核清单 + log），不参与 MedFix 循环与后续剔除
+        _qids = {q.get("id") for q in questions if q.get("id")}
+        actionable = [x for x in fails + dup_issues if x.get("q_id") in _qids]
+        non_action = [x for x in fails + dup_issues if x.get("q_id") not in _qids]
+        if non_action and not non_action_flagged:
+            non_action_flagged = True
+            _log(base, f"  门禁① {len(non_action)} 条非定向核查项（比例级/无 q_id），"
+                       f"不触发 MedFix，转人工复核："
+                       f"{'、'.join(str(x.get('code', '?')) for x in non_action[:6])}")
+            _append_manual_section(base, "门禁① 非定向核查项（B-18）",
+                                   [f"第 {round_i} 轮「{x.get('code', '?')}」：{x.get('reason', '')}"
+                                    for x in non_action[:10]])
+        if not actionable:
+            _log(base, f"  门禁① 可定向问题已清除（warn {len(all_issues)} 条 / 非定向 {len(non_action)} 条）")
+            break
+        to_fix = actionable
+        if round_i <= FIX_ROUNDS_GATE:
+            if cancel.is_set():   # B24：修复轮开始前可取消（单次修复调用期间的取消由 LLM 层流式退出接管）
+                return questions, _cancel_out(base, meta_path, done_sids, questions)
+            _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} → MedFix 修复第 {round_i} 轮…（可定向 {len(to_fix)} 条）")
+            for _i, iss in enumerate(to_fix):
+                _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+                _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}", "running",
+                         f"第 {round_i} 轮 · {str(iss.get('reason', ''))[:80]}")
+            fixed, fix_err = _run_substep(
+                base, "gate1", "medfix", "MedFix 批量修复",
+                # R4-10：输入深拷贝快照——超时放弃后僵尸 daemon 线程只能污染副本，
+                # 不再与主流程共享 questions（继续烧 token 仍是已知边界：客户端已发出请求）
+                lambda qs=copy.deepcopy(questions), tf=to_fix: medfix.fix_questions(
+                    fix_client, qs, tf, text_by_sid),
+                ttl=300, retries=1,
+                detail=f"第 {round_i} 轮 · {len(to_fix)} 条问题")
+            if fix_err:
+                _append_manual_section(base, "门禁① MedFix",
+                                       [f"第 {round_i} 轮失败：{fix_err}",
+                                        "本轮未修复，题目保留待人工复核。"])
+                fixed = {"fixed": [], "trace": []}
+            fixed = fixed or {"fixed": [], "trace": []}
+            _fixed_ids = {fq.get("id") for fq in fixed.get("fixed", [])}
+            for _i, iss in enumerate(to_fix):
+                _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+                _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}",
+                         "done" if _qid in _fixed_ids else "failed",
+                         "已自动修复" if _qid in _fixed_ids else "保留待人工复核")
+            by_id = {q["id"]: q for q in questions}
+            for fq in fixed["fixed"]:
+                if fq.get("id") in by_id:
+                    by_id[fq["id"]] = fq
+            questions = list(by_id.values())
+        else:
+            # B-14：修复轮次用尽——未达标（可定向 fail）题不再随流进入产物：
+            # 剔除 + 人工复核清单留痕（产物计数随 questions 长度自然同步）；
+            # 极端情形（全剔空题库）→ 显式豁免留痕，避免空题库死循环
+            drop_ids = sorted({x["q_id"] for x in actionable
+                               if x.get("severity") == "fail"})
+            alive = [q for q in questions if q.get("id") not in set(drop_ids)]
+            if drop_ids and alive:
+                _substep(base, "gate1", "fail-drop", f"剔除 {len(drop_ids)} 道未修复 fail 题",
+                         "done", f"修复 {FIX_ROUNDS_GATE} 轮用尽后仍未达标 → 转人工复核（B-14）")
+                _reasons = {x.get("q_id"): x.get("reason", "") for x in actionable
+                            if x.get("severity") == "fail"}
+                _append_manual_section(
+                    base, "门禁① fail 题剔除（B-14）",
+                    [f"修复 {FIX_ROUNDS_GATE} 轮后仍未达标：{len(drop_ids)} 道",
+                     f"题号：{'、'.join(f'**{x}**' for x in drop_ids[:20])}"
+                     + ("…" if len(drop_ids) > 20 else ""),
+                     "未通过原因：",
+                     *[f"  {qid}：{_reasons.get(qid, '')}" for qid in drop_ids[:10]],
+                     "已从产物剔除；如需保留请人工修改题干/选项后重新生成。"])
+                _log(base, f"  门禁① 修复轮次用尽，{len(drop_ids)} 道 fail 已剔除并转人工复核")
+                questions = alive
+            else:
+                _append_manual_section(
+                    base, "门禁① 未达标保留（B-14 豁免留痕）",
+                    [f"修复轮用尽仍有 {len(drop_ids)} 道未达标——全部剔除将致空题库，"
+                     "保留并留痕待人工复核。", "人工复核修改后再重新生成。"])
+                _log(base, f"  门禁① 修复轮次用尽，{len(drop_ids)} 道 fail 豁免保留（空题库保护）")
+            break
+    # U-07：查重（DUP，warn 级）修复轮用尽仍未消除——不剔除（避免误伤题库规模），
+    # 但在题目上打可见标记 + 人工复核清单留痕，产物页对疑似重复题显示「⚠ 疑似重复」。
+    _dup_hit = [q for q in questions if q.get("id") in _dup_marks]
+    if _dup_hit:
+        for _q in _dup_hit:
+            _q["_dup_warn"] = _dup_marks[_q["id"]]
+        _log(base, f"  ⚠️ 门禁① 查重未通过 {len(_dup_hit)} 道（修复轮用尽仍未消除）"
+                   f"→ 产物已标记「疑似重复」并留痕人工复核清单")
+        _append_manual_section(
+            base, "门禁① 查重未通过（已标记 · 未剔除，U-07）",
+            [f"{len(_dup_hit)} 道题与其它题题干高度相似，修复轮用尽仍未消除。",
+             "已在产物中对这些题显示「⚠ 疑似重复」标记；如影响复习体验，"
+             "可在逐题审核台改写题干或直接剔除后「保存并重渲染」。",
+             *[f"  {qid}：{_dup_marks[qid]}" for qid in list(_dup_marks)[:10]]])
+    return questions, None
+
+
 def _run_project_impl(pid: str, seed: Optional[int] = None,
                       overrides: Optional[dict[str, Any]] = None,
                       cancel: Optional[threading.Event] = None) -> dict[str, Any]:
@@ -899,163 +1074,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     if dropped_img:
         _log(base, f"  ⚠️ 图像引用门禁：剔除 {len(dropped_img)} 题"
              f"（image_ref 不在素材清单：{'、'.join(str(x) for x in dropped_img[:5])}）")
-    non_action_flagged = False   # B-18：非定向核查项只留痕一次（避免每轮重复写清单）
-    _dup_marks: dict[str, str] = {}   # U-07：查重未消除题的留痕（q_id → reason）
-    for round_i in range(1, FIX_ROUNDS_GATE + 2):
-        if cancel.is_set():   # B24：门禁循环轮次间可取消
-            return _cancel_out(base, meta_path, done_sids, questions)
-        _set_stage(base, meta_path, "gate1", f"② 门禁① 第 {round_i} 轮…")
-        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="选项校验", sub_done=0, sub_total=4)
-        _opt_issues, opt_err = _run_substep(
-            base, "gate1", "options", "选项校验",
-            lambda qs=questions: options_check.check_all(qs)["issues"],
-            detail=f"第 {round_i} 轮")
-        if opt_err:
-            _append_manual_section(base, "门禁① 选项校验",
-                                   [f"第 {round_i} 轮失败：{opt_err}", "已按无问题继续，建议人工复核。"])
-            _opt_issues = []
-        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="Bloom 校验", sub_done=1, sub_total=4)
-        _bloom_issues, bloom_err = _run_substep(
-            base, "gate1", "bloom", "Bloom 校验",
-            lambda qs=questions: bloom_check.check_bloom(qs, bloom_target)["issues"],
-            detail=f"第 {round_i} 轮")
-        if bloom_err:
-            _append_manual_section(base, "门禁① Bloom 校验",
-                                   [f"第 {round_i} 轮失败：{bloom_err}", "已按无问题继续，建议人工复核。"])
-            _bloom_issues = []
-        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="溯源回查", sub_done=2, sub_total=4)
-        _trace_issues, trace_err = _run_substep(
-            base, "gate1", "trace", "溯源回查",
-            lambda qs=questions: trace_check.check_trace(qs, known_sids)["issues"],
-            detail=f"第 {round_i} 轮")
-        if trace_err:
-            _append_manual_section(base, "门禁① 溯源回查",
-                                   [f"第 {round_i} 轮失败：{trace_err}", "已按无问题继续，建议人工复核。"])
-            _trace_issues = []
-        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="查重", sub_done=3, sub_total=4)
-        _dup, dup_err = _run_substep(
-            base, "gate1", "dup", "查重",
-            lambda qs=questions: dedup_check.check_dup(qs),
-            detail=f"第 {round_i} 轮")
-        if dup_err:
-            _append_manual_section(base, "门禁① 查重",
-                                   [f"第 {round_i} 轮失败：{dup_err}", "已按无问题继续，建议人工复核。"])
-            _dup = {"issues": []}
-        gate = {
-            "options": {"issues": _opt_issues},
-            "bloom": {"issues": _bloom_issues},
-            "trace": {"issues": _trace_issues},
-            "dup": _dup,
-        }
-        _set_progress(base, "gate1", round_i, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮完成",
-                      sub="门禁检查", sub_done=4, sub_total=4)
-        dup_issues = [x for x in gate["dup"]["issues"] if x.get("severity") in ("fail", "warn")]
-        # U-07：按轮刷新查重留痕（最后一轮仍命中的 = 修复轮用尽仍未消除）
-        _dup_marks = {x["q_id"]: x.get("reason", "") for x in dup_issues if x.get("q_id")}
-        all_issues = (gate["options"]["issues"] + gate["bloom"]["issues"]
-                      + gate["trace"]["issues"] + dup_issues)
-        fails = [x for x in all_issues if x["severity"] == "fail"]
-        (base / "质检报告").mkdir(exist_ok=True)
-        (base / "质检报告" / f"gate1_round{round_i}.json").write_text(
-            json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
-        # B-18：区分「可定向修复」（有真实 q_id）与「非定向核查项」（比例级 Bloom
-        # q_id='BLOOM' 等哨兵——MedFix 按 issue 序号找不到原题，修复必然是空转白烧 token）：
-        # 非定向项只留痕一次（人工复核清单 + log），不参与 MedFix 循环与后续剔除
-        _qids = {q.get("id") for q in questions if q.get("id")}
-        actionable = [x for x in fails + dup_issues if x.get("q_id") in _qids]
-        non_action = [x for x in fails + dup_issues if x.get("q_id") not in _qids]
-        if non_action and not non_action_flagged:
-            non_action_flagged = True
-            _log(base, f"  门禁① {len(non_action)} 条非定向核查项（比例级/无 q_id），"
-                       f"不触发 MedFix，转人工复核："
-                       f"{'、'.join(str(x.get('code', '?')) for x in non_action[:6])}")
-            _append_manual_section(base, "门禁① 非定向核查项（B-18）",
-                                   [f"第 {round_i} 轮「{x.get('code', '?')}」：{x.get('reason', '')}"
-                                    for x in non_action[:10]])
-        if not actionable:
-            _log(base, f"  门禁① 可定向问题已清除（warn {len(all_issues)} 条 / 非定向 {len(non_action)} 条）")
-            break
-        to_fix = actionable
-        if round_i <= FIX_ROUNDS_GATE:
-            if cancel.is_set():   # B24：修复轮开始前可取消（单次修复调用期间的取消由 LLM 层流式退出接管）
-                return _cancel_out(base, meta_path, done_sids, questions)
-            _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} → MedFix 修复第 {round_i} 轮…（可定向 {len(to_fix)} 条）")
-            for _i, iss in enumerate(to_fix):
-                _qid = str(iss.get("q_id") or f"issue{_i + 1}")
-                _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}", "running",
-                         f"第 {round_i} 轮 · {str(iss.get('reason', ''))[:80]}")
-            fixed, fix_err = _run_substep(
-                base, "gate1", "medfix", "MedFix 批量修复",
-                # R4-10：输入深拷贝快照——超时放弃后僵尸 daemon 线程只能污染副本，
-                # 不再与主流程共享 questions（继续烧 token 仍是已知边界：客户端已发出请求）
-                lambda qs=copy.deepcopy(questions), tf=to_fix: medfix.fix_questions(
-                    fix_client, qs, tf, text_by_sid),
-                ttl=300, retries=1,
-                detail=f"第 {round_i} 轮 · {len(to_fix)} 条问题")
-            if fix_err:
-                _append_manual_section(base, "门禁① MedFix",
-                                       [f"第 {round_i} 轮失败：{fix_err}",
-                                        "本轮未修复，题目保留待人工复核。"])
-                fixed = {"fixed": [], "trace": []}
-            fixed = fixed or {"fixed": [], "trace": []}
-            _fixed_ids = {fq.get("id") for fq in fixed.get("fixed", [])}
-            for _i, iss in enumerate(to_fix):
-                _qid = str(iss.get("q_id") or f"issue{_i + 1}")
-                _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}",
-                         "done" if _qid in _fixed_ids else "failed",
-                         "已自动修复" if _qid in _fixed_ids else "保留待人工复核")
-            by_id = {q["id"]: q for q in questions}
-            for fq in fixed["fixed"]:
-                if fq.get("id") in by_id:
-                    by_id[fq["id"]] = fq
-            questions = list(by_id.values())
-        else:
-            # B-14：修复轮次用尽——未达标（可定向 fail）题不再随流进入产物：
-            # 剔除 + 人工复核清单留痕（产物计数随 questions 长度自然同步）；
-            # 极端情形（全剔空题库）→ 显式豁免留痕，避免空题库死循环
-            drop_ids = sorted({x["q_id"] for x in actionable
-                               if x.get("severity") == "fail"})
-            alive = [q for q in questions if q.get("id") not in set(drop_ids)]
-            if drop_ids and alive:
-                _substep(base, "gate1", "fail-drop", f"剔除 {len(drop_ids)} 道未修复 fail 题",
-                         "done", f"修复 {FIX_ROUNDS_GATE} 轮用尽后仍未达标 → 转人工复核（B-14）")
-                _reasons = {x.get("q_id"): x.get("reason", "") for x in actionable
-                            if x.get("severity") == "fail"}
-                _append_manual_section(
-                    base, "门禁① fail 题剔除（B-14）",
-                    [f"修复 {FIX_ROUNDS_GATE} 轮后仍未达标：{len(drop_ids)} 道",
-                     f"题号：{'、'.join(f'**{x}**' for x in drop_ids[:20])}"
-                     + ("…" if len(drop_ids) > 20 else ""),
-                     "未通过原因：",
-                     *[f"  {qid}：{_reasons.get(qid, '')}" for qid in drop_ids[:10]],
-                     "已从产物剔除；如需保留请人工修改题干/选项后重新生成。"])
-                _log(base, f"  门禁① 修复轮次用尽，{len(drop_ids)} 道 fail 已剔除并转人工复核")
-                questions = alive
-            else:
-                _append_manual_section(
-                    base, "门禁① 未达标保留（B-14 豁免留痕）",
-                    [f"修复轮用尽仍有 {len(drop_ids)} 道未达标——全部剔除将致空题库，"
-                     "保留并留痕待人工复核。", "人工复核修改后再重新生成。"])
-                _log(base, f"  门禁① 修复轮次用尽，{len(drop_ids)} 道 fail 豁免保留（空题库保护）")
-            break
-    # U-07：查重（DUP，warn 级）修复轮用尽仍未消除——不剔除（避免误伤题库规模），
-    # 但在题目上打可见标记 + 人工复核清单留痕，产物页对疑似重复题显示「⚠ 疑似重复」。
-    _dup_hit = [q for q in questions if q.get("id") in _dup_marks]
-    if _dup_hit:
-        for _q in _dup_hit:
-            _q["_dup_warn"] = _dup_marks[_q["id"]]
-        _log(base, f"  ⚠️ 门禁① 查重未通过 {len(_dup_hit)} 道（修复轮用尽仍未消除）"
-                   f"→ 产物已标记「疑似重复」并留痕人工复核清单")
-        _append_manual_section(
-            base, "门禁① 查重未通过（已标记 · 未剔除，U-07）",
-            [f"{len(_dup_hit)} 道题与其它题题干高度相似，修复轮用尽仍未消除。",
-             "已在产物中对这些题显示「⚠ 疑似重复」标记；如影响复习体验，"
-             "可在逐题审核台改写题干或直接剔除后「保存并重渲染」。",
-             *[f"  {qid}：{_dup_marks[qid]}" for qid in list(_dup_marks)[:10]]])
+    questions, _g1_cancel = _stage_gate1(
+        base=base, meta_path=meta_path, questions=questions, cancel=cancel,
+        done_sids=done_sids, fix_client=fix_client, text_by_sid=text_by_sid,
+        bloom_target=bloom_target, known_sids=known_sids)
+    if _g1_cancel is not None:
+        return _g1_cancel
     (base / "中间产物" / "questions_gate1.json").write_text(
         json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
 
