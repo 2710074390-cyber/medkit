@@ -883,6 +883,8 @@ def _drop_knowledge_of_in(st: dict[str, Any], rec: dict[str, Any]) -> None:
 def get_mastery_view(subject: str = "") -> dict[str, Any]:
     """掌握度驾驶舱：知识点全貌 + 全局统计（C1：可选按科目过滤，供概览顶部与闭环同口径）。"""
     kps = _load(KNOWLEDGE_FILE)
+    # U-22：先剔除脏数据（???/编码损坏）——不参与掌握率分母与推荐排序
+    kps = [k for k in kps if is_kp_dirty(k) is False]
     if subject:
         kps = [k for k in kps if k.get("subject") == subject]
     for kp in kps:
@@ -977,6 +979,30 @@ def _bad_str(s: Any) -> bool:
     if _MOJIBAKE_QRUN.search(s or ""):
         return True
     return heal_mojibake(s) is not None
+
+
+# U-22：脏数据（编码损坏/不可逆标记）不参与掌握率分母与科目下拉——
+# 避免 `???` 虚增知识点数、拉低掌握率，也让考生无从困惑「这是什么科」。
+_KP_DIRTY_FIELDS = ("name", "subject", "chapter", "topic")
+_MISTAKE_DIRTY_FIELDS = ("subject", "chapter", "topic", "question")
+
+
+def is_kp_dirty(kp: dict[str, Any]) -> bool:
+    """知识点记录是否疑似损坏（'?' 乱码串 / 可逆 cp1252 误读 / 已标记 data_broken）。"""
+    return _rec_dirty(kp, _KP_DIRTY_FIELDS)
+
+
+def is_mistake_dirty(m: dict[str, Any]) -> bool:
+    """错题记录是否疑似损坏（口径同 is_kp_dirty）。"""
+    return _rec_dirty(m, _MISTAKE_DIRTY_FIELDS)
+
+
+def _rec_dirty(rec: dict[str, Any], fields: tuple[str, ...]) -> bool:
+    if not isinstance(rec, dict):
+        return True
+    if rec.get("data_broken"):
+        return True
+    return any(_bad_str(rec.get(f)) for f in fields)
 
 
 def scan_corrupted() -> dict[str, Any]:

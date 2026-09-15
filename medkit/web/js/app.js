@@ -1,4 +1,4 @@
-/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 const $ = id => document.getElementById(id);
 let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [], extra: [] },
@@ -309,6 +309,73 @@ async function checkUpdate(silent = false) {
   }
 }
 
+/* ---- U-20 数据管理区（我的 tab）：路径 / 占用 / 一键备份 / 打开目录 / 清空全部 ---- */
+function fmtBytes(n) {
+  if (n >= 1073741824) return (n / 1073741824).toFixed(2) + " GB";
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+  return (n || 0) + " B";
+}
+async function loadDataMgmt() {
+  const dir = $("dm_dir"), sizes = $("dm_sizes"), backups = $("dm_backups");
+  if (!dir) return;
+  try {
+    const r = await api("/api/data/summary");
+    dir.textContent = r.dir;
+    const names = { config: "配置", presets: "预设", library: "学习库", projects: "项目", prompts: "提示词" };
+    const row = [];
+    for (const k of ["config", "presets", "library", "projects", "prompts"])
+      if (r.size && r.size.hasOwnProperty(k)) row.push(`${names[k]} ${fmtBytes(r.size[k])}`);
+    const counts = `项目 ${r.counts.projects} · 错题 ${r.counts.mistakes} · 知识点 ${r.counts.knowledge}` +
+      ` · 复习卡 ${r.counts.review_cards} · 会话 ${r.counts.sessions}`;
+    let subj = "";
+    if (r.by_subject && Object.keys(r.by_subject).length)
+      subj = "<br>按科目错题：" + Object.entries(r.by_subject).slice(0, 12).map(([s, c]) => `${esc(s)} ${c}`).join(" / ");
+    sizes.innerHTML = `总计 <b>${fmtBytes(r.size.total)}</b> · ${row.join(" / ")}<br>${counts}${subj}`;
+    if (r.backups && r.backups.length)
+      backups.textContent = "最近备份：" + r.backups.map(b => `${b.name}（${fmtBytes(b.size)}）`).join("，");
+    else backups.textContent = "暂无备份——建议先「一键备份」留存数据。";
+  } catch (e) {
+    sizes.innerHTML = "加载数据统计失败：" + esc(e.message || e);
+  }
+}
+async function dmBackup() {
+  const out = $("dm_result");
+  if (out) out.textContent = "正在备份…（数据量大时稍候）";
+  try {
+    const r = await api("/api/data/backup", { method: "POST", body: "{}" });
+    if (out) out.innerHTML = `✅ ${esc(r.hint || "备份完成")}`;
+    loadDataMgmt();
+  } catch (e) { if (out) out.textContent = "备份失败：" + esc(e.message || e); }
+}
+function dmOpen() {
+  api("/api/data/open", { method: "POST", body: "{}" })
+    .catch(e => toast("打开数据目录失败：" + (e.message || e), false));
+}
+async function dmClear() {
+  const inp = $("dm_confirm");
+  if (!inp || inp.value.trim() !== "清空全部数据") {
+    toast("请先在输入框输入「清空全部数据」以二次确认", false);
+    return;
+  }
+  if (!confirm("再次确认：这将删除全部学习数据与项目（执行前自动生成完整备份）。是否继续？")) return;
+  const out = $("dm_result");
+  if (out) out.textContent = "正在清空并自动备份…";
+  try {
+    const r = await api("/api/data/clear", { method: "POST", body: JSON.stringify({ confirm: inp.value.trim() }) });
+    inp.value = "";
+    if (out) out.innerHTML = `✅ 已清空。${esc(r.hint || "")}`;
+    loadDataMgmt();
+  } catch (e) { if (out) out.textContent = "清空失败/已中止：" + esc(e.message || e); }
+}
+function initDataMgmt() {
+  const bind = (id, fn) => { const el = $(id); if (el) el.addEventListener("click", fn); };
+  bind("btn_dm_refresh", () => loadDataMgmt());
+  bind("btn_dm_open", () => dmOpen());
+  bind("btn_dm_backup", () => dmBackup());
+  bind("btn_dm_clear", () => dmClear());
+}
+
 /* ---- 导航 + hash 路由 */
 let shownTab = null;   // A-新7：记录当前已展示 tab——hashchange 与 showTab 双入口去重（防双倍请求）
 function showTab(name) {
@@ -338,7 +405,7 @@ function showTab(name) {
   if (name === "study") { loadStudy(); setStudyKeys(true); }   // A-15：进入刷题页挂拼键监听
   if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
   if (name === "learn") loadLibrary();
-  if (name === "mine") loadPrompts();
+  if (name === "mine") { loadPrompts(); loadDataMgmt(); }
   if (name !== "study") setStudyKeys(false);   // A-15：离开刷题页移除（配对卸载，防残留监听）
 }
 /* A-15：复习卡快捷键 1/2/3 的 window 监听——只在刷题页存在（showTab 配对挂/卸） */
@@ -358,6 +425,7 @@ function initTab() {
   const h = (location.hash || "").replace("#", "");
   if (["start", "study", "bank", "learn", "mine"].includes(h)) showTab(h);
   else loadStart();   // 无 hash → 默认落地「开始」仪表盘（此时各脚本已就绪）
+  initDataMgmt();   // U-20：绑定数据管理区按钮（元素为静态 HTML，可安全绑定）
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initTab);

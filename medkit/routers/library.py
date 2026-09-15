@@ -354,8 +354,9 @@ def subjects() -> dict[str, Any]:
     from collections import defaultdict
     from datetime import date as _date
 
-    mistakes = lib.list_mistakes()
-    kps = lib.list_knowledge()
+    # U-22：脏数据（???/编码损坏）不进科目下拉与每科统计，避免虚无的「??? 科」
+    mistakes = [m for m in lib.list_mistakes() if not lib.is_mistake_dirty(m)]
+    kps = [k for k in lib.list_knowledge() if not lib.is_kp_dirty(k)]
     explains = expl.list_explains()
     cards = rev.list_cards()
     seen: set[str] = set()

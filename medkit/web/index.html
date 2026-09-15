@@ -202,6 +202,33 @@ try {
         <b>MedQC</b>（LLM-as-judge）：D11 干扰项合理性 / D16 层级 / D17 同质性 / D18 词重复线索 / D19 收敛 / F1 事实 / F2 溯源 —— 任一 fail 触发定向修复。
       </div>
     </div>
+
+    <h2 class="subh"><svg class="ic"><use href="#i-book"></use></svg>数据管理</h2>
+    <p class="psub">学习数据与项目全部保存在本机 <code>~/.medkit/</code>；可在此查看占用、一键备份、打开目录</p>
+    <div class="card">
+      <h2>数据存储</h2>
+      <div class="row">
+        <div><label>数据目录 <code id="dm_dir" style="user-select:all"></code></label></div>
+      </div>
+      <div class="btns">
+        <button class="act gray" id="btn_dm_refresh">刷新统计</button>
+        <button class="act gray" id="btn_dm_open">打开数据目录</button>
+        <button class="act" id="btn_dm_backup">一键备份（zip）</button>
+      </div>
+      <div class="hint" id="dm_sizes">加载中…</div>
+      <div class="hint" id="dm_backups"></div>
+      <div class="hint" id="dm_result"></div>
+    </div>
+
+    <div class="card" style="border:1px solid var(--warn)">
+      <h2 style="color:var(--warn)">清空全部数据（危险）</h2>
+      <div class="hint">清空<b>学习数据与全部项目</b>（错题 / 掌握度 / 复习计划 / 项目与产物），保留服务商等应用配置。
+      操作<b>不可逆</b>；执行前自动生成一份完整备份到备份目录。</div>
+      <div class="row" style="margin-top:10px">
+        <div><label>确认短语</label><input type="text" id="dm_confirm" placeholder="输入「清空全部数据」以确认" style="width:100%"></div>
+      </div>
+      <div class="btns"><button class="act" id="btn_dm_clear">清空全部数据</button></div>
+    </div>
   </section>
 
   <!-- ③ 题库（新建课题 + 项目列表/详情） -->

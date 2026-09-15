@@ -3,6 +3,10 @@
 > 授人以渔：医学生自备教材 + 教师重点（+ 可选自备真题 / 网络检索），自选服务商与 API Key，
 > 本地一键生成**全新的**题库 / 押题卷 / 复习手册。不携带、不内置任何旧产物质料。
 
+> **License**：本项目以 **[GNU AGPL-3.0](LICENSE)** 开源发布（修改/再分发须以 AGPL 公开源码）。
+> 第三方组件的各自许可证见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)；决策记录见
+> [`docs/adr/ADR-007-license-agpl.md`](docs/adr/ADR-007-license-agpl.md)。
+
 ## 医学生快速上手（拿到安装包开始）
 
 1. **安装**：双击 `MedKit-Setup-0.10.2.exe` → 一路下一步（可选桌面图标）。
