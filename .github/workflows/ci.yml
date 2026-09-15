@@ -22,11 +22,27 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             requirements.txt
+            requirements.lock
             requirements-dev.txt
       - name: Install deps
-        run: pip install -r requirements.txt -r requirements-dev.txt ruff
+        # U-16：Windows（实际打包平台）按 requirements.lock 复现构建；
+        # Linux 用 requirements.txt（锁文件由 Windows 已验证环境生成，不含 uvloop 等
+        # 仅非 Windows 生效的依赖，直接用于 Linux 会漏装）。
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruff pip-audit
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            python -m pip install -r requirements.lock -r requirements-dev.txt
+          else
+            python -m pip install -r requirements.txt -r requirements-dev.txt
+          fi
       - name: Lint
         run: python -m ruff check .
+      - name: Dependency vulnerability audit (U-16)
+        # 已知漏洞即失败。过渡期如遇「上游未修复但已评估为不可达」的条目，
+        # 在此处追加 `--ignore-vuln GHSA-xxxx-xxxx-xxxx` 并在本注释下方登记原因与复查日期。
+        run: python -m pip_audit -r requirements.txt --strict
       - name: Test
         # --timeout 兜底；CLI 显式传入以便在 pyproject 配置之外可覆盖
         # R6-01：显式排除浏览器层——本 job 未装 chromium 时 tests/browser 会整体 skip，

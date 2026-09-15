@@ -1,0 +1,38 @@
+| annotated-doc | 0.0.4 | 见包内 LICENSE |
+| annotated-types | 0.7.0 | MIT License |
+| anyio | 4.13.0 | 见包内 LICENSE |
+| cached-property | 2.0.1 | BSD |
+| certifi | 2026.4.22 | MPL-2.0 |
+| chevron | 0.14.0 | MIT |
+| click | 8.4.1 | 见包内 LICENSE |
+| colorama | 0.4.6 | BSD License |
+| distro | 1.9.0 | Apache License, Version 2.0 |
+| fastapi | 0.136.3 | 见包内 LICENSE |
+| frozendict | 2.4.7 | LGPL v3 |
+| fsrs | 6.3.2 | MIT License |
+| genanki | 0.13.1 | MIT |
+| h11 | 0.16.0 | MIT |
+| httpcore | 1.0.9 | BSD License |
+| httptools | 0.8.0 | 见包内 LICENSE |
+| httpx | 0.28.1 | BSD-3-Clause |
+| idna | 3.13 | 见包内 LICENSE |
+| jieba | 0.42.1 | MIT |
+| jiter | 0.15.0 | 见包内 LICENSE |
+| lxml | 5.4.0 | BSD-3-Clause |
+| Markdown | 3.10.2 | 见包内 LICENSE |
+| openai | 2.41.0 | Apache-2.0 |
+| pydantic | 2.13.4 | 见包内 LICENSE |
+| pydantic_core | 2.46.4 | 见包内 LICENSE |
+| PyMuPDF | 1.27.2.3 | Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License |
+| python-docx | 1.2.0 | MIT |
+| python-dotenv | 1.2.2 | BSD-3-Clause |
+| python-multipart | 0.0.32 | Apache Software License |
+| PyYAML | 6.0.3 | MIT |
+| sniffio | 1.3.1 | MIT OR Apache-2.0 |
+| starlette | 1.2.1 | 见包内 LICENSE |
+| tqdm | 4.68.1 | MPL-2.0 AND MIT |
+| typing_extensions | 4.15.0 | 见包内 LICENSE |
+| typing-inspection | 0.4.2 | 见包内 LICENSE |
+| uvicorn | 0.49.0 | 见包内 LICENSE |
+| watchfiles | 1.2.0 | MIT |
+| websockets | 16.0 | 见包内 LICENSE |

@@ -1,0 +1,39 @@
+# U-16：依赖自动更新（pip 生态，weekly）。
+# 目的：上游安全通告与版本更新有固定通道，而不是靠人工发现。
+# 说明：PR 一律走既有 CI 总闸（ruff / pytest / 迁移 / pip check / 打包纯净检查）。
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+    # 分组：运行依赖与开发依赖分开，避免一个 PR 混入两类变更难以回滚
+    groups:
+      runtime:
+        patterns:
+          - "fastapi"
+          - "uvicorn*"
+          - "openai"
+          - "pymupdf"
+          - "python-docx"
+          - "httpx"
+          - "python-multipart"
+          - "markdown"
+          - "genanki"
+          - "jieba"
+          - "fsrs"
+      dev:
+        patterns:
+          - "pytest*"
+          - "playwright"
+          - "freezegun"
+          - "ruff"
+          - "pip-audit"

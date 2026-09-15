@@ -91,6 +91,32 @@
   路由层直写 SQL 与迁移 / 静默 `pass` 收敛（≤5）/ 迁移 v7 升级回滚 / 脱敏与诊断端点 /
   LLM 异常不回显模型输出。
 
+### 依赖与合规（三报告整合 · U 批次 3）
+
+#### Added
+
+- **U-16 `requirements.lock`（38 项运行时依赖闭包，含 `uvicorn[standard]` 等 extras）**：
+  此前 `requirements.txt` 10 项全为 `>=`（仅 `genanki` 精确固定），无锁文件 → 同一文件不同时间
+  装出不同依赖树，构建不可复现。现 Windows（实际打包平台）按锁文件复现构建。
+- **U-16 `THIRD_PARTY_NOTICES.md`**：列出全部 34+ 组件的版本与许可证，回答「安装包含哪些第三方
+  组件、什么许可证」。**关键发现：`PyMuPDF` 为 AGPL-3.0 / Artifex 商业双授权（强传染性），
+  `frozendict` 为 LGPL-3.0**——分发前需产品决策（购买商业授权 / 接受 AGPL 开源 / 替换实现）。
+- **U-16 CI 依赖漏洞审计**：`pip-audit -r requirements.txt --strict`（发现已知漏洞即失败，
+  并预留 `--ignore-vuln` 白名单登记位）。本地实跑结果：**无已知漏洞**。
+- **U-16 `.github/dependabot.yml`**：pip 生态 weekly 自动更新（运行/开发依赖分组，PR 走既有总闸）。
+
+#### Changed
+
+- **U-16 CI 依赖安装**：Windows 改用 `requirements.lock`（复现构建）；Linux 仍用
+  `requirements.txt`（锁文件由 Windows 环境生成，不含 `uvloop` 等仅非 Windows 生效的依赖）。
+- **`requirements-dev.txt`** 增 `pip-audit`（并保留 `setuptools<81` 的 jieba/pkg_resources 锁定说明）。
+
+#### 待产品决策（未执行）
+
+- **`LICENSE` 暂缓写入**：项目当前无许可声明，但**若声明 MIT 会与「随产物分发 AGPL 的 PyMuPDF」
+  自相矛盾**。许可选择与 PyMuPDF 的 AGPL 决策耦合，须先定案依赖策略再写 `LICENSE`，
+  不宜由工程侧单方面选定（详见 `THIRD_PARTY_NOTICES.md` §需注意的许可证）。
+
 ### 工程与闸门（2026-09-15，R6 审查批次 1·3）
 
 #### Fixed

@@ -4,3 +4,4 @@ pytest-timeout>=2
 playwright>=1.44   # IMP-05 浏览器测试基座；装依赖后还需 `playwright install chromium`（缺浏览器时用例自动 skip）
 freezegun>=1.5     # IMP-09：时间相关测试时钟冻结（SM-2 due / 24h 幂等窗 / 掌握度衰减）
 setuptools<81      # NX-08（R-6）：jieba 0.42.1 依赖 pkg_resources（deprecation；setuptools≥81 将移除，新版发布前锁定）
+pip-audit>=2.7     # U-16：依赖 CVE 审计（CI 步骤 `pip-audit -r requirements.txt`）；仅查已知漏洞，不查冲突（冲突由 pip check 管）
