@@ -97,6 +97,14 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
    历史 `paste` 行归 teacher 后无法按行还原。
 4. **前端静态路径**：拆分后静态资源挂 `/assets`（`app.mount("/assets", StaticFiles(...))`），
    链接一律 `/assets/...`；经典脚本共享全局作用域，跨文件函数加载期前向引用会挂。
+   **U-17（2026-09-15）新增前端静态防线**：`npm run lint`（ESLint，`--max-warnings 0`）已入 CI。
+   - 配置在 `eslint.config.js`：**不引入打包器**（产物仍是零构建、零 CDN 的原生 `<script src>`）。
+   - 因为经典脚本共享全局作用域，配置**逐文件自动收集「其它文件的顶层声明 + `window.X =`/`global.X =` 挂载」**
+     作为共享全局符号 → `no-undef` 能抓「拼错函数名」（原先只有运行时才炸），且不误报跨文件调用。
+   - **新增顶层声明若被其它文件或内联 HTML 处理器引用，须在该文件首行 `/* exported a, b, c */` 声明**
+     （脚本模式下 `no-unused-vars` 靠它识别「对外暴露」）——否则会被误报为未使用。
+   - 实测价值：上线即抓到 `learn.js` 调用**不存在的 `rexAnalyzeRender()`**（运行时必抛 TypeError，
+     且「确认前 200 条后」这条分支才走到，长期未被发现）。
 5. **api() 契约**：字符串体自动补 `Content-Type: application/json`（已修复，浏览器测试不再
   打 fetch 补丁）；FormData 原样透传（不设 header）。改 api() 需同步
    `tests/browser/test_syllabus_view.py`。

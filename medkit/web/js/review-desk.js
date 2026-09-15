@@ -1,3 +1,5 @@
+/* exported ART_LABEL, BLOOMS, BLOOM_SEGS, L, RATIO_SEGS, ROLE_LABEL, ROW_STATE, STEPS, SUBSTEP_ICON, SUBSTEP_LABEL, TAB_KEYS, UP_OK_EXT, UP_OK_MIME, a, addFiles, ankiOk, answerIssue, any, applyReviewFilter, artifactLinks, arts, autoMap, b, b2, bad, bar, barW, base, baseUrl, baseUrlDirty, bindSegBar, bloom, bloomSum, body, box, box_append, btn, c, canResume, cancelN, cap, card, chars, checkAns, chosen, cid, clean, cls, cnt, cntEl, cny, collectKnobs, createToken, cum, cur, currentFormPayload, d, data, delPreset, diffPrompt, dl, doPickProvider, doRemove, doclickTrialAgain, doneN, dropBtn, dropped, dz, e, ed, edits, el, err, est, estLine, estT, estimateCost, examText, ext, extra, extraText, f, failN, fd, files, filesCount, fillModelSelect, fillPayload, filtered, finished, first, fmtClock, fmtLogLine, fullSlices, gen, gg, gix, go, goDemo, goOwn, got, grabOff, groups, h, handle, hd, hit, href, html, i, id, ids, in1, inp, isTerminal, issues, j, jobs, k, keep, kept, keysR, la, label, labelTxt, lbl, leftOk, leftPos, letters, list, loadConfig, loadKeys, loadLog, loadPresets, loadProjects, loadPrompts, loadSearchOptions, loadSessionAs, loadSessions, loadSessionsAsTextbook, logEl, lts, manual, mark, markErr, maybeShowWizard, meta, mime, missing, mk, model, modelValue, move, moved, msgEl, mu, myToken, n, nQ, nSlices, names, normAnswer, note, nowDropped, nv, o, ocrBadge, okB, okFiles, okQ, okT, okY, old, opList, openPromptEdit, openReview, optSrc, opts, optsSrc, p, parseGroup, pct, pdAssetDel, pdAssetPick, pdAssetUp, pdAssets, ph, pickFiles, pickProvider, pid, pre, prefix, pres, prev, prevDrop, prevEdits, price, probeSampleAvailability, promptCache, promptContainer, promptStatusBadge, prov, provNote, provs, q, qc, qid, qs, quota, r, r0, ratioSum, ratios, rect, removeFile, renderChips, renderDz, renderLog, renderPrompt, renderResults, renderReview, renderSegBar, renderStepper, renderSubsteps, rerenderArtifact, res, resTotalChars, restorePrompt, resume, revFilterText, revHideKey, revSaving, reviewDirtyGuard, reviewState, rightOk, row, rowsBox, rr, runOcrJobs, runningN, s, sa, savePrompt, saved, savedGen, savedIds, savedQc, scheduleReady, searchBackends, seg, seg1, seg2, segEl, segResizeT, segVals, sel, setDrop, setW, show, showProject, si, sib, skipped, slices, ss, st, stEl, stageEl, startPoll, startX, started, stepIdx, stopPoll, subStr, sum, syncWsManual, t, tEl, ta, tags, target, tb, teacherText, text, tk, total, tpl, tplKey, u, up, updBatch, updateOcrUi, updateReady, updateRevCount, updateRunBtn, updateWsNote, usage, v, v1, validBaseUrl, vals, value, visChecks, visIds, visible, vs, warns, wrap, wsc, wzClose, wzDone, wzRender, wzSetDots, wzStep, x */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+  /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 /* ---- ① 服务商 */
 let createToken = "";   // R3-08：建课题意图令牌（双击/双标签幂等；失败保留供重试复用）
 /* R3-16：统一选项字母标签（ABCDEFGHIJ 前 n 位，n 上限 10）——试出/审核台/复制同口径 */
@@ -865,7 +867,7 @@ function renderResults(roleLabel, res) {
 }
 /* S2：成本公式统一走后端（core/cost.estimate_run，与 Python 同源），旧内嵌公式删除 */
 async function estimateCost() {
-  const chars = resTotalChars(pres.textbook) + resTotalChars(pres.teacher);
+  // U-17：旧内嵌成本公式删除后遗留的 chars 已移除（成本统一走后端 core/cost）
   const nSlices = (pres.textbook && pres.textbook.results || []).filter(r => r.ok)
     .reduce((a, r) => a + (r.slice_count || 0), 0);
   const nQ = Math.max(parseInt($("target").value || "100"), 1);
@@ -2138,7 +2140,7 @@ async function openPromptEdit(name) {
 async function savePrompt(name) {
   const ta = document.querySelector("#peditor_" + name.replace(".", "_") + " textarea");
   try {
-    const r = await api("/api/prompts/" + encodeURIComponent(name), { method: "PUT",
+    await api("/api/prompts/" + encodeURIComponent(name), { method: "PUT",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: ta.value }) });
     toast("已保存影子副本（生效中）");
     loadPrompts();

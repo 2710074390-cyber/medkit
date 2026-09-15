@@ -1,3 +1,4 @@
+/* exported KW, cells, codes, esc, escMap, highlight, html, inline, isSepRow, isTableRow, line, lines, mdRender, raw, s, segs */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
 /* WP-9：本地极简 Markdown → 富文本渲染器（零 CDN，XSS 安全：先转义再解析）。
    暴露：window.mdRender(src) / window.mdHighlight(text) / window.mdKeywords。 */
 (function (global) {

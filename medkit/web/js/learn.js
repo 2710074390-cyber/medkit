@@ -1,3 +1,5 @@
+/* exported C, ERR_LABEL, GRADE3_MAP, HL_KEYWORDS, LEARN_ALT_KEYS, LEARN_CACHE, LEARN_COLORS, LEARN_ORDER, LEARN_STATE, LEARN_STATE_ORDER, LEARN_TTL, LETTERS, MEM_GRADE3, REX_DRAFTS, REX_STATS, RVC_STATES, SYL_DRAFTS, SYL_LOADED, SYL_STD, TUTOR_QTYPES, TUTOR_STATES, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, abort, acc, acts, addMistakeRaw, allCard, allChecked, anchor, ankiHelp, ankiPreview, appliedSubject, arcs, arr, at, b, badgeNote, bar, batch, bb, bg, blob, body, border, bottom, box, brief, btn, btnAll, btns, buf, byName, c, cachedMastery, cachedSubjects, card, cardEl, cardN, cards, cd, cells, ch, chk, cnt, cny, color, consumeSSE, conversationHTML, cs, ct, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, dec, del, detail, done, downloadText, ds, due, eid, el, est, estLlmCost, event, expCards, expCardsBusy, expCardsHint, expCopy, expDel, expExport, expFold, expGenerate, expHint, expMd, expRegen, ext, f, fd, fillExpKp, fillMkSubjectSelect, fillReviewSubjects, fillTutorKp, first, fold, fr, full, gapPaper, gradeBusy, grades, groups, grp, head, healLibrary, hint, hlKw, html, i, id, ids, idx, inline, inp, invalidateLearnCache, isSepRow, isTableRow, items, keep, key, kind, kp, kps, label, lbl, learnChip, learnRecAction, line, lines, list, live, loadDashboard, loadExplainCtx, loadExplains, loadLibrary, loadOverview, loadReviewCtx, loadStudy, loadStudySubjects, loadTutorCtx, loadTutorSessions, loc, loop, lv, m, memCard, memDel, memExportApkg, memExportTxt, memGrade, memGrade3, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkOcrFile, mkOcrPick, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, msg, n, name, nav, nb, note, o, ok, old, on, onlyUn, open, opt, opts, parts, path, payload, pct, pill, prevAnswer, price, prov, pv, q, qcardFlip, qs, question, queueBusy, r, raw, reader, recs, refreshOverviewIfAny, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, renderMemoryCards, renderRexDrafts, renderSmReview, renderStudyProgress, renderTutorSide, res, resp, rexAnalyze, rexConfirmAll, rexDraftClear, rexFile, rexFilePick, rexFileRender, rexHeat, rexItemDel, rexReport, rexSubject, rounds, rows, rvCard, rvChip, rvDel, rvGrade, rvGrade3, rvHint, rvHintGen, rvQueueAll, rvSliceExpand, rvSliceHTML, rvStudyKeys, rvSubject, s, sb, scope, scoped, sec, sel, sessionItem, setLearnNavBadge, setNavTabBadge, showLearnView, shown, sl, sr, sseAbort, sseAbortAll, sseAborts, sseStopUI, st, stages, stats, stdName, stem, streamed, strip, studyDueBase, studyDueDate, studyDueResetIfStale, subj, subject, subjectDelete, subjectMgrOpen, subs, sylDraftClear, sylDraftDel, sylEnsure, sylFail, sylItemDel, sylLoad, sylParse, sylParseConfirm, sylPaste, sylRender, sylReport, sylSeedImport, sylSeedPick, sylSetStd, sylStructurize, sylTeacherImport, sylTeacherPick, syncMkScope, t, ta, tag, target, text, todayStr, tot, total, tutorChip, tutorCleanup, tutorDel, tutorExit, tutorResume, tutorShowConversation, tutorStart, tutorState, tutorStatePath, tutorSubmit, txt, updateByQueue, updateLearnBadges, updateMkToolbar, url, useWeb, v */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+  /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 /* ---- ④ 学习中心（v0.7 M1/M2：错题本 + 掌握度诊断） ---- */
 /* R4-02 流式取消：在途 AbortController 按入口（anchorId）登记——A-16：讲解/提问可并发生成时
    互不误杀（旧实现单 _sseAbort + 全局单按钮，sseStopUI 先清上一处=先杀并发流；且声明前置
@@ -382,6 +384,7 @@ async function sylReport() {
 
 /* ---- ⑦ 真题考频（WP-02） ---- */
 let REX_DRAFTS = [];
+let REX_STATS = {};   // U-17：最近一次真题分析的统计（sentences/unmatched），供批量确认后重渲染复用
 function rexSubject() { return document.getElementById("syl_subject")?.value || ""; }
 async function rexAnalyze() {
   const text = document.getElementById("rex_text").value;
@@ -392,6 +395,7 @@ async function rexAnalyze() {
       { method: "POST", body: JSON.stringify({ text, subject: rexSubject() }) });
   } catch (e) { toast(e.message || "分析失败", false); return; }
   REX_DRAFTS = r.drafts || [];
+  REX_STATS = r.stats || {};
   if (!REX_DRAFTS.length) {
     const box = document.getElementById("rex_drafts");
     box.innerHTML = `<div class="hint">未识别到考点命中（${r.stats?.unmatched ?? 0} 句未命中词典）——可先导入大纲种子或粘贴大纲，词典越全频次越准。</div>`;
@@ -435,7 +439,7 @@ async function rexConfirmAll() {
   if (total > 200) {
     REX_DRAFTS = REX_DRAFTS.slice(200);
     toast(`已确认 ${r.added} 条（单次上限 200 条；剩余 ${REX_DRAFTS.length} 条待确认，请再次点击「确认全部入库」）`);
-    rexAnalyzeRender();
+    renderRexDrafts(REX_STATS);   // U-17：原为 rexAnalyzeRender()——该函数全仓不存在（运行时 TypeError）
     return;
   }
   toast(`已确认 ${r.added} 条频次（可重复确认合并）`);
@@ -1678,16 +1682,10 @@ function tutorStatePath(state) {
     color, state: TUTOR_STATES[cur].label,
   };
 }
-function tutorRowCore(extra = "") {
-  const subj = $("tu_subject").value;
-  const rec = tutorState.sessions.find(s => s.id === tutorState.active) || null;
-  const lv = TUTOR_QTYPES[rec && rec.current && rec.current.type] || "解释";
-  const chip = rec ? tutorChip(rec.state) : "";
-  return { subj, rec, lv, chip };
-}
+/* U-17：删除孤儿函数 tutorRowCore（ESLint no-unused-vars 实测全仓无调用者）*/
 async function loadTutorCtx(preserveSubject) {
   try {
-    const [subj, my] = await Promise.all([cachedSubjects(), cachedMastery()]);
+    const [subj] = await Promise.all([cachedSubjects(), cachedMastery()]);   // U-17：去掉未使用的 my 解构
     const subs = (subj.subjects || []).sort();
     $("tu_subject").innerHTML = '<option value="">全部科目</option>' +
       subs.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
@@ -1754,7 +1752,8 @@ async function tutorCleanup() {
     }, false);
 }
 function sessionItem(s) {
-  const lv = TUTOR_QTYPES[s.current && s.current.type] || "解释";
+  // U-17：原此处计算了 lv（TUTOR_QTYPES[...]）但模板从未使用——已删除；
+  // 若产品希望会话条目显示层级，需在下方模板中真正插入该值。
   const at = (s.updated_at || "").slice(5, 16).replace("T", " ");
   return `<div class="tu-item" onclick="tutorResume('${esc(s.id)}')">
     <div class="ti-name">${esc(s.kp_name || "未命名知识点")}</div>

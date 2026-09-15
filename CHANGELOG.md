@@ -142,6 +142,35 @@
   自相矛盾**。许可选择与 PyMuPDF 的 AGPL 决策耦合，须先定案依赖策略再写 `LICENSE`，
   不宜由工程侧单方面选定（详见 `THIRD_PARTY_NOTICES.md` §需注意的许可证）。
 
+### 前端静态防线（三报告整合 · U 批次 6）
+
+#### Added
+
+- **U-17（部分）ESLint 前端静态检查**：新增 `package.json`（仅 devDependency：`eslint` + `globals`）、
+  `eslint.config.js`、`package-lock.json`，并接入 CI（`npm run lint`，`--max-warnings 0`）。
+  **不引入打包器**——产物仍是零构建、零 CDN 的原生 `<script src>`，本配置只做只读检查。
+  配置要点：因经典脚本共享全局作用域（`app.js`/`learn.js`/`review-desk.js` 靠「加载顺序即隐式契约」
+  互相调用），**逐文件自动收集「其它文件的顶层声明 + `window.X =`/`global.X =` 挂载」**作为共享
+  全局符号——`no-undef` 既能抓「拼错函数名」（原先只有运行时才炸），又不误报合法的跨文件调用；
+  被外部引用的顶层声明在文件首行以 `/* exported … */` 标注（脚本模式下 `no-unused-vars` 靠它识别）。
+
+#### Fixed
+
+- **U-17 上线即抓到一处真实缺陷**：`learn.js` 调用了**全仓不存在的 `rexAnalyzeRender()`**——
+  该分支在「真题草稿超 200 条、确认前 200 条后重渲染剩余」时才走到，长期未被发现，运行时必抛
+  `TypeError`。现改为 `renderRexDrafts(REX_STATS)` 并新增模块级 `REX_STATS` 缓存分析统计。
+- **U-17 清理 ESLint 实测的死代码**：孤儿函数 `tutorRowCore`（全仓无调用者）· 未使用的
+  `REVIEW_SITE` 常量（同一 URL 已硬编码在 `index.html` 导航链接）· 未使用的局部量
+  `my`（`loadTutorCtx`）· `chars`（旧内嵌成本公式删除后遗留）· `r`（`savePrompt`）。
+  另标注 `sessionItem` 中「算了 `lv` 但模板从未使用」——疑似曾计划显示会话层级，已在注释中留痕。
+
+#### 说明
+
+- **U-17 的「ES Module 化 + 按域拆分超大 JS（learn.js 2402 / review-desk.js 2299 行）」未执行**：
+  该步需改 `index.html` 的脚本加载方式，而**浏览器层回归网在当前环境不可用**
+  （`agent-browser` 不支持 Windows；Playwright chromium 未安装）——无回归网改加载顺序风险过高
+  （§4.4 自述「加载顺序即隐式契约」）。静态防线已就位，为后续该步提供了安全网。
+
 ### 测试可信度（三报告整合 · U 批次 4）
 
 #### Added

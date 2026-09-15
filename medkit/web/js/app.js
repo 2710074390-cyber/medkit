@@ -1,3 +1,5 @@
+/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+  /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 const $ = id => document.getElementById(id);
 let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [], extra: [] },
               pres: { textbook: null, teacher: null, exam: null, extra: null, sample: false },
@@ -163,7 +165,7 @@ function toggleTheme() {
 
 /* ---- v0.6：反馈(邮件) + 更新检查 ---- */
 const FEEDBACK_MAIL = "2710074390@qq.com";
-const REVIEW_SITE = "https://med-review-site.pages.dev/#reviews";
+/* U-17：删除未使用的 REVIEW_SITE 常量——同一 URL 已硬编码于 index.html 导航链接 */
 
 function copyText(text, btn) {
   const done = () => { if (btn) { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制"; }, 1600); } };

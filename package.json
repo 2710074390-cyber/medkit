@@ -1,0 +1,15 @@
+{
+  "name": "medkit-web-lint",
+  "private": true,
+  "version": "0.0.0",
+  "description": "U-17：MedKit 前端静态检查（ESLint）。仅用于 lint，不参与打包——产物仍是零构建、零 CDN 的原生 <script src>。",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint medkit/web/js/ --max-warnings 0",
+    "lint:fix": "eslint medkit/web/js/ --fix"
+  },
+  "devDependencies": {
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0"
+  }
+}

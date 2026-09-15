@@ -37,8 +37,14 @@ jobs:
           else
             python -m pip install -r requirements.txt -r requirements-dev.txt
           fi
-      - name: Lint
+      - name: Lint (Python)
         run: python -m ruff check .
+      - name: Lint (frontend, U-17)
+        # 前端静态防线：拼错标识符静态即报（原先只有运行时才炸）。
+        # 不引入打包器——产物仍是零构建、零 CDN 的原生 <script src>。
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npm run lint
       - name: Dependency vulnerability audit (U-16)
         # 已知漏洞即失败。过渡期如遇「上游未修复但已评估为不可达」的条目，
         # 在此处追加 `--ignore-vuln GHSA-xxxx-xxxx-xxxx` 并在本注释下方登记原因与复查日期。
