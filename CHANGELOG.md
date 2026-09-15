@@ -8,6 +8,39 @@
 
 ## [Unreleased] - 2026-09-01
 
+### 工程与闸门（2026-09-15，R6 审查批次 1·3）
+
+#### Fixed
+
+- **R6-01 质量总闸转绿（本地/CI 判定分叉修复）**：`verify.cmd` 与 CI 的单测步此前会连
+  `tests/browser` 一起收集——session 级 Playwright 同步上下文（`sync_playwright()`）在整个会话
+  期间占住主线程事件循环，导致随后任何 `asyncio.run()` 抛
+  `RuntimeError: cannot be called from a running event loop`（本地 3 failed / CI 全绿）。
+  现单测步显式 `--ignore=tests/browser`，浏览器层仍由第 [3/4] 步与独立 browser job 承担；
+  `tests/conftest.py` 新增 `run_coro` fixture（在新线程驱动协程）并改接 3 个用例。
+  另清零 4 处 ruff 错误（`ocr.py` 导入排序、`projects.py` 未用变量、`test_cards.py` 分号拆行、
+  `test_wp04.py` 重复字典键）并修正 1 处 invalid `# noqa` 指令。
+- **R6-11 打包纯净检查入总闸**：`borrow-rules` §5 要求的 `pack/check-package.py` 此前只在
+  `pack/build.bat` 接线；现加入 `verify.cmd` 第 [4/4] 步与 CI verify job（未构建 `dist/` 时
+  脚本自行跳过并返回 0）。正反用例已实测：注入 `dist/MedKit/**/tests/` → 失败退出 1，移除后恢复通过。
+
+#### Changed
+
+- **R6-15 README 版本口径对齐**：`已实现功能（v0.8.0）` → `（v0.10.1）`（此前落后 3 个次版本，
+  与同文件已同步的 `MedKit-Setup-0.10.1.exe` 口径矛盾）；「开发里程碑」小节明确标注为
+  **历史记录（截至 v0.8.1）**，与当前版本能力区分。
+- **`docs/AGENT_HANDOFF.md` §4 陷阱清单新增 12/13/14 条**：未推送提交时禁 `git gc/prune/repack`、
+  提交后立即 push、多会话并发时 git 写操作必须收敛单线（源自 2026-09-15 仓库事故）。
+
+#### Docs
+
+- 新增 `docs/工程审查改进指南_2026-09-15.md`（R6 六维审查：代码质量/架构/性能/安全/可维护性/
+  依赖管理；阻塞 2 · 高 5 · 中 8 · 低 6 + 编号 R6-01~R6-22 + 依赖图与批次）。
+- 新增 `docs/reviews/仓库恢复记录_2026-09-15.md`（`.git` 被删除后从回收站恢复导致的对象库损坏
+  与 `master` 被重置的取证、恢复过程与收尾清单；内容零损失）。
+- 复核撤注：R6-12（NX-06 提示词治理被违反）经逐版本核验为**误报**——`8e69642` 属 v0.9.0
+  （该版有 `### Prompts` 小节），v0.9.0 之后无提示词改动，NX-06 合规。
+
 ### R5 全链路复核修复（2026-09-01，批次 0/1/2：数据安全 + 流式主路径 + 流程信任链）
 
 #### Fixed

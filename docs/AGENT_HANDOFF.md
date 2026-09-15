@@ -8,6 +8,7 @@
 
 | 日期 | commit | 变更 |
 | - | - | - |
+| 2026-09-15 | `be0ffdc`→`b4ebd45` | **仓库事故恢复 + R6 工程审查批次 1**：① **事故** `.git` 被整体删除（后从回收站恢复）→ 对象库损坏（`55c4225` 对象消失、`8f98d44` 根树缺失）+ `master` 被重置回 `9a9058a`。按「备份 → 保全 → 导出悬空对象 → 重建 → 立即推送」恢复：`r5-batch0-1` 分支保全 `eb7855a`（R5 批次 0+1 唯一完整提交），悬空对象导出至 `.git/lost-found/` 并异地归档；R5 批次 2 与其余未提交工作按工作区内容重建为 `be0ffdc`；**内容零损失**。详见 `docs/reviews/仓库恢复记录_2026-09-15.md`。② **§4 陷阱清单新增 12/13/14 条**（未推送提交禁 gc/prune、提交后立即 push、并发时 git 写操作收敛单线）。③ **R6-01 总闸转绿**：`verify.cmd`/CI 单测步显式 `--ignore=tests/browser`（浏览器层 session 级 Playwright 同步上下文会占住线程事件循环，致 `asyncio.run()` 用例必失败——本地红/CI 绿的分叉根因）；`tests/conftest.py` 新增 `run_coro` fixture 并改接 3 个用例；ruff 清零 4 处 + 修正 1 处 invalid noqa。详见 `docs/工程审查改进指南_2026-09-15.md`（R6-01~R6-22）。 |
 | 2026-09-01 | 本批 | **R5 全链路复核批次 0/1/2（P0/P1）**：① **数据安全** `tests/conftest.py` 补全 7 个 JSON 文件常量隔离 + session 级家目录哈希哨兵（R5-01；此前测试回落 JSON 直接写真实 `~/.medkit`，实机两次复现）；R5-04 取证修订——备份目录顶层 113KB mistakes.json 实为 08-27 20:43 后测试垃圾，真实数据（1 错题/4 知识点/1 复习卡/1 提问会话）从**污染前**备份 + WAL 回放恢复（`pack/recover-user-data.py`，先快照可回退）· ② **流式主路径** R5-02 dedupe 移入 gen() 首帧前/finally + 守卫降级 `dedupe.is_active` 窥视（实验证实本 FastAPI 版本 Depends teardown 在流完成后执行，守卫持锁会与 gen 内锁自锁）；R5-03 两流式端点 `cancel_ev` 上传 client + gen finally 置位 + `LLMClient.chat_stream` finally `stream.close()` 中止 provider 连接；R5-C-02 usage 累计→取消/异常处快照落账 · ③ **流程信任链** R5-05 提交自查三步（见 §4.11）；CHANGELOG/R4 报告 R4-01/R4-02 失实条目加勘误注 · ④ 体验兜底 R5-A-01 模板键 `medkit-tpl-<pid>`、R5-B-01 assets 累计 600MB 上限、R5-B-05/15 删除复核（残留即 500）+ 孤儿项「残留目录，可清理」；测试 18+2+2 新增，离线全量基线不回归（R5-01 哨兵同时守卫后续每次全量测试） |
 | 2026-08-31 | 本批 | **R4 审查批次 3 落地（打磨，18 项 ✅）**：R4-09 子步骤 in-flight 登记 + 取消/异常出口补 cancelled/failed 终态 · R4-10 MedFix/MedQC 输入深拷贝快照隔离超时僵尸线程 · R4-11 冗余写已被 R4-05 重构消除（查证无改动）· R4-13 import-image 200MB 读后即判 400 · R4-14 meta 非 dict → 422 · R4-15 llm/models 复用 `_test_error_hint` 归一 · R4-16 未分类卡分区互斥（rev/cards list_cards + subjects 口径）· R4-17 cards_generate 复用 R3-21 去重 409 · R4-18 短 Key 掩码只露前2后2 · R4-19 自评失败卡重渲恢复 · R4-20 考前提醒真触达（窗口冲刺提示）· R4-21 全选范围明示 · R4-22 批处理在途互斥 · R4-23 切科目前置重渲 · R4-24「清同名卡」显式入口（`POST /api/library/review/purge-same`，review/cards 增 `delete_by_kp`）· R4-25 delPreset 改事件绑定 · R4-26 md.js code 段不再嵌套高亮；测试 `tests/test_r4_batch3.py`（10 例）+ 浏览器 2 例新增；离线 434 · 浏览器 36 全绿 |
 | 2026-08-31 | 本批 | **R4 审查批次 2 落地（5 缺陷）**：R4-05 `structurize_outline` 完整性通过即 `add_seed_items` 幂等落库官方大纲（返回 `source`/`added`，付费产物可回读）· R4-06 资产上传 200MB 上限（`_MAX_ASSET_BYTES`，超限 400 不落盘）· R4-07 `config.save` 统一 `write_json_atomic` 原子写 · R4-08 `syllabus._rows`/`list_subjects` 切 `tx(write=False)` 纯读事务 · R4-12 `official_quota` 越界由静默钳制改 400（口径与 web_ref_quota/bloom 一致）；测试 `test_s1_backend.py`/`test_syllabus_manage.py`/`test_wp04.py`，离线 424 passed · ruff 干净 |
@@ -120,6 +121,20 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
     应出现在 `gen()` 邻域；`cancel_ev` 应出现在端点函数内）；② CHANGELOG/handoff 条目只引用
     「已 diff 验证的 file:line」，引用意图=失实源头；③ 批量提交后立即 `git show HEAD` 抽查关键行
     （配合本节第 7 条「改完立即提交」——批次全部落库前不要宣布落地）。
+12. **⚠️ 有未推送提交时，禁止 `git gc` / `git prune` / `git repack -a -d`（2026-09-15 事故）**：
+   本仓库 `.git` 曾被整体删除后从回收站恢复，造成对象库损坏（提交 `55c4225` 对象消失、
+   `8f98d44` 根树缺失）。这类残留对象**是唯一的可恢复来源**，一次成功的 gc 或 git 自动触发的
+   `geometric-repack` 就会把它们清掉（事故当时 `git count-objects -v` 的 `prune-packable: 98` 即引信；
+   实测提交时会自动触发 repack 并因缺失对象失败，**成功即毁灭证据**）。
+   规则：① 存在未推送/悬空提交时保持 `gc.auto=0`、`maintenance.auto=false`、`gc.autoDetach=false`；
+   ② 恢复期只做只读命令（`status/log/rev-parse/cat-file/fsck`）+ 整仓备份，禁止一切写引用/写对象操作；
+   ③ 用 `git fsck --lost-found` 导出悬空对象并**异地归档**后，才考虑恢复自动维护。
+13. **提交后立即 push**：未推送的提交只存在于本地对象库，是单点故障——2026-09-15 事故中 R5 三个提交
+   （含 P0 数据安全修复）正是「改完不推」才在 `.git` 损坏后无法从远端找回。与第 7 条合起来即
+   「改完 → 提交 → **立刻推送**」闭环；`git rev-parse origin/master` 必须等于 `HEAD`。
+14. **多会话并发时，git 写操作必须收敛为单线**：动手前 `git status` + `git log -1` 与本会话预期不符
+   → **立即停手取证，不要继续写**。实测（2026-09-15）：两个会话同时做仓库恢复，导致
+   `refs/remotes/origin/*` 被反复删除、悬空对象面临被二次 gc 的风险——同一 `.git` 只能有一条恢复线。
 
 ## 5. 常用开发入口
 

@@ -37,6 +37,11 @@ jobs:
         run: python -m pytest -q -m migration
       - name: Dependency integrity (IMP-10)
         run: pip check
+      # R6-11（borrow-rules §5）：总闸须覆盖打包纯净检查。本 job 不构建 dist，
+      # 脚本会自动打印「[跳过] …（尚未构建）」并返回 0；一旦该 job 产出 dist
+      # （或改为打包 job），此步即成为真实防线。与 verify.cmd 第 [4/4] 步等价。
+      - name: Package purity check (R6-11)
+        run: python pack/check-package.py
       # 注：tests/browser（Playwright 浏览器层）自 NX-05 起由独立 browser job 承担
       # （见下）；本 verify job 不再跑浏览器层，避免无 chromium 拖垮矩阵。
 
