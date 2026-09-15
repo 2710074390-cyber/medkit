@@ -585,6 +585,68 @@ def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
     return web_materials, web_materials_text, False
 
 
+def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
+                   cancel: threading.Event, done_sids: set[str],
+                   questions: list[dict[str, Any]], fix_client: Any,
+                   text_by_sid: dict[str, str],
+                   bloom_target: Optional[dict[str, float]],
+                   known_sids: set[str],
+                   ) -> tuple[list[dict[str, Any]], str, Optional[dict[str, Any]]]:
+    """④ 质检 BLOCKED → MedFix 定向修复 + 门禁① 快速复核（不再 QC，成本控制）。
+
+    返回 `(questions, trace_md, cancel_out)`；`cancel_out` 非 None 表示管线需提前结束。
+    U-10：从 727 行的 `_run_project_impl` 抽出的第二个阶段函数。
+    """
+    if qc_report["gate_decision"] == "BLOCKED":
+        if cancel.is_set():   # B24：质检修复阶段可取消
+            return questions, "", _cancel_out(base, meta_path, done_sids, questions)
+        _set_stage(base, meta_path, "fixing", "④ MedFix（质检 BLOCKED → 定向修复）…")
+        _set_progress(base, "fixing", 0, 1, "定向修复中…（最长约 1~2 分钟）",
+                      sub="MedFix", sub_done=0, sub_total=1)
+        for _i, iss in enumerate(qc_report["issues"]):
+            _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+            _substep(base, "fixing", f"fix:{_qid}", f"修复 {_qid}", "running",
+                     str(iss.get("reason", ""))[:80])
+        fixed, fix_err = _run_substep(
+            base, "fixing", "medfix", "MedFix 质检修复",
+            # R4-10：快照隔离（see gate1 medfix）
+            lambda: medfix.fix_questions(fix_client, copy.deepcopy(questions),
+                                         qc_report["issues"], text_by_sid),
+            ttl=300, retries=1, detail=f"{len(qc_report['issues'])} 条问题")
+        if fix_err:
+            _append_manual_section(base, "MedFix 质检修复",
+                                   [f"失败：{fix_err}", "本轮未修复，题目保留待人工复核。"])
+            fixed = {"fixed": [], "trace": []}
+        fixed = fixed or {"fixed": [], "trace": []}
+        _fixed_ids = {fq.get("id") for fq in fixed.get("fixed", [])}
+        for _i, iss in enumerate(qc_report["issues"]):
+            _qid = str(iss.get("q_id") or f"issue{_i + 1}")
+            _substep(base, "fixing", f"fix:{_qid}", f"修复 {_qid}",
+                     "done" if _qid in _fixed_ids else "failed",
+                     "已自动修复" if _qid in _fixed_ids else "保留待人工复核")
+        by_id = {q["id"]: q for q in questions}
+        for fq in fixed["fixed"]:
+            if fq.get("id") in by_id:
+                by_id[fq["id"]] = fq
+        questions = list(by_id.values())
+        _log(base, f"  修复 {len(fixed['fixed'])} 题")
+        _set_progress(base, "fixing", 1, 1, f"修复完成（{len(fixed['fixed'])} 题）",
+                      sub="MedFix", sub_done=1, sub_total=1)
+        # 修复后终检：门禁① 快速复核（不再 QC，成本控制）
+        gate = {
+            "options": options_check.check_all(questions),
+            "bloom": bloom_check.check_bloom(questions, bloom_target),
+            "trace": trace_check.check_trace(questions, known_sids),
+            "dup": dedup_check.check_dup(questions),
+        }
+        (base / "质检报告" / "gate1_final.json").write_text(
+            json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
+        trace_md = "\n".join(f"- {t['q_id']}: {t['reason']}" for t in fixed["trace"]) or "无修复项"
+    else:
+        trace_md = "质检通过（PASS / PASS_WITH_FIXES），无需修复。"
+    return questions, trace_md, None
+
+
 def _run_project_impl(pid: str, seed: Optional[int] = None,
                       overrides: Optional[dict[str, Any]] = None,
                       cancel: Optional[threading.Event] = None) -> dict[str, Any]:
@@ -1044,53 +1106,12 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _append_contract_review(base, contract_fails)
     _log(base, f"  QC score={qc_report['score']} decision={qc_report['gate_decision']}"
                f" issues={len(qc_report['issues'])}")
-    if qc_report["gate_decision"] == "BLOCKED":
-        if cancel.is_set():   # B24：质检修复阶段可取消
-            return _cancel_out(base, meta_path, done_sids, questions)
-        _set_stage(base, meta_path, "fixing", "④ MedFix（质检 BLOCKED → 定向修复）…")
-        _set_progress(base, "fixing", 0, 1, "定向修复中…（最长约 1~2 分钟）",
-                      sub="MedFix", sub_done=0, sub_total=1)
-        for _i, iss in enumerate(qc_report["issues"]):
-            _qid = str(iss.get("q_id") or f"issue{_i + 1}")
-            _substep(base, "fixing", f"fix:{_qid}", f"修复 {_qid}", "running",
-                     str(iss.get("reason", ""))[:80])
-        fixed, fix_err = _run_substep(
-            base, "fixing", "medfix", "MedFix 质检修复",
-            # R4-10：快照隔离（see gate1 medfix）
-            lambda: medfix.fix_questions(fix_client, copy.deepcopy(questions),
-                                         qc_report["issues"], text_by_sid),
-            ttl=300, retries=1, detail=f"{len(qc_report['issues'])} 条问题")
-        if fix_err:
-            _append_manual_section(base, "MedFix 质检修复",
-                                   [f"失败：{fix_err}", "本轮未修复，题目保留待人工复核。"])
-            fixed = {"fixed": [], "trace": []}
-        fixed = fixed or {"fixed": [], "trace": []}
-        _fixed_ids = {fq.get("id") for fq in fixed.get("fixed", [])}
-        for _i, iss in enumerate(qc_report["issues"]):
-            _qid = str(iss.get("q_id") or f"issue{_i + 1}")
-            _substep(base, "fixing", f"fix:{_qid}", f"修复 {_qid}",
-                     "done" if _qid in _fixed_ids else "failed",
-                     "已自动修复" if _qid in _fixed_ids else "保留待人工复核")
-        by_id = {q["id"]: q for q in questions}
-        for fq in fixed["fixed"]:
-            if fq.get("id") in by_id:
-                by_id[fq["id"]] = fq
-        questions = list(by_id.values())
-        _log(base, f"  修复 {len(fixed['fixed'])} 题")
-        _set_progress(base, "fixing", 1, 1, f"修复完成（{len(fixed['fixed'])} 题）",
-                      sub="MedFix", sub_done=1, sub_total=1)
-        # 修复后终检：门禁① 快速复核（不再 QC，成本控制）
-        gate = {
-            "options": options_check.check_all(questions),
-            "bloom": bloom_check.check_bloom(questions, bloom_target),
-            "trace": trace_check.check_trace(questions, known_sids),
-            "dup": dedup_check.check_dup(questions),
-        }
-        (base / "质检报告" / "gate1_final.json").write_text(
-            json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
-        trace_md = "\n".join(f"- {t['q_id']}: {t['reason']}" for t in fixed["trace"]) or "无修复项"
-    else:
-        trace_md = "质检通过（PASS / PASS_WITH_FIXES），无需修复。"
+    questions, trace_md, _qc_cancel = _stage_qc_fix(
+        base=base, meta_path=meta_path, qc_report=qc_report, cancel=cancel,
+        done_sids=done_sids, questions=questions, fix_client=fix_client,
+        text_by_sid=text_by_sid, bloom_target=bloom_target, known_sids=known_sids)
+    if _qc_cancel is not None:
+        return _qc_cancel
     (base / "最终产物").mkdir(exist_ok=True)
     (base / "最终产物" / "追溯日志.md").write_text(trace_md, encoding="utf-8")
 
