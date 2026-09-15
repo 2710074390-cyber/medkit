@@ -32,6 +32,13 @@ def check_dist(root: Path) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
     argv = argv if argv is not None else sys.argv[1:]
     default = Path(__file__).resolve().parents[1] / "dist" / "MedKit"
     root = Path(argv[0]) if argv else default
