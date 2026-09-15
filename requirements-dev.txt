@@ -3,6 +3,6 @@ pytest>=8
 pytest-timeout>=2
 playwright>=1.44   # IMP-05 browser-test base; also run `playwright install chromium` (tests auto-skip if absent)
 freezegun>=1.5     # IMP-09: freeze clock for time tests (SM-2 due / 24h idempotent window / mastery decay)
-setuptools<81      # NX-08(R-6): jieba 0.42.1 depends on pkg_resources (deprecated; dropped in setuptools>=81; pin until new release)
+setuptools<85      # NX-08(R-6): jieba 0.42.1 depends on pkg_resources (deprecated; dropped in setuptools>=81; pin until new release)
 pip-audit>=2.7     # U-16: dependency CVE audit (CI step `pip-audit -r requirements.txt`); known vulns only, no conflicts (pip check handles those)
 pytest-cov>=5      # U-12: coverage (CI `--cov=medkit --cov-fail-under=80`; optional locally)
