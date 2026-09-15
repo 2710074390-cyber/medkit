@@ -7,6 +7,10 @@ config.json
 build/
 dist/
 dist-installer/
+# 旧构建目录重命名（如出包留档 dist-old-0.10.1-pre-r5 / build-old-0.10.1）——
+# 用通配以防 `git add -A` 把重命名后的构建产物误提交（2026-09-15 曾误提交 843 个文件）
+dist-old*/
+build-old*/
 archive/installers/
 pack/icon_preview.png
 projects/

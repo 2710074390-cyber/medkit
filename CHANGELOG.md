@@ -91,6 +91,16 @@
   路由层直写 SQL 与迁移 / 静默 `pass` 收敛（≤5）/ 迁移 v7 升级回滚 / 脱敏与诊断端点 /
   LLM 异常不回显模型输出。
 
+### 发布产物（U-01 重新出包）
+
+- **U-01 发布产物重新出包（0.10.2 两件套）**：`pack/build.bat` 同款流程重跑——
+  PyInstaller onedir 绿色版 → `pack/check-package.py` 纯净检查**通过** → Inno Setup 出安装包。
+  产出 `dist-installer/MedKit-Setup-0.10.2.exe` 与 `MedKit-0.10.2-portable.zip`（均为 09-15 19:47）。
+  **产物冒烟实测**（隔离 `USERPROFILE`，不触碰真实 `~/.medkit`）：
+  `GET /api/health` → `{"ok":true,"version":"0.10.2","stage":"ready"}`（版本确为 0.10.2）；
+  `GET /api/diagnostics/errors` → `{"counts":{},"total":0,"recent":[]}`（U-15 新端点在产物中生效）；
+  静态资源 200。包内前端资源已核验含 U-02/U-03/U-19 修复。
+
 ### 依赖与合规（三报告整合 · U 批次 3）
 
 #### Added
