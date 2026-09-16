@@ -45,6 +45,24 @@
   等价性由 `tests/test_v03_rowwise_write.py` 保证：增量写与全表替换的最终表内容逐行比对一致、
   未被触碰的行逐字节不变、无 `id` 的历史脏行必须退回全表替换。
 
+- **V-09 单行路径「定向读 + 单事务」**：V-03 之后仍有两处读放大残留——① `record_quiz` /
+  `record_review` / `log_knowledge_event` 仍要把**整张 knowledge 表**读进内存再线性查找
+  （1500+800 行库实测 ~12ms/次）；② `add_mistake` 尾部对每个知识点名**各开一个事务**调
+  `log_knowledge_event`（错题通常派生 2~3 个知识点 = 2~3 个额外事务）。而 `batch_add` /
+  `sync_from_paper`（押题卷回流）/ `import_site_items`（站点导入）都是**逐条**走 `add_mistake`——
+  100 条回流实测 **3.7s**，且随库变大线性劣化。现：
+  - 新增 `db.find_row()` 与 `library._find_kp()` / `_find_mistake()`：按 name/id **定向取单行**
+    （保留「表内确有 `name` 为空的历史行时才整表扫描」的兜底，避免凭空造出重复知识点）；
+  - 新增 `library.log_knowledge_events()`：**一次事务**处理多个知识点（`log_knowledge_event` 变其单元素封装）；
+  - `add_mistake` 不再整表读 mistakes（重复检测由主键 `INSERT OR REPLACE` 承担，序号改走 `COUNT(*)`）；
+  - 回写判定改为「**表是否被整表加载过**」：未加载 = 不可能改到其它行 → 只 UPSERT 登记行；
+    加载过 → 全表替换；并把登记行**并回列表**，避免「先登记、后整表加载」时被旧快照覆盖；
+  - `_mark_kp_row` / `_mark_m_row` **登记即置脏**，消除「登记了却忘标脏 → 改动静默丢失」。
+  - 实测：`add_mistake` 单条 **99.8 → 0.2ms** · `record_quiz` 15.7 → 5.1ms（最快 0.4ms）·
+    **`batch_add` 100 条 3.7s → <0.05s**。
+  - 守卫/等价性用例扩到 **10 例**（`tests/test_v03_rowwise_write.py`），含「同 id 覆盖不新增」
+    「派生知识点必须落库」「先登记、后整表加载不得被旧快照覆盖」；**反向验证 3/3 有效**。
+
 #### Fixed
 
 - **V-04 静默异常守卫从「预算式」改为「零容忍」**：`test_u15_silent_pass_converged` 原断言

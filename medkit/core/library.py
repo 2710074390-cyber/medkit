@@ -84,16 +84,32 @@ def _save(path: Path, data: list[dict[str, Any]]) -> None:
 def _write_back(cur: Any, table: str, st: dict[str, Any], meta: tuple[str, tuple[str, ...]]) -> None:
     """回写一张表。
 
-    V-03：若调用方显式登记了「只改这几行」（`st["rowwise"]`），走行级 UPSERT；
-    否则退回全表替换（`DELETE` + 全量重插）——**语义等价**，差别只在成本：
-    全表替换是 O(表内总行数)，单行改动在 3000 行库上实测 ~103ms（≈34µs/行）。
-    缺省为空集 → 任何未显式登记的结构性改动（批量删/整组替换）行为与改动前完全一致。
+    V-03/V-09：两条路径，**语义等价**，差别只在成本：
+    - **行级增量**（快）：调用方从未把整表读进内存（`table not in st`），只登记了改动行
+      （`st["rowwise"]`）。此时可以**证明**其它行不可能被改 → 只 UPSERT 这几行。
+    - **全表替换**（慢，O(表内总行数)）：表被整表加载过（批量删/整组替换等结构性改动）。
+      3000 行库上单次全表替换实测 ~103ms（≈34µs/行）。
+
+    判据取「表是否被整表加载过」而不是「有没有登记行」，是**刻意保守**：未加载 = 没读过其它行
+    = 不可能改到它们；一旦加载过就退回全表替换，避免漏写/漏删（宁慢不丢）。
     """
-    ids = st.get("rowwise", {}).get(table) or set()
-    if ids:
-        dbs.upsert_rows(cur, table, st[table], ids, meta[1])
-    else:
-        dbs.replace_all(cur, table, st[table], meta[1])
+    changed = st.get("rowwise", {}).get(table) or {}
+    forced = st.get("fullwrite", {}).get(table)
+    if table not in st and not forced:
+        if changed:
+            recs = list(changed.values())
+            dbs.upsert_rows(cur, table, recs, set(changed), meta[1])
+        return
+    # 全表替换：先把登记行并回列表，否则「列表在登记之后才被整表加载」会让这些改动被旧快照覆盖
+    lst = st[table]
+    for rid, rec in changed.items():
+        for i, item in enumerate(lst):
+            if str(item.get("id")) == rid:
+                lst[i] = rec
+                break
+        else:
+            lst.append(rec)
+    dbs.replace_all(cur, table, lst, meta[1])
 
 
 class _StoreView(dict):
@@ -102,14 +118,16 @@ class _StoreView(dict):
     V-03（读侧）：旧实现进 `_store()` 就无条件把两张表全读一遍（`SELECT *` + 逐行
     `json.loads`）。而 `record_quiz` / `record_review` / `log_knowledge_event` 只碰 knowledge，
     却要顺带把 mistakes 全表解一遍——800+1500 行库上实测白花 ~25ms/次。
-    本类把「读哪张表」与「用哪张表」对齐；写回路径不变（仍由 `dirty` 决定）。
+    V-09：连「要碰的那张表」也不必整表读——单行路径改用 `_find_kp` / `_find_mistake` 定向取行，
+    于是 `_write_back` 判定为「未整表加载」→ 只写改动行。
     """
 
     def __init__(self, cur: Any) -> None:
         super().__init__(
             cur=cur,
             dirty={"mistakes": False, "knowledge": False},
-            rowwise={"mistakes": set(), "knowledge": set()},
+            rowwise={"mistakes": {}, "knowledge": {}},   # id → 变更后的记录（不是 id 集合）
+            fullwrite={"mistakes": False, "knowledge": False},   # 无法定位 id → 强制全表替换
         )
         self._cur = cur
 
@@ -121,20 +139,88 @@ class _StoreView(dict):
         raise KeyError(key)
 
 
-def _mark_m_row(st: dict[str, Any], mid: Any) -> None:
-    """V-03：登记「本次只改动这一条错题」。无 id 时登记集为空 → 退回全表替换（宁慢不丢）。"""
-    if mid:
-        st["rowwise"]["mistakes"].add(str(mid))
+def _find_mistake(st: dict[str, Any], mid: Any) -> Optional[dict[str, Any]]:
+    """按 id 取单条错题（V-09 定向读）。
+
+    `id` 是主键，`row_to_dict` 也把行 id 回填进 dict，故 SQL 模式下定向查与整表扫结果等价，
+    无需兜底扫描。JSON 模式（`cur is None`）退回列表查找。
+    """
+    if not mid:
+        return None
+    cur = st.get("cur")
+    if cur is not None:
+        return dbs.find_row(cur, _M_TABLE[0], "id = ?", (str(mid),))
+    return _find(st["mistakes"], mid)
+
+
+def _find_kp(st: dict[str, Any], name: str) -> Optional[dict[str, Any]]:
+    """按知识点名取单行（V-09 定向读，命中 `knowledge.name` 冗余列索引）。
+
+    **兜底整表扫描只在确有「name 冗余列为空」的历史行时才做**：否则为一次查找把整表
+    `SELECT *` + 逐行 `json.loads`（1500 行 ~17ms）就白花了；而若直接判定「不存在」，
+    又会让新增路径凭空造出重复知识点。故先花一次 `COUNT(*)` 探一下。
+    """
+    if not name:
+        return None
+    cur = st.get("cur")
+    if cur is not None:
+        row = dbs.find_row(cur, _K_TABLE[0], "name = ?", (name,))
+        if row is not None:
+            if row.get("id"):
+                return row
+            # 无 id 的历史行：必须走「整表快照」语义（返回列表里的**同一个对象**），
+            # 否则改动落在临时 dict 上，回写全表替换时会用旧快照覆盖掉
+            return next((k for k in st["knowledge"] if k.get("name") == name), None)
+        cur.execute(f"SELECT COUNT(*) FROM {_K_TABLE[0]} WHERE name IS NULL OR name = ''")
+        got = cur.fetchone()
+        if not (got and got[0]):
+            return None
+    return next((k for k in st["knowledge"] if k.get("name") == name), None)
+
+
+def _sync_row_into_list(st: dict[str, Any], table: str, rec: dict[str, Any]) -> None:
+    """把登记行同步进「已被整表加载」的列表（若存在）。
+
+    `_find_kp` 的兜底扫描会把整表读进内存；此时若只把变更行放进 `rowwise` 而不进列表，
+    回写走全表替换就会把它丢掉（反之亦然：列表里的旧对象会覆盖变更）。故就地替换/追加。
+    """
+    if table not in st:
+        return
+    lst = st[table]
+    rid = str(rec.get("id"))
+    for i, item in enumerate(lst):
+        if str(item.get("id")) == rid:
+            lst[i] = rec
+            return
+    lst.append(rec)
+
+
+def _mark_m_row(st: dict[str, Any], rec: Optional[dict[str, Any]]) -> None:
+    """V-09：登记「本次只改动了这一条错题」。无 id 不登记 → 强制全表替换（宁慢不丢）。
+
+    登记即置脏（`dirty`）——把「登记了却忘了标脏 → 改动静默丢失」这类错误从接口上消掉。
+    """
+    st["dirty"]["mistakes"] = True
+    if rec and rec.get("id"):
+        st["rowwise"]["mistakes"][str(rec["id"])] = rec
+        _sync_row_into_list(st, "mistakes", rec)
+    else:
+        st.setdefault("fullwrite", {"mistakes": False, "knowledge": False})["mistakes"] = True
 
 
 def _mark_kp_row(st: dict[str, Any], kp: dict[str, Any]) -> None:
-    """V-03：登记「本次只改动了这一个知识点行」。
+    """V-09：登记「本次只改动了这一个知识点行」。
 
-    无 `id` 的历史脏行**不登记**——登记集为空即退回全表替换（宁慢不丢）。
+    无 `id` 的历史脏行**不登记**并置「强制全表替换」标志——否则增量路径会把它整行丢掉
+    （宁慢不丢）。登记即置脏（`dirty`），避免「登记了却忘标脏 → 改动静默丢失」。
     """
+    st["dirty"]["knowledge"] = True
     kp_id = kp.get("id")
     if kp_id:
-        st["rowwise"]["knowledge"].add(str(kp_id))
+        st["rowwise"]["knowledge"][str(kp_id)] = kp
+        _sync_row_into_list(st, "knowledge", kp)
+    else:
+        st.setdefault("fullwrite", {"mistakes": False, "knowledge": False})["knowledge"] = True
 
 
 @contextmanager
@@ -158,8 +244,9 @@ def _store() -> Iterator[dict[str, Any]]:
             "mistakes": list(_load(MISTAKES_FILE)),
             "knowledge": list(_load(KNOWLEDGE_FILE)),
             "cur": None, "dirty": {"mistakes": False, "knowledge": False},
-            # JSON 模式恒为整文件原子写，rowwise 仅用于保持调用方接口一致（不改变行为）
-            "rowwise": {"mistakes": set(), "knowledge": set()},
+            # JSON 模式恒为整文件原子写，rowwise/fullwrite 仅用于保持调用方接口一致（不改变行为）
+            "rowwise": {"mistakes": {}, "knowledge": {}},
+            "fullwrite": {"mistakes": False, "knowledge": False},
         }
         yield st
         if st["dirty"]["mistakes"]:
@@ -264,10 +351,14 @@ def _new_id(prefix: str) -> str:
 
 
 def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
-    """新增一条错题并派生/更新知识点。返回落库后的错题记录。"""
+    """新增一条错题并派生/更新知识点。返回落库后的错题记录。
+
+    V-09：不再整表读 mistakes（`_find` 的重复检测改由 `INSERT OR REPLACE` 的主键语义承担，
+    序号改走 `count_mistakes()` 的 `COUNT(*)`），也不再为每个知识点名各开一个事务
+    （`log_knowledge_events` 合并为一次）。
+    """
     with _store() as st:
-        records = st["mistakes"]
-        seq = str(len(records) + len(_today()))
+        seq = str(count_mistakes() + len(_today()))
         mid = data.get("id") or _new_id("m")
         record = {
             "id": mid,
@@ -296,17 +387,12 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
             "mastery": compute_state(compute_score(0, 1, _now())),
             "_seq": seq,
         }
-        dup = _find(records, mid)
-        if dup:
-            records[records.index(dup)] = record
-        else:
-            records.append(record)
+        # V-09：同 id 覆盖由 INSERT OR REPLACE 的主键语义承担（原 `_find` 需整表在内存）
         st["dirty"]["mistakes"] = True
-        _mark_m_row(st, mid)   # V-03：单行增量写（新增或同 id 覆盖，均为一行）
+        _mark_m_row(st, record)   # 单行增量写（新增或同 id 覆盖，均为一行）
         _touch_knowledge_in(st, record)
     # D-25：入库错题事件（ACTIVITY_EVENTS['mistake'] 已有定义但此前无写入方）
-    for name in _kp_key(record):
-        log_knowledge_event(name, "mistake", note=f"错题 {record.get('id')} 入库")
+    log_knowledge_events(_kp_key(record), "mistake", note=f"错题 {record.get('id')} 入库")
     return record
 
 
@@ -438,8 +524,7 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None) 
 
 def update_mistake(mid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
     with _store() as st:
-        records = st["mistakes"]
-        cur = _find(records, mid)
+        cur = _find_mistake(st, mid)      # V-09：定向取行
         if cur is None:
             return None
         allowed = {"subject", "chapter", "topic", "question", "options", "answer",
@@ -450,7 +535,7 @@ def update_mistake(mid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
         cur["last_tried"] = _now()
         # correct/learned 会反写掌握度 → 重算该错题派生的知识点
         st["dirty"]["mistakes"] = True
-        _mark_m_row(st, mid)   # V-03：单行增量写
+        _mark_m_row(st, cur)
         _touch_knowledge_in(st, cur)
     return cur
 
@@ -639,13 +724,12 @@ def mark_learned(mid: str, learned: bool = True) -> Optional[dict[str, Any]]:
     是统计虚高的来源。correct/miss 只应由「真实作答」（quiz/review）驱动。
     """
     with _store() as st:
-        records = st["mistakes"]
-        cur = _find(records, mid)
+        cur = _find_mistake(st, mid)      # V-09：定向取行
         if cur is None:
             return None
         cur["learned"] = bool(learned)
         st["dirty"]["mistakes"] = True
-        _mark_m_row(st, mid)   # V-03：单行增量写（仅翻转 learned 一个字段）
+        _mark_m_row(st, cur)   # 单行增量写（仅翻转 learned 一个字段）
     return cur
 
 
@@ -654,26 +738,42 @@ def list_knowledge() -> list[dict[str, Any]]:
     return _load(KNOWLEDGE_FILE)
 
 
+def log_knowledge_events(names: list[str], event: str, note: str = "") -> list[Any]:
+    """批量向命中知识点追加 history 事件（V-09），返回命中 kp 的 id 列表（未命中跳过）。
+
+    旧实现由调用方对每个名字各调一次 `log_knowledge_event`，每次都是一整个 `_store()` 事务
+    （含一次整表读 + 一次回写）。押题卷回流/批量导入/错题入库都会走这条扇出，
+    1500+800 行库上实测每次事务 ~12ms，2~3 个名字即白花 25~35ms。
+    """
+    wanted = [n for n in (names or []) if n]
+    if not wanted:
+        return []
+    hits: list[Any] = []
+    with _store() as st:
+        for name in wanted:
+            kp = _find_kp(st, name)       # V-09：定向取行
+            if kp is None:
+                continue
+            hist = kp.get("history") or []
+            hist.append({"t": _now(), "event": event, "note": note})
+            kp["history"] = hist[-50:]
+            _mark_kp_row(st, kp)
+            hits.append(kp.get("id"))
+        if hits:
+            st["dirty"]["knowledge"] = True
+    return hits
+
+
 def log_knowledge_event(kp_name: str, event: str, note: str = "") -> str | None:
     """向命中知识点追加一条 history 事件（如 explain / review），返回 kp id 或 None。"""
-    with _store() as st:
-        kps = st["knowledge"]
-        hit = next((k for k in kps if k.get("name") == kp_name), None)
-        if hit is None:
-            return None
-        hist = hit.get("history") or []
-        hist.append({"t": _now(), "event": event, "note": note})
-        hit["history"] = hist[-50:]
-        st["dirty"]["knowledge"] = True
-        _mark_kp_row(st, hit)   # V-03：单行增量写
-    return hit.get("id")
+    hits = log_knowledge_events([kp_name], event, note)
+    return hits[0] if hits else None
 
 
 def record_quiz(kp_name: str, score: int) -> str | None:
     """提问式学习判分回写：score≥2 记「答对」，否则记「答错」，并重算掌握度。返回 kp id 或 None。"""
     with _store() as st:
-        kps = st["knowledge"]
-        hit = next((k for k in kps if k.get("name") == kp_name), None)
+        hit = _find_kp(st, kp_name)       # V-09：定向取行（原为整表读后线性查找）
         if hit is None:
             return None
         pass_ = int(score or 0) >= TUTOR_PASS_SCORE
@@ -704,8 +804,7 @@ def record_review(kp_name: str, quality: int) -> str | None:
     掌握分随这次既真实又及时的提取而抬升，而不是分数只随时间阴跌、推荐永不更新。
     """
     with _store() as st:
-        kps = st["knowledge"]
-        hit = next((k for k in kps if k.get("name") == kp_name), None)
+        hit = _find_kp(st, kp_name)       # V-09：定向取行
         if hit is None:
             return None
         passed = int(quality or 0) >= REVIEW_PASS_SCORE
@@ -901,12 +1000,18 @@ def _kp_key(rec: dict[str, Any]) -> list[str]:
 def _touch_knowledge_in(st: dict[str, Any],
                         rec: dict[str, Any],
                         recompute_existing: Optional[list[dict[str, Any]]] = None) -> None:
-    """错题入/改库后刷新由它命名的知识点（新增一个错题样本 + 重算掌握度）。就地操作 st["knowledge"]。"""
-    kps = st["knowledge"] if recompute_existing is None else recompute_existing
-    kp_by_name = {k.get("name"): k for k in kps}
+    """错题入/改库后刷新由它命名的知识点（新增一个错题样本 + 重算掌握度）。
+
+    V-09：默认路径（`recompute_existing is None`）**定向取行**（`_find_kp` 按 name 索引），
+    不再为改 1~3 个知识点把整张表读进内存；改动行逐个登记，写回时只 UPSERT 它们。
+    传入 `recompute_existing` 时保持旧的「整表子集」语义（调用方已持有列表）。
+    """
+    targeted = recompute_existing is None
+    kps = None if targeted else recompute_existing
+    kp_by_name = {} if targeted else {k.get("name"): k for k in (kps or [])}
     learned = bool(rec.get("learned"))
     for name in _kp_key(rec):
-        kp = kp_by_name.get(name)
+        kp = _find_kp(st, name) if targeted else kp_by_name.get(name)
         if kp is None:
             kp = {
                 "id": _new_id("kp"), "name": name,
@@ -917,7 +1022,10 @@ def _touch_knowledge_in(st: dict[str, Any],
                 "last_tried": None, "last_reviewed": None,
                 "slices": [], "mistakes": [], "history": [],
             }
-            kps.append(kp)
+            if targeted:
+                _mark_kp_row(st, kp)     # 新增行 → 走增量插入
+            else:
+                kps.append(kp)           # type: ignore[union-attr]
         # 归并一个样本：learned/答对 → 记 correct；未掌握 → 记 miss
         if learned:
             kp["correct"] = kp.get("correct", 0) + 1
@@ -932,7 +1040,9 @@ def _touch_knowledge_in(st: dict[str, Any],
         kp["state"] = compute_state(kp["score"])
         kp["priority"] = compute_priority(kp["score"], kp["miss"], kp["last_tried"])
         kp["history"] = (kp.get("history") or [])[-50:]
-    if recompute_existing is None:
+        if targeted:
+            _mark_kp_row(st, kp)
+    if targeted:
         st["dirty"]["knowledge"] = True
     return None
 
