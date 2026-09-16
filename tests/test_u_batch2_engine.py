@@ -91,10 +91,15 @@ def test_u14_v7_indexes_created_and_rollback():
 
 
 def test_u15_silent_pass_converged():
-    """U-15：静默 `except Exception: pass` 收敛（原 31 处 → ≤5）。"""
+    """U-15：静默 `except Exception: pass` **零容忍**（原 31 处 → 0）。
+
+    V-04：原断言是 `n <= 5`——一个「预算式」阈值，等于允许 5 处静默回归不被发现
+    （反向验证实测：注入 1 处仍绿，注入 6 处才红）。现收敛为 0；
+    确需吞异常的场景一律走 `core.errors.record/swallow`（留痕 + 计数 + 脱敏）。
+    """
     import re as _re
     root = ROOT / "medkit"
-    n = 0
+    hits: list[str] = []
     for p in root.rglob("*.py"):
         lines = p.read_text(encoding="utf-8").splitlines()
         for i, ln in enumerate(lines):
@@ -103,8 +108,8 @@ def test_u15_silent_pass_converged():
                 while j < len(lines) and not lines[j].strip():
                     j += 1
                 if j < len(lines) and lines[j].strip() == "pass":
-                    n += 1
-    assert n <= 5, f"仍有 {n} 处静默 except-pass（应 ≤5）"
+                    hits.append(f"{p.relative_to(ROOT)}:{i + 1}")
+    assert not hits, f"出现静默 except-pass（应为 0）：{hits}"
 
 
 def test_u15_redact_and_diagnostics_endpoint():

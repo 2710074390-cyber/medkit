@@ -6,6 +6,62 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
+## [0.10.3] - 2026-09-16
+
+> **本版为何要 bump（又一次「同号不同物」）**：`dist-installer/` 里的 0.10.2 两件套构建于
+> **09-15 20:37 / 20:38**（提交 `d0e6d10` 那一刻源码对齐），但**同一版本号下当天 22:51~23:49
+> 又落了四笔实质提交**，产物再未重出：
+>
+> | 提交 | 时间 | 用户手上的 0.10.2 缺什么 |
+> |---|---|---|
+> | `beecdcf` | 22:51 | 前端 JS 缺陷修复——`learn.js` 调用全仓不存在的 `rexAnalyzeRender()`，运行必抛 TypeError（仅在「真题草稿 >200 条」分支触发） |
+> | `1e8cb2a` | 23:18 | 数据管理区（`routers/data.py`）· 脏数据排除（U-22）· **日志脱敏 `RedactingFilter`**（U-24，安全）· **AGPL-3.0 `LICENSE` 随包分发**（合规） |
+> | `b360f90` | 23:40 | `routers/library.py` 讲解流去重竞态修复（服务端正确性） |
+> | `ced0f6d` | 23:49 | 打包纯净检查的 Windows 中文输出崩溃（工具链） |
+>
+> 取证：`dist/MedKit/_internal/medkit/web/js/learn.js` 中 `rexAnalyzeRender` 仍存在（=修复未进包）、
+> `_internal/` 下**无 `LICENSE`**、`app.js` 无 `api/data/summary`。
+> 旧 0.10.2 产物已改名隔离为 `*-pre-u17`（首个缺失修复的批次）；本版重出包，确保版本可区分。
+
+### 性能（本轮实测驱动的三项治理）
+
+#### Changed
+
+- **V-02 概览/掌握度的读放大**：`/api/library/dashboard` 此前为「取一个数字」把整张 mistakes 表
+  `SELECT *` + 逐行 `json.loads`（`total_mistakes`），并把 knowledge 表**整表读两遍**
+  （`get_mastery_view` 一遍、`recent_activity` 又一遍）。现新增 `library.count_mistakes()`
+  走 `COUNT(*)`（命中 U-14 补的 `mistakes(subject,…)` 索引），`recent_activity(kps=…)`
+  复用调用方已加载的列表。1500 错题 / 800 知识点 / 600 复习卡合成库实测：
+  `dashboard` 144.5 → **83.8ms**（−42%），`mastery` 50.1 → **29.7ms**，`recommend` 40.9 → **23.4ms**。
+- **V-03 单行写放大**：`_store()` 退出时对脏表走 `replace_all`（`DELETE` 全表 + 逐行重插），
+  成本 O(表内总行数)——3000 行库单次写实测 ~103ms（≈34µs/行，是定向 UPDATE 的千倍量级），
+  而 `record_quiz` / `record_review` / `log_knowledge_event` / `add_mistake` / `update_mistake` /
+  `mark_learned` 实际都只改一行。现引入：
+  - `db.upsert_rows()`：按 id 集合增量 UPSERT，未列入的行原样保留；
+  - `library._StoreView`：双表**惰性读**（只碰 knowledge 的路径不再顺带全表解 mistakes）；
+  - `library._mark_kp_row()/_mark_m_row()`：调用方显式登记「只改这一行」。
+  **缺省登记集为空 → 一律退回全表替换**，任何未显式登记的结构性改动（批量删/整组替换）
+  行为与改动前完全一致（宁慢不丢）。实测 `record_quiz` 67.6 → **15.7ms**（−77%）。
+  等价性由 `tests/test_v03_rowwise_write.py` 保证：增量写与全表替换的最终表内容逐行比对一致、
+  未被触碰的行逐字节不变、无 `id` 的历史脏行必须退回全表替换。
+
+#### Fixed
+
+- **V-04 静默异常守卫从「预算式」改为「零容忍」**：`test_u15_silent_pass_converged` 原断言
+  `n <= 5`，等于允许 5 处静默 `except Exception: pass` 回归而不被发现（反向验证实测：注入 1 处仍绿、
+  注入 6 处才红）。现收敛为 `n == 0` 并输出具体 file:line。
+- **V-05 `test_cleanup_stale_sessions` 时间敏感 flake**：用例按**列表下标**取「要变老的两场」
+  （`sessions[1], sessions[2]`），而 `list_sessions()` 按 `updated_at` 降序排——三次
+  `start_session` 跨了秒边界时下标含义就变了，会把**最新**的那场改成 60 天前删掉，断言随机翻红
+  （全量跑实测复现）。现改为按 `kp_name` 精确定位，并**用递增时间戳确定性地复现跨秒条件**，
+  把「靠运气才绿」变成稳定回归网。
+
+#### Chore
+
+- **V-06 工程卫生**：`.coverage`（二进制覆盖率数据）此前被版本库跟踪，每次跑测试都产生脏 diff
+  → `git rm --cached` 并加入 `.gitignore`；删除空目录 `docs/design/`；
+  对两份审查文档中 U-17 涉及的 `.eslintrc.json` 补勘误注（实际落地为 `eslint.config.js` flat config）。
+
 ## [0.10.2] - 2026-09-15
 
 > **本版为何要 bump**：R5 批次的数据安全修复（含 R5-01「测试污染真实用户库」止血）此前只存在于

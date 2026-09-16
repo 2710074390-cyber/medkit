@@ -75,8 +75,7 @@ def summary(subject: str = "") -> dict[str, Any]:
     mastery = {
         "total_knowledge": len(kps),
         **{s: sum(1 for k in kps if k.get("state") == s) for s in state_names},
-        "total_mistakes": sum(1 for m in lib.list_mistakes()
-                              if not subject or m.get("subject") == subject),
+        "total_mistakes": lib.count_mistakes(subject),
         "miss_kps": miss_total,
         "miss_count": misuse,
     }
@@ -123,7 +122,8 @@ def summary(subject: str = "") -> dict[str, Any]:
         "tutor": tutor,
         "loop": loop,
         # C22：近期活动时间线（讲解/复习/提问，倒序；前端概览卡直接消费）
-        "recent": lib.recent_activity(8, subject),
+        # V-02：复用上面已加载并过滤好的 kps，不再整表读第二遍 knowledge
+        "recent": lib.recent_activity(8, subject, kps=kps),
         # NX-03（R-2）：契约告警计数（生成输出软校验；0 表示最近一轮无告警或未生成过）
         "contract_warnings": _contract_warnings(subject),
     }

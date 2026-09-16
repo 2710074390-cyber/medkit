@@ -24,6 +24,9 @@ projects/
 .idea/
 htmlcov/
 *.log
+# V-06：覆盖率数据文件（二进制）——此前被入库，每次跑测试都脏工作区
+.coverage
+.coverage.*
 
 # U-17：前端静态检查（ESLint）的依赖目录——仅开发期使用，不入库
 node_modules/

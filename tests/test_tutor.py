@@ -115,29 +115,47 @@ def test_quiz_writes_back_mastery(isolated):
     assert any(h["event"] == "quiz" for h in kp["history"])
 
 
-def test_cleanup_stale_sessions(isolated):
-    """C18：清理无活动会话——保留最近活跃，删除 days 天前无活动的。"""
+def test_cleanup_stale_sessions(isolated, monkeypatch):
+    """C18：清理无活动会话——保留最近活跃，删除 days 天前无活动的。
+
+    V-05：原实现按**列表下标**取「要变老的两场」（`sessions[1], sessions[2]`），
+    而 `list_sessions()` 按 `updated_at` 降序排——三次 `start_session` 若跨了秒边界，
+    时间戳就不同，下标含义随之变化（实测全量跑时 `sessions[0]` 变成「旧会话2」，
+    于是把最新的那场改成 60 天前并删掉，断言随机翻红）。
+    现改为**按 kp_name 精确定位**，并用递增时间戳**确定性地**复现「跨秒」这一触发条件
+    （否则用例只在三次调用落在同一秒时才绿，属于靠运气）。
+    """
     from datetime import datetime, timedelta
 
     from medkit.core import tutor as tut_mod
 
+    keep_name, stale_names = "支气管肺炎首选治疗", {"旧会话1", "旧会话2"}
+    ticks = iter([f"2026-09-16T10:00:0{i}" for i in range(1, 9)])
+    monkeypatch.setattr(tut, "_now", lambda: next(ticks))
+
     old = datetime.now() - timedelta(days=60)
-    tut.start_session("儿科学", "支气管肺炎首选治疗")
-    tut.start_session("儿科学", "旧会话1")
-    tut.start_session("儿科学", "旧会话2")
+    tut.start_session("儿科学", keep_name)
+    for name in ("旧会话1", "旧会话2"):
+        tut.start_session("儿科学", name)
+
     sessions = tut.list_sessions()
-    old1, old2 = sessions[1], sessions[2]
-    for s in (old1, old2):
+    assert {s["kp_name"] for s in sessions} == stale_names | {keep_name}
+    # 跨秒时 updated_at 不同 → 排序把「最后创建的」排在首位（旧写法正是在此翻红）
+    assert sessions[0]["kp_name"] == "旧会话2", "本用例需覆盖「时间戳不同」这一触发条件"
+    for s in sessions:
+        if s["kp_name"] not in stale_names:
+            continue
         data = tut_mod._load()
         for x in data:
             if x["id"] == s["id"]:
                 x["updated_at"] = old.isoformat(timespec="seconds")
         tut_mod._save(data)
+
     removed = tut.cleanup_stale(30)
     assert removed == 2, "60 天前无活动的 2 场应被清理"
     remain = tut.list_sessions()
     assert len(remain) == 1
-    assert remain[0]["kp_name"] == "支气管肺炎首选治疗"
+    assert remain[0]["kp_name"] == keep_name
 
 
 def test_router_tutor_cleanup(mock_agents, isolated):

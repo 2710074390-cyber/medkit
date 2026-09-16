@@ -373,6 +373,28 @@ def replace_all(cur: sqlite3.Cursor, table: str, recs: list[dict[str, Any]],
         put_row(cur, table, rec, cols)
 
 
+def upsert_rows(cur: sqlite3.Cursor, table: str, recs: list[dict[str, Any]],
+                ids: set[str], cols: tuple[str, ...] = ()) -> int:
+    """增量写：只 UPSERT `ids` 命中的行，其余行**原样保留**。返回写入行数。
+
+    V-03（性能）：`replace_all` 是 O(表内总行数)——单行改动也要 DELETE 全表再逐行重插，
+    实测 3000 行库单次写 ~103ms（≈34µs/行），是定向 UPDATE 的千倍量级。
+    本函数供「确定只改了这几行」的调用方使用（见 `core.library._write_back`）。
+
+    **等价性前提**（调用方负责）：未列入 `ids` 的行在本次事务内没有被修改；
+    若某行被删除，调用方必须走 `replace_all`（本函数不做删除）。
+    """
+    by_id = {str(r.get("id")): r for r in recs}
+    written = 0
+    for rid in ids:
+        rec = by_id.get(str(rid))
+        if rec is None:
+            continue
+        put_row(cur, table, rec, cols)
+        written += 1
+    return written
+
+
 # ---------------------------------------------------------------- 备份与导入
 def backup_library(tag: str = "pre-db") -> list[str]:
     """复制 library 目录全部 JSON + medkit.db → {原名}.{tag}-<ts>.bak；返回备份路径列表。"""

@@ -81,6 +81,62 @@ def _save(path: Path, data: list[dict[str, Any]]) -> None:
     write_json_atomic(path, data)
 
 
+def _write_back(cur: Any, table: str, st: dict[str, Any], meta: tuple[str, tuple[str, ...]]) -> None:
+    """回写一张表。
+
+    V-03：若调用方显式登记了「只改这几行」（`st["rowwise"]`），走行级 UPSERT；
+    否则退回全表替换（`DELETE` + 全量重插）——**语义等价**，差别只在成本：
+    全表替换是 O(表内总行数)，单行改动在 3000 行库上实测 ~103ms（≈34µs/行）。
+    缺省为空集 → 任何未显式登记的结构性改动（批量删/整组替换）行为与改动前完全一致。
+    """
+    ids = st.get("rowwise", {}).get(table) or set()
+    if ids:
+        dbs.upsert_rows(cur, table, st[table], ids, meta[1])
+    else:
+        dbs.replace_all(cur, table, st[table], meta[1])
+
+
+class _StoreView(dict):
+    """`_store()` 的双表视图：`mistakes` / `knowledge` **首次访问时才读库**。
+
+    V-03（读侧）：旧实现进 `_store()` 就无条件把两张表全读一遍（`SELECT *` + 逐行
+    `json.loads`）。而 `record_quiz` / `record_review` / `log_knowledge_event` 只碰 knowledge，
+    却要顺带把 mistakes 全表解一遍——800+1500 行库上实测白花 ~25ms/次。
+    本类把「读哪张表」与「用哪张表」对齐；写回路径不变（仍由 `dirty` 决定）。
+    """
+
+    def __init__(self, cur: Any) -> None:
+        super().__init__(
+            cur=cur,
+            dirty={"mistakes": False, "knowledge": False},
+            rowwise={"mistakes": set(), "knowledge": set()},
+        )
+        self._cur = cur
+
+    def __missing__(self, key: Any) -> Any:
+        if key in ("mistakes", "knowledge"):
+            data = dbs.list_rows(self._cur, key)
+            self[key] = data          # 同一事务内缓存，后续访问不再查库
+            return data
+        raise KeyError(key)
+
+
+def _mark_m_row(st: dict[str, Any], mid: Any) -> None:
+    """V-03：登记「本次只改动这一条错题」。无 id 时登记集为空 → 退回全表替换（宁慢不丢）。"""
+    if mid:
+        st["rowwise"]["mistakes"].add(str(mid))
+
+
+def _mark_kp_row(st: dict[str, Any], kp: dict[str, Any]) -> None:
+    """V-03：登记「本次只改动了这一个知识点行」。
+
+    无 `id` 的历史脏行**不登记**——登记集为空即退回全表替换（宁慢不丢）。
+    """
+    kp_id = kp.get("id")
+    if kp_id:
+        st["rowwise"]["knowledge"].add(str(kp_id))
+
+
 @contextmanager
 def _store() -> Iterator[dict[str, Any]]:
     """mistakes+knowledge 双视图；退出时按 dirty 标志写回。
@@ -90,22 +146,20 @@ def _store() -> Iterator[dict[str, Any]]:
     """
     if _store_is_sql(MISTAKES_FILE):
         with dbs.tx(write=True) as cur:
-            st: dict[str, Any] = {
-                "mistakes": dbs.list_rows(cur, "mistakes"),
-                "knowledge": dbs.list_rows(cur, "knowledge"),
-                "cur": cur, "dirty": {"mistakes": False, "knowledge": False},
-            }
+            st: dict[str, Any] = _StoreView(cur)
             yield st
             if st["dirty"]["mistakes"]:
-                dbs.replace_all(cur, "mistakes", st["mistakes"], _M_TABLE[1])
+                _write_back(cur, "mistakes", st, _M_TABLE)
             if st["dirty"]["knowledge"]:
-                dbs.replace_all(cur, "knowledge", st["knowledge"], _K_TABLE[1])
+                _write_back(cur, "knowledge", st, _K_TABLE)
         return
     with _LOCK:
         st = {
             "mistakes": list(_load(MISTAKES_FILE)),
             "knowledge": list(_load(KNOWLEDGE_FILE)),
             "cur": None, "dirty": {"mistakes": False, "knowledge": False},
+            # JSON 模式恒为整文件原子写，rowwise 仅用于保持调用方接口一致（不改变行为）
+            "rowwise": {"mistakes": set(), "knowledge": set()},
         }
         yield st
         if st["dirty"]["mistakes"]:
@@ -172,6 +226,31 @@ def list_mistakes() -> list[dict[str, Any]]:
     return _load(MISTAKES_FILE)
 
 
+def count_mistakes(subject: str = "") -> int:
+    """错题计数（**只计数不解析**）。
+
+    V-02：概览/掌握度只需要一个数字，旧实现走 `list_mistakes()` → `SELECT *` + 逐行
+    `json.loads`，把整表 payload 全解一遍只为 `len()`。SQL 模式改走 `COUNT(*)`，
+    命中 U-14 补的 `mistakes(subject, ...)` 冗余列索引；JSON 模式（测试/导入源）保持原口径。
+    """
+    subject = (subject or "").strip()
+    if _store_is_sql(MISTAKES_FILE):
+        table, _ = _table_of(MISTAKES_FILE)
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            if subject:
+                row = cur.execute(f"SELECT COUNT(*) FROM {table} WHERE subject = ?",
+                                  (subject,)).fetchone()
+            else:
+                row = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            return int(row[0] if row else 0)
+        finally:
+            cur.close()
+    return sum(1 for m in read_json_list(MISTAKES_FILE)
+               if not subject or m.get("subject") == subject)
+
+
 def _find(records: list[dict[str, Any]], mid: str) -> Optional[dict[str, Any]]:
     return next((r for r in records if r.get("id") == mid), None)
 
@@ -223,6 +302,7 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
         else:
             records.append(record)
         st["dirty"]["mistakes"] = True
+        _mark_m_row(st, mid)   # V-03：单行增量写（新增或同 id 覆盖，均为一行）
         _touch_knowledge_in(st, record)
     # D-25：入库错题事件（ACTIVITY_EVENTS['mistake'] 已有定义但此前无写入方）
     for name in _kp_key(record):
@@ -370,6 +450,7 @@ def update_mistake(mid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
         cur["last_tried"] = _now()
         # correct/learned 会反写掌握度 → 重算该错题派生的知识点
         st["dirty"]["mistakes"] = True
+        _mark_m_row(st, mid)   # V-03：单行增量写
         _touch_knowledge_in(st, cur)
     return cur
 
@@ -564,6 +645,7 @@ def mark_learned(mid: str, learned: bool = True) -> Optional[dict[str, Any]]:
             return None
         cur["learned"] = bool(learned)
         st["dirty"]["mistakes"] = True
+        _mark_m_row(st, mid)   # V-03：单行增量写（仅翻转 learned 一个字段）
     return cur
 
 
@@ -583,6 +665,7 @@ def log_knowledge_event(kp_name: str, event: str, note: str = "") -> str | None:
         hist.append({"t": _now(), "event": event, "note": note})
         hit["history"] = hist[-50:]
         st["dirty"]["knowledge"] = True
+        _mark_kp_row(st, hit)   # V-03：单行增量写
     return hit.get("id")
 
 
@@ -607,6 +690,7 @@ def record_quiz(kp_name: str, score: int) -> str | None:
         hist.append({"t": _now(), "event": "quiz", "note": f"score={int(score or 0)}"})
         hit["history"] = hist[-50:]
         st["dirty"]["knowledge"] = True
+        _mark_kp_row(st, hit)   # V-03：单行增量写
     return hit.get("id")
 
 
@@ -640,6 +724,7 @@ def record_review(kp_name: str, quality: int) -> str | None:
                      "note": f"quality={int(quality or 0)} / {'pass' if passed else 'fail'}"})
         hit["history"] = hist[-50:]
         st["dirty"]["knowledge"] = True
+        _mark_kp_row(st, hit)   # V-03：单行增量写
     return hit.get("id")
 
 
@@ -897,8 +982,7 @@ def get_mastery_view(subject: str = "") -> dict[str, Any]:
         "shaky": sum(1 for k in kps if k["state"] == "shaky"),
         "solid": sum(1 for k in kps if k["state"] == "solid"),
         "mastered": sum(1 for k in kps if k["state"] == "mastered"),
-        "total_mistakes": sum(1 for m in list_mistakes()
-                              if not subject or m.get("subject") == subject),
+        "total_mistakes": count_mistakes(subject),
     }
     kps.sort(key=lambda k: k["priority"], reverse=True)
     return {"knowledge": kps, "stats": stats}
@@ -927,15 +1011,19 @@ ACTIVITY_EVENTS = {
 }
 
 
-def recent_activity(limit: int = 8, subject: str = "") -> list[dict[str, Any]]:
+def recent_activity(limit: int = 8, subject: str = "",
+                    kps: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
     """跨知识点时间线：聚合各知识点 history（讲解/复习/提问），按时间倒序。
 
     数据来自既有 knowledge.history（log_knowledge_event 已写入），纯只读聚合，
     零额外 IO；subject 过滤与概览科目口径一致（未分类/空科目记录纳入全部）。
+
+    V-02：调用方已持有知识点列表时用 `kps=` 传入，避免重复整表读（概览端点此前读两遍）。
     """
-    kps = _load(KNOWLEDGE_FILE)
+    if kps is None:
+        kps = _load(KNOWLEDGE_FILE)
     if subject:
-        kps = [k for k in kps if k.get("subject") == subject or not subject]
+        kps = [k for k in kps if k.get("subject") == subject]
     rows: list[dict[str, Any]] = []
     for k in kps:
         for h in (k.get("history") or []):
