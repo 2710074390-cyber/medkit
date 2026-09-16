@@ -134,6 +134,24 @@
   新增 `tests/test_v13_single_source.py`（7 例：结构守卫 + 行为断言 + 「纯死代码不得回流」）。
   审计复扫零引用候选由 **15 → 5**（余下 5 个均为正当公开 API / 测试契约 / 待产品决策项）。
 
+#### Tests
+
+- **V-14 把「零 CDN / 零构建」从口头规矩变成机械闸门**：`borrow-rules` §1/§2 与 R6 判据 P7 都写明
+  「零 CDN、零构建、产物可离线打开」，但**此前没有任何自动检查**（典型「已立规矩未入闸」：
+  后人加一行 `<script src="https://cdn…">` 不会有任何反馈，而它会让「断网可用」的承诺静默失效）。
+  现补**两道互补闸门**：
+  - **静态**（`tests/test_v14_zero_cdn.py`，3 例）：扫描 `medkit/web/**` 与 `medkit/render/*.py`，
+    禁止 `<script src>` / `<link href>` / `@import` / `url()` / 动态 `import()` / `fetch()` /
+    `WebSocket|EventSource` / `<img src>` / `<iframe src>` 指向外部（`<a href>` 导航链接除外）；
+    并断言前端 script/link 一律走本地 `/assets/`、`package.json` 无运行时依赖且 devDependency
+    仅 eslint/globals（防止悄悄引入打包器）。
+  - **运行时**（`tests/browser/test_zero_cdn.py`，2 例）：用 Playwright 拦截真实请求，走完
+    「首屏 + 各主 tab + 学习中心全部子视图」，**断言所有请求主机都是回环地址** —— 这能抓住
+    静态扫描看不见的**动态注入**（`document.createElement("script")` + CDN 地址等）。
+  - **反向验证**：静态闸门注入 CDN `<script>` / 产物页注入外部字体 → 均变红；
+    运行时闸门注入动态外部 script → 变红。
+  - 两道闸门都落在既有 CI 步骤内（单测步 / browser job），无需改 CI 配置。
+
 #### Chore
 
 - **V-06 工程卫生**：`.coverage`（二进制覆盖率数据）此前被版本库跟踪，每次跑测试都产生脏 diff
