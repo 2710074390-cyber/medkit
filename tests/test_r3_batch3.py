@@ -318,8 +318,19 @@ def test_r3_13_paper_judged_persistence():
 
 
 # ---------------------------------------------------------------- R3-14 前端拦截文案（静态）
+def _frontend_js() -> str:
+    """前端全部经典脚本的合并源码（**按文件名排序**）。
+
+    V-15（2026-09-16）：原先这两处直接读 `review-desk.js`，而该文件已按域拆为 4 片
+    （`review-desk.js` / `-materials` / `-project` / `-review`）——**前端源码扫描类断言必须扫全目录**，
+    否则「拆文件」这种纯搬迁也会让它们变红（断言本身与文件划分无关）。
+    """
+    js_dir = ROOT / "medkit" / "web" / "js"
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(js_dir.glob("*.js")))
+
+
 def test_r3_14_review_keep_zero_confirm():
-    js = (ROOT / "medkit" / "web" / "js" / "review-desk.js").read_text(encoding="utf-8")
+    js = _frontend_js()
     assert "无法保存空题库" in js
     assert "你将剔除全部题目（后端拒绝保存空题库）" in js
     assert "知道了" in js
@@ -344,7 +355,7 @@ def test_r3_15_unrelated_invalid_answer_not_blocking(proj_cfg, monkeypatch):
 
 # ---------------------------------------------------------------- R3-16 letters 统一
 def test_r3_16_letters_helper_unified():
-    js = (ROOT / "medkit" / "web" / "js" / "review-desk.js").read_text(encoding="utf-8")
+    js = _frontend_js()
     assert "function letters(" in js
     assert "letters((q.options || []).length)" in js, "试出一题应走 letters()"
     assert 'const LETTERS = "ABCDEF"' not in js, '\u4e0d\u5e94\u518d\u5b58\u5728 6 \u4f4d\u786c\u7f16\u7801\u5e38\u91cf'

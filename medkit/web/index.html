@@ -624,7 +624,17 @@ try {
 
 <script src="/assets/js/app.js"></script>
 <script src="/assets/js/md.js"></script>
+<!-- V-15（U-17 剩余项）：按域拆分超大经典脚本（learn.js 2401 / review-desk.js 2301 行 → 各 ≤800 行）。
+     仍是**经典脚本、零构建、零 CDN**；⚠️ 加载顺序即隐式契约（共享全局作用域），
+     分片必须**按此顺序**加载 —— 拆分时已用「分片拼接逐字节等价」证明零逻辑改动，
+     并保留「加载期立即调用」的目标与调用点同片（详见 CHANGELOG 0.10.3 / V-15）。 -->
 <script src="/assets/js/learn.js"></script>
+<script src="/assets/js/learn-study.js"></script>
+<script src="/assets/js/learn-live.js"></script>
+<script src="/assets/js/learn-review.js"></script>
 <script src="/assets/js/review-desk.js"></script>
+<script src="/assets/js/review-desk-materials.js"></script>
+<script src="/assets/js/review-desk-project.js"></script>
+<script src="/assets/js/review-desk-review.js"></script>
 </body>
 </html>

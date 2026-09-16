@@ -106,6 +106,20 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
      （脚本模式下 `no-unused-vars` 靠它识别「对外暴露」）——否则会被误报为未使用。
    - 实测价值：上线即抓到 `learn.js` 调用**不存在的 `rexAnalyzeRender()`**（运行时必抛 TypeError，
      且「确认前 200 条后」这条分支才走到，长期未被发现）。
+   - **V-15（2026-09-16）按域拆分超大脚本**：`learn.js` 2401 行 → 4 片
+     （`learn` / `learn-study` / `learn-live` / `learn-review`）；`review-desk.js` 2301 行 → 4 片
+     （`review-desk` / `-materials` / `-project` / `-review`）。**仍是经典脚本、零构建、零 CDN**。
+     ⚠️ 三条硬约束（`tests/test_v15_frontend_split.py` 已把它们变成闸门，改前端前先读）：
+     1. **加载顺序即契约**：`index.html` 里 `<script>` 的顺序必须与分片族顺序一致，且**每个文件恰好一次**；
+     2. **加载期不得跨片前向引用**：某片在**加载期立即调用**的函数，其定义必须在**同片或更早片**
+        （函数提升只在同一脚本内生效）。拆分时 `learn.js` 首片保留了 `showLearnView` /
+        `sylLoad` / `sseAbortAll` / 三个 IIFE —— 因为 `initLearnView()` 在加载期就会经
+        `showLearnView` 调到后两者，**跨片即 ReferenceError**；
+     3. **每片首行自带 `/* exported ... */`**（原文件的清单已按名字落位到各片）；
+        新增顶层声明若被其它文件/内联 HTML 引用，务必补进去，否则 `--max-warnings 0` 会红。
+     **未做 ES Module 化**（U-17 的另一半）：那会改 `index.html` 的加载语义（`type="module"` +
+     顶层 `const` 不再是全局词法绑定），收益是工程整洁，风险是整站静默失效——判据（≤800 行/文件）
+     已用更低风险的「纯搬迁」达成，故明确留档不做。
 5. **api() 契约**：字符串体自动补 `Content-Type: application/json`（已修复，浏览器测试不再
   打 fetch 补丁）；FormData 原样透传（不设 header）。改 api() 需同步
    `tests/browser/test_syllabus_view.py`。
