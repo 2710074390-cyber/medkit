@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .core import db as dbs
 from .core import errors as errs
 from .core.llm import LLMError
 from .core.mineru import MinerUError
@@ -74,6 +75,22 @@ async def _lifespan(_app: FastAPI):
         setup_logging()
     except Exception as e:  # noqa: BLE001  日志失败不阻塞启动
         errs.record("main._lifespan", "静默容错（U-15 留痕）", e=e)
+    # V-11（ADR-006「迁移路径 §3」）：启动即建库 + JSON→SQLite 幂等补导。
+    # 为什么必须放在启动路径：
+    #   ① ADR-006「退役条件 1」明确要求 `import_from_json()` 在**启动路径**幂等执行；
+    #   ② 库域（mistakes/knowledge）自己从不建库，db 只由 syllabus/realexams/cards 按需建立
+    #      → 只用错题本/学习中心的用户**永远停在 JSON 轨**，每次单行写入都是整文件原子重写
+    #      （实测单条 add_mistake：JSON 轨 31.7ms 且 O(N) vs SQL 轨 0.3ms，97×）；
+    #   ③ 也让「轨」不再取决于用户碰过哪个功能（V-10 修的是切换时的数据可见性，这里把
+    #      切换时机定死）。
+    # 幂等：migrate() 升级前自动备份、重复调用直接返回；import_from_json() 以 id 为键
+    # INSERT OR REPLACE，导入成功后原 JSON 改名 `*.pre-db-import-*.bak` 留档（可回滚）。
+    # 失败不阻断启动：留痕后退回 JSON 轨（数据始终可读），下次启动重试。
+    try:
+        dbs.migrate()
+        dbs.import_from_json()
+    except Exception as e:  # noqa: BLE001  迁移/补导失败 → 退回 JSON 轨，不阻断启动
+        errs.record("main._lifespan", "启动建库/补导失败（本次回落 JSON 轨）", e=e)
     # B34：启动时恢复 OCR 任务记录（jobs.json）并清理无记录的孤儿 tmp 文件
     try:
         from .routers.ocr import restore_ocr_persistence

@@ -62,13 +62,15 @@ def test_mistakes_group_and_batch_delete(page, server_url):
         assert page.locator("#btn_mk_all").inner_text() == "全选全部"
 
         # 分组渲染：<details> 默认展开，头部含科目与计数
+        # R7（V-10）：同会话其它用例可能留下别的科目分组，故按**本用例的科目**定位分组，
+        # 不假设它一定是第一组（此前依赖「遗留数据读不到」的缺陷才绿）。
         assert page.locator("#learn_mk .mk-group").count() >= 1
-        first_group = page.locator("#learn_mk .mk-group").first
-        assert "内科学_批测A" in first_group.inner_text()
-        assert "3 道" in first_group.inner_text()
+        group = page.locator("#learn_mk .mk-group", has_text=subject).first
+        assert subject in group.inner_text()
+        assert "3 道" in group.inner_text()
 
-        # 勾选前 2 行
-        boxes = page.locator("#learn_mk .mkck")
+        # 勾选本组前 2 行
+        boxes = group.locator(".mkck")
         boxes.nth(0).check()
         boxes.nth(1).check()
         assert "已选 2" in page.locator("#mk_sel_count").inner_text()
@@ -86,7 +88,12 @@ def test_mistakes_group_and_batch_delete(page, server_url):
         )
         page.click("#md_ok")
         page.wait_for_function(
-            "() => document.querySelectorAll('#learn_mk .mk-row').length === 1",
+            """(subject) => {
+              const g = [...document.querySelectorAll('#learn_mk .mk-group')]
+                .find(el => el.innerText.includes(subject));
+              return !g || g.querySelectorAll('.mk-row').length === 1;
+            }""",
+            arg=subject,
             timeout=15000,
         )
     finally:
@@ -101,18 +108,24 @@ def test_mistakes_batch_learn_hides_from_filter(page, server_url):
         _seed(page, subject, 2)
         _goto_mistakes(page, server_url)
 
-        boxes = page.locator("#learn_mk .mkck")
+        group = page.locator("#learn_mk .mk-group", has_text=subject).first
+        boxes = group.locator(".mkck")
         boxes.nth(0).check()
         page.click('button:has-text("标记已掌握")')
         page.wait_for_function(
             "() => document.getElementById('mk_sel_count')?.innerText.includes('已选 0')",
             timeout=15000,
         )
-        # 默认不过滤仍可见 2 行（标记只是归档标记）
-        page.wait_for_selector("#learn_mk .mk-row", timeout=15000)
+        # 默认不过滤仍可见本组 2 行（标记只是归档标记）
+        assert group.locator(".mk-row").count() == 2
         page.check("#mk_filter_unlearned")
         page.wait_for_function(
-            "() => document.querySelectorAll('#learn_mk .mk-row').length === 1",
+            """(subject) => {
+              const g = [...document.querySelectorAll('#learn_mk .mk-group')]
+                .find(el => el.innerText.includes(subject));
+              return !g || g.querySelectorAll('.mk-row').length === 1;
+            }""",
+            arg=subject,
             timeout=15000,
         )
     finally:

@@ -27,6 +27,28 @@ def _seed_mistake(page, subject: str, tag: str) -> int:
     )
 
 
+def _cleanup(page, subject: str) -> None:
+    """清理本用例播种的错题与复习卡（R7/V-10：浏览器用例共享一个后端进程与数据目录，
+    不清理会挤进后续用例的到期卡列表）。"""
+    page.evaluate(
+        """async (subject) => {
+          const ms = await (await fetch('/api/library/mistakes')).json();
+          for (const m of (ms.mistakes || [])) {
+            if (m.subject === subject) {
+              await fetch('/api/library/mistakes/' + encodeURIComponent(m.id), {method: 'DELETE'});
+            }
+          }
+          const cs = await (await fetch('/api/library/review/cards?subject='
+            + encodeURIComponent(subject))).json();
+          for (const c of (cs.cards || [])) {
+            await fetch('/api/library/review/' + encodeURIComponent(c.id), {method: 'DELETE'});
+          }
+          return true;
+        }""",
+        subject,
+    )
+
+
 def _queue_all(page, subject: str = "") -> int:
     return page.evaluate(
         """async (subject) => {
@@ -45,9 +67,14 @@ def _open_study(page, server_url: str):
 
 def test_study_card_flip_and_three_buttons(page, server_url):
     """铺卡 → 翻转卡渲染 → 点击翻面 → 三按钮 → 点「记住」→ 空态 + 进度 1/1。"""
+    # R7（V-10）：用**专属科目**隔离——同会话其它用例也会用「儿科学」，
+    # 遗留的知识点会让 queue-all 多铺出卡片，本用例「只有 1 张卡 / 进度 1/1」的断言随即失效。
+    subject, tag = "儿科学_刷测A", "支气管肺炎_刷测A"
     _open_study(page, server_url)
-    assert _seed_mistake(page, "儿科学", "支气管肺炎") == 200
-    assert _queue_all(page, "儿科学") >= 1
+    # 知识点名（= tag）也必须专属：kp 以**名字**为键，沿用通用名会命中早先用例建的同名 kp
+    # （其 subject 仍是「儿科学」）→ 本用例的 queue-all(subject) 找不到任何 kp，返回 0。
+    assert _seed_mistake(page, subject, tag) == 200
+    assert _queue_all(page, subject) >= 1
     page.reload()
     page.wait_for_selector("#tab-study.show", timeout=15000)
 
@@ -71,19 +98,23 @@ def test_study_card_flip_and_three_buttons(page, server_url):
     assert page.locator("#rv_body .g3.got").inner_text() == "记住"
 
     # 点「记住」→ 卡片移出今日到期 → 空态；进度 1/1
-    page.locator("#rv_body .g3.got").click()
-    page.wait_for_selector("#rv_body .empty", timeout=15000)
-    page.wait_for_function(
-        "() => document.querySelector('#study_progress .sprog-label').innerText.includes('1/1')",
-        timeout=15000,
-    )
+    try:
+        page.locator("#rv_body .g3.got").click()
+        page.wait_for_selector("#rv_body .empty", timeout=15000)
+        page.wait_for_function(
+            "() => document.querySelector('#study_progress .sprog-label').innerText.includes('1/1')",
+            timeout=15000,
+        )
+    finally:
+        _cleanup(page, subject)
 
 
 def test_study_keyboard_shortcut_flips_then_grades(page, server_url):
     """D-10：快捷键 1/2/3 未翻面仅翻面不评分；已翻面才评分（防误触给首卡打 0 分）。"""
+    subject, tag = "内科学_刷测B", "心力衰竭_刷测B"   # R7（V-10）：专属科目 + 专属知识点名
     _open_study(page, server_url)
-    assert _seed_mistake(page, "内科学", "心力衰竭") == 200
-    assert _queue_all(page, "内科学") >= 1
+    assert _seed_mistake(page, subject, tag) == 200
+    assert _queue_all(page, subject) >= 1
     page.reload()
     page.wait_for_selector("#tab-study.show", timeout=15000)
 
@@ -96,7 +127,10 @@ def test_study_keyboard_shortcut_flips_then_grades(page, server_url):
         timeout=15000,
     )
     assert page.locator("#rv_body .qcard").count() == 1, "未翻面按快捷键只翻面不评分"
-    # 已翻面 → 再按 3 → 评分并出队
-    page.keyboard.press("3")
-    page.wait_for_selector("#rv_body .empty", timeout=15000)
-    assert page.locator("#toasts .toast.bad").count() == 0, "快捷键自评不应报错"
+    try:
+        # 已翻面 → 再按 3 → 评分并出队
+        page.keyboard.press("3")
+        page.wait_for_selector("#rv_body .empty", timeout=15000)
+        assert page.locator("#toasts .toast.bad").count() == 0, "快捷键自评不应报错"
+    finally:
+        _cleanup(page, subject)

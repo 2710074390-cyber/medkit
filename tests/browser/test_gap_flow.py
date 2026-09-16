@@ -17,6 +17,34 @@ def _open_overview(page, server_url: str):
     page.wait_for_selector("#tab-learn.show", timeout=15000)
 
 
+def _cleanup(page, subject: str, tag: str) -> None:
+    """清理本用例播种的错题与由它派生的复习卡。
+
+    R7（V-10）教训：本文件原先**只播种不清理**，而同会话的浏览器用例共享一个后端进程与
+    数据目录——遗留的「儿科学 / 呼吸」会挤进后续用例的首个分组与到期卡列表，使
+    `test_mistakes_batch*`（断言首组是自己的科目）与 `test_study_quiz*`（断言只有 1 张到期卡）
+    随机翻红。此前之所以没暴露，是因为库域「切轨不补导」的缺陷让遗留数据**恰好读不到**
+    （V-10 修好数据可见性后立刻显形）。这里补上清理。
+    """
+    page.evaluate(
+        """async ([subject, tag]) => {
+          const ms = await (await fetch('/api/library/mistakes')).json();
+          for (const m of (ms.mistakes || [])) {
+            if (m.subject === subject && (m.question || '').includes(tag)) {
+              await fetch('/api/library/mistakes/' + encodeURIComponent(m.id), {method: 'DELETE'});
+            }
+          }
+          const cs = await (await fetch('/api/library/review/cards?subject='
+            + encodeURIComponent(subject))).json();
+          for (const c of (cs.cards || [])) {
+            await fetch('/api/library/review/' + encodeURIComponent(c.id), {method: 'DELETE'});
+          }
+          return true;
+        }""",
+        [subject, tag],
+    )
+
+
 def test_gap_paper_no_subject_autopicks_first(page, server_url):
     """科目范围未选（全部科目）时点「一键刷薄弱组卷」：
     A. 无任何可选科目 → 提示「暂无可选科目…」（新文案，不再报「科目范围」错）；
@@ -26,28 +54,31 @@ def test_gap_paper_no_subject_autopicks_first(page, server_url):
     page.click("#btn_gap_paper")
     page.wait_for_selector('#toasts >> text=暂无可选科目', timeout=15000)
 
-    # 场景 B：注入一条带科目的错题 → 刷新后科目下拉有选项 → 自动选中
-    page.evaluate(
-        """async () => {
-          await fetch('/api/library/mistakes', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({source: 'manual', subject: '儿科学',
-              chapter: '呼吸', question: '测试错题？',
-              options: ['甲', '乙', '丙', '丁', '戊'], answer: 'A', analysis: '解析'})
-          });
-        }"""
-    )
-    page.reload()
-    page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
-    page.click('button[data-tab="learn"]')
-    page.wait_for_selector("#tab-learn.show", timeout=15000)
-    page.locator("#btn_gap_paper").wait_for(state="visible", timeout=15000)
-    page.click("#btn_gap_paper")
-    page.wait_for_timeout(1500)
-    assert "请先在上方选择科目范围" not in page.locator("#toasts").inner_text()
-    sel_value = page.evaluate("() => document.getElementById('dash_subject').value")
-    assert sel_value == "儿科学", f"应自动选中第一个可选科目，实得 {sel_value!r}"
+    try:
+        # 场景 B：注入一条带科目的错题 → 刷新后科目下拉有选项 → 自动选中
+        page.evaluate(
+            """async () => {
+              await fetch('/api/library/mistakes', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({source: 'manual', subject: '儿科学',
+                  chapter: '呼吸', question: '测试错题？',
+                  options: ['甲', '乙', '丙', '丁', '戊'], answer: 'A', analysis: '解析'})
+              });
+            }"""
+        )
+        page.reload()
+        page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
+        page.click('button[data-tab="learn"]')
+        page.wait_for_selector("#tab-learn.show", timeout=15000)
+        page.locator("#btn_gap_paper").wait_for(state="visible", timeout=15000)
+        page.click("#btn_gap_paper")
+        page.wait_for_timeout(1500)
+        assert "请先在上方选择科目范围" not in page.locator("#toasts").inner_text()
+        sel_value = page.evaluate("() => document.getElementById('dash_subject').value")
+        assert sel_value == "儿科学", f"应自动选中第一个可选科目，实得 {sel_value!r}"
+    finally:
+        _cleanup(page, "儿科学", "测试错题？")
 
 
 def test_gap_paper_api_empty_subject_soft_fails(page, server_url):
