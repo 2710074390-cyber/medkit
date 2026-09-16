@@ -21,6 +21,7 @@ from typing import Any, Iterator, Optional
 
 from . import config as cfg
 from . import db as dbs
+from . import errors as errs
 from .fsutil import read_json_list, write_json_atomic
 
 LIBRARY_DIR = cfg.CONFIG_DIR / "library"
@@ -46,6 +47,49 @@ def _store_is_sql(path: Path) -> bool:
     """该路径当前是否走 SQL（路径等于当前模块常量且 db 已建立；测试 monkeypatch 自动回落 JSON）。"""
     return path in (MISTAKES_FILE, KNOWLEDGE_FILE) and DB_FILE.exists()
 
+
+def _backfill_json_once() -> bool:
+    """库域**首次**要走 SQL 轨之前，先把 JSON 轨的活数据补导进库（幂等）。
+
+    返回「是否可以安全走 SQL 轨」：无需补导或补导成功 → True；补导失败 → False
+    （调用方退回 JSON 轨，保证数据**始终可见**，下次访问再试）。
+
+    V-10（P0 数据可见性）：`_store_is_sql()` 只看「`medkit.db` 是否存在」，而这个 db 是由
+    **别的域**（大纲管理 / 真题考频 / 记忆卡）按需 `migrate()` 建立的；库域自己从不建库、
+    也从不补导。于是出现这条**必现**路径：
+
+    ```
+    新装 → 用错题本（JSON 轨，数据落 mistakes.json / knowledge.json）
+         → 去点一次「大纲管理」（建库）→ 库域改判 SQL 轨 → 错题本/掌握度**读空库 = 界面全空**
+    ```
+
+    实测（`.workbuddy-ai/tmp/test_track_flip.py`）：JSON 轨写 3 条错题 → `migrate()` →
+    `list_mistakes()` 由 3 变 **0**，而磁盘上 `mistakes.json` 仍有 3 条；此后新写入进 DB，
+    形成真正的双轨分叉（旧数据永远读不到）。
+
+    `db.import_from_json()` 本就是为这一步准备的（按 id 幂等 + 导入成功后原 JSON 改名留档，
+    其 docstring 明确写着「避免『JSON 活数据永远进不了 DB』的丢失风险」），只是**从未被接线**。
+
+    零开销常态：补导成功后 JSON 已被改名，本函数只剩两次 `exists()` 判断。
+    """
+    if not DB_FILE.exists():
+        return True
+    if not (MISTAKES_FILE.exists() or KNOWLEDGE_FILE.exists()):
+        return True                 # 已补导过（原 JSON 已改名）→ 常态路径
+    try:
+        dbs.import_from_json()
+        return True
+    except Exception as e:  # noqa: BLE001  补导失败 → 留痕 + 本次退回 JSON 轨（数据不隐身）
+        errs.record("library._backfill_json_once", "JSON→SQL 补导失败（本次退回 JSON 轨，下次重试）", e=e)
+        return False
+
+
+def _sql_ready(path: Path) -> bool:
+    """该路径是否走 SQL 轨；**首次**判定为真时先完成 JSON→SQL 补导（V-10）。"""
+    if not _store_is_sql(path):
+        return False
+    return _backfill_json_once()
+
 # 掌握度状态机阈值（score ∈ [0,1]）——对偶《设计文档 §2.2 / §4.3》
 STATE_THRESHOLDS = [("mastered", 0.95), ("solid", 0.80), ("shaky", 0.60)]
 """由高到低，(state, min_score)；低于 0.60 → weak"""
@@ -60,7 +104,7 @@ TUTOR_PASS_SCORE = 2
 # ---------------------------------------------------------------- 原子读写（咽喉点）
 def _load(path: Path) -> list[dict[str, Any]]:
     """读集合；缺失/损坏 → 空（复用 fsutil 统一容错）。SQL 模式读表，JSON 模式读文件。"""
-    if _store_is_sql(path):
+    if _sql_ready(path):
         table, _ = _table_of(path)
         conn = dbs.get_conn()
         cur = conn.cursor()
@@ -73,7 +117,7 @@ def _load(path: Path) -> list[dict[str, Any]]:
 
 def _save(path: Path, data: list[dict[str, Any]]) -> None:
     """写集合。SQL 模式事务整组替换；JSON 模式复用 fsutil 原子写。"""
-    if _store_is_sql(path):
+    if _sql_ready(path):
         table, cols = _table_of(path)
         with dbs.tx(write=True) as cur:
             dbs.replace_all(cur, table, data, cols)
@@ -230,7 +274,7 @@ def _store() -> Iterator[dict[str, Any]]:
     SQL 模式：单事务（BEGIN IMMEDIATE）内读-改-写全部串行——并发 grade/record_quiz 不再丢失更新。
     JSON 模式：模块级 RLock 串行 + 双文件原子写（测试/导入源兼容）。
     """
-    if _store_is_sql(MISTAKES_FILE):
+    if _sql_ready(MISTAKES_FILE):
         with dbs.tx(write=True) as cur:
             st: dict[str, Any] = _StoreView(cur)
             yield st
@@ -321,7 +365,7 @@ def count_mistakes(subject: str = "") -> int:
     命中 U-14 补的 `mistakes(subject, ...)` 冗余列索引；JSON 模式（测试/导入源）保持原口径。
     """
     subject = (subject or "").strip()
-    if _store_is_sql(MISTAKES_FILE):
+    if _sql_ready(MISTAKES_FILE):
         table, _ = _table_of(MISTAKES_FILE)
         conn = dbs.get_conn()
         cur = conn.cursor()
@@ -1253,7 +1297,7 @@ def heal_encoding() -> dict[str, Any]:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     backups: list[str] = []
 
-    if _store_is_sql(MISTAKES_FILE):
+    if _sql_ready(MISTAKES_FILE):
         backups = dbs.backup_library("pre-heal")
         with _store() as st:
             healed, flagged = _heal_recs(st["mistakes"], 0, 0)
