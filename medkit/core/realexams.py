@@ -243,6 +243,12 @@ def analyze_llm(client: Any, text: str, subject: str = "", enabled: bool = False
 
     返回 ``{"drafts": [...]}``，可直接喂 ``confirm_drafts``；校验 / 修复失败返回 ``None``
     （调用方转人工复核，不入库）。``repair_fn`` 遵循 ``validate_or_repair`` 语义。
+
+    ⚠️ V-13（2026-09-16）审计留档：本函数**当前全仓零调用方**（含测试），
+    因此 ``enabled`` 开关实际无从打开 —— 属「实现了但未接线的功能」。
+    未删除的理由：是否给「真题考频」加一条**可选** LLM 增强，与项目既有原则
+    （零 LLM 原则边界：主流程零 LLM，唯一 LLM 触点 = 官方大纲 seed 导入）存在冲突，
+    属产品决策。**待定：接线（配置项 + 端点）或删除**。
     """
     if not enabled:
         return None

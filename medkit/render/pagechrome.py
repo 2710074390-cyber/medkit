@@ -48,6 +48,4 @@ function applyThemeBtn(){const b=document.getElementById("themeBtn");
 applyThemeBtn();
 </script>"""
 
-# 打印基线：白底黑字 + 隐藏交互控件（各页可在 print 规则后追加自己的细化）
-PRINT_BASE = """\
-@media print{body{background:#fff;color:#111}}"""
+# V-13：删除零引用的 PRINT_BASE（打印样式实际由各页自己的 <style> 承担）。

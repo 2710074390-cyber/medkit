@@ -35,10 +35,8 @@ CONCEPT_STATES = ["weak", "shaky", "solid", "mastered"]
 
 # 五类提问轮换（解释→应用→对比→预测→追溯）；上一轮有差距则同类型追问不换档
 QUESTION_TYPES = ["explain", "apply", "contrast", "predict", "trace"]
-QUESTION_LABELS = {
-    "explain": "解释", "apply": "应用", "contrast": "对比",
-    "predict": "预测", "trace": "追溯",
-}
+# V-13：删除零引用的 QUESTION_LABELS（中文标签在前端 TUTOR_QTYPES 里另有一份，
+# 后端这份从未被使用 → 双份真相且不生效）。
 
 PASS_SCORE = 2          # 判分 0~3；≥2 计通过
 PASS_STREAK = 2         # 连续通过次数 → 升一档

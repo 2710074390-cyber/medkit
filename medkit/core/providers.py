@@ -12,11 +12,7 @@ from typing import Any, Optional
 # zhipu：open.bigmodel.cn 官方（GLM-5.3 输入 8 / 输出 28；缓存命中 2）
 # qwen：阿里云百炼华北2北京官方价（qwen-max 页面）；qwen3.x 系列以控制台为准
 # kimi：platform.kimi.com 定价页（kimi-k2-thinking：缓存命中 1 / 输入 4 / 输出 16）
-PRICE_NOTES = {"deepseek": "官网 https://platform.deepseek.com（峰谷时段价，见实时页面）",
-               "zhipu": "官网 https://open.bigmodel.cn（美元价×汇率估算）",
-               "qwen": "官网 https://bailian.console.aliyun.com",
-               "kimi": "官网 https://platform.moonshot.cn（K2 系列价格见文档定价页）"}
-
+# V-13：删除零引用的 PRICE_NOTES（价格说明由前端 providers 卡片自带文案呈现）。
 PROVIDERS: list[dict[str, Any]] = [
     {
         "id": "deepseek",

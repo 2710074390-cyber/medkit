@@ -524,14 +524,17 @@ def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
             backend = ws.resolve_backend(meta.get("web_backend", "auto") or "auto",
                                          _cfg.get("provider", "deepseek"),
                                          _ws_bocha_key)
-            _search_key = _ws_bocha_key if backend == "bocha" else _provider_key
-            if backend != "manual" and not _search_key:
+            # V-13：后端分类改走 websearch 的常量（原先写死 "bocha"/"manual" 字面量，
+            # 与同模块的 EXTERNAL_BACKENDS / NO_SEARCH_BACKENDS 构成双份真相）。
+            _search_key = (_ws_bocha_key if backend in ws.EXTERNAL_BACKENDS
+                           else _provider_key)
+            if backend not in ws.NO_SEARCH_BACKENDS and not _search_key:
                 # 生成前给出明确告警（不再只在跑完 3 轮后写复核清单里体现，UX A4）
                 _log(base, "  ⚠️ 网络检索：未检测到可用 Key——若本次检索失败，"
                            "请到「我的 → 连接服务商」配置服务商 Key 后重新生成")
             chapter = next((s.get("title", "") for s in textbook_slices), "")
             keywords = teacher_text[:500]
-            if backend == "manual":
+            if backend in ws.NO_SEARCH_BACKENDS:
                 materials = ws.parse_manual(meta.get("web_manual_text", ""))
                 logs_list = [f"手动粘贴素材 {len(materials)} 条"]
                 err_list: list[str] = []

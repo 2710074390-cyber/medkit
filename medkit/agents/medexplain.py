@@ -13,11 +13,14 @@
 import re
 from typing import Any, Callable, Optional
 
+from ..core.explain import WEB_MATERIALS_LIMIT, WEB_SNIPPET_LIMIT
 from . import render_prompt
 
 # 联网补充：单轮、单检索词（讲解补充不需要出题的三路考纲/真题/指南检索）
 WEB_QUERY_LIMIT = 40
-WEB_TIMEOUT = 20.0
+# V-13：素材条数/单条字数上限改用 `core.explain` 的常量（原先这里写死 4 / 240，
+# 而 `core/explain.py` 里那两个同名常量零引用——改常量不生效，是典型的「双份真相」）。
+# 注意：原先没有 WEB_TIMEOUT（写了 20.0 但从未使用，检索超时由 websearch 侧控制）→ 已删除。
 
 
 def _build_web_query(subject: str, kp_name: str, mistake: Optional[dict[str, Any]]) -> str:
@@ -48,7 +51,7 @@ def _web_digest(materials: list[dict[str, Any]], limit: int,
     for m in materials[:limit]:
         title = (m.get("title") or "")[:60]
         url = m.get("url") or ""
-        snippet = (m.get("snippet") or "")[:240]
+        snippet = (m.get("snippet") or "")[:WEB_SNIPPET_LIMIT]
         line = f"- {title}" + (f" · {url}" if url else "")
         if snippet:
             line += f"\n  {snippet}"
@@ -79,7 +82,7 @@ def prepare_explain(subject: str,
         if fetched:
             via_web = True
             web_materials = fetched
-    web_digest = _web_digest(web_materials, 4)
+    web_digest = _web_digest(web_materials, WEB_MATERIALS_LIMIT)
 
     system = render_prompt("medexplain.md", subject=subject, kp_name=kp_name)
     # 素材注入：切片 + 网络（两者独立标注，不混淆）

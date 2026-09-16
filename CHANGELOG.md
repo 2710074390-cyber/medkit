@@ -115,6 +115,25 @@
   改为按本用例科目定位分组；`test_study_quiz*` 改用专属科目 + 专属知识点名
   （kp 以名字为键，沿用通用名会命中早先用例的 kp）。浏览器层恢复 **35 passed** 且连跑 3 次稳定。
 
+#### Changed
+
+- **V-13 「定义了但没人调」全仓审计 → 双份真相接线 + 死代码清理 + 回滚入口**：用 AST 收集
+  `medkit/**` 的模块级定义并统计引用次数，零引用者为候选（本轮两个 P0 正是这条线挖出来的——
+  `db.import_from_json()` 自 S0 起零调用方）。15 个候选中 **10 个是「双份真相」**：常量放在 A 处、
+  生效值却以字面量硬编码在 B 处，**改常量不生效**。现接线为单一真相：
+  `core.explain.WEB_MATERIALS_LIMIT/WEB_SNIPPET_LIMIT`（原 `agents/medexplain` 写死 `4`/`[:240]`）、
+  `websearch.EXTERNAL_BACKENDS/NO_SEARCH_BACKENDS`（原 `orchestrator` 写死 `"bocha"`/`"manual"`）、
+  `review.CARD_STATES`（原 `stats()` 各档写死字面量）、`scheduler.SCHEDS`（原 `make_scheduler`
+  **静默**回退默认 → 现校验 + 留痕）。纯死代码（应用/测试/前端三方零引用）删除四处：
+  `tutor.QUESTION_LABELS`、`providers.PRICE_NOTES`、`medexplain.WEB_TIMEOUT`、`pagechrome.PRINT_BASE`。
+  另**修正 ADR-006 的回滚方案**：原文写「`db.downgrade_to(0)` + 恢复 `.bak` 原文件名 → 回到 JSON 模式」，
+  但 `_store_is_sql()` 判据是 `DB_FILE.exists()`——只 DROP 表**回不到 JSON 轨**（表空了、轨没变，
+  界面又「全空」），且 `downgrade_to()` 全仓零调用方、无任何可执行入口。
+  现新增 **`pack/rollback-json-track.py`**（默认 dry-run、`--yes` 执行；按「移走 db 文件 → 恢复 `.bak`
+  → 回查是否真的回落 JSON 轨」的正确顺序；db 文件改名保留不删除），并勘误 ADR-006。
+  新增 `tests/test_v13_single_source.py`（7 例：结构守卫 + 行为断言 + 「纯死代码不得回流」）。
+  审计复扫零引用候选由 **15 → 5**（余下 5 个均为正当公开 API / 测试契约 / 待产品决策项）。
+
 #### Chore
 
 - **V-06 工程卫生**：`.coverage`（二进制覆盖率数据）此前被版本库跟踪，每次跑测试都产生脏 diff

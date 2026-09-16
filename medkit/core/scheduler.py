@@ -20,6 +20,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from . import errors as _errs
+
 DEFAULT_SCHED = "fsrs"          # NX-04：FSRS 为默认调度
 SCHEDS = ("fsrs", "sm2")
 
@@ -148,7 +150,16 @@ class Sm2Scheduler:
 
 # ---------------------------------------------------------------- 工厂
 def make_scheduler(name: str = DEFAULT_SCHED) -> CardScheduler:
+    """按名取调度器；未知名回退默认并**留痕**。
+
+    V-13：`SCHEDS` 原先零引用（常量与「回退默认」逻辑构成双份真相，新增调度算法时容易漏改）。
+    现在用它做校验，并把「静默回退」变成可观测事件（U-15 口径：静默必留痕）。
+    """
     name = (name or DEFAULT_SCHED).strip().lower()
+    if name not in SCHEDS:
+        _errs.record("scheduler.make_scheduler",
+                     f"未知调度算法 {name!r}，已回退 {DEFAULT_SCHED}")
+        name = DEFAULT_SCHED
     if name == "sm2":
         return Sm2Scheduler()
     return FsrsScheduler()

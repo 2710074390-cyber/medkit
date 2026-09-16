@@ -262,10 +262,12 @@ def delete_by_kp(subject: str, kp_name: str) -> int:
 def stats(subject: str = "") -> dict[str, int]:
     cards = list_cards(subject)
     today = _today().isoformat()
+    # V-13：状态分档由 CARD_STATES 派生（原先各档写死字面量，常量零引用 → 改常量不生效）
+    by_state = {s: sum(1 for c in cards if c.get("state") == s) for s in CARD_STATES}
     return {
         "total": len(cards),
-        "new": sum(1 for c in cards if c.get("state") == "new"),
+        "new": by_state["new"],
         "due": sum(1 for c in cards if (c.get("due") or "") <= today),
-        "in_progress": sum(1 for c in cards if c.get("state") in ("learning", "relearning")),
-        "review": sum(1 for c in cards if c.get("state") == "review"),
+        "in_progress": by_state["learning"] + by_state["relearning"],
+        "review": by_state["review"],
     }

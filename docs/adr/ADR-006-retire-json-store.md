@@ -30,7 +30,14 @@
        每表成功写 `meta.imported::<table>` 标记 → 原 JSON 改名 `*.pre-db-<ts>.bak`（不回灌）；
      - 该路径 ADR-005 已实现，本 ADR 不新增机制，只把「何时切换为唯一路径」定死。
   4. **回滚方案**
-     - 库级：`db.downgrade_to(0)` + 恢复 `.pre-db-*.bak` 原文件名 → 回到 JSON 模式；
+     - 库级：**移走** `medkit.db` / `-wal` / `-shm`（`_store_is_sql()` 判据是 `DB_FILE.exists()`，
+       只 DROP 表**回不到 JSON 模式**——表空了但域模块仍走 SQL 轨，界面又变「全空」）
+       + 恢复 `*.pre-db-*.bak` 原文件名 → 回到 JSON 模式；
+       **已提供可执行入口**：`python pack/rollback-json-track.py`（默认 dry-run，`--yes` 执行，
+       db 文件保留改名不删除，执行后自动回查「是否真的回落 JSON 轨」）。
+       > 勘误（2026-09-16 R7/V-13）：本节原写「`db.downgrade_to(0)` + 恢复 `.bak` 原文件名」，
+       > 但按此执行**回不到 JSON 模式**（`downgrade_to` 只 DROP 表、db 文件仍在），
+       > 且 `db.downgrade_to()` 全仓零调用方、无任何可执行入口 —— 文档里的回滚路径实际不可执行。
      - 数据级：ADR-005 的升级前全量备份（`backup_library()`）继续有效；
      - 发布级：退役动作单独成版，不与结构迁移同版发布（出问题可只回退该版）。
 - 影响文件清单（退役时需处理）
