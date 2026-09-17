@@ -104,6 +104,26 @@
   冲突条数。程序级兜底：即便模型仍误用冲突素材数值，门禁① 的数值核验（S1-2）会要求正确选项的
   临床数值能在**教材切片**里找到出处 → 误用会被判 fail 并交 MedFix 纠正。
 
+- **S2-2（R8+W）押题卷历史行不再拼未归一的数值**：`showHistory()` 把 localStorage 里
+  `{score,total,secs}` 直接拼进 `innerHTML`（同源脚本或用户可篡改该键 → 任意 HTML 注入面）。
+  现新增 `num()` 助手统一按数值归一（`Number.isFinite` 校验后取整），`ts` 仍走 `esc()`。
+- **S2-3（R8+W）错题重练不再信任 localStorage 题目集**：`retryWrong()` 会把存储里的题目灌进
+  `QUESTIONS`，而 `render()` 里 `h+=q.media` 是**唯一**未转义的插值点 → 篡改该键即可注入任意 HTML。
+  现用 `const SRV_Q = new WeakSet()` 登记**服务端渲染**的题目对象，`render()` 改为
+  `if(q.media && SRV_Q.has(q)) h+=q.media;`——`JSON.parse` 出来的新对象不在集合里，
+  media 自动失效；`backToAll()` 回到原卷后图片照常显示。
+- **S1-1b（R8+W）「本批未经质检」在产物页可见**：原实现只把该状态写进 run.log 与人工复核清单，
+  读者拿到题库/押题卷时完全看不出来。现 `_page()` 支持 `notice` 告警条，编排层在质检报告含
+  `QC_UNVERIFIED` 时传入「本批题目中有部分批次未能完成 AI 质检……未经事实校验」，
+  题库与押题卷产物页顶部即显示该红色横幅（notice 经 `html_mod.escape`）。
+- **S3-6（R8+W）FTS5 MATCH 字面量转义**：`fts_match_expr` 原直接 `f'"{t}"*'`——token 内含 `"` 会
+  提前闭合字面量（轻则 MATCH 语法报错，重则把输入当 FTS5 语法解析）。现新增 `_fts_quote()`：
+  内部双引号翻倍（FTS5 规范转义）。注：实测 jieba 会把裸 `"` 切成单字符 token 而被 `len>=2`
+  过滤，故真实分词路径难以触发——按**纵深防御**补齐，并用 monkeypatch 喂 token 守住该路径。
+- **S2-25（R8+W）AGPL 站点口径**：在 `docs/adr/ADR-007-license-agpl.md` 补「同源公网站点 §13 口径」
+  补记、在 `THIRD_PARTY_NOTICES.md` 补「同源站使用场景」小节——**均明确标注口径待产品/法务定版，
+  不预设结论**（两种读法并列 + R1~R5 待办）。**R1「同源」语义定版属产品/法务决策，代码侧不代为决定。**
+
 ### Prompts
 
 > **NX-06 义务说明**：本版改动了 `medkit/prompts/medreview.md`。该 prompt **没有**对应的

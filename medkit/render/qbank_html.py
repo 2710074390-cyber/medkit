@@ -321,7 +321,8 @@ def _html_sub(q: dict[str, Any], show_options: bool = True,
 
 
 def export_html(questions: list[dict[str, Any]], title: str = "题库",
-                image_index: Optional[dict[str, Any]] = None, pid: str = "") -> str:
+                image_index: Optional[dict[str, Any]] = None, pid: str = "",
+                notice: str = "") -> str:
     """题库 HTML：案例/选项组按组折叠（S3），单题保持原 <details class=q data-type> 结构。
     v0.7.1：搜索 + 全部题型过滤 + 计数 + 窄屏适配。WP-04：图像（base64）+ 表格渲染。
     D7：分页按「题目数」计（案例/选项组作为原子跨页保留整组，一页内的题数 ≤50）。
@@ -411,7 +412,7 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
     _qn, _cn = len(questions), len(items)
     _count_meta = (f"共 {_qn} 题" if _qn == _cn
                    else f"共 {_qn} 题（{_cn} 张卡，其中组内子题 {_qn - _cn} 道）")
-    return _page(title, f"""
+    return _page(title, notice=notice, body=f"""
 <h1>{html_mod.escape(title)}</h1>
 <p class="meta">{_count_meta} · 每页最多 50 题 · 答案默认隐藏，点击题目展开查看 · <button class="mini" onclick="window.print()">🖨 打印</button> ·
 <span id="qcount" role="status" aria-live="polite"></span></p>
@@ -599,6 +600,13 @@ def _paper_js_state(qs: str, pid_json: str, subj_json: str) -> str:
     """押题卷内联 JS（一）：常量与状态机、作答读写、渲染与答题卡。"""
     return f"""let QUESTIONS = ({qs}).filter(function(q){{return q && q.options && q.options.length;}});
 const ORIG = QUESTIONS.slice();
+// S2-3（R8+W）：只有**服务端渲染**的题目对象允许注入 media（图/表 HTML）。错题重练会把
+// localStorage 里的题目灌进 QUESTIONS——那份数据可被任何同源脚本或用户篡改，
+// 若直接 `h+=q.media` 就等于开了个任意 HTML 注入面。WeakSet 天然只认最初那批对象：
+// JSON.parse 出来的新对象不在集合里 → media 自动失效，且不需要维护额外标志位。
+const SRV_Q = new WeakSet(); QUESTIONS.forEach(q=>SRV_Q.add(q));
+// S2-2（R8+W）：localStorage 里的 score/total 一律按数值归一，绝不直接拼进 innerHTML
+const num=v=>{{ const n=Number(v); return Number.isFinite(n)?Math.round(n):0; }};
 /* B-09：错题重练沿用原卷题号——ORIG_NO 记录 id→原卷序号；qNo(q,i) 重练时回原号 */
 const ORIG_NO = {{}};
 ORIG.forEach((q,j)=>{{ if(q&&q.id) ORIG_NO[String(q.id)]=j+1; }});
@@ -679,7 +687,7 @@ function render(){{
       h+='<div class="casebar" data-case="'+esc(q.case_id)+'">'+esc(q.case_label)+'</div>';
       lastCase=q.case_id;
     }}
-    if(q.media) h+=q.media;
+    if(q.media && SRV_Q.has(q)) h+=q.media;   // S2-3：仅服务端题目对象可注入 media
     h+='<div class="q" id="q'+i+'"><p class="qs"><span class="tag">'+esc(TL[q.type]||q.type)+'</span>'
       +'<span class="tag b">'+esc(q.bloom)+'</span>'
       +(q.source_type==='真题'?'<span class="tag src">'+esc(q.source_year?q.source_year+' ':'')+'真题</span>':'')
@@ -760,11 +768,11 @@ function showHistory(){{
   try{{
     const H=JSON.parse(localStorage.getItem(KEY+'-his')||'[]');
     if(!H.length||judged){{ el.textContent=''; return; }}
-    const pct=h=>Math.round(h.score*100/(h.total||1));
+    const pct=h=>Math.round(num(h.score)*100/(num(h.total)||1));
     let best=H[0]; H.forEach(h=>{{ if(pct(h)>pct(best)) best=h; }});
     const last=H[0];
-    el.innerHTML='📈 上次 '+last.score+'/'+last.total+'（'+pct(last)+' 分）· 用时 '+fmtT(last.secs||0)
-      +' · 最佳 '+best.score+'/'+best.total+'（'+pct(best)+' 分）· '+esc(last.ts||'');
+    el.innerHTML='📈 上次 '+num(last.score)+'/'+num(last.total)+'（'+pct(last)+' 分）· 用时 '+fmtT(num(last.secs))
+      +' · 最佳 '+num(best.score)+'/'+num(best.total)+'（'+pct(best)+' 分）· '+esc(last.ts||'');
   }}catch(e){{ el.textContent=''; }}
 }}
 function buildGrid(){{
@@ -1007,7 +1015,8 @@ render();
 
 def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷", *,
                       pid: str = "", subject: str = "",
-                      image_index: Optional[dict[str, Any]] = None) -> str:
+                      image_index: Optional[dict[str, Any]] = None,
+                      notice: str = "") -> str:
     """交互押题卷（I3 练习化）：
     - X 型 checkbox + 集合判分（A1 修复）
     - localStorage 实时保存作答 + 重开续答 + 答题卡 + 计时器（练习计时；可开启限时模式→到点自动判分）
@@ -1032,16 +1041,21 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
     qs = _questions_json_for_page(questions, image_index)
     pid_json = json.dumps(pid or "")
     subj_json = json.dumps(subject or "")
-    return _page(title,
+    return _page(title, notice=notice, body=
                  _paper_head(title, questions, dropped_n, no_opt, noscript_items)
                  + _paper_js_state(qs, pid_json, subj_json)
                  + _paper_js_grade(),
                  extras="paper")
 
 
-def _page(title: str, body: str, extras: str = "") -> str:
-    """产物页外壳：共用主题（pagechrome）+ 各页自身样式。"""
+def _page(title: str, body: str, extras: str = "", notice: str = "") -> str:
+    """产物页外壳：共用主题（pagechrome）+ 各页自身样式。
+
+    `notice`（S1-1b / R8+W）：页面顶部告警条，用于「本批未经 AI 质检」这类**必须让读者看到**
+    的状态——原先该状态只写进 run.log 与人工复核清单，产物页上看不出来。
+    """
     from .pagechrome import BASE_CSS, PRODUCT_CSP, THEME_BTN, THEME_SCRIPT, THEME_VARS
+    notice_html = (f'<p class="banner bad">{html_mod.escape(notice)}</p>' if notice else "")
 
     own_css = """
 main{max-width:860px;margin:0 auto}
@@ -1105,7 +1119,7 @@ details.q .qs:hover{color:var(--acc)}
 {THEME_VARS}
 {BASE_CSS}
 {own_css}
-</style></head><body><main>{body}</main>
+</style></head><body><main>{notice_html}{body}</main>
 {THEME_BTN}
 {THEME_SCRIPT}
 <p class="hint">⚠️ 本页由 AI 辅助生成，仅供复习参考，<strong>不能替代教材、指南与临床判断</strong>；数值与结论请以现行教材/指南为准，用药与诊疗决策务必核对原始出处。</p>

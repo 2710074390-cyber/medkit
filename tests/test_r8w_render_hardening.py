@@ -11,6 +11,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -18,6 +20,24 @@ from medkit.core import websearch as ws  # noqa: E402
 from medkit.render import qbank_html, review_html  # noqa: E402
 
 XSS = "<img src=x onerror=alert(1)>"
+
+
+@pytest.fixture()
+def isolated_cfg(tmp_path, monkeypatch):
+    """隔离配置目录 + projects_dir 指向 tmp（与 test_pipeline_offline 同款）。"""
+    from medkit.core import config as cfgmod
+
+    monkeypatch.setattr(cfgmod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(cfgmod, "CONFIG_FILE", tmp_path / "config.json")
+    orig_load = cfgmod.load
+
+    def _load():
+        c = orig_load()
+        c["projects_dir"] = str(tmp_path / "projects")
+        return c
+
+    monkeypatch.setattr(cfgmod, "load", _load)
+    return tmp_path
 
 
 def _q(**kw) -> dict:
@@ -124,3 +144,113 @@ def test_digest_without_conflict_has_no_extra_section():
     d = ws.digest_for_prompt([{"title": "A", "url": "https://a.example/x", "snippet": "s"}])
     assert "与教材冲突的素材" not in d
     assert "https://a.example/x" in d
+
+
+# ---------------------------------------------------------------- S2-2 / S2-3（产物页脚本）
+
+def test_paper_history_numbers_are_coerced():
+    """S2-2：localStorage 的 score/total 必须经数值归一后才进 innerHTML（源码级守卫）。"""
+    paper = qbank_html.export_paper_html([_q()], "押题卷")
+    for raw in ("+last.score+", "+last.total+", "+best.score+", "+best.total+"):
+        assert raw not in paper, f"仍存在未归一的插值：{raw}"
+    assert "num(last.score)" in paper and "num(best.total)" in paper
+    assert "const num=v=>" in paper, "缺少数值归一助手"
+
+
+def test_paper_media_only_from_server_questions():
+    """S2-3：只有服务端题目对象可注入 media——localStorage 灌入的题目必须失效。"""
+    paper = qbank_html.export_paper_html([_q()], "押题卷")
+    assert "new WeakSet()" in paper, "缺少服务端题目对象登记"
+    assert "if(q.media && SRV_Q.has(q)) h+=q.media;" in paper, "media 注入必须带来源校验"
+    assert paper.count("h+=q.media;") == 1, "media 注入点应只有一处（且带来源校验）"
+
+
+# ---------------------------------------------------------------- S1-1b
+
+def test_product_notice_banner_rendered_only_when_given():
+    """S1-1b：传入 notice 时产物页顶部出现告警条；不传则没有。"""
+    with_notice = qbank_html.export_html([_q()], "题库", notice="本批未经事实校验")
+    assert "banner bad" in with_notice and "本批未经事实校验" in with_notice
+    plain = qbank_html.export_html([_q()], "题库")
+    assert "banner bad" not in plain
+    paper = qbank_html.export_paper_html([_q()], "押题卷", notice="本批未经事实校验")
+    assert "本批未经事实校验" in paper
+
+
+def test_notice_is_escaped():
+    html = qbank_html.export_html([_q()], "题库", notice=XSS)
+    assert XSS not in html and "&lt;img" in html
+
+
+def test_qc_unverified_reaches_product_page(isolated_cfg):
+    """接线级（S1-1b）：质检整批故障 → 产物页必须带上「未经事实校验」告警。"""
+    import json as _json
+
+    from medkit.core import orchestrator as orch
+
+    pid = "p_notice"
+    base = isolated_cfg / "projects" / pid
+    base.mkdir(parents=True)
+    slices = [{"sid": "S001", "title": "第一章", "text": "生长发育三个高峰。", "role": "textbook"}]
+    (base / "slices.json").write_text(_json.dumps(slices, ensure_ascii=False), encoding="utf-8")
+    (base / "meta.json").write_text(_json.dumps({
+        "pid": pid, "subject": "儿科", "exam": "期末", "stage": "quota", "seed": 42,
+        "ratios": {"A1": 100}, "toggles": {"qbank": True, "paper": False, "review": False},
+        "quota": [{"sid": "S001", "count": 2, "title": "第一章"}],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    class _Gen:
+        def chat_json(self, messages, **kwargs):
+            return {"questions": [{
+                "id": "Q001", "type": "A1", "bloom": "记忆", "subtopic": "章",
+                "question": "生长发育有几个高峰？", "options": ["一个", "两个", "三个", "四个", "五个"],
+                "answer": "C", "analysis": "三个。【源:切片S001】", "sid": "S001"}]}
+
+    class _Boom:
+        """质检整批故障（模拟 LLM 不可用）。"""
+
+        def chat_json(self, messages, **kwargs):
+            raise RuntimeError("模拟质检故障")
+
+    orch.run_project(pid, overrides={"gen": _Gen(), "qc": _Boom(), "fix": _Gen()})
+    qbank = (base / "最终产物" / "qbank.html").read_text(encoding="utf-8")
+    assert "未经事实校验" in qbank, "质检未完成必须在产物页可见（S1-1b 接线回归）"
+
+
+# ---------------------------------------------------------------- S3-6
+
+def test_fts_quote_escapes_double_quote():
+    """S3-6：FTS5 字面量转义——内部双引号必须翻倍（否则提前闭合字面量）。"""
+    from medkit.core.db import _fts_quote
+
+    assert _fts_quote('a"b') == '"a""b"*'
+    assert _fts_quote("plain") == '"plain"*'
+
+
+def test_fts_match_expr_escapes_token_with_quote(monkeypatch):
+    """S3-6 接线级：token 含双引号时，生成的 MATCH 表达式必须已转义。
+
+    用 monkeypatch 直接喂 token，避免依赖 jieba 的分词行为（实测裸 `"` 会被
+    `len(t) >= 2` 过滤掉，所以靠真实分词构造不出该路径）。
+    """
+    from medkit.core import db as _db
+
+    monkeypatch.setattr(_db, "fts_tokens", lambda q: ['a"b'])
+    assert _db.fts_match_expr("x") == '"a""b"*'
+
+
+def test_fts_match_expr_executes_on_quote_query():
+    """真跑一次 FTS5：含引号的查询串不得让 MATCH 报语法错。"""
+    import sqlite3
+
+    from medkit.core import db as _db
+
+    expr = _db.fts_match_expr('甲状腺"功能"减退')
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+        conn.execute("INSERT INTO t VALUES ('甲状腺功能减退')")
+        n = conn.execute("SELECT count(*) FROM t WHERE t MATCH ?", (expr,)).fetchone()[0]
+        assert n >= 0
+    finally:
+        conn.close()

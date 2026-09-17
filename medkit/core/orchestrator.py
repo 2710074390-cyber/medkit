@@ -1400,8 +1400,15 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     _set_progress(base, "rendering", 0, 1, "生成 HTML…",
                   sub="题库 MD/HTML", sub_done=0, sub_total=5)
     qbank_md = qbank_html.export_md(questions, f"{subject} 题库")
+    # S1-1b（R8+W）：质检未完成的批次必须**在产物页上可见**——原先该状态只写进 run.log 与
+    # 人工复核清单，读者拿到题库/押题卷时完全看不出来。
+    _qc_unverified = [i for i in qc_report.get("issues", []) if i.get("code") == "QC_UNVERIFIED"]
+    _qc_notice = ("本批题目中有部分批次未能完成 AI 质检（质检调用失败或超时），"
+                  "这部分题目**未经事实校验**——请以教材与指南为准，重要结论请人工复核。"
+                  if _qc_unverified else "")
     qbank_html_text = qbank_html.export_html(questions, f"{subject} 题库",
-                                             image_index=image_index, pid=pid)
+                                             image_index=image_index, pid=pid,
+                                             notice=_qc_notice)
     (base / "最终产物" / "qbank.md").write_text(qbank_md, encoding="utf-8")
     (base / "最终产物" / "qbank.html").write_text(qbank_html_text, encoding="utf-8")
     rendered = ["qbank.md", "qbank.html"]
@@ -1418,7 +1425,8 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         (base / "最终产物" / "押题卷.html").write_text(
             qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
                                          pid=pid, subject=subject,
-                                         image_index=image_index), encoding="utf-8")
+                                         image_index=image_index,
+                                         notice=_qc_notice), encoding="utf-8")
         rendered.append("押题卷.html")
         _substep(base, "rendering", "paper", "押题卷", "done",
                  f"{len(paper_qs)} 题")

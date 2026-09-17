@@ -576,6 +576,15 @@ def fts_tokens(text: str) -> list[str]:
     return toks
 
 
+def _fts_quote(tok: str) -> str:
+    """FTS5 字符串字面量转义：内部双引号翻倍（S3-6 / R8+W）。
+
+    原实现直接 `f'"{t}"*'`——token 里若含 `"` 会**提前闭合字面量**：轻则 MATCH 语法报错
+    （检索整条失败），重则把用户输入当 FTS5 语法解析。token 来自搜索框，必须转义。
+    """
+    return '"' + tok.replace('"', '""') + '"*'
+
+
 def fts_match_expr(query: str) -> str:
     """查询串 → FTS5 MATCH 表达式：token 前缀式 OR 召回（去重，单字过滤，≤40 项）。
 
@@ -585,7 +594,7 @@ def fts_match_expr(query: str) -> str:
     for t in fts_tokens(query or ""):
         if len(t) >= 2 and t not in toks:
             toks.append(t)
-    return " OR ".join(f'"{t}"*' for t in toks[:40])
+    return " OR ".join(_fts_quote(t) for t in toks[:40])
 
 
 def reindex_slices(rows: list[dict[str, Any]]) -> int:
