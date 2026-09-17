@@ -27,7 +27,7 @@ from ..core import db as dbs
 from ..core import usage
 from ..core import websearch as ws
 from ..core.config import resolve_key
-from ..gates import bloom_check, dedup_check, options_check, trace_check
+from ..gates import bloom_check, dedup_check, numeric_check, options_check, trace_check
 from ..render import qbank_html, review_html
 from . import errors as _errs
 
@@ -725,7 +725,10 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
             "options": options_check.check_all(questions),
             "bloom": bloom_check.check_bloom(questions, bloom_target),
             "trace": trace_check.check_trace(questions, known_sids),
-            "dup": dedup_check.check_dup(questions),
+            # S1-3：查重同路带上源文本（题↔源照抄检测）
+            "dup": dedup_check.check_dup(questions, source_texts=text_by_sid),
+            # S1-2：数值核验（正确选项的临床数值必须有源文本出处）
+            "numeric": numeric_check.check_numbers(questions, source_texts=text_by_sid),
         }
         (base / "质检报告" / "gate1_final.json").write_text(
             json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -758,7 +761,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             return questions, _cancel_out(base, meta_path, done_sids, questions)
         _set_stage(base, meta_path, "gate1", f"② 门禁① 第 {round_i} 轮…")
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="选项校验", sub_done=0, sub_total=4)
+                      sub="选项校验", sub_done=0, sub_total=5)
         _opt_issues, opt_err = _run_substep(
             base, "gate1", "options", "选项校验",
             lambda ev, qs=questions: options_check.check_all(qs)["issues"],
@@ -768,7 +771,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                                    [f"第 {round_i} 轮失败：{opt_err}", "已按无问题继续，建议人工复核。"])
             _opt_issues = []
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="Bloom 校验", sub_done=1, sub_total=4)
+                      sub="Bloom 校验", sub_done=1, sub_total=5)
         _bloom_issues, bloom_err = _run_substep(
             base, "gate1", "bloom", "Bloom 校验",
             lambda ev, qs=questions: bloom_check.check_bloom(qs, bloom_target)["issues"],
@@ -778,7 +781,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                                    [f"第 {round_i} 轮失败：{bloom_err}", "已按无问题继续，建议人工复核。"])
             _bloom_issues = []
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="溯源回查", sub_done=2, sub_total=4)
+                      sub="溯源回查", sub_done=2, sub_total=5)
         _trace_issues, trace_err = _run_substep(
             base, "gate1", "trace", "溯源回查",
             lambda ev, qs=questions: trace_check.check_trace(qs, known_sids)["issues"],
@@ -788,28 +791,44 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                                    [f"第 {round_i} 轮失败：{trace_err}", "已按无问题继续，建议人工复核。"])
             _trace_issues = []
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
-                      sub="查重", sub_done=3, sub_total=4)
+                      sub="查重", sub_done=3, sub_total=5)
         _dup, dup_err = _run_substep(
-            base, "gate1", "dup", "查重",
-            lambda ev, qs=questions: dedup_check.check_dup(qs),
+            base, "gate1", "dup", "查重与查源",
+            # S1-3（R8+W）：查重之外补「题↔源文本」照抄检测（按 sid 取源切片文本）
+            lambda ev, qs=questions: dedup_check.check_dup(qs, source_texts=text_by_sid),
             detail=f"第 {round_i} 轮")
         if dup_err:
             _append_manual_section(base, "门禁① 查重",
                                    [f"第 {round_i} 轮失败：{dup_err}", "已按无问题继续，建议人工复核。"])
             _dup = {"issues": []}
+        # S1-2（R8+W）：数值核验——不依赖 LLM 的硬锚点（正确选项的临床数值必须有源文本出处）
+        _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
+                      sub="数值核验", sub_done=4, sub_total=5)
+        _num, num_err = _run_substep(
+            base, "gate1", "numeric", "数值核验",
+            lambda ev, qs=questions: numeric_check.check_numbers(qs, source_texts=text_by_sid),
+            detail=f"第 {round_i} 轮")
+        if num_err:
+            _append_manual_section(base, "门禁① 数值核验",
+                                   [f"第 {round_i} 轮失败：{num_err}", "已按无问题继续，建议人工复核。"])
+            _num = {"issues": []}
         gate = {
             "options": {"issues": _opt_issues},
             "bloom": {"issues": _bloom_issues},
             "trace": {"issues": _trace_issues},
             "dup": _dup,
+            "numeric": _num,
         }
         _set_progress(base, "gate1", round_i, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮完成",
-                      sub="门禁检查", sub_done=4, sub_total=4)
+                      sub="门禁检查", sub_done=5, sub_total=5)
         dup_issues = [x for x in gate["dup"]["issues"] if x.get("severity") in ("fail", "warn")]
+        # S1-2：数值核验的 fail/warn 与查重同路（进 MedFix 定向修复 + 人工复核留痕）
+        num_issues = [x for x in gate["numeric"]["issues"]
+                      if x.get("severity") in ("fail", "warn")]
         # U-07：按轮刷新查重留痕（最后一轮仍命中的 = 修复轮用尽仍未消除）
         _dup_marks = {x["q_id"]: x.get("reason", "") for x in dup_issues if x.get("q_id")}
         all_issues = (gate["options"]["issues"] + gate["bloom"]["issues"]
-                      + gate["trace"]["issues"] + dup_issues)
+                      + gate["trace"]["issues"] + dup_issues + num_issues)
         fails = [x for x in all_issues if x["severity"] == "fail"]
         (base / "质检报告").mkdir(exist_ok=True)
         (base / "质检报告" / f"gate1_round{round_i}.json").write_text(
@@ -818,8 +837,8 @@ def _stage_gate1(*, base: Path, meta_path: Path,
         # q_id='BLOOM' 等哨兵——MedFix 按 issue 序号找不到原题，修复必然是空转白烧 token）：
         # 非定向项只留痕一次（人工复核清单 + log），不参与 MedFix 循环与后续剔除
         _qids = {q.get("id") for q in questions if q.get("id")}
-        actionable = [x for x in fails + dup_issues if x.get("q_id") in _qids]
-        non_action = [x for x in fails + dup_issues if x.get("q_id") not in _qids]
+        actionable = [x for x in fails + dup_issues + num_issues if x.get("q_id") in _qids]
+        non_action = [x for x in fails + dup_issues + num_issues if x.get("q_id") not in _qids]
         if non_action and not non_action_flagged:
             non_action_flagged = True
             _log(base, f"  门禁① {len(non_action)} 条非定向核查项（比例级/无 q_id），"
@@ -835,7 +854,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
         if round_i <= FIX_ROUNDS_GATE:
             if cancel.is_set():   # B24：修复轮开始前可取消（单次修复调用期间的取消由 LLM 层流式退出接管）
                 return questions, _cancel_out(base, meta_path, done_sids, questions)
-            _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} → MedFix 修复第 {round_i} 轮…（可定向 {len(to_fix)} 条）")
+            _log(base, f"  门禁① fails={len(fails)} dup={len(dup_issues)} num={len(num_issues)} → MedFix 修复第 {round_i} 轮…（可定向 {len(to_fix)} 条）")
             for _i, iss in enumerate(to_fix):
                 _qid = str(iss.get("q_id") or f"issue{_i + 1}")
                 _substep(base, "gate1", f"fix:{_qid}", f"修复 {_qid}", "running",
@@ -1116,6 +1135,13 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                     (lambda ev: medqc.make_client(cancel=_or_cancel(cancel, ev))))
 
     subject = meta.get("subject", "")
+    # S1-2（R8+W）：QC 与生成用同一模型档 = 同模型自查自纠，事实性判分的独立性打折。
+    # 这里**只告警不硬拦**：默认配置下 model_qc 会回落到 model_gen，硬拦会让存量用户直接
+    # 无法生成；是否强制分档属产品决策（见 docs/reviews/修复方案_R8+W_2026-09-17.md B4）。
+    _c_gen, _c_qc = str(cfg.load().get("model_gen") or ""), str(cfg.load().get("model_qc") or "")
+    if _c_gen and (not _c_qc or _c_qc == _c_gen):
+        _log(base, f"  ⚠️ 质检模型与生成模型相同（{_c_gen}）——同模型自查自纠，"
+                   f"事实性判分的独立性打折；建议在「审核台 → 模型」为质检单独选一个不同档位")
     exam = meta.get("exam", "期末")
     toggles = meta.get("toggles", {})
     # WP-01/WP-10：大纲锚定注入——教师重点为主（source=teacher），官方 306 仅作补充
