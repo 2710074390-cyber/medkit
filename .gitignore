@@ -11,7 +11,11 @@ dist-installer/
 # 用通配以防 `git add -A` 把重命名后的构建产物误提交（2026-09-15 曾误提交 843 个文件）
 dist-old*/
 build-old*/
-archive/installers/
+# 2026-09-17 整理：旧构建快照统一归档到 archive/（builds/ + dist/），
+# 只保留归档说明 README.md 入库（否则「为什么有 archive/」这件事会失传）。
+# 根目录因此从 27 个条目收敛到 12 个。
+archive/*
+!archive/README.md
 pack/icon_preview.png
 projects/
 *.spec.bak
