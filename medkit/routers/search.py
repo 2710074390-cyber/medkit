@@ -47,7 +47,9 @@ def _search_error_hint(e: Exception) -> str:
         return "网络不可达——请检查本机网络或后端地址"
     if "400" in s:
         return "请求参数不被后端接受（模型/工具版本可能过时）"
-    return f"测试失败：{e}"
+    # SEC-REDACT ①（R8+W）：同上——末枝直回原始异常串，先脱敏再回显。
+    from ..core import errors as _errs
+    return f"测试失败：{_errs.redact(e)}"
 
 
 @router.post("/api/search/test")

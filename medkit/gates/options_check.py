@@ -16,6 +16,8 @@ OPTION_PREFIX = re.compile(r"^[A-E][\.、\s]")
 EXPECT_OPTION_COUNT = {"A1": 5, "A2": 5, "X": 5, "B1": 5, "A3": 5, "A4": 5}
 ALLOWED_BLOOM = {"记忆", "理解", "应用", "创造"}
 ALLOWED_TYPES = {"A1", "A2", "X", "B1", "A3", "A4"}  # S3：案例题 A3/A4 纳入门禁
+# 答案键字母表（与渲染层 qbank_html.LETTERS 同口径，供 R15 越界提示用）
+LETTERS = "ABCDEFGHIJ"
 
 
 def _strip_prefix(opt: str) -> str:
@@ -98,6 +100,29 @@ def check_question(q: dict[str, Any], idx: str) -> list[dict[str, Any]]:
         add("D16", "fail", f"bloom 标注非法：「{q.get('bloom')}」（应为记忆/理解/应用/创造）")
     if q.get("type") not in ALLOWED_TYPES:
         add("R0", "fail", f"题型非法：「{q.get('type')}」")
+    # R15 答案键越界（S2-7 / R8+W）：字母必须落在**实际选项范围内**。
+    # 原实现只验「非空 + 单字母」，`answer="F"` 而只有 A~E 时全程无人拦——渲染后该题无正确项可勾，
+    # 学生按答案键判分永远判错。X 型逐个字母都要在范围内。
+    if answer:
+        _letters = list(answer)
+        for ch in _letters:
+            if ord(ch) - ord("A") >= len(opts):
+                add("R15", "fail",
+                    f"答案键越界：{ch} 超出选项范围（共 {len(opts)} 个选项，仅到 "
+                    f"{LETTERS[len(opts) - 1] if opts else '-'}）")
+                break
+    # R16 重复选项（S2-8 / R8+W）：归一化后内容相同的选项不得同时出现——原无任何门禁拦截，
+    # 重复项会让「哪个是正确答案」出现歧义（渲染上看着是两个选项，实际指向同一内容）。
+    _seen_opts: dict[str, int] = {}
+    for _i, _o in enumerate(opts):
+        _key = re.sub(r"\s+", "", _o).lower()
+        if not _key:
+            continue
+        if _key in _seen_opts:
+            add("R16", "fail",
+                f"选项重复：第 {_seen_opts[_key] + 1} 项与第 {_i + 1} 项内容相同（{_o[:24]}）")
+            break
+        _seen_opts[_key] = _i
     return issues
 
 

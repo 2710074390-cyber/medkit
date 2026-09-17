@@ -148,6 +148,17 @@ async def _guard_local(request: Request, call_next):
         org = (request.headers.get("origin") or "").rstrip("/")
         if org and org not in _allowed_origins():
             return JSONResponse({"detail": "forbidden origin"}, status_code=403)
+    else:
+        # S2-6（R8+W）：GET/HEAD 也要挡跨站触发——原实现只查非 GET 的 Origin，于是
+        # 用户浏览的任意网页都能用 `<img src="http://127.0.0.1:4880/api/library/cards/export/apkg?subject=x">`
+        # 触发**带副作用的 GET**（该端点会真的写文件；`/api/update/check` 会真的外呼 GitHub）。
+        # `Sec-Fetch-Site` 由浏览器强制标注、页面脚本无法伪造（跨站触发必为 `cross-site`）；
+        # 无该头的客户端（curl / 测试 / 本机工具）不受影响——威胁模型是「用户访问的恶意网页」。
+        if (request.headers.get("sec-fetch-site") or "").lower() == "cross-site":
+            return JSONResponse({"detail": "forbidden cross-site request"}, status_code=403)
+        org = (request.headers.get("origin") or "").rstrip("/")
+        if org and org not in _allowed_origins():
+            return JSONResponse({"detail": "forbidden origin"}, status_code=403)
     resp = await call_next(request)
     # S2-4（R8+W）：响应头加固。前端是零构建的原生脚本 + 内联 onclick 范式，因此 script-src
     # 必须放行 'unsafe-inline'；但**外部加载与连接一律封死**——即便有内容注入成功，

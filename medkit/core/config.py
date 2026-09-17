@@ -103,8 +103,16 @@ def _unprotect(value: str) -> str:
 
 
 def resolve_key(value: str) -> str:
-    """取真实明文密钥（兼容明文迁移期）。"""
-    return _unprotect(value)
+    """取真实明文密钥（兼容明文迁移期）。
+
+    SEC-REDACT ③（R8+W）：顺手把明文登记到 `errors`，让日志/回显侧的 `redact`
+    能精确掩码**本机实际使用的**密钥（正则只认已知前缀，抓不住自定义形态）。
+    """
+    plain = _unprotect(value)
+    if plain:
+        from . import errors as _errs
+        _errs.register_secret(plain)
+    return plain
 
 
 def encrypt_for_save(value: str) -> str:

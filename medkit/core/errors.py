@@ -33,12 +33,34 @@ _logger = logging.getLogger("medkit.errors")
 
 # R6-20：日志/回显前统一脱敏（Key 一旦进入异常串即被写盘/回显，此处为主动防线）
 _KEY_RE = re.compile(r"sk-[A-Za-z0-9_\-]{6,}")
+# SEC-REDACT ③（R8+W）：原正则只遮 `sk-` 前缀——MinerU 的 `mr-xxx`、JWT `eyJ….….…`
+# 这类非 sk- 形态的裸值会原样落进 run.log 与 /api/diagnostics/errors。
+_EXTRA_KEY_RE = re.compile(
+    r"\bmr-[A-Za-z0-9_\-]{6,}"
+    r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}")
 _AUTH_RE = re.compile(r"(?i)\b(authorization|api[_-]?key)\b\s*[:=]\s*\S+")
+
+# 已登记的「本机实际密钥明文」（由 config.resolve_key 登记）。
+# 正则只能覆盖已知前缀形态；智谱 `xxx.yyyy`、自建网关自定义 token 等抓不住，
+# 登记实际值才能精确掩码（SEC-REDACT ③ 的「动态掩码」部分）。
+_SECRETS: set[str] = set()
+
+
+def register_secret(value: Any) -> None:
+    """登记一个实际密钥明文，供 `redact` 一并掩码（长度 <8 的短串忽略，避免误伤正常文本）。"""
+    v = str(value or "").strip()
+    if len(v) >= 8:
+        _SECRETS.add(v)
 
 
 def redact(text: Any, limit: int = _MAX_MSG) -> str:
-    """脱敏 + 截断：掩码 `sk-***` 与 `Authorization/api_key: ***`，并限制长度。"""
-    t = _KEY_RE.sub("sk-***", str(text))
+    """脱敏 + 截断：掩码已登记密钥、`sk-***`、`mr-***`/JWT，以及 `Authorization/api_key: ***`。"""
+    t = str(text)
+    for s in _SECRETS:
+        if s in t:
+            t = t.replace(s, "***")
+    t = _KEY_RE.sub("sk-***", t)
+    t = _EXTRA_KEY_RE.sub("***", t)
     t = _AUTH_RE.sub(r"\1: ***", t)
     return t[:limit]
 

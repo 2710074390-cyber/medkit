@@ -231,7 +231,10 @@ class LLMClient:
         if any(k in low for k in ("connect", "connection", "refused", "network",
                                   "remote", "ssl")):
             return "连接失败：无法连接到服务端——请检查 Base URL 与网络"
-        return f"连接失败：{m}"
+        # SEC-REDACT ①（R8+W）：原始异常串必须过 redact 才能回显——
+        # 该分支以 200 正常 JSON 的 msg 字段直出，**不经过** main.py 的统一错误出口。
+        from . import errors as _errs
+        return f"连接失败：{_errs.redact(m)}"
 
     def test(self) -> tuple[bool, str]:
         """测试连接：能拿到模型应答即成功（不校验应答内容，避免误报）。"""

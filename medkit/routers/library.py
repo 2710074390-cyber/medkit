@@ -709,11 +709,35 @@ def _tutor_grounding(subject: str, kp_name: str) -> tuple[str, bool, list[dict[s
     return slices_text, grounded, web_materials
 
 
+def _tutor_guard(body: TutorStartBody) -> Iterator[None]:
+    """S2-5（R8+W）：**非流式** tutor/start 的持锁守卫——与 `_explain_guard` 同款。
+
+    原实现给非流式端点也用了窥视式 `_tutor_start_guard`（只 `is_active` 看一眼、不登记），
+    而流式端点另有 `gen()` 持锁兜底 → 两个并发 `POST /api/library/tutor/start` 都能通过窥视，
+    各自建会话并各调一次 LLM，**双份计费 + 两个会话**（前端按钮禁用挡不住并发端口）。
+    这里改为 begin/end 真正持有，重复提交直接 409。
+    """
+    from ..core import dedupe
+
+    key = _tutor_key(body)
+    if dedupe.begin(key):
+        raise HTTPException(409, "该知识点的提问会话正在创建，请稍候或直接进入会话，勿重复提交")
+    try:
+        yield
+    finally:
+        dedupe.end(key)
+
+
 def _tutor_start_guard(body: TutorStartBody) -> Iterator[None]:
     """R3-21：同知识点同契入「在飞」去重（防连点双开会话双扣费）。
 
-    R5-02/鉴 R4-01：同 _explain_start_guard——窥视式早拦截，流生命周期锁由
-    tutor_start_stream 的 gen() begin/end 持有（原因见 _explain_start_guard 注释）。
+    R5-02/鉴 R4-01：本守卫只做**请求级早拦截**——**窥视**（不登记、不占锁）后 409；
+    真正的「锁持有期 ≡ 流生命周期」由 tutor_start_stream 的 gen() begin/end 保证
+    （不用 begin/end 的原因见 `_explain_start_guard` 注释：Depends(yield) 的 teardown
+    在流完成后才执行，守卫若持锁会与 gen() 内同 key 锁互斥）。
+
+    ⚠️ S2-5（R8+W）：本窥视守卫**只可用于流式端点**。非流式 `tutor_start` 必须用
+    `_tutor_guard`（持锁）——否则并发提交会双建会话双扣费。
     """
     from ..core import dedupe
 
@@ -723,7 +747,7 @@ def _tutor_start_guard(body: TutorStartBody) -> Iterator[None]:
 
 
 @router.post("/api/library/tutor/start")
-def tutor_start(body: TutorStartBody, _guard: None = Depends(_tutor_start_guard)) -> dict[str, Any]:
+def tutor_start(body: TutorStartBody, _guard: None = Depends(_tutor_guard)) -> dict[str, Any]:
     """开一个 Socratic 会话：锁定知识点+教材切片 → LLM 出第一问 → 存会话。"""
     if not body.kp_name.strip() and not body.kp_id and not body.mistake_id:
         raise HTTPException(400, "请指定待学习的知识点")

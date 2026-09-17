@@ -731,7 +731,7 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
         gate = {
             "options": options_check.check_all(questions),
             "bloom": bloom_check.check_bloom(questions, bloom_target),
-            "trace": trace_check.check_trace(questions, known_sids),
+            "trace": trace_check.check_trace(questions, known_sids, slice_texts=text_by_sid),
             # S1-3：查重同路带上源文本（题↔源照抄检测）
             "dup": dedup_check.check_dup(questions, source_texts=text_by_sid),
             # S1-2：数值核验（正确选项的临床数值必须有源文本出处）
@@ -791,7 +791,8 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                       sub="溯源回查", sub_done=2, sub_total=5)
         _trace_issues, trace_err = _run_substep(
             base, "gate1", "trace", "溯源回查",
-            lambda ev, qs=questions: trace_check.check_trace(qs, known_sids)["issues"],
+            lambda ev, qs=questions: trace_check.check_trace(
+                qs, known_sids, slice_texts=text_by_sid)["issues"],
             detail=f"第 {round_i} 轮")
         if trace_err:
             _append_manual_section(base, "门禁① 溯源回查",

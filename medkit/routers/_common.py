@@ -65,9 +65,11 @@ def _write_meta_atomic(base: Path, meta: dict[str, Any]) -> None:
 
 
 def _log_project(base: Path, msg: str) -> None:
+    # SEC-REDACT ②（R8+W）：run.log 是**裸 open 追加**，不走 errors 的 RedactingFilter，
+    # 且会被打进 exports 备份 zip —— 写盘前必须先过 redact（截断 + 掩码）。
     try:
         with open(base / "run.log", "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {_errs.redact(msg)}\n")
     except Exception as e:  # noqa: BLE001
         _errs.record("_common._log_project", "静默容错（U-15 留痕）", e=e)
 

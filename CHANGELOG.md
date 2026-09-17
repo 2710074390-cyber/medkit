@@ -124,6 +124,36 @@
   补记、在 `THIRD_PARTY_NOTICES.md` 补「同源站使用场景」小节——**均明确标注口径待产品/法务定版，
   不预设结论**（两种读法并列 + R1~R5 待办）。**R1「同源」语义定版属产品/法务决策，代码侧不代为决定。**
 
+### 医学门禁与并发/脱敏（Fixed，R8+W P1 收口）
+
+- **S2-7 答案键字母越界补拦**：原 `options_check` 只验「非空 + 单字母」，`answer="F"` 而只有 A~E 时
+  全程无人拦——渲染后该题无正确项可勾，按答案键判分永远判错。现新增规则 **R15**：
+  逐个答案字母必须落在实际选项范围内（X 型逐字母检查）。
+- **S2-8 重复选项补拦**：原无任何门禁覆盖，重复项会让「哪个是正确答案」出现歧义。
+  现新增规则 **R16**：选项归一化（去空白 + 小写）后不得重复。
+- **S2-9 溯源补「知识点 ↔ 切片对齐」**：原 `trace_check` 只验「切片 ID 是否存在」——
+  引用了**别的切片**（ID 真实存在但与本题无关）时无人发现，溯源形同虚设。现传入
+  `slice_texts` 后额外核对本题 `subtopic` 能否在该切片里找到，找不到判 `warn` 进人工复核
+  （不直接剔除：知识点命名与切片表述常有差异）。不传 `slice_texts` 时行为与原先一致。
+- **S2-5 非流式 tutor/start 改为真正持锁**：原给**非流式**端点也用了窥视式守卫
+  （只 `is_active` 看一眼、不登记），而流式端点另有 `gen()` 持锁兜底 → 两个并发
+  `POST /api/library/tutor/start` 都能通过窥视，各自建会话并各调一次 LLM，
+  **双份计费 + 两个会话**。现新增 `_tutor_guard`（begin/end 真正持有，与 `_explain_guard` 同款）
+  供非流式端点使用；流式端点继续用窥视守卫（避免同一请求自锁）。
+- **S2-6 GET/HEAD 也挡跨站触发**：原实现只查非 GET 的 Origin，于是用户浏览的任意网页都能用
+  `<img src="http://127.0.0.1:4880/api/library/cards/export/apkg?subject=x">` 触发**带副作用的
+  GET**（该端点会真的写文件；`/api/update/check` 会真的外呼 GitHub）。现对 GET/HEAD 增加
+  `Sec-Fetch-Site: cross-site` 拒绝（该头由浏览器强制标注、页面脚本无法伪造）；
+  无该头的客户端（curl / 测试 / 本机工具）不受影响。
+- **SEC-REDACT 脱敏防线三处旁路收口**：
+  ① 回显末枝——`LLMClient._test_error_hint` 与 `_search_error_hint` 的「原始异常串」分支
+  以 **200 正常 JSON** 直出、**不经过**统一错误出口，现先过 `errs.redact`；
+  ② `_log_project` 写 run.log 是**裸 open 追加**（不走 `RedactingFilter`，且该文件会被打进
+  exports 备份 zip），现写盘前过 `redact`；
+  ③ `redact` 正则原只遮 `sk-` 前缀，现补 `mr-`（MinerU）与 JWT `eyJ….….…` 形态，
+  并新增 `register_secret()` + `config.resolve_key` 登记**本机实际密钥明文**——
+  智谱 `xxx.yyyy`、自建网关自定义 token 等非标准形态靠前缀抓不住，登记实际值才能精确掩码。
+
 ### Prompts
 
 > **NX-06 义务说明**：本版改动了 `medkit/prompts/medreview.md`。该 prompt **没有**对应的
