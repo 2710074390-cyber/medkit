@@ -764,7 +764,7 @@ function buildGrid(){{
     const a=st.answers[qid(i)];
     const mk=st.marked.includes(qid(i));
     const tip='第 '+qNo(q,i)+' 题 · '+(a?'已答':'未答')+(mk?' · 已标记':'');
-    h+='<span class="cell'+(a?' done':'')+(mk?' mk':'')+'" title="'+tip+'" aria-label="'+tip+'" role="button" tabindex="0" onclick="jump('+i+')">'+qNo(q,i)+'</span>';
+    h+='<span class="cell'+(a?' done':'')+(mk?' mk':'')+'" data-i="'+i+'" title="'+tip+'" aria-label="'+tip+'" role="button" tabindex="0" onclick="jump('+i+')">'+qNo(q,i)+'</span>';
   }});
   g.innerHTML=h;
 }}
@@ -982,10 +982,12 @@ function tick(){{
 }}
 setInterval(tick,1000); tick();
 document.addEventListener('input',e=>{{if(e.target.matches('.opt input'))collectAnswers();}});
-/* IMP-08：答题卡格子可键盘激活（Enter/Space） */
+/* IMP-08：答题卡格子可键盘激活（Enter/Space）
+   RV5（2026-09-17 审查）：改读 data-i 下标——原 parseInt(textContent)-1 用卷面题号
+   反推下标，错题重练时格子显示原卷号（B-09 等），Enter 会跳错题甚至 NaN */
 function gridKeys(e){{const c=e.target;
   if((e.key==='Enter'||e.key===' ')&&c.classList&&c.classList.contains('cell')){{
-    e.preventDefault(); jump(parseInt(c.textContent,10)-1);
+    e.preventDefault(); jump(Number(c.dataset.i));
   }}}}
 document.addEventListener('keydown',gridKeys);
 render();

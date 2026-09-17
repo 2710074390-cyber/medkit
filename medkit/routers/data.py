@@ -5,7 +5,9 @@
 
 安全边界：
 - `backup` 只读源、写「备份产物」目录，不触碰任何活数据 → 非破坏性。
-- `clear` 破坏性：必须匹配确认短语；自动先做完整备份；只清「学习数据 + 项目」，保留应用配置。
+- `clear` 破坏性：必须匹配确认短语；自动先做完整备份；清「学习数据 + 项目 + 会话/日志 + exports
+  （保留 `exports/backups`）」，保留应用配置（config.json / presets / prompts）；
+  未能删除的项**如实回执** `ok=false` + `failed`，绝不谎报成功（S2-13）。
 - `restore`（导入恢复）**不在此轮提供**：运行中覆盖 SQLite 有 WAL/线程缓存一致性问题，需
   重启令牌机制与产品交互定案后再做（见 AGENT_HANDOFF / 优化清单 U-20 段）。
 """
@@ -27,10 +29,15 @@ router = APIRouter()
 BACKUPS_SUBDIR = ("exports", "backups")
 _CLEAR_CONFIRM = "清空全部数据"
 
-# 参与备份/清空的「活数据 + 应用配置」目录白名单（不含 prompts 影子副本：由内置模板可重建）
-_INCLUDE_PATHS = ("config.json", "presets", "library", "projects")
-# 清空 = 学习数据 + 项目（保留 config.json / presets / prompts）
-_CLEAR_PATHS = ("library", "projects")
+# 参与备份的「活数据 + 应用配置」目录白名单（不含 prompts 影子副本：由内置模板可重建）
+# S2-14（R8+W）：补 sessions——原实现漏掉素材会话，换机恢复后会话全丢。
+_INCLUDE_PATHS = ("config.json", "presets", "library", "projects", "sessions")
+# 清空 = 学习数据 + 项目 + 会话/日志（保留 config.json / presets / prompts）
+# S2-13（R8+W）：原仅 library/projects，导致 exports/sessions/logs 残留。
+_CLEAR_PATHS = ("library", "projects", "sessions", "logs")
+# exports 清空时**保留**的子目录：`exports/backups` 是清空前刚生成的自动备份，
+# 若一并删除等于亲手毁掉这次操作的安全网（S2-13 落地时的必要修正）。
+_CLEAR_KEEP: dict[str, tuple[str, ...]] = {"exports": ("backups",)}
 
 
 def _ts() -> str:
@@ -124,11 +131,17 @@ def _build_backup_zip(include_projects: bool) -> tuple[str, int]:
             if not src.exists():
                 continue
             if not include_projects and rel == "library":
-                # 核心备份：DB 主文件 + 活跃 JSON（跳过产生中的 WAL/损坏改名 bak）
+                # 核心备份：DB 主文件 + 活跃 JSON + **回滚点**（S3-18）。
+                # 只跳过产生中的 WAL/SHM 与损坏改名 bak（.corrupt-*，无恢复价值）；
+                # `.pre-db-*.bak` / `.pre-db-import-*.bak` 是真正的迁移/导入回滚点，
+                # 原实现把它们一并排除，导致「换机恢复后失去回滚点」。
                 for f in sorted(src.rglob("*")):
-                    if f.is_file() and not f.name.endswith(("-wal", "-shm", ".bak")):
-                        zf.write(f, f"library/{f.relative_to(src)}")
-                        items += 1
+                    if not f.is_file():
+                        continue
+                    if f.name.endswith(("-wal", "-shm")) or ".corrupt-" in f.name:
+                        continue
+                    zf.write(f, f"library/{f.relative_to(src)}")
+                    items += 1
                 continue
             if src.is_file():
                 zf.write(src, rel)
@@ -168,15 +181,24 @@ async def data_open_dir() -> dict[str, Any]:
     return {"ok": True, "path": str(root)}
 
 
-def _clear_all_data() -> list[str]:
-    """清空学习数据 + 项目。返回删除的顶层块列表。"""
+def _clear_all_data() -> tuple[list[str], list[str]]:
+    """清空学习数据 + 项目 + 会话/日志。返回 `(已删除的顶层块, 未能删除的路径)`。
+
+    S2-13（R8+W）：原实现逐 child 吞掉 `OSError` 后**恒报成功**——运行中 SQLite 被占用时
+    主库根本删不掉（Windows `WinError 32`），用户却收到 `ok=True`，重启后数据"复活"。
+    现把失败项原样交给调用方，由接口如实回执（宁报 partial，不谎报成功）。
+    """
     root = cfg.CONFIG_DIR
     removed: list[str] = []
-    for rel in _CLEAR_PATHS:
+    failed: list[str] = []
+    for rel in (*_CLEAR_PATHS, *_CLEAR_KEEP):
         p = root / rel
         if not p.exists():
             continue
+        keep = _CLEAR_KEEP.get(rel, ())
         for child in sorted(p.iterdir()):
+            if child.name in keep:
+                continue
             try:
                 if child.is_dir():
                     for f in sorted(child.rglob("*")):
@@ -187,9 +209,10 @@ def _clear_all_data() -> list[str]:
                     child.unlink(missing_ok=True)
             except OSError as e:
                 _errs.record("data.clear", f"清理 {child} 失败", e=e)
-        if not any(p.iterdir()):
+                failed.append(str(child))
+        if rel in _CLEAR_PATHS and not any(p.iterdir()):
             removed.append(rel)
-    return removed
+    return removed, failed
 
 
 @router.post("/api/data/clear")
@@ -204,9 +227,19 @@ async def data_clear(body: dict[str, Any] | None = None) -> dict[str, Any]:
         _errs.record("data.clear.backup", "清空前自动备份失败——中止清空", e=e)
         raise HTTPException(500, "清空前自动备份失败，已中止，未删除任何数据")
     try:
-        removed = await asyncio.to_thread(_clear_all_data)
+        removed, failed = await asyncio.to_thread(_clear_all_data)
     except Exception as e:  # noqa: BLE001
         _errs.record("data.clear", "清空数据失败", e=e)
         raise HTTPException(500, "清空失败，数据可能残留，请用上面的备份恢复")
-    return {"ok": True, "removed": removed, "backup": {"file": Path(path).name, "path": path},
+    backup = {"file": Path(path).name, "path": path}
+    if failed:
+        # S2-13（R8+W）：不得恒报成功——如实回 partial 并给出可执行指引
+        _errs.record("data.clear", f"{len(failed)} 项未能删除（多为 SQLite 仍被占用）")
+        names = "、".join(Path(f).name for f in failed[:5])
+        more = f" 等 {len(failed)} 项" if len(failed) > 5 else ""
+        return {"ok": False, "removed": removed, "failed": failed, "backup": backup,
+                "hint": (f"部分数据未能删除（{names}{more}）——通常是数据库仍被本程序占用。"
+                         f"请**完全退出 MedKit**（含托盘/黑窗）后重新打开「数据管理」再清空一次。"
+                         f"清空前的完整备份已存于 {path}，本次不会丢失数据。")}
+    return {"ok": True, "removed": removed, "failed": [], "backup": backup,
             "hint": f"已清空学习数据与项目；自动备份存于 {path}（请重启 MedKit 使数据库完全释放）"}

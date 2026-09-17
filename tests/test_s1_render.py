@@ -27,6 +27,18 @@ def test_letters_cover_render_max():
     assert len(LETTERS) >= RENDER_MAX_OPTIONS
 
 
+def test_paper_grid_cells_carry_data_i():
+    """RV5：答题卡格子带 data-i 下标 + 键盘跳题读 data-i——错题重练时格子显示原卷号
+    （B-09 等），原 parseInt(textContent)-1 会跳错题/NaN。"""
+    qs = [{"id": "Q001", "type": "A1", "bloom": "理解", "subtopic": "呼吸",
+           "question": "肺通气机制？", "options": ["a", "b", "c", "d", "e"],
+           "answer": "A", "analysis": "解析"}]
+    p = export_paper_html(qs, "押题卷")
+    assert "data-i=\"'+i+'\"" in p          # buildGrid 格子写下标
+    assert "Number(c.dataset.i)" in p       # gridKeys 读下标（不再反推题号）
+    assert "parseInt(c.textContent" not in p
+
+
 def test_qbank_html_source_tag_and_year_filter():
     """v0.8.1 真题标记：来源标签（20XX 真题）与年份筛选器进入题库 HTML（含 data-yr）。"""
     qs = [{"id": "Q001", "type": "A1", "bloom": "理解", "subtopic": "呼吸",

@@ -95,3 +95,16 @@ def test_batch_endpoints_validation(iso):
     a = _mk(lib, "内科学", "A")
     r = c.post("/api/library/mistakes/batch-learn", json={"ids": [a], "learned": True})
     assert r.status_code == 200 and r.json()["updated"] == 1
+
+
+def test_batch_add_endpoint_rejects_over_500(iso):
+    """RV6：批量导入无上限会占住线程池 worker 长时间批量写库——与 batch-delete 同限 500。"""
+    from fastapi.testclient import TestClient
+
+    import medkit.main as m
+
+    c = TestClient(m.app, base_url="http://127.0.0.1")
+    body = [{"question": f"题干{i}", "options": ["甲", "乙"], "answer": "A", "analysis": "解析"}
+            for i in range(501)]
+    r = c.post("/api/library/mistakes/batch", json=body)
+    assert r.status_code == 400 and "500" in r.text

@@ -3,6 +3,7 @@
 U1/U2：可取消 + 断点续跑；成本预估接口统一前端 formula（S2：原 JS 内嵌公式删除）。
 """
 
+import asyncio
 import threading
 from typing import Any
 
@@ -104,8 +105,13 @@ class TrialBody(BaseModel):
 
 
 @router.post("/api/trial")
-def trial(body: TrialBody) -> dict[str, Any]:
-    """试出一题：不创建项目/不落盘/不跑管线；门禁即检，30~90 秒返回。"""
+async def trial(body: TrialBody) -> dict[str, Any]:
+    """试出一题：不创建项目/不落盘/不跑管线；门禁即检，30~90 秒返回。
+
+    RV4（2026-09-17 审查）：改 async + asyncio.to_thread——原同步 def 的 30~90 秒
+    LLM 阻塞会占住 FastAPI 线程池 worker（默认 40），并发 trial 会把其他接口
+    一并拖入排队；to_thread 后阻塞隔离在独立 worker，事件循环保持响应。
+    """
     c = cfg.load()
     if not resolve_key(c.get("api_key", "")):
         raise HTTPException(400, "请先在「① 连接服务商」保存 API Key，再试出题")
@@ -124,7 +130,7 @@ def trial(body: TrialBody) -> dict[str, Any]:
         dedupe.end(dedupe_key)
         raise HTTPException(429, "该科目的试出题请求过多，请稍候再试")
     try:
-        return _trial_locked(c, body)
+        return await asyncio.to_thread(_trial_locked, c, body)
     finally:
         dedupe.end(dedupe_key)
         dedupe.release(body.subject or "__trial__")

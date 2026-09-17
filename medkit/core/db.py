@@ -277,26 +277,74 @@ def enabled() -> bool:
     return DB_PATH.exists()
 
 
+class BackupError(RuntimeError):
+    """升级/导入前的备份未能完成——调用方必须**中止**不可逆操作（S2-27）。"""
+
+
+def _backup_db_snapshot(src: Path, dest: Path) -> None:
+    """用 SQLite online backup API 生成**一致性快照**，并校验其可读（S2-15 / S2-26）。
+
+    为什么不能直接 `copy2` 主库：WAL 模式下最新事务可能还在 `-wal` 里，只拷主库会得到
+    「缺表/缺行」的库——W1 E2E §C 实证：`wal_autocheckpoint=0` 时只拷主库 → `no such table: t`，
+    主库 + `-wal` 同拷才完整。backup API 会把 WAL 一并落到单一文件，天然一致。
+    校验：`PRAGMA integrity_check` 必须为 ok，且快照内至少有一张表；否则抛错（不静默留坏备份）。
+    """
+    src_conn = sqlite3.connect(f"{src.as_uri()}?mode=rw", uri=True, timeout=30)
+    try:
+        dest.unlink(missing_ok=True)
+        dst_conn = sqlite3.connect(str(dest))
+        try:
+            src_conn.backup(dst_conn)
+            row = dst_conn.execute("PRAGMA integrity_check").fetchone()
+            if not row or str(row[0]).lower() != "ok":
+                raise sqlite3.DatabaseError(f"备份完整性校验未通过：{row}")
+            tables = dst_conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+            if not tables:
+                raise sqlite3.DatabaseError("备份内无任何表——快照不可用")
+        finally:
+            dst_conn.close()
+    finally:
+        src_conn.close()
+
+
 def _backup_one(p: Path, tag: str, ts: str) -> Optional[Path]:
-    """备份单个文件 → {原名}.{tag}-<ts>.bak；返回备份路径或 None。"""
+    """备份单个文件 → {原名}.{tag}-<ts>.bak；失败留痕并返回 None。
+
+    DB 走 backup API（一致性快照 + 可读校验）；其余（JSON）走 copy2。
+    """
     bak = p.with_name(f"{p.name}.{tag}-{ts}.bak")
     try:
-        shutil.copy2(p, bak)
-    except OSError:
+        if p.name == DB_PATH.name:
+            _backup_db_snapshot(p, bak)
+        else:
+            shutil.copy2(p, bak)
+    except (OSError, sqlite3.Error) as e:
+        _errs.record("db.backup", f"备份 {p.name} 失败", e=e)
         return None
     return bak
 
 
 def _backup_before_migrate(include_db: bool) -> None:
+    """迁移前备份；**任一关键文件备份失败即抛 `BackupError` 中止迁移**（S2-27）。
+
+    原实现忽略 `_backup_one` 的 None 返回值并继续迁移——等于「连备份都没做成仍执行不可逆
+    结构变更」。宁可升级失败（下次启动重试，数据始终可读），不可裸奔。
+    """
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     lib = LIBRARY_DIR
-    if lib.is_dir():
-        paths = sorted(lib.glob("*.json"))
-        if include_db:  # 已有旧版本 db（升级既有库）才备份 db；首次迁移仅 JSON 有数据
-            paths += sorted(lib.glob("medkit.db"))
-        for p in paths:
-            if p.exists():
-                _backup_one(p, "pre-db", ts)
+    if not lib.is_dir():
+        return
+    paths = sorted(lib.glob("*.json"))
+    if include_db:  # 已有旧版本 db（升级既有库）才备份 db；首次迁移仅 JSON 有数据
+        paths += sorted(lib.glob("medkit.db"))
+    failed: list[str] = []
+    for p in paths:
+        if p.exists() and _backup_one(p, "pre-db", ts) is None:
+            failed.append(p.name)
+    if failed:
+        raise BackupError(
+            "升级前备份失败，已中止迁移（数据未被改动）：" + "、".join(failed))
 
 
 def migrate() -> int:
@@ -333,23 +381,38 @@ def downgrade_to(ver: int) -> int:
 
 
 # ---------------------------------------------------------------- 通用行存取
-def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    """query 列是冗余索引，权威数据在 data JSON（行→dict 无损）。"""
+def row_to_dict(row: sqlite3.Row) -> Optional[dict[str, Any]]:
+    """query 列是冗余索引，权威数据在 data JSON（行→dict 无损）。
+
+    RV7（2026-09-17 审查）：data JSON 损坏/非 dict → 返回 None（此前返回只含 id
+    的空壳 dict，被业务层当作「存在但字段为空」的记录——空题干卡/空科目漂移）。
+    调用方把 None 视为「该行不可读」：list_rows 过滤并留痕，find_row 视同未找到。
+    """
     d = dict(row)
     try:
         payload = json.loads(d.pop("data"))
     except Exception:  # noqa: BLE001
-        payload = {}
-    if isinstance(payload, dict):
-        payload.setdefault("id", d.get("id"))
-        return payload
-    return {}
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload.setdefault("id", d.get("id"))
+    return payload
 
 
 def list_rows(cur: sqlite3.Cursor, table: str,
               where: str = "", params: tuple = ()) -> list[dict[str, Any]]:
     cur.execute(f"SELECT * FROM {table} {where}", params)
-    return [row_to_dict(r) for r in cur.fetchall()]
+    out: list[dict[str, Any]] = []
+    dropped = 0
+    for r in cur.fetchall():
+        rec = row_to_dict(r)
+        if rec is None:
+            dropped += 1   # RV7：损坏行不流入业务层；计次汇总留痕（不逐行刷日志）
+        else:
+            out.append(rec)
+    if dropped:
+        _errs.record("db.list_rows", f"{table} 表 {dropped} 行 data JSON 损坏，已跳过（可从 ~/.medkit/library 备份恢复）")
+    return out
 
 
 def find_row(cur: sqlite3.Cursor, table: str,

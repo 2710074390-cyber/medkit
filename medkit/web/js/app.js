@@ -364,7 +364,11 @@ async function dmClear() {
   try {
     const r = await api("/api/data/clear", { method: "POST", body: JSON.stringify({ confirm: inp.value.trim() }) });
     inp.value = "";
-    if (out) out.innerHTML = `✅ 已清空。${esc(r.hint || "")}`;
+    // S2-13：后端不再恒报成功——被占用的数据（运行中的 SQLite）会回 ok=false + failed
+    if (r.ok === false) {
+      if (out) out.innerHTML = `⚠️ 部分数据未能删除。${esc(r.hint || "")}`;
+      toast("部分数据未能删除，请完全退出 MedKit 后重试", false);
+    } else if (out) out.innerHTML = `✅ 已清空。${esc(r.hint || "")}`;
     loadDataMgmt();
   } catch (e) { if (out) out.textContent = "清空失败/已中止：" + esc(e.message || e); }
 }
@@ -466,7 +470,7 @@ async function loadStart() {
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>最近项目</h2><span class="hint">点击进入项目详情</span></div>
         ${recent.length ? recent.map(p => `
-          <button class="start-proj" onclick="openRecentProject('${esc(p.pid)}')">
+          <button class="start-proj" data-pid="${esc(p.pid)}" onclick="openRecentProject(this)">
             <span class="proj-stage">${esc(p.stage_label)}</span>
             <span class="proj-name">${esc(p.subject || "未命名课题")} · ${esc(p.exam || "未设考试")}${p.target ? " · " + p.target + " 题" : ""}</span>
             ${p.running ? '<span class="spin"></span>' : ""}
@@ -546,14 +550,16 @@ function renderExamPlans() {
         <div class="exam-remind${active ? " hot" : ""}">${active ? "📌 " + esc(active) : esc(remind)}</div>
       </div>
       <div class="exam-actions">
-        <button class="mini-btn" onclick="examFormOpen('${esc(e.id)}')">编辑</button>
-        <button class="mini-btn" style="color:#f87171" onclick="examDelete('${esc(e.id)}')">删除</button>
+        <button class="mini-btn" data-id="${esc(e.id)}" onclick="examFormOpen(this)">编辑</button>
+        <button class="mini-btn" style="color:#f87171" data-id="${esc(e.id)}" onclick="examDelete(this)">删除</button>
       </div>
     </div>`;
   }).join("") + `</div><div style="margin-top:10px">${add}</div><div id="exam_form_slot"></div>`;
 }
 let _examEditId = "";
-function examFormOpen(id) {
+function examFormOpen(idOrEl) {
+  // RV1：双签名——内联传 this（data-id；新增表单传 ''），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   const slot = $("exam_form_slot");
   if (!slot) return;
   _examEditId = id || "";
@@ -602,7 +608,9 @@ function examFormClose() {
   const slot = $("exam_form_slot");
   if (slot) slot.innerHTML = "";
 }
-function examDelete(id) {
+function examDelete(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   const e = examFind(id);
   if (!e) return;
   confirmModal("删除考试", `<p class="muted" style="margin:0">确定删除「${esc(e.title || "考试")}」（${esc(e.date || "")}）吗？<br>本操作为本地偏好，不影响学习数据。</p>`,
@@ -616,5 +624,9 @@ window.examFormSave = examFormSave;
 window.examFormClose = examFormClose;
 window.examDelete = examDelete;
 window.renderExamPlans = renderExamPlans;
-function openRecentProject(pid) { showTab("bank"); showProject(pid); }
+function openRecentProject(pidOrEl) {
+  // RV1：双签名——内联传 this（data-pid），程序化调用传 pid
+  const pid = pidOrEl && pidOrEl.dataset ? (pidOrEl.dataset.pid || "") : pidOrEl;
+  showTab("bank"); showProject(pid);
+}
 window.openRecentProject = openRecentProject;

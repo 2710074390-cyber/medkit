@@ -103,6 +103,10 @@ def add_mistake(body: MistakeBody) -> dict[str, Any]:
 
 @router.post("/api/library/mistakes/batch")
 def batch_mistakes(body: list[MistakeBody]) -> dict[str, Any]:
+    # RV6（2026-09-17 审查）：与 batch-delete 的 _valid_ids 同口径限 500——
+    # 无上限的超大列表会长时间占住线程池 worker 并批量写库
+    if len(body) > 500:
+        raise HTTPException(400, "单次最多导入 500 条（请分批提交）")
     added = lib.batch_add([b.model_dump() for b in body])
     return {"ok": True, "added": added}
 

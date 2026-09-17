@@ -199,7 +199,7 @@ async function loadStudySubjects() {
     const byName = {};
     (r.stats || []).forEach(s => { byName[s.subject] = s; });
     const card = (s, st) => `
-      <button class="subj-card${rvSubject === s ? " on" : ""}" onclick="loadReviewCtx('${esc(s)}')" title="只看「${esc(s)}」的到期复习">
+      <button class="subj-card${rvSubject === s ? " on" : ""}" data-subject="${esc(s)}" onclick="loadReviewCtx(this)" title="只看「${esc(s)}」的到期复习">
         <div class="subj-avatar">${esc((s || "未分类").slice(0, 1))}</div>
         <div class="subj-main">
           <div class="subj-name">${esc(s)}</div>
@@ -524,20 +524,22 @@ function mkRowHTML(mm) {
       <input type="checkbox" class="mkck" data-id="${esc(mm.id)}" ${mkSelected.has(mm.id) ? "checked" : ""} onchange="mkToggleRow(this)">
     </label>
     <div class="mk-main">
-      <div class="mk-q" onclick="mkDetailTgl('${esc(mm.id)}')" title="点击展开详情">${esc(mm.question || "(无题干)")}</div>
+      <div class="mk-q" data-id="${esc(mm.id)}" onclick="mkDetailTgl(this)" title="点击展开详情">${esc(mm.question || "(无题干)")}</div>
       <div class="mk-meta">${meta.join("")}</div>
       <div class="mk-detail" id="mkd_${esc(mm.id)}">${detail || '<div class="hint">（无更多详情）</div>'}</div>
     </div>
     <div class="mk-actions">
       ${kp ? `<button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 讲解</button>
       <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 提问</button>` : ""}
-      ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" onclick="mkLearn('${esc(mm.id)}',true)">已掌握</button>`}
-      ${mm.learned && kp ? `<button class="act gray" style="padding:5px 11px;font-size:12px" onclick="mkPurgeSameCards('${esc(mm.subject || "")}','${esc(kp)}')">清同名卡</button>` : ""}
-      <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" onclick="mkDel('${esc(mm.id)}')">删除</button>
+      ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" data-id="${esc(mm.id)}" onclick="mkLearn(this,true)">已掌握</button>`}
+      ${mm.learned && kp ? `<button class="act gray" style="padding:5px 11px;font-size:12px" data-subject="${esc(mm.subject || "")}" data-kp="${esc(kp)}" onclick="mkPurgeSameCards(this)">清同名卡</button>` : ""}
+      <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" data-id="${esc(mm.id)}" onclick="mkDel(this)">删除</button>
     </div>
   </div>`;
 }
-function mkDetailTgl(id) {
+function mkDetailTgl(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   const d = $("mkd_" + id);
   if (d) d.classList.toggle("open");
 }
@@ -598,7 +600,9 @@ async function healLibrary() {
   } catch (e) { toast(e.message, false); }
 }
 window.mkDetailTgl = mkDetailTgl; window.learnRecAction = learnRecAction; window.healLibrary = healLibrary;
-async function mkLearn(id, learned) {
+async function mkLearn(idOrEl, learned) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 (id, learned)
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   try {
     await api(`/api/library/mistakes/${id}/learn`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -608,8 +612,14 @@ async function mkLearn(id, learned) {
                   : "已取消已掌握标记"); loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
-/* R4-24：标记「已掌握」后的显式清理——移出同名复习卡/记忆卡（带确认，不静默删） */
-async function mkPurgeSameCards(subject, kpName) {
+/* R4-24：标记「已掌握」后的显式清理——移出同名复习卡/记忆卡（带确认，不静默删）
+   RV1：双签名——内联传 this（data-subject/data-kp），程序化调用传 (subject, kpName) */
+async function mkPurgeSameCards(subjectOrEl, kpName) {
+  let subject = subjectOrEl;
+  if (subjectOrEl && typeof subjectOrEl === "object" && subjectOrEl.dataset) {
+    subject = subjectOrEl.dataset.subject || "";
+    kpName = subjectOrEl.dataset.kp || "";
+  }
   confirmModal("移出同名卡？",
     `<p style="margin:0;color:var(--dim)">将移出 <b>${esc(kpName)}</b> 的同名复习卡 / 记忆卡（${esc(subject || "未分类")}）。<br>
      <span class="hint">删除后该卡的 SM-2/FSRS 排期数据一并清除；确认知识点已掌握时再操作。</span></p>`,
@@ -624,7 +634,9 @@ async function mkPurgeSameCards(subject, kpName) {
     }, false);
 }
 window.mkPurgeSameCards = mkPurgeSameCards;
-async function mkDel(id) {
+async function mkDel(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   confirmModal("删除错题", `<p style="margin:0;color:var(--dim)">确定删除这道错题吗？对应知识点掌握度会随之刷新。<br>
     <span class="hint">已生成的讲解 / 提问会话 / 复习卡 / 记忆卡会<b>保留</b>；如不再需要请到对应视图删除。</span></p>`,
     "删除", async () => {

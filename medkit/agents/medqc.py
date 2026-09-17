@@ -116,10 +116,15 @@ def _qc_batch_once(client: Any, batch: list[dict[str, Any]],
             "summary": out.get("summary", ""),
         }
     except Exception as e:  # noqa: BLE001  单批失败不中断整体
+        # S1-1（R8+W）：异常批**不得**降级为「通过」——原实现返回 PASS_WITH_FIXES + warn 级 QC_ERR，
+        # 聚合层只看 severity 便放行，等于「一次 LLM 故障 → 整批 20 题跳过事实校验」。
+        # 现与既有 QC_CONTRACT 契约失败同语义：fail 级 + score=-1（不计分）+ BLOCKED，
+        # 交由人工复核清单兜底；下游 MedFix 因 q_id 未命中题库而零 LLM 调用（见 medfix.fix_questions）。
         return {
-            "issues": [{"q_id": "QC_ERR", "code": "QC_ERR", "severity": "warn",
-                        "reason": f"质检批次异常：{e}"}],
-            "score": 50, "decision": "PASS_WITH_FIXES", "summary": "",
+            "issues": [{"q_id": "QC_UNVERIFIED", "code": "QC_UNVERIFIED", "severity": "fail",
+                        "reason": f"本批未经事实校验（质检调用异常：{e}）——判分未采纳，"
+                                  f"该批题目需人工复核"}],
+            "score": -1, "decision": "BLOCKED", "summary": "",
         }
 
 
@@ -182,10 +187,14 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
         decisions.add(r["decision"])
         summaries.append(r["summary"])
 
-    # 聚合决策：存在 fail → BLOCKED；否则有 warn 或有 QC_ERR → PASS_WITH_FIXES
+    # 聚合决策：存在 fail → BLOCKED；否则有 warn → PASS_WITH_FIXES；否则 PASS。
+    # S1-1（R8+W）：**显式承认批次级 BLOCKED**——原实现只按 issues 的 severity 判定，
+    # `decisions` 集合收了却从未参与（死代码），任何「批次判 BLOCKED 但 issues 无 fail 级」
+    # 的情况都会被静默降级。现把 decisions 纳入判据，杜绝此类脆弱前提。
     has_fail = any(x.get("severity") == "fail" for x in issues)
     has_warn = any(x.get("severity") == "warn" for x in issues)
-    decision = "BLOCKED" if has_fail else ("PASS_WITH_FIXES" if has_warn else "PASS")
+    decision = ("BLOCKED" if (has_fail or "BLOCKED" in decisions)
+                else ("PASS_WITH_FIXES" if has_warn else "PASS"))
     # NX-03：契约失败批次 score=-1 不计入平均分；全部不可计分 → 整体 -1
     countable = [s for s in scores if s >= 0]
     score = round(sum(countable) / max(len(countable), 1), 1) if countable else -1

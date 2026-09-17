@@ -103,6 +103,24 @@ def _append_contract_review(base: Path, fails: list[dict[str, Any]]) -> None:
     target.write_text(pre + "\n".join(section) + "\n", encoding="utf-8")
 
 
+def _append_unverified_review(base: Path, fails: list[dict[str, Any]]) -> None:
+    """S1-1（R8+W）：质检未完成的批次追加进人工复核清单.md（自然语言，去技术黑话）。
+
+    与 `_append_contract_review`（判分格式不合规）区分：这里是**根本没质检成**
+    （LLM 故障/超时），该批题目从未经过事实校验，必须让人过一遍。
+    """
+    section = ["", "## 未经 AI 质检的批次（需人工复核）", "",
+               "> 这几批题目在 AI 质检环节没能完成检查（调用失败或超时），"
+               "**因此它们没有经过事实校验**，不代表题目有问题，但请务必人工过一遍。"
+               "建议打开「质检报告」与对应题目，重点核对剂量、数值与答案是否与教材一致。", ""]
+    for f in fails:
+        section.append(f"- {f.get('reason', '')}")
+    section.append("")
+    target = base / "人工复核清单.md"
+    pre = target.read_text(encoding="utf-8") + "\n" if target.exists() else ""
+    target.write_text(pre + "\n".join(section) + "\n", encoding="utf-8")
+
+
 class PipelineError(Exception):
     pass
 
@@ -130,7 +148,10 @@ _SUBSTEP_LOCK = threading.Lock()
 _SUBSTEP_KEEP = 200
 # R4-09：在飞子步骤登记（running 写入，done/failed/cancelled 清除）——
 # 取消/异常出口据此补终态，杜绝子步骤面板永久「运行中」。
-_SUBSTEP_INFLIGHT: dict[str, dict[str, str]] = {}
+# RV2（2026-09-17 审查）：外层按 pid（= base.name）分桶——运行守卫（routers/pipeline.py）
+# 按 pid 隔离、不同项目允许并发；原全局平铺 dict 被并发项目共写，A 项目 terminate
+# 时会把 B 项目在飞的子步骤一并清除并误写进 A 的事件流（B 侧面板永久「运行中」）。
+_SUBSTEP_INFLIGHT: dict[str, dict[str, dict[str, str]]] = {}
 
 
 def _substep(base: Path, stage: str, step: str, label: str,
@@ -140,12 +161,16 @@ def _substep(base: Path, stage: str, step: str, label: str,
     写入失败（磁盘只读等）静默跳过——事件流是辅助可视化，不阻断管线。
     """
     key = f"{stage}:{step}"
+    pid = base.name   # RV2：项目目录名即 pid，登记/清除只作用于本项目桶
     with _SUBSTEP_LOCK:
+        bucket = _SUBSTEP_INFLIGHT.setdefault(pid, {})
         if status == "running":
-            _SUBSTEP_INFLIGHT[key] = {"stage": stage, "step": step, "label": label,
-                                      "detail": detail}
+            bucket[key] = {"stage": stage, "step": step, "label": label,
+                           "detail": detail}
         elif status in ("done", "failed", "cancelled"):
-            _SUBSTEP_INFLIGHT.pop(key, None)
+            bucket.pop(key, None)
+            if not bucket:   # 桶空即回收，长期运行不累积 pid 键
+                _SUBSTEP_INFLIGHT.pop(pid, None)
         record = {"stage": stage, "step": step, "label": label,
                   "status": status, "detail": detail,
                   "ts": datetime.now().isoformat()}
@@ -165,10 +190,10 @@ def _substeps_terminate(base: Path, status: str, detail: str = "") -> None:
 
     状态机口径（K8S Job / CI 构建）：每个 in-flight 状态必须有 done/failed/cancelled
     至少一个出口；取消/异常出口调用本函数后再写 stage，与终态一致。
+    RV2：只清本项目（base.name）的在飞登记——并发运行的其他项目不受影响。
     """
     with _SUBSTEP_LOCK:
-        items = list(_SUBSTEP_INFLIGHT.values())
-        _SUBSTEP_INFLIGHT.clear()
+        items = list(_SUBSTEP_INFLIGHT.pop(base.name, {}).values())
     for it in items:
         _substep(base, it["stage"], it["step"], it["label"], status, detail)
 
@@ -183,28 +208,63 @@ def _append_manual_section(base: Path, title: str, lines: list[str]) -> None:
     target.write_text(pre + "\n".join(section) + "\n", encoding="utf-8")
 
 
+def _or_cancel(*events):
+    """RV3（2026-09-17 审查）：组合取消源——任一事件置位即视为取消。
+
+    duck-type threading.Event 的 is_set/set（LLMClient / qc_batch 等消费方只调用
+    这两个方法，未用到 wait/clear 等其余接口）；None 成员忽略，仅剩单个有效事件时
+    原样返回。用于把「项目级取消」与「子步骤超时」并成一个取消口径。
+    """
+    evs = [e for e in events if e is not None]
+    if len(evs) <= 1:
+        return evs[0] if evs else None
+
+    class _Or:
+        def is_set(self) -> bool:
+            return any(e.is_set() for e in evs)
+
+        def set(self) -> None:
+            for e in evs:
+                e.set()
+
+    return _Or()
+
+
 def _run_substep(base: Path, stage: str, step: str, label: str, fn,
                  ttl: float = 60, retries: int = 2,
-                 detail: str = "", on_fail=None) -> tuple[Any, Optional[Exception]]:
+                 detail: str = "", on_fail=None,
+                 cancel: Optional[threading.Event] = None) -> tuple[Any, Optional[Exception]]:
     """WP-3：超时/重试子步骤包装。
 
     每次尝试：retry → running → fn（守护线程，ttl 秒）→ done/failed；
     超时或异常写 failed 并重试（retry 事件），重试用尽返回 (None, err)，
     调用方按需求降级（写人工复核清单并继续，不中断管线）。
+
+    RV3：fn 签名为 fn(ev)——ev 是本次尝试专属的取消事件；超时即置位，fn 内以
+    `cancel=_or_cancel(项目cancel, ev)` 构造的 LLMClient 在流式读取中检测到后
+    提前退出——超时线程不再烧完整回复（旧口径：daemon 线程无法 kill，重试叠加
+    时最多 3 个线程并发烧同一份 token，费用失控）。
+    cancel：项目级取消事件——置位后不再发起新的重试尝试，直接按取消出口返回。
     """
     last_err: Optional[Exception] = None
     for attempt in range(retries + 1):
+        if cancel is not None and cancel.is_set():
+            # RV3：项目已取消 → 立即退出（不算失败；终态由 _cancel_out→terminate 统一补写）
+            _substep(base, stage, step, label, "cancelled", "管线已取消，子步骤终止")
+            return None, None
         if attempt:
             _substep(base, stage, step, label, "retry",
                      f"第 {attempt}/{retries} 次重试（上次：{last_err}）")
         _substep(base, stage, step, label, "running", detail)
         box: dict[str, Any] = {}
+        tmo = threading.Event()   # RV3：本次尝试专属取消源（超时置位，重试各用新事件互不污染）
         # R3S-03：子步骤在线程执行——在父线程先取上下文，worker 内 run 才带 token 账本
         _ctx = contextvars.copy_context()
 
-        def _target(_box: dict[str, Any] = box, _c: Any = _ctx) -> None:
+        def _target(_box: dict[str, Any] = box, _c: Any = _ctx,
+                    _fn: Any = fn, _ev: threading.Event = tmo) -> None:
             try:
-                _box["result"] = _c.run(fn)
+                _box["result"] = _c.run(lambda: _fn(_ev))
             except BaseException as e:  # noqa: BLE001  超时线程异常只回传不抛出
                 _box["error"] = e
 
@@ -213,6 +273,7 @@ def _run_substep(base: Path, stage: str, step: str, label: str, fn,
         t.join(ttl)
         if t.is_alive():
             last_err = TimeoutError(f"子步骤超过 {ttl}s 未完成")
+            tmo.set()   # RV3：通知旧线程协作退出（LLM 流式读取检测后提前返回，不再烧完整回复）
             _substep(base, stage, step, label, "failed", str(last_err))
             continue
         err = box.get("error")
@@ -590,7 +651,7 @@ def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
 
 def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
                    cancel: threading.Event, done_sids: set[str],
-                   questions: list[dict[str, Any]], fix_client: Any,
+                   questions: list[dict[str, Any]], fix_client_fn: Any,
                    text_by_sid: dict[str, str],
                    bloom_target: Optional[dict[str, float]],
                    known_sids: set[str],
@@ -599,6 +660,7 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
 
     返回 `(questions, trace_md, cancel_out)`；`cancel_out` 非 None 表示管线需提前结束。
     U-10：从 727 行的 `_run_project_impl` 抽出的第二个阶段函数。
+    RV3：fix_client_fn(ev) 为按尝试客户端工厂（见 _run_project_impl 构造处注释）。
     """
     if qc_report["gate_decision"] == "BLOCKED":
         if cancel.is_set():   # B24：质检修复阶段可取消
@@ -613,9 +675,12 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
         fixed, fix_err = _run_substep(
             base, "fixing", "medfix", "MedFix 质检修复",
             # R4-10：快照隔离（see gate1 medfix）
-            lambda: medfix.fix_questions(fix_client, copy.deepcopy(questions),
-                                         qc_report["issues"], text_by_sid),
-            ttl=300, retries=1, detail=f"{len(qc_report['issues'])} 条问题")
+            # RV3：客户端经工厂按尝试构造（项目取消 ∨ 本尝试超时）——超时置位 ev 后
+            # 旧线程流式读取提前退出，不再烧完整回复
+            lambda ev: medfix.fix_questions(
+                fix_client_fn(ev),
+                copy.deepcopy(questions), qc_report["issues"], text_by_sid),
+            ttl=300, retries=1, cancel=cancel, detail=f"{len(qc_report['issues'])} 条问题")
         if fix_err:
             _append_manual_section(base, "MedFix 质检修复",
                                    [f"失败：{fix_err}", "本轮未修复，题目保留待人工复核。"])
@@ -652,7 +717,7 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
 
 def _stage_gate1(*, base: Path, meta_path: Path,
                  questions: list[dict[str, Any]], cancel: threading.Event,
-                 done_sids: set[str], fix_client: Any,
+                 done_sids: set[str], fix_client_fn: Any,
                  text_by_sid: dict[str, str],
                  bloom_target: Optional[dict[str, float]],
                  known_sids: set[str],
@@ -664,6 +729,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
     极端情形（全剔空题库）豁免保留；查重另在产物页打「⚠ 疑似重复」标记。
 
     U-10：从 727 行的 `_run_project_impl` 抽出的第三个阶段函数（原 150+ 行内联循环）。
+    RV3：fix_client_fn(ev) 为按尝试客户端工厂（见 _run_project_impl 构造处注释）。
     """
     non_action_flagged = False   # B-18：非定向核查项只留痕一次（避免每轮重复写清单）
     _dup_marks: dict[str, str] = {}   # U-07：查重未消除题的留痕（q_id → reason）
@@ -675,7 +741,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                       sub="选项校验", sub_done=0, sub_total=4)
         _opt_issues, opt_err = _run_substep(
             base, "gate1", "options", "选项校验",
-            lambda qs=questions: options_check.check_all(qs)["issues"],
+            lambda ev, qs=questions: options_check.check_all(qs)["issues"],
             detail=f"第 {round_i} 轮")
         if opt_err:
             _append_manual_section(base, "门禁① 选项校验",
@@ -685,7 +751,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                       sub="Bloom 校验", sub_done=1, sub_total=4)
         _bloom_issues, bloom_err = _run_substep(
             base, "gate1", "bloom", "Bloom 校验",
-            lambda qs=questions: bloom_check.check_bloom(qs, bloom_target)["issues"],
+            lambda ev, qs=questions: bloom_check.check_bloom(qs, bloom_target)["issues"],
             detail=f"第 {round_i} 轮")
         if bloom_err:
             _append_manual_section(base, "门禁① Bloom 校验",
@@ -695,7 +761,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                       sub="溯源回查", sub_done=2, sub_total=4)
         _trace_issues, trace_err = _run_substep(
             base, "gate1", "trace", "溯源回查",
-            lambda qs=questions: trace_check.check_trace(qs, known_sids)["issues"],
+            lambda ev, qs=questions: trace_check.check_trace(qs, known_sids)["issues"],
             detail=f"第 {round_i} 轮")
         if trace_err:
             _append_manual_section(base, "门禁① 溯源回查",
@@ -705,7 +771,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                       sub="查重", sub_done=3, sub_total=4)
         _dup, dup_err = _run_substep(
             base, "gate1", "dup", "查重",
-            lambda qs=questions: dedup_check.check_dup(qs),
+            lambda ev, qs=questions: dedup_check.check_dup(qs),
             detail=f"第 {round_i} 轮")
         if dup_err:
             _append_manual_section(base, "门禁① 查重",
@@ -757,10 +823,12 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             fixed, fix_err = _run_substep(
                 base, "gate1", "medfix", "MedFix 批量修复",
                 # R4-10：输入深拷贝快照——超时放弃后僵尸 daemon 线程只能污染副本，
-                # 不再与主流程共享 questions（继续烧 token 仍是已知边界：客户端已发出请求）
-                lambda qs=copy.deepcopy(questions), tf=to_fix: medfix.fix_questions(
-                    fix_client, qs, tf, text_by_sid),
-                ttl=300, retries=1,
+                # 不再与主流程共享 questions
+                # RV3：客户端经工厂按尝试构造（项目取消 ∨ 本尝试超时）——超时置位 ev 后
+                # 旧线程流式读取提前退出，不再烧完整回复（旧注释「继续烧 token 仍是已知边界」就此收窄）
+                lambda ev, qs=copy.deepcopy(questions), tf=to_fix: medfix.fix_questions(
+                    fix_client_fn(ev), qs, tf, text_by_sid),
+                ttl=300, retries=1, cancel=cancel,
                 detail=f"第 {round_i} 轮 · {len(to_fix)} 条问题")
             if fix_err:
                 _append_manual_section(base, "门禁① MedFix",
@@ -992,9 +1060,17 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
 
     # R3-09/B24：cancel 下透到 LLM 层（流式读取提前退出，停止后不再烧完整回复）
     gen_client = (overrides or {}).get("gen") or medgen.make_client(cancel=cancel)
-    qc_client = (overrides or {}).get("qc") or medqc.make_client(cancel=cancel)
-    fix_client = (overrides or {}).get("fix") or medfix.make_client(cancel=cancel)
     rev_client = (overrides or {}).get("review") or medreview.make_client(cancel=cancel)
+    # RV3：fix/qc 客户端改为「按尝试工厂」——注入（测试 Fake）原样直用保住注入通道；
+    # 生产路径每次尝试新建客户端并把「项目取消 ∨ 本尝试超时」组合进 cancel
+    # （_run_substep 超时置位 ev → 旧线程流式读取提前退出，不再烧完整回复）。
+    # get_client 仅读配置构造，按尝试新建零网络开销。
+    _fix_override = (overrides or {}).get("fix")
+    _qc_override = (overrides or {}).get("qc")
+    fix_client_fn = ((lambda ev: _fix_override) if _fix_override is not None else
+                     (lambda ev: medfix.make_client(cancel=_or_cancel(cancel, ev))))
+    qc_client_fn = ((lambda ev: _qc_override) if _qc_override is not None else
+                    (lambda ev: medqc.make_client(cancel=_or_cancel(cancel, ev))))
 
     subject = meta.get("subject", "")
     exam = meta.get("exam", "期末")
@@ -1105,7 +1181,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
              f"（image_ref 不在素材清单：{'、'.join(str(x) for x in dropped_img[:5])}）")
     questions, _g1_cancel = _stage_gate1(
         base=base, meta_path=meta_path, questions=questions, cancel=cancel,
-        done_sids=done_sids, fix_client=fix_client, text_by_sid=text_by_sid,
+        done_sids=done_sids, fix_client_fn=fix_client_fn, text_by_sid=text_by_sid,
         bloom_target=bloom_target, known_sids=known_sids)
     if _g1_cancel is not None:
         return _g1_cancel
@@ -1134,15 +1210,27 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     qc_report, qc_err = _run_substep(
         base, "qc", "medqc", "MedQC 质检",
         # R4-10：快照隔离（see gate1 medfix）
-        lambda: medqc.qc_batch(qc_client, copy.deepcopy(questions), text_by_sid,
-                               on_progress=_qc_step, cancel=cancel),
-        ttl=600, retries=1, detail=f"{total_batches} 批")
+        # RV3：客户端经工厂按尝试构造 + 批间取消同走组合源（项目取消 ∨ 本尝试超时）——
+        # 超时置位 ev 后旧线程流式读取提前退出，不再烧完整回复
+        lambda ev: medqc.qc_batch(
+            qc_client_fn(ev), copy.deepcopy(questions),
+            text_by_sid, on_progress=_qc_step, cancel=_or_cancel(cancel, ev)),
+        ttl=600, retries=1, cancel=cancel, detail=f"{total_batches} 批")
     if qc_err:
+        # S1-1（R8+W）：整个质检子步骤失败/超时**不得**降级为「通过」——原实现置
+        # PASS_WITH_FIXES 且 issues 为空，等于「一次 LLM 故障 → 全部题目跳过事实校验」。
+        # 现置 BLOCKED + 注入 QC_UNVERIFIED：产物仍照常生成（BLOCKED 不中断管线，
+        # 走 §④ MedFix 分支，而该 issue 的 q_id 未命中题库 → 零 LLM 调用），
+        # 但决策层不再谎报「已通过质检」，并进人工复核清单。
         _append_manual_section(base, "MedQC 质检",
                                [f"质检失败/超时：{qc_err}",
-                                "已按「质检通过」降级继续，建议人工复核质检报告。"])
-        qc_report = {"score": 50, "gate_decision": "PASS_WITH_FIXES",
-                     "issues": [], "summary": f"质检降级继续：{qc_err}"}
+                                "本次质检未完成，全部题目未经事实校验，建议人工复核质检报告。"])
+        qc_report = {"score": -1, "gate_decision": "BLOCKED",
+                     "issues": [{"q_id": "QC_UNVERIFIED", "code": "QC_UNVERIFIED",
+                                 "severity": "fail",
+                                 "reason": f"本次质检未完成（{qc_err}）"
+                                           f"——全部题目未经事实校验，需人工复核"}],
+                     "summary": f"质检未完成：{qc_err}"}
         _set_progress(base, "qc", 0, total_batches, f"质检降级继续：{str(qc_err)[:60]}",
                       sub="LLM 判分", sub_done=0, sub_total=total_batches)
     qc_report = qc_report or {"score": 50, "gate_decision": "PASS_WITH_FIXES",
@@ -1157,11 +1245,17 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _log(base, f"  ⚠️ {len(contract_fails)} 个质检批次判分不可信（格式两次未过，计分未采纳）"
                    f"→ 人工复核清单.md")
         _append_contract_review(base, contract_fails)
+    # S1-1（R8+W）：未经质检的批次同样进人工复核清单（"没检查成" ≠ "检查通过"）
+    unverified = [i for i in qc_report.get("issues", []) if i.get("code") == "QC_UNVERIFIED"]
+    if unverified:
+        _log(base, f"  ⚠️ {len(unverified)} 个质检批次未完成校验（LLM 故障/超时）"
+                   f"→ 人工复核清单.md")
+        _append_unverified_review(base, unverified)
     _log(base, f"  QC score={qc_report['score']} decision={qc_report['gate_decision']}"
                f" issues={len(qc_report['issues'])}")
     questions, trace_md, _qc_cancel = _stage_qc_fix(
         base=base, meta_path=meta_path, qc_report=qc_report, cancel=cancel,
-        done_sids=done_sids, questions=questions, fix_client=fix_client,
+        done_sids=done_sids, questions=questions, fix_client_fn=fix_client_fn,
         text_by_sid=text_by_sid, bloom_target=bloom_target, known_sids=known_sids)
     if _qc_cancel is not None:
         return _qc_cancel

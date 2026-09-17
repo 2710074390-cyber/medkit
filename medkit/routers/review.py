@@ -3,6 +3,7 @@
 运行中（RUNNING）时 review/regen 返回 409（v0.5），避免与出题线程并发写盘。
 """
 
+import asyncio
 import json
 import re
 import threading
@@ -343,13 +344,23 @@ def _rerender_project_locked(pid: str, what_raw: str) -> dict[str, Any]:
 
 
 @router.post("/api/projects/{pid}/regen")
-def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
-    """按 q.sid 找回原切片，单题重掷（generate_slice count=1），替换入库并重渲染。"""
+async def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
+    """按 q.sid 找回原切片，单题重掷（generate_slice count=1），替换入库并重渲染。
+
+    RV4（2026-09-17 审查）：改 async + asyncio.to_thread——重掷含 30~90 秒 LLM 调用，
+    同步 def 会占住 FastAPI 线程池 worker；_pid_lock 的获取（可能等 30~90 秒）
+    与 LLM 调用一并移入 worker 线程，事件循环保持响应。
+    """
     pid = _safe_pid(pid)
     if RUNNING.get(pid):  # v0.5：运行中重掷 → 409（避免与出题线程并发写盘）
         raise HTTPException(409, "项目正在生成中，暂不可重掷（请等待完成或先停止）")
+    return await asyncio.to_thread(_regen_question_sync, pid, body.id)
+
+
+def _regen_question_sync(pid: str, qid: str) -> dict[str, Any]:
+    """regen 同步主体：per-pid 写锁内执行（锁等待与 LLM 阻塞都不落回事件循环）。"""
     with _pid_lock(pid):
-        return _regen_question_locked(pid, body.id)
+        return _regen_question_locked(pid, qid)
 
 
 def _regen_question_locked(pid: str, qid: str) -> dict[str, Any]:

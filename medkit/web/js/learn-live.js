@@ -92,7 +92,7 @@ async function loadExplains() {
     }
     $("explain_list").innerHTML = recs.map((e, i) => `
       <div class="exp-card" id="expc_${esc(e.id)}">
-        <div class="exp-fold" onclick="expFold('${esc(e.id)}')" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="exp-fold" data-id="${esc(e.id)}" onclick="expFold(this)" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <b style="flex:1">${esc(e.kp_name || "")}</b>
           <span class="tag">${esc(e.subject || "未分类")}</span>
           ${e.grounded === false
@@ -112,8 +112,8 @@ async function loadExplains() {
           ${e.kp_name ? `<button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(e.subject || "")}" data-name="${esc(e.kp_name)}">→ 提问练习</button>` : ""}
           ${(typeof FEATURES !== "undefined" && FEATURES.cards) ? `<button class="mini-btn" onclick="expCards(this)" data-eid="${esc(e.id)}" data-subject="${esc(e.subject || "")}">🧠 生成记忆卡</button>` : ""}
           <button class="mini-btn primary" onclick="expRegen(this)" data-id="${esc(e.id)}" data-subject="${esc(e.subject || "")}" data-kp="${esc(e.kp_name || "")}">↻ 重新生成</button>
-          <button class="mini-btn" onclick="expCopy('${esc(e.id)}',this)">复制</button>
-          <button class="mini-btn danger" onclick="expDel('${esc(e.id)}')">删除</button>
+          <button class="mini-btn" data-id="${esc(e.id)}" onclick="expCopy(this)">复制</button>
+          <button class="mini-btn danger" data-id="${esc(e.id)}" onclick="expDel(this)">删除</button>
         </div>
       </div>`).join("");
   } catch (e) { $("explain_list").innerHTML = `<div class="hint">加载失败：${esc(e.message)}</div>`; }
@@ -213,13 +213,18 @@ async function expExport() {
     toast("复习手册已导出");
   } catch (e) { toast(e.message, false); }
 }
-async function expCopy(id, btn) {
-  try { const r = await api("/api/library/explains/" + id); copyText(r.explain.content || "", btn || null);
+async function expCopy(idOrBtn) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id（此时无按钮反馈，仅 toast）
+  const btn = idOrBtn && idOrBtn.dataset ? idOrBtn : null;
+  const id = btn ? (btn.dataset.id || "") : idOrBtn;
+  try { const r = await api("/api/library/explains/" + id); copyText(r.explain.content || "", btn);
         if (!btn) toast("已复制讲解全文"); }
   catch (e) { toast(e.message, false); }
 }
 /* 折叠/展开讲解产物全文 */
-function expFold(id) {
+function expFold(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   const c = $("expc_" + id);
   if (!c) return;
   const open = c.classList.toggle("open");
@@ -271,7 +276,9 @@ async function expCards(btnOrEid, subject) {
   }
 }
 window.expCards = expCards;
-async function expDel(id) {
+async function expDel(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   // D-05：删除讲解会级联删除派生记忆卡——确认文案先列出数量（不静默不可恢复消失）
   let cardN = 0;
   try {
@@ -396,11 +403,11 @@ function sessionItem(s) {
   // U-17：原此处计算了 lv（TUTOR_QTYPES[...]）但模板从未使用——已删除；
   // 若产品希望会话条目显示层级，需在下方模板中真正插入该值。
   const at = (s.updated_at || "").slice(5, 16).replace("T", " ");
-  return `<div class="tu-item" onclick="tutorResume('${esc(s.id)}')">
+  return `<div class="tu-item" data-id="${esc(s.id)}" onclick="tutorResume(this)">
     <div class="ti-name">${esc(s.kp_name || "未命名知识点")}</div>
     <div class="ti-meta">${esc(s.subject || "未知科目")} · ${s.rounds.length} 轮 · ${tutorChip(s.state)}
       <span style="margin-left:auto">${esc(at)}</span>
-      <button class="ti-x" title="删除会话" onclick="event.stopPropagation();tutorDel('${esc(s.id)}')">×</button>
+      <button class="ti-x" title="删除会话" data-id="${esc(s.id)}" onclick="event.stopPropagation();tutorDel(this)">×</button>
     </div></div>`;
 }
 function conversationHTML(s) {
@@ -556,7 +563,9 @@ async function tutorSubmit() {
   } catch (e) { toast(e.message, false); $("tutor_cost").textContent = ""; }
   finally { if (btn) { btn.textContent = old; btn.disabled = false; } }
 }
-async function tutorResume(id) {
+async function tutorResume(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   try {
     const r = await api("/api/library/tutor/" + id);
     const s = r.session;
@@ -568,7 +577,9 @@ async function tutorResume(id) {
   } catch (e) { toast(e.message, false); }
 }
 function tutorExit() { tutorState.active = null; $("btn_tu_start").textContent = "开始提问"; renderTutorSide(); }
-function tutorDel(id) {
+function tutorDel(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   confirmModal("删除提问会话", `<p style="margin:0;color:var(--dim)">确定删除这场提问会话？问答记录将被清空，知识点掌握度不受影响。</p>`, "删除", async () => {
     try {
       await api("/api/library/tutor/" + id, { method: "DELETE" });

@@ -86,6 +86,24 @@ def test_paper_js_escapes_every_rendered_field():
     assert "<\\/script>" in src, "数据岛应把 `</` 转义为 `<\\/`"
 
 
+def test_web_js_no_dynamic_value_in_inline_event_handlers():
+    """RV1（2026-09-17 审查）：应用前端源码不得出现「动态值拼进内联事件 JS」——
+    `esc()` 只做 HTML 转义，属性值内实体会被浏览器先解码再交 JS 解析，
+    单引号复活即注入（x');alert(1)//）。动态参数一律走 data-* + this 传参。
+    源码级扫描：新写 `onclick="fn('${esc(...)}')"` 这类模式立即失败。"""
+    from pathlib import Path
+
+    js_dir = Path(__file__).resolve().parents[1] / "medkit" / "web" / "js"
+    pat = re.compile(r"""on\w+="[^"]*\$\{esc\(""")
+    offenders = []
+    for f in sorted(js_dir.glob("*.js")):
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if pat.search(line):
+                offenders.append(f"{f.name}:{i}: {line.strip()[:100]}")
+    assert not offenders, (
+        "发现「动态值进内联事件 JS」模式（应改 data-* + this 传参）：\n" + "\n".join(offenders))
+
+
 @pytest.mark.parametrize("payload", PAYLOADS)
 def test_export_anki_escapes_id_and_fields(payload):
     """Anki 导出声明 `#html:true`，卡面字段必须转义（U-13 实测曾泄漏 `id`）。"""

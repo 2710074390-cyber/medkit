@@ -6,6 +6,107 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
+## [0.10.4] - 2026-09-17
+
+> **本版为何要 bump**：2026-09-17 全面代码审查（build-web-apps 插件三路深查：后端质量 /
+> 前端质量 / 安全专项 + 浏览器运行时 QA）发现 1 个可致 **API Key 泄露**的前端注入漏洞与
+> 2 个并发正确性/费用缺陷，本版一次性根治（批次 ID `RV1`~`RV7`，`RV` = ReView 2026-09-17）。
+> 审查基线：ruff/eslint 全绿、573 测试全过、覆盖率 83%、浏览器 QA 7/7（零 console 报错）——
+> 以下缺陷均为审查新发现，非既有回归。
+
+### 安全（Security）
+
+#### Fixed
+
+- **RV1（严重）行内 `onclick`/`ontoggle` 的 JS 注入 → 存储型 XSS → 密钥泄露链**：
+  `esc()` 只做 HTML 转义，属性值内的 `&#39;` 会被浏览器**先解码再交 JS 解析**，单引号复活
+  即可闭合字符串注入（`x');alert(1)//`）。可控源覆盖错题/真题导入的 subject、知识点名与
+  LLM 输出（连 "Hodgkin's" 类正常医学术语也会击穿）；完整攻击链：导入他人分享的错题
+  JSON → 打开学习中心触发 XSS → `PUT /api/config` 把 base_url 指向攻击者 → 下次生成时
+  解密后的 Key 以 Bearer 外发。**修复**：全仓 35 处「动态值进内联 JS」统一改为项目既有的
+  `data-* + this` 范式（R3-02 立过），函数双签名兼容程序化调用；渲染端（`qbank_html.py`）
+  核查为静态字面量参数，无注入面。**附带修正**：刷题快捷键 1/2/3 此前对 `#mem_area`
+  记忆卡误调 `rvGrade3`（SM-2 复习端点）必报错，现按卡片所属容器分流到 `memGrade3`（FSRS）。
+
+### 后端正确性与费用（Fixed）
+
+- **RV2（严重）`_SUBSTEP_INFLIGHT` 跨项目污染**：在飞子步骤登记原为模块级平铺 dict
+  （键 `stage:step` 不含 pid），而运行守卫按 pid 隔离、**不同项目允许并发**——A 项目
+  terminate 时会把 B 项目在飞的子步骤一并清除并误写进 A 的事件流（B 侧面板永久「运行中」）。
+  现按 pid（= 项目目录名）分桶，terminate 只清本项目；桶空即回收不累积。
+- **RV3（严重）子步骤超时后僵尸线程持续烧 token**：`_run_substep` 超时后旧 daemon 线程
+  无法 kill、继续执行 LLM 调用，重试叠加最多 3 个线程并发烧同一份 token。现 `fn` 签名改为
+  `fn(ev)`——超时即置位本次尝试专属取消事件，fn 内以 `_or_cancel(项目取消, ev)` 组合源
+  按尝试构造的 LLMClient 流式读取检测后**提前退出**；项目级 cancel 置位后不再发起新尝试。
+  fix/qc 客户端改为「按尝试工厂」：注入（测试 Fake）原样直用保住离线测试通道。
+- **RV7 `row_to_dict` 损坏行语义漂移**：data JSON 损坏时原返回只含 id 的空壳 dict，被
+  业务层当作「存在但字段为空」的记录（空题干卡/空科目）。现返回 `None`——`list_rows`
+  过滤并按表汇总留痕（提示从备份恢复），`find_row` 视同未找到。
+
+### 质检门禁（Fixed）
+
+- **S1-1（R8+W 审查 P0）质检故障不再静默降级为「通过」**：`agents/medqc.py` 单批质检 LLM 异常
+  原返回 `PASS_WITH_FIXES` + warn 级 `QC_ERR` 并计 50 分，而聚合层只看 issue 的 `severity`
+  （批次自身的 `decision` 收了却从未参与判定，属死代码）——**一次 LLM 故障即让整批 20 题
+  跳过事实校验**。现与既有 `QC_CONTRACT` 契约失败**同语义**：`QC_UNVERIFIED` / `severity=fail` /
+  `score=-1`（不计分）/ `decision=BLOCKED`；聚合层显式承认批次级 `BLOCKED`
+  （`has_fail or "BLOCKED" in decisions`，两道守卫纵深防御）。
+  `core/orchestrator.py` 的「整个质检子步骤失败/超时」路径同样由 `PASS_WITH_FIXES` 改为
+  `BLOCKED` 并注入同码 issue，`QC_UNVERIFIED` 与 `QC_CONTRACT` 一并写入「人工复核清单.md」
+  （新增 `_append_unverified_review`，自然语言说明「这几批没经过事实校验，请人工过一遍」）。
+  **零额外成本**：该 issue 的 `q_id` 未命中题库，`medfix.fix_questions` 先 `fail_ids &= by_id`
+  后直接返回，不触发任何 LLM 调用。产物仍照常生成（`BLOCKED` 走 MedFix + 门禁① 复核分支，
+  不中断管线），只是决策层不再谎报「已通过质检」。
+
+### 数据可靠性（Fixed）
+
+- **S2-15 / S2-26（R8+W P1）迁移前 DB 备份改为一致性快照 + 可读校验**：原实现仅 `copy2` 主库，
+  WAL 模式下最新事务可能仍在 `-wal` 里 → 备份得到「缺表/缺行」的库（W1 E2E §C 实证：
+  `wal_autocheckpoint=0` 时只拷主库 → `no such table: t`），**ADR-005「可一键回退」在最需要它的时候打折**。
+  现改用 **SQLite online backup API**（`core/db.py::_backup_db_snapshot`）把 WAL 一并落到单一文件，
+  并用 `PRAGMA integrity_check` + 表数校验**确认可读**后才算成功；非 SQLite 文件不再产出「看似成功」的备份。
+- **S2-27（R8+W P1）备份失败不再静默继续迁移**：原 `_backup_before_migrate` 忽略 `_backup_one` 的
+  `None` 返回值、无条件进迁移——等于「连备份都没做成仍执行不可逆结构变更」。现收集失败项并抛
+  `db.BackupError` **中止迁移**（启动路径已有兜底：留痕后退回 JSON 轨，数据始终可读，下次启动重试）。
+- **S2-13（R8+W P1）「清空全部数据」不再谎报成功**：原 `_clear_all_data` 逐 child 吞掉 `OSError`
+  后恒回 `ok=true`——运行中 SQLite 被占用（Windows `WinError 32`）时主库根本删不掉，用户却在
+  「已清空」的错觉下重启看到数据「复活」。现 `_clear_all_data` 返回 `(removed, failed)`，接口在
+  有失败项时回 **`ok=false` + `failed` 列表 + 可执行指引**（「请完全退出 MedKit 后再清空一次」）；
+  前端 `dmClear` 相应显示 `⚠️ 部分数据未能删除`。同时清空范围补 `sessions/`、`logs/`、`exports/`
+  （**保留 `exports/backups`**——那是清空前刚生成的自动备份，一并删掉等于亲手毁掉安全网）。
+- **S2-14（R8+W）一键备份补 `sessions/`**：原 `_INCLUDE_PATHS` 漏掉素材会话，换机恢复后会话全丢。
+- **S3-18（R8+W）核心备份带回滚点**：核心备份原排除全部 `.bak`，连 `.pre-db-*.bak`（迁移/导入回滚点）
+  一起丢掉；现只跳过 `-wal/-shm` 与 `.corrupt-*`（无恢复价值），保留真正的回滚点。
+
+### 健壮性（Changed）
+
+- **RV4 同步 LLM 路由占满线程池**：`POST /api/trial` 与 `POST /api/projects/{pid}/regen`
+  的 30~90 秒 LLM 阻塞原以同步 `def` 占住 FastAPI 线程池 worker（默认 40），并发请求会把
+  其他接口一并拖入排队。现改 `async def` + `asyncio.to_thread`（regen 的 `_pid_lock`
+  获取与 LLM 调用一并移入 worker，锁等待不落回事件循环）。
+- **RV6 `batch_mistakes` 无长度上限**：与 batch-delete 的 `_valid_ids` 同口径限 500 条
+  （超大列表长时间占 worker 并批量写库）。
+- **RV5 押题卷答题卡键盘跳题错位**：`gridKeys` 原用 `parseInt(格子文本)-1` 反推下标，
+  错题重练时格子显示原卷号（B-09 等），Enter 会跳错题甚至 NaN。现格子带 `data-i` 下标、
+  键盘直接读下标。
+
+### 测试（Added）
+
+- 新增 7 个回归测试：RV1 源码级扫描守卫——`web/js/` 不得再出现「动态值进内联事件 JS」
+  模式（`test_u_batch3_render_safety.py`）、RV2 并发项目隔离 / RV3 超时置位事件 +
+  cancel 熔断（`test_pipeline_events.py`）、RV5 data-i（`test_s1_render.py`）、
+  RV6 501 条拒收（`test_mistake_batch.py`）、RV7 损坏行过滤（`test_db.py`）。
+  `_run_substep` 既有 4 用例随 `fn(ev)` 签名同步更新。全量 **580 passed**、覆盖率 83%（门槛 80%）。
+- **S1-1（R8+W）另新增 5 例**（`tests/test_s1_medqc_unverified.py`）：异常批 → BLOCKED、
+  异常批不计分、部分批失败仍整体 BLOCKED、聚合层承认批次级 BLOCKED、`QC_UNVERIFIED`
+  不触发 MedFix 的 LLM 调用。两道守卫**各自**做过反向验证（注入即红）。
+- **B2（R8+W）新增 8 例**（`tests/test_r8w_backup_chain.py`）：WAL 未合并时 copy2 主库读不回
+  而快照读得回、**接线级**「迁移产出的一致性快照含 WAL 数据」、非 SQLite 文件被拒、备份失败中止
+  迁移（并断言版本仍为 0 且未建表）、对照组迁移正常、清空遇占用如实回 `failed`、端到端回
+  `ok=false`、核心备份含 `sessions/` 与回滚点且跳过 `.corrupt-*`/`-wal`。
+  四处守卫**各自**做过反向验证（注入即红；其中接线级用例是补测——只测 helper 会漏掉
+  「调用点被换回 copy2」这类回归）。
+
 ## [0.10.3] - 2026-09-16
 
 > **本版为何要 bump（又一次「同号不同物」）**：`dist-installer/` 里的 0.10.2 两件套构建于

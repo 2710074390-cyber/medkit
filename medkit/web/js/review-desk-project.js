@@ -183,8 +183,14 @@ function artifactLinks(pid, names) {
       <span class="ai">${ico}</span><span><b>${esc(label)}</b><small>${esc(n)}</small></span></a>`;
   }).join("") + `</div>`;
 }
-/* B17：仅重渲染单个产物（后端复用审核渲染层；题库内容不变、无 token 消耗） */
-async function rerenderArtifact(pid, what) {
+/* B17：仅重渲染单个产物（后端复用审核渲染层；题库内容不变、无 token 消耗）
+   RV1：双签名——内联传 this（data-pid/data-what），程序化调用传 (pid, what) */
+async function rerenderArtifact(pidOrEl, what) {
+  let pid = pidOrEl;
+  if (pidOrEl && typeof pidOrEl === "object" && pidOrEl.dataset) {
+    pid = pidOrEl.dataset.pid || "";
+    what = pidOrEl.dataset.what || "";
+  }
   const label = { qbank: "题库", paper: "押题卷", review: "复习手册", anki: "Anki" }[what] || what;
   confirmModal(`仅重渲染「${label}」？`, `<p style="margin:0;color:var(--dim)">不会改动题库内容，只重新生成对应产物文件（无 token 消耗）。</p>`,
     "重渲染", async () => {
@@ -280,7 +286,7 @@ async function showProject(pid) {
     产物开关：${meta.toggles.qbank ? "题库✓" : "题库✗"} ${meta.toggles.paper ? "押题卷✓" : "押题卷✗"} ${meta.toggles.review ? "复习手册✓" : "复习手册✗"}
     ${ankiOk ? `<a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/anki">导出 Anki（.txt）</a>
       <a class="btnart" href="/api/projects/${encodeURIComponent(pid)}/export/apkg" download>S3 导出 Anki（.apkg）</a>
-      <a class="btnart" href="javascript:void(0)" onclick="ankiPreview('${esc(pid)}')" title="导出前先看卡面样式">预览 Anki 卡样</a>
+      <a class="btnart" href="javascript:void(0)" data-pid="${esc(pid)}" onclick="ankiPreview(this)" title="导出前先看卡面样式">预览 Anki 卡样</a>
       <a class="btnart" href="javascript:void(0)" onclick="ankiHelp()" title="如何把导出文件导入 Anki">Anki 导入指引</a>` : ""}</div>
     ${extra.length ? `<div class="hint" style="margin-top:6px">${extra.join(" · ")}</div>` : ""}
     <div id="pd_stepper" class="stepper">${renderStepper(meta.stage, meta.progress)}</div>
@@ -291,7 +297,7 @@ async function showProject(pid) {
     ${(meta.artifacts || []).some(n => /^qbank\.html$/i.test(n))
       ? `<div class="hint" style="margin-top:6px">仅重渲染（不重跑管线 · 无 token 消耗）：` +
         Object.entries([["qbank", "题库"], ["paper", "押题卷"], ["review", "复习手册"], ["anki", "Anki"]])
-          .map(([w, l]) => `<button class="mini-btn" style="padding:2px 9px" onclick="rerenderArtifact('${esc(pid)}','${w}')">${l}</button>`).join(" ")
+          .map(([w, l]) => `<button class="mini-btn" style="padding:2px 9px" data-pid="${esc(pid)}" data-what="${w}" onclick="rerenderArtifact(this)">${l}</button>`).join(" ")
         + ` <span class="hint" style="font-size:11px">— 用于只改产物不改题</span></div>`
       : ""}
     ${usage}
@@ -326,7 +332,7 @@ async function pdAssets() {
         style="max-width:160px;max-height:110px;border-radius:8px;border:1px solid var(--line);margin-right:10px;vertical-align:middle"
         onerror="this.style.display='none'">
       <b>${esc(a.sid)}</b> · ${esc(a.caption)}<span class="hint"> · ${((a.bytes || 0) / 1024).toFixed(0)}KB</span>
-      <button class="act gray" style="padding:3px 9px;font-size:11px;margin-left:8px" onclick="pdAssetDel('${esc(a.sid)}')">删除</button>
+      <button class="act gray" style="padding:3px 9px;font-size:11px;margin-left:8px" data-sid="${esc(a.sid)}" onclick="pdAssetDel(this)">删除</button>
     </div>`).join("");
   } catch (e) { const box = $("pd_assets"); if (box) box.innerHTML = "素材加载失败：" + esc(e.message); }
 }
@@ -344,7 +350,9 @@ async function pdAssetUp(input) {
   } catch (e) { toast(e.message, false); }
   finally { input.value = ""; }
 }
-async function pdAssetDel(sid) {
+async function pdAssetDel(sidOrEl) {
+  // RV1：双签名——内联传 this（data-sid），程序化调用传 sid
+  const sid = sidOrEl && sidOrEl.dataset ? (sidOrEl.dataset.sid || "") : sidOrEl;
   await api("/api/projects/" + currentPid + "/assets/" + sid, { method: "DELETE" });
   toast("已删除素材 " + sid);
   pdAssets();

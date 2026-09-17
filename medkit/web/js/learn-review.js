@@ -14,6 +14,10 @@ function rvChip(state) {
   return `<span class="learn-chip" style="color:${s.c};border-color:${border};background:${bg}">${esc(s.t)}</span>`;
 }
 async function loadReviewCtx(subject = "") {
+  // RV1（2026-09-17 安全审查）：内联事件里的动态参数统一改 data-* + this 传参——
+  // esc() 只做 HTML 转义，属性值内实体会被浏览器先解码再交 JS 解析，单引号复活即注入；
+  // 程序化调用（loadReviewCtx(rvSubject) 等）仍传字符串，双签名兼容。
+  if (subject && typeof subject === "object" && subject.dataset) subject = subject.dataset.subject || "";
   // 切换科目 或 跨天（D-11）→ 重置今日进度基数（杜绝「今日进度 70/100」凭空显示）
   if (rvSubject !== subject) studyDueBase = 0;
   studyDueResetIfStale();
@@ -90,25 +94,25 @@ const GRADE3_MAP = { forget: 0, fuzzy: 2, got: 4 };
 function rvCard(c) {
   const meta = `间隔 ${c.interval || 0} 天 · 难度 ${(c.ease || 2.5).toFixed(2)} · 背 ${c.reps || 0} 次 · 忘 ${c.lapses || 0} 次`;
   const grades = [0, 1, 2, 3, 4, 5].map(q =>
-    `<button class="rv-g${q}" onclick="rvGrade('${esc(c.id)}',${q})" title="质量 ${q}/5 分">${q}</button>`).join("");
+    `<button class="rv-g${q}" data-id="${esc(c.id)}" data-q="${q}" onclick="rvGrade(this)" title="质量 ${q}/5 分">${q}</button>`).join("");
   return `<div class="qcard" data-card="${esc(c.id)}" onclick="qcardFlip(this, event)">
     <div class="qcard-inner">
       <div class="qcard-face qfront">
         <div class="rv-top">${rvChip(c.state)}<span class="hint" style="font-size:11px">${esc(c.subject || "未分类")}</span>
-          <button class="rv-x" title="移出复习队列" onclick="rvDel('${esc(c.id)}')">×</button></div>
+          <button class="rv-x" title="移出复习队列" data-id="${esc(c.id)}" onclick="rvDel(this)">×</button></div>
         <div class="rv-q">${esc(c.kp_name || "(未命名知识点)")}</div>
         <div class="rv-meta">${esc(meta)}</div>
         <div class="qcard-tip">💡 先在脑中回忆这个知识点，再点卡片翻面看提示</div>
       </div>
       <div class="qcard-face qback">
-        <details class="rv-hint" ontoggle="rvHint(this,'${esc(c.kp_name || "")}','${esc(c.subject || "")}')">
+        <details class="rv-hint" data-kp="${esc(c.kp_name || "")}" data-subject="${esc(c.subject || "")}" ontoggle="rvHint(this)">
           <summary>📖 展开提示（教材原文 · 不消耗 AI）</summary>
           <div class="rv-hintbody"><span class="hint">展开后自动检索教材切片</span></div>
         </details>
         <div class="grades3">
-          <button class="g3 forget" onclick="rvGrade3('${esc(c.id)}','forget')" title="忘了——按 0/5 排期（快捷键 1）">忘了</button>
-          <button class="g3 fuzzy" onclick="rvGrade3('${esc(c.id)}','fuzzy')" title="模糊——按 2/5 排期（快捷键 2）">模糊</button>
-          <button class="g3 got" onclick="rvGrade3('${esc(c.id)}','got')" title="记住——按 4/5 排期（快捷键 3）">记住</button>
+          <button class="g3 forget" data-id="${esc(c.id)}" onclick="rvGrade3(this,'forget')" title="忘了——按 0/5 排期（快捷键 1）">忘了</button>
+          <button class="g3 fuzzy" data-id="${esc(c.id)}" onclick="rvGrade3(this,'fuzzy')" title="模糊——按 2/5 排期（快捷键 2）">模糊</button>
+          <button class="g3 got" data-id="${esc(c.id)}" onclick="rvGrade3(this,'got')" title="记住——按 4/5 排期（快捷键 3）">记住</button>
         </div>
         <details class="rv-grades-detail"><summary class="hint">精确自评（0~5）</summary>
           <div class="rv-grades">${grades}</div>
@@ -127,7 +131,10 @@ window.qcardFlip = qcardFlip;
 /* 三按钮评级：按映射质量走原 rvGrade 管线；
    A-12：不再「先删卡再调 API」——API 成功后由 loadReviewCtx 重渲自然移除；
    失败时卡片保留（按钮恢复可重试），R4-19 的「失败重渲恢复」仅作兜底不再常态触发 */
-async function rvGrade3(cid, key) {
+async function rvGrade3(cidOrBtn, key) {
+  // RV1：双签名——内联按钮传 this（data-id），键盘/程序化调用传 (cid, key)
+  const cid = cidOrBtn && typeof cidOrBtn === "object" && cidOrBtn.dataset
+    ? (cidOrBtn.dataset.id || "") : cidOrBtn;
   const q = GRADE3_MAP[key];
   await rvGrade(cid, q, { forget: "忘了", fuzzy: "模糊", got: "记住" }[key]);
 }
@@ -149,7 +156,10 @@ function rvStudyKeys(e) {
     card.classList.add("flipped");   // 未翻面：只翻面，不评分
     return;
   }
-  rvGrade3(card.dataset.card, ["forget", "fuzzy", "got"][+e.key - 1]);
+  // RV1 附带修正：#mem_area 的记忆卡此前误走 rvGrade3（SM-2 复习端点）→ 必报错；
+  // 按卡片所属容器分流——记忆卡走 memGrade3（FSRS 端点），复习卡走 rvGrade3。
+  const inMem = card.closest("#mem_area");
+  (inMem ? memGrade3 : rvGrade3)(card.dataset.card, ["forget", "fuzzy", "got"][+e.key - 1]);
 }
 /* 复习卡「查看提示」：懒加载教材原文切片（零 LLM，纯本地检索） */
 /* C20：切片原文「展开全文」——默认截断保护版面，需完整阅读时一键展开 */
@@ -170,6 +180,11 @@ function rvSliceHTML(s, briefLen) {
       ? `<button class="mini" style="margin-left:6px" onclick="rvSliceExpand(this)">展开全文</button>` : ""}</div>`;
 }
 async function rvHint(det, kpName, subject) {
+  // RV1：kp/subject 改经 data-kp/data-subject 属性传入（同 expHint 范式，不做内联 JS 拼参）
+  if (det && typeof det === "object" && det.dataset) {
+    kpName = det.dataset.kp || "";
+    subject = det.dataset.subject || "";
+  }
   if (!det || det.dataset.loaded === "1" || !det.open) return;
   det.dataset.loaded = "1";
   const body = det.querySelector(".rv-hintbody");
@@ -181,7 +196,7 @@ async function rvHint(det, kpName, subject) {
       // RAG 无原文回退：先说明未检索到，再提供「网络 + 模型知识」一键生成（成本前置）
       body.innerHTML = `<div class="hint" style="line-height:1.9">
         教材中未检索到「${esc(kpName)}」原文。<br>
-        <button class="mini-btn primary" onclick="rvHintGen(this,'${esc(kpName)}','${esc(subject)}')">结合网络与模型知识生成提示</button>
+        <button class="mini-btn primary" data-kp="${esc(kpName)}" data-subject="${esc(subject)}" onclick="rvHintGen(this)">结合网络与模型知识生成提示</button>
         <span style="font-size:11px;color:var(--dim)">${estLlmCost(2.2, 0.35)}</span></div>`;
       return;
     }
@@ -193,6 +208,11 @@ async function rvHint(det, kpName, subject) {
 window.rvHint = rvHint;
 /* 无原文回退：联网检索 + 模型知识生成提示（复用讲解端点，产物同时沉淀到复习手册） */
 async function rvHintGen(btn, kpName, subject) {
+  // RV1：双签名——内联按钮传 this（data-kp/data-subject），程序化调用传 (btn, kp, subject)
+  if (btn && typeof btn === "object" && btn.dataset) {
+    kpName = btn.dataset.kp || "";
+    subject = btn.dataset.subject || "";
+  }
   const old = btn.textContent; btn.disabled = true; btn.textContent = "生成提示中…";
   try {
     const r = await api("/api/library/explain", {
@@ -230,7 +250,13 @@ window.expHint = expHint;
 /* R3-03：自评/铺卡防重入——双击不再对同一张卡连发两次 grade（SM-2/FSRS 双计、排期错乱） */
 const gradeBusy = new Set();
 let queueBusy = false;
-async function rvGrade(cid, q, label = null) {
+async function rvGrade(cidOrBtn, q, label = null) {
+  // RV1：双签名——内联按钮传 this（data-id/data-q），程序化调用（rvGrade3/快捷键）传 (cid, q)
+  let cid = cidOrBtn;
+  if (cidOrBtn && typeof cidOrBtn === "object" && cidOrBtn.dataset) {
+    cid = cidOrBtn.dataset.id || "";
+    q = Number(cidOrBtn.dataset.q);
+  }
   if (gradeBusy.has(cid)) return;   // 该卡评分在途 → 忽略重复点击
   gradeBusy.add(cid);
   const cardEl = document.querySelector('.qcard[data-card="' + CSS.escape(cid) + '"]');
@@ -264,7 +290,10 @@ async function rvQueueAll() {
   } catch (e) { toast(e.message, false); }
   finally { queueBusy = false; }
 }
-async function rvDel(cid) {
+async function rvDel(cidOrBtn) {
+  // RV1：双签名——内联按钮传 this（data-id），程序化调用传 cid
+  const cid = cidOrBtn && typeof cidOrBtn === "object" && cidOrBtn.dataset
+    ? (cidOrBtn.dataset.id || "") : cidOrBtn;
   confirmModal("移出复习队列？", `<p style="margin:0;color:var(--dim)">该复习卡将从队列移除（知识点可随时「铺卡」重新入队）。</p>`, "移出", async () => {
     try {
       await api("/api/library/review/" + cid, { method: "DELETE" });
@@ -307,7 +336,7 @@ function memCard(c) {
       <div class="qcard-face qfront">
         <div class="rv-top">${rvChip(c.state)}<span class="tag">${esc(c.kind_label || c.kind || "")}</span>
           <span class="hint" style="font-size:11px">${esc(c.subject || "未分类")}</span>
-          <button class="rv-x" title="删除记忆卡" onclick="memDel('${esc(c.id)}')">×</button></div>
+          <button class="rv-x" title="删除记忆卡" data-id="${esc(c.id)}" onclick="memDel(this)">×</button></div>
         <div class="rv-q">${esc(c.front)}</div>
         <div class="rv-meta">${esc((c.kp_name || "") + (c.sched ? " · " + c.sched.toUpperCase() : ""))}
           · 下次 ${esc(String(c.due || "").slice(0, 10))} · 背 ${c.reps || 0} 次 · 忘 ${c.lapses || 0} 次</div>
@@ -316,25 +345,34 @@ function memCard(c) {
       <div class="qcard-face qback">
         <div class="rv-slice" style="margin:6px 0">${hlKw(c.back)}</div>
         <div class="grades3">
-          <button class="g3 forget" onclick="memGrade3('${esc(c.id)}','forget')" title="忘了——重来（快捷键 1）">忘了</button>
-          <button class="g3 fuzzy" onclick="memGrade3('${esc(c.id)}','fuzzy')" title="模糊——困难（快捷键 2）">模糊</button>
-          <button class="g3 got" onclick="memGrade3('${esc(c.id)}','got')" title="记住——良好（快捷键 3）">记住</button>
+          <button class="g3 forget" data-id="${esc(c.id)}" onclick="memGrade3(this,'forget')" title="忘了——重来（快捷键 1）">忘了</button>
+          <button class="g3 fuzzy" data-id="${esc(c.id)}" onclick="memGrade3(this,'fuzzy')" title="模糊——困难（快捷键 2）">模糊</button>
+          <button class="g3 got" data-id="${esc(c.id)}" onclick="memGrade3(this,'got')" title="记住——良好（快捷键 3）">记住</button>
         </div>
         <details class="rv-grades-detail"><summary class="hint">精确自评（FSRS 4 档）</summary>
           <div class="rv-grades">${grades.map(([t, q]) =>
-            `<button class="rv-g${q}" onclick="memGrade('${esc(c.id)}',${q})">${t}</button>`).join("")}</div>
+            `<button class="rv-g${q}" data-id="${esc(c.id)}" data-q="${q}" onclick="memGrade(this)">${t}</button>`).join("")}</div>
           <div class="rv-legend hint">重来=遗忘 · 困难=回想吃力 · 良好=正常 · 简单=秒答（三按钮：忘≈重来0 · 糊≈困难2 · 记≈良好3）</div>
         </details>
       </div>
     </div>
   </div>`;
 }
-async function memGrade3(cid, key) {
+async function memGrade3(cidOrBtn, key) {
   // A-12：先成功后移除（API 成功 → loadReviewCtx 重渲移除；失败卡片保留可重试）
+  // RV1：双签名——内联按钮传 this（data-id），键盘/程序化调用传 (cid, key)
+  const cid = cidOrBtn && typeof cidOrBtn === "object" && cidOrBtn.dataset
+    ? (cidOrBtn.dataset.id || "") : cidOrBtn;
   await memGrade(cid, MEM_GRADE3[key], { forget: "忘了", fuzzy: "模糊", got: "记住" }[key]);
 }
 window.memGrade3 = memGrade3;
-async function memGrade(cid, q, label = null) {
+async function memGrade(cidOrBtn, q, label = null) {
+  // RV1：双签名——内联按钮传 this（data-id/data-q），程序化调用传 (cid, q)
+  let cid = cidOrBtn;
+  if (cidOrBtn && typeof cidOrBtn === "object" && cidOrBtn.dataset) {
+    cid = cidOrBtn.dataset.id || "";
+    q = Number(cidOrBtn.dataset.q);
+  }
   if (gradeBusy.has(cid)) return;   // R3-03：记忆卡评分防重入
   gradeBusy.add(cid);
   const cardEl = document.querySelector('.memq[data-card="' + CSS.escape(cid) + '"]');
@@ -356,7 +394,10 @@ async function memGrade(cid, q, label = null) {
     }
   } finally { gradeBusy.delete(cid); }
 }
-async function memDel(cid) {
+async function memDel(cidOrBtn) {
+  // RV1：双签名——内联按钮传 this（data-id），程序化调用传 cid
+  const cid = cidOrBtn && typeof cidOrBtn === "object" && cidOrBtn.dataset
+    ? (cidOrBtn.dataset.id || "") : cidOrBtn;
   confirmModal("删除记忆卡？", `<p style="margin:0;color:var(--dim)">该记忆卡将从队列删除（讲解产物可重新「🧠 生成记忆卡」）。</p>`, "删除", async () => {
     try {
       await api("/api/library/cards/" + encodeURIComponent(cid), { method: "DELETE" });
@@ -410,7 +451,10 @@ async function memExportTxt() {
 window.memExportApkg = memExportApkg; window.memExportTxt = memExportTxt;
 
 /* Anki 卡样预览：前 3 张卡正反面（直接复用项目题目数据，零后端改动） */
-async function ankiPreview(pid) {
+async function ankiPreview(pidOrBtn) {
+  // RV1：双签名——内联按钮传 this（data-pid），程序化调用传 pid
+  const pid = pidOrBtn && typeof pidOrBtn === "object" && pidOrBtn.dataset
+    ? (pidOrBtn.dataset.pid || "") : pidOrBtn;
   try {
     const r = await api("/api/projects/" + encodeURIComponent(pid) + "/questions");
     const qs = (r.questions || []).slice(0, 3);

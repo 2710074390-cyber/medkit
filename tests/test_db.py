@@ -91,6 +91,20 @@ def test_row_roundtrip_dict(iso):
     assert rows[0]["options"] == ["A", "B"]        # JSON 嵌套无损
 
 
+def test_corrupted_row_dropped_not_empty_dict(iso):
+    """RV7：data JSON 损坏 → list_rows 过滤留痕、find_row 视同未找到（不产空壳记录）。"""
+    db.migrate()
+    with db.tx(write=True) as cur:
+        db.put_row(cur, "mistakes", {"id": "good", "question": "正常题"}, cols=())
+        cur.execute("INSERT OR REPLACE INTO mistakes (id, data) VALUES ('bad', '这不是JSON{{{')")
+        cur.execute("INSERT OR REPLACE INTO mistakes (id, data) VALUES ('list', '[1,2,3]')")
+    with db.tx(write=True) as cur:
+        rows = db.list_rows(cur, "mistakes")
+        assert [r["id"] for r in rows] == ["good"]          # 损坏/非 dict 行被过滤
+        assert db.find_row(cur, "mistakes", "id = ?", ("bad",)) is None
+        assert db.find_row(cur, "mistakes", "id = ?", ("good",))["question"] == "正常题"
+
+
 def test_concurrent_writes_no_lost_update(iso):
     db.migrate()
     with db.tx(write=True) as cur:

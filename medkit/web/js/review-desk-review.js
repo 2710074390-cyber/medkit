@@ -1,4 +1,4 @@
-/* exported BLOOMS, L, TAB_KEYS, a, answerIssue, any, applyReviewFilter, b, b2, bad, bar, body, box, box_append, btn, c, card, checkAns, cid, clean, cnt, cur, d, diffPrompt, dropBtn, dropped, e, ed, edits, el, err, f, filtered, first, gg, gix, goDemo, goOwn, groups, hd, html, id, ids, k, keep, kept, la, list, loadPrompts, lts, mark, maybeShowWizard, missing, n, nowDropped, o, okB, okQ, okT, okY, opList, openPromptEdit, openReview, optSrc, opts, optsSrc, ph, pre, prevDrop, prevEdits, promptCache, promptContainer, promptStatusBadge, provs, q, qid, qs, r, renderPrompt, renderReview, restorePrompt, revFilterText, revHideKey, revSaving, reviewDirtyGuard, reviewState, rr, sa, savePrompt, segResizeT, setDrop, show, sib, t, ta, tags, target, text, tk, updBatch, updateRevCount, v, visChecks, visIds, visible, wzClose, wzDone, wzRender, wzSetDots, wzStep */
+/* exported BLOOMS, L, TAB_KEYS, a, answerIssue, any, applyReviewFilter, b, b2, bad, bar, body, box, box_append, btn, c, card, checkAns, cid, clean, cnt, cur, d, diffPrompt, dropBtn, dropped, e, ed, edits, el, err, f, filtered, first, gg, gix, goDemo, goOwn, groups, hd, html, id, ids, k, keep, kept, la, list, loadPrompts, lts, mark, maybeShowWizard, missing, n, nowDropped, o, okB, okQ, okT, okY, opList, openPromptEdit, openReview, optSrc, opts, optsSrc, ph, pre, prevDrop, prevEdits, promptCache, promptContainer, promptEditCancel, promptStatusBadge, provs, q, qid, qs, r, renderPrompt, renderReview, restorePrompt, revFilterText, revHideKey, revSaving, reviewDirtyGuard, reviewState, rr, sa, savePrompt, segResizeT, setDrop, show, sib, t, ta, tags, target, text, tk, updBatch, updateRevCount, v, visChecks, visIds, visible, wzClose, wzDone, wzRender, wzSetDots, wzStep */
 /* ---- 迭代4：逐题审核台 */
 $("btn_review").onclick = () => openReview();
 let reviewState = { questions: [], keep: null, drop: new Set(), edits: {}, dirty: false,
@@ -510,9 +510,9 @@ function renderPrompt(p) {
     </summary>
     <div class="hint">占位符（运行时替换，勿删）：<span class="phchips">${ph}</span></div>
     <div class="btns">
-      <button class="act gray" onclick="openPromptEdit('${esc(p.name)}')">编辑</button>
-      ${p.using === "custom" ? `<button class="act gray" onclick="restorePrompt('${esc(p.name)}')">恢复默认</button>
-      <button class="act gray" onclick="diffPrompt('${esc(p.name)}')">与官方版对比</button>` : ""}
+      <button class="act gray" data-name="${esc(p.name)}" onclick="openPromptEdit(this)">编辑</button>
+      ${p.using === "custom" ? `<button class="act gray" data-name="${esc(p.name)}" onclick="restorePrompt(this)">恢复默认</button>
+      <button class="act gray" data-name="${esc(p.name)}" onclick="diffPrompt(this)">与官方版对比</button>` : ""}
     </div>
     <pre class="pview" id="pv_${esc(p.name).replace(".", "_")}">${esc(p.content)}</pre>
     <div id="peditor_${esc(p.name).replace(".", "_")}" style="display:none"></div>
@@ -526,7 +526,9 @@ function renderPrompt(p) {
 }
 function promptContainer() { return $("prompt_list"); }
 function box_append(el, d) { el.appendChild(d); }
-async function openPromptEdit(name) {
+async function openPromptEdit(nameOrEl) {
+  // RV1：双签名——内联传 this（data-name），程序化调用传 name
+  const name = nameOrEl && nameOrEl.dataset ? (nameOrEl.dataset.name || "") : nameOrEl;
   const r = promptCache.find(x => x.name === name);
   if (!r) return;
   const cur = r.content;
@@ -536,8 +538,8 @@ async function openPromptEdit(name) {
     <textarea class="pedit" id="pedit_${esc(name).replace(".", "_")}" style="width:100%">${esc(cur)}</textarea>
     <div class="hint" id="phcheck_${esc(name).replace(".", "_")}">校验：编辑时请保留全部占位符</div>
     <div class="btns">
-      <button class="act" onclick="savePrompt('${esc(name)}')">保存（写入影子副本）</button>
-      <button class="act gray" onclick="document.getElementById('peditor_${esc(name).replace(".", "_")}').style.display='none'">取消</button>
+      <button class="act" data-name="${esc(name)}" onclick="savePrompt(this)">保存（写入影子副本）</button>
+      <button class="act gray" data-name="${esc(name)}" onclick="promptEditCancel(this)">取消</button>
     </div>`;
   const ta = ed.querySelector("textarea");
   ta.oninput = () => {
@@ -552,7 +554,16 @@ async function openPromptEdit(name) {
   };
   ed.querySelector("textarea").focus();
 }
-async function savePrompt(name) {
+/* RV1：提示词编辑器「取消」——收起编辑面板（原为内联 getElementById 拼参，改 data-name 传参） */
+function promptEditCancel(btnOrName) {
+  const name = btnOrName && btnOrName.dataset ? (btnOrName.dataset.name || "") : btnOrName;
+  const ed = $("peditor_" + String(name).replace(".", "_"));
+  if (ed) ed.style.display = "none";
+}
+window.promptEditCancel = promptEditCancel;
+async function savePrompt(nameOrEl) {
+  // RV1：双签名——内联传 this（data-name），程序化调用传 name
+  const name = nameOrEl && nameOrEl.dataset ? (nameOrEl.dataset.name || "") : nameOrEl;
   const ta = document.querySelector("#peditor_" + name.replace(".", "_") + " textarea");
   try {
     await api("/api/prompts/" + encodeURIComponent(name), { method: "PUT",
@@ -563,14 +574,18 @@ async function savePrompt(name) {
       "去试出题", () => { location.hash = "bank"; showTab("bank"); }, false);
   } catch (e) { toast(e.message, false); }
 }
-async function restorePrompt(name) {
+async function restorePrompt(nameOrEl) {
+  // RV1：双签名——内联传 this（data-name），程序化调用传 name
+  const name = nameOrEl && nameOrEl.dataset ? (nameOrEl.dataset.name || "") : nameOrEl;
   confirmModal("恢复默认？", `将删除影子副本，恢复内置提示词（对「${esc(name)}」）。`,
     "恢复默认", async () => {
       try { await api("/api/prompts/" + encodeURIComponent(name), { method: "DELETE" }); toast("已恢复内置"); loadPrompts(); }
       catch (e) { toast(e.message, false); }
     });
 }
-async function diffPrompt(name) {
+async function diffPrompt(nameOrEl) {
+  // RV1：双签名——内联传 this（data-name），程序化调用传 name
+  const name = nameOrEl && nameOrEl.dataset ? (nameOrEl.dataset.name || "") : nameOrEl;
   const r = promptCache.find(x => x.name === name);
   if (!r || !r.custom) return;
   const el = $("pdiff_" + name.replace(".", "_"));

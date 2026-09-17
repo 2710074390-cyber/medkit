@@ -220,7 +220,7 @@ async function sylRender(subject) {
                   it.status === "covered" ? ["已覆盖", "solid"] : ["未覆盖", "pending"];
         return `<div class="syl-item"><span class="learn-chip ${s[1]}">${s[0]}</span>
           <span class="grow"><b>${esc(it.item)}</b>${it.matched ? `<div class="hint">已匹配：${esc(it.matched)}</div>` : ""}</span>
-          ${it.id ? `<button class="rv-x" title="删除该条目（可重新导入）" onclick="sylItemDel('${esc(it.id)}')">×</button>` : ""}</div>`;
+          ${it.id ? `<button class="rv-x" title="删除该条目（可重新导入）" data-id="${esc(it.id)}" onclick="sylItemDel(this)">×</button>` : ""}</div>`;
       }).join("");
       return `<div class="syl-chap">${esc(ch.chapter)} <span class="hint">（覆盖 ${ch.covered + ch.mastered}/${ch.total} · 未覆盖 ${ch.pending}）</span></div>` +
         (items || '<div class="hint" style="margin-left:10px">（无条目，待粘贴）</div>');
@@ -300,7 +300,9 @@ function sylDraftClear() {
   document.getElementById("syl_paste_preview").innerHTML = '<div class="hint">草稿已取消。</div>';
 }
 window.sylDraftDel = sylDraftDel; window.sylDraftClear = sylDraftClear;
-async function sylItemDel(id) {
+async function sylItemDel(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   confirmModal("删除大纲条目", `<p style="margin:0;color:var(--dim)">确定删除该条目？删除后覆盖率将即时更新；误删可重新导入（种子/教师重点源）。</p>`, "删除", async () => {
     try {
       await api("/api/syllabus/items/" + encodeURIComponent(id), { method: "DELETE" });
@@ -463,7 +465,7 @@ async function rexHeat() {
   box.innerHTML = `<table class="rex-tab"><thead><tr><th>章节</th><th>频次</th><th>高频条目（前5）</th></tr></thead><tbody>` +
     r.chapters.slice(0, 15).map(ch => `<tr><td>${esc(ch.chapter)}</td><td><b>${ch.freq}</b></td><td>` +
       ch.items.slice(0, 5).map(i => `<span class="rex-item">${esc(i.item)}×${i.freq}` +
-        (i.id ? ` <button class="rv-x" title="删除该频次记录" onclick="rexItemDel('${esc(i.id)}')">×</button>` : "") +
+        (i.id ? ` <button class="rv-x" title="删除该频次记录" data-id="${esc(i.id)}" onclick="rexItemDel(this)">×</button>` : "") +
         `</span>`).join(" · ") + `</td></tr>`).join("") +
     `</tbody></table>`;
 }
@@ -504,7 +506,9 @@ function rexDraftClear() {
   const box = document.getElementById("rex_drafts");
   if (box) box.innerHTML = '<div class="hint">草稿已取消。</div>';
 }
-async function rexItemDel(id) {
+async function rexItemDel(idOrEl) {
+  // RV1：双签名——内联传 this（data-id），程序化调用传 id
+  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   confirmModal("删除频次记录", `<p style="margin:0;color:var(--dim)">确定删除这条已确认的频次记录？仅删除统计数据，不影响真题原文；删除后热力表即时更新。</p>`, "删除", async () => {
     try {
       await api("/api/library/realexams/" + encodeURIComponent(id), { method: "DELETE" });
