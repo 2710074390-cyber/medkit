@@ -16,7 +16,7 @@ from ..core import config as cfg
 from ..core import errors as _errs
 from ..core import projects as core_projects
 from ..core.fsutil import safe_filename, write_json_atomic
-from ..state import CANCELLING, RUNNING
+from ..state import CANCELLING, RUN_LOCK, RUNNING
 from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir, require_flag
 
 _ALLOW_IMG = (".png", ".jpg", ".jpeg", ".webp", ".gif")
@@ -241,20 +241,24 @@ def delete_project(pid: str) -> dict[str, Any]:
     base = proj_dir(pid)
     if not base.exists():
         raise HTTPException(404, "项目不存在")
-    if RUNNING.get(pid):
-        raise HTTPException(400, "项目正在生成中：请先「停止」后再删除")
-    meta_missing = not (base / "meta.json").exists()
-    try:
-        shutil.rmtree(base, ignore_errors=True)
-    except Exception as e:  # noqa: BLE001
-        # R5-B-15：删除失败不再吞掉——显式上抛
-        raise HTTPException(500, f"项目删除失败：{e}") from e
-    if base.exists():
-        # R5-B-05/15：删后复核——部分文件被占用时 rmtree 会静默跳过（ignore_errors=True），
-        # 此时绝不能返回 {"ok": true}（用户看到“删了又冒出来”）；显式报错并提示手动清理
-        raise HTTPException(
-            500, "项目目录未能完全删除（部分文件可能被占用）——请关闭占用该目录的程序后重试，"
-                 f"或手动删除残留目录「{pid}」")
+    # S2-32（R8+W）：RUNNING 检查与删除必须在**同一把 RUN_LOCK 内**完成——启动端点
+    # （routers/pipeline.py 持 RUN_LOCK 后才置 RUNNING）与本端点原为「先检查、后删除」，
+    # 中间存在 TOCTOU 窗口：检查通过后管线刚启动，项目目录被删 → 管线在已消失的目录上写产物。
+    with RUN_LOCK:
+        if RUNNING.get(pid):
+            raise HTTPException(400, "项目正在生成中：请先「停止」后再删除")
+        meta_missing = not (base / "meta.json").exists()
+        try:
+            shutil.rmtree(base, ignore_errors=True)
+        except Exception as e:  # noqa: BLE001
+            # R5-B-15：删除失败不再吞掉——显式上抛
+            raise HTTPException(500, f"项目删除失败：{e}") from e
+        if base.exists():
+            # R5-B-05/15：删后复核——部分文件被占用时 rmtree 会静默跳过（ignore_errors=True），
+            # 此时绝不能返回 {"ok": true}（用户看到“删了又冒出来”）；显式报错并提示手动清理
+            raise HTTPException(
+                500, "项目目录未能完全删除（部分文件可能被占用）——请关闭占用该目录的程序后重试，"
+                     f"或手动删除残留目录「{pid}」")
     if meta_missing:
         # R3-20：base 存在但 meta 缺失 → 无条件删目录，并明确提示
         return {"ok": True, "msg": "元数据缺失，已直接删除目录"}

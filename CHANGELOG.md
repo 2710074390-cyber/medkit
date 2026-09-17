@@ -78,6 +78,24 @@
 - **S3-18（R8+W）核心备份带回滚点**：核心备份原排除全部 `.bak`，连 `.pre-db-*.bak`（迁移/导入回滚点）
   一起丢掉；现只跳过 `-wal/-shm` 与 `.corrupt-*`（无恢复价值），保留真正的回滚点。
 
+### 断点续跑（Fixed）
+
+- **S2-29（R8+W P1）损坏的断点文件不再静默全量重跑**：原 `_load_checkpoint` 的
+  `except Exception: return set(), []` 会让「继续」按钮变成全量重出题——用户在**不知情**下
+  把已付费的 token 再付一遍，且 run.log 里查不到任何痕迹。现按 `config.py` 既有范式先改名
+  `checkpoint.json.corrupt-<ts>.bak` 留证 + 记 errors + run.log 明确告知，**再**从头跑；
+  同时补类型校验（顶层非对象、`done_sids`/`questions` 非列表一律按损坏处理）。
+- **S2-31（R8+W P1）空题切片不再被记入完成位**：原实现无条件 `done_sids.add(sid_r)`，
+  某切片一次空返回即被永久记为「已完成」，续跑不再生成它 → 最终题数少于配额且用户难以察觉。
+  现在串行路径、并发路径、以及「取消/中断回填」循环**三处**都不再记录空切片，并留 run.log 告警，
+  续跑会重试该切片。
+- **S2-30（R8+W P1）断点范围不再隐性**：发现断点时 run.log 补一行明示
+  「**断点仅覆盖「出题」阶段：门禁①/质检/MedFix/渲染 无断点**」——若上次中断发生在这些阶段，
+  续跑会重新执行它们（可能重复消耗 token）。原实现默默如此，用户无从得知。
+- **S2-32（R8+W P1）删除项目的 TOCTOU 窗口关闭**：`routers/projects.py` 的 RUNNING 检查、
+  `rmtree`、删后复核整体移入 `with RUN_LOCK:`，与启动端点（持 RUN_LOCK 后才置 RUNNING）串行化；
+  原实现为「先检查、后删除」，中间存在「检查通过后管线刚启动、目录被删」的窗口。
+
 ### 健壮性（Changed）
 
 - **RV4 同步 LLM 路由占满线程池**：`POST /api/trial` 与 `POST /api/projects/{pid}/regen`
@@ -106,6 +124,10 @@
   `ok=false`、核心备份含 `sessions/` 与回滚点且跳过 `.corrupt-*`/`-wal`。
   四处守卫**各自**做过反向验证（注入即红；其中接线级用例是补测——只测 helper 会漏掉
   「调用点被换回 copy2」这类回归）。
+- **B3（R8+W）新增 7 例**（`tests/test_r8w_checkpoint_chain.py`）：损坏 checkpoint 留
+  `.corrupt-<ts>.bak` 且 run.log 有告警、正常 checkpoint 照常读出、空题切片在串行/并发两路
+  都不进 `done_sids`、续跑明示断点范围、异常中断检测留痕、删除项目在 RUN_LOCK 内完成
+  （直接断言锁的持有状态，不用时序推断）。六处守卫**各自**做过反向验证（注入即红）。
 
 ## [0.10.3] - 2026-09-16
 

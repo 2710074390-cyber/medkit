@@ -408,13 +408,33 @@ def select_paper_stable(saved_ids: list[str], questions: list[dict[str, Any]],
 
 
 def _load_checkpoint(base: Path) -> tuple[set[str], list[dict[str, Any]]]:
+    """读取断点文件；**损坏时先备份再告警**，绝不静默从头重跑（S2-29）。
+
+    原实现 `except Exception: return set(), []`——用户看到「继续」按钮，点下去却是全量重出题，
+    在**不知情**的情况下把已付费的 token 再付一遍，且 run.log 里查不到任何痕迹。
+    现按 `config.py` 既有范式先改名 `.corrupt-<ts>.bak` 留证，再写 run.log 明确告知。
+    """
     ckpt = base / "中间产物" / "checkpoint.json"
     if not ckpt.exists():
         return set(), []
     try:
         data = json.loads(ckpt.read_text(encoding="utf-8"))
-        return set(data.get("done_sids", [])), data.get("questions", [])
-    except Exception:  # noqa: BLE001
+        if not isinstance(data, dict):
+            raise ValueError(f"顶层不是对象（{type(data).__name__}）")
+        done, qs = data.get("done_sids", []), data.get("questions", [])
+        if not isinstance(done, list) or not isinstance(qs, list):
+            raise ValueError("done_sids/questions 不是列表")
+        return set(done), qs
+    except Exception as e:  # noqa: BLE001  损坏：留证据 + 告警，然后从头跑
+        bak = ckpt.with_name(f"{ckpt.name}.corrupt-{datetime.now().strftime('%Y%m%d-%H%M%S')}.bak")
+        try:
+            ckpt.rename(bak)
+            bak_name = bak.name
+        except OSError:
+            bak_name = "（备份失败，原文件保留）"
+        _errs.record("orchestrator._load_checkpoint", "断点文件损坏，已备份并从头重跑", e=e)
+        _log(base, f"  ⚠️ 断点文件损坏（{e}）——已备份为 {bak_name}，本次将**从头出题**；"
+                   f"若此前已生成过题目，这部分 token 会被重复消耗")
         return set(), []
 
 
@@ -912,6 +932,10 @@ def _stage_generate(*, base: Path, meta_path: Path, cancel: threading.Event,
     done_sids, done_questions = _load_checkpoint(base)
     if done_sids:
         _log(base, f"  发现断点：已完成 {len(done_sids)} 个切片（{len(done_questions)} 题），跳过继续…")
+        # S2-30（R8+W）：断点语义要说明白——它**只覆盖出题阶段**。下游（门禁①/质检/MedFix/渲染）
+        # 没有断点，若上次是这些阶段中断，续跑会整段重做并重复消耗 token。原实现默默如此。
+        _log(base, "  ⚠️ 断点仅覆盖「出题」阶段：门禁①/质检/MedFix/渲染 无断点——"
+                   "若上次中断发生在这几个阶段，续跑会重新执行它们（可能重复消耗 token）")
     # 断点题目先并入（新完成的切片会覆盖/追加）
     ckpt_lock = threading.Lock()
     result_by_sid: dict[str, list[dict[str, Any]]] = {}
@@ -965,6 +989,11 @@ def _stage_generate(*, base: Path, meta_path: Path, cancel: threading.Event,
                     if cancel.is_set():
                         raise PipelineCancelled()
                     sid_r, qs = gen_one(idx, item, cnt, sid, id_ranges[idx][0])
+                    if not qs:
+                        # S2-31（R8+W）：空题切片**不得**记入 done_sids——否则续跑永久跳过它，
+                        # 最终题数少于配额，用户仅靠一条 warning 难以察觉。
+                        _log(base, f"  ⚠️ 切片 {sid_r} 未产出任何题目——不计入断点，续跑会重试该切片")
+                        continue
                     with ckpt_lock:
                         done_sids.add(sid_r)
                         result_by_sid[sid_r] = qs
@@ -988,6 +1017,11 @@ def _stage_generate(*, base: Path, meta_path: Path, cancel: threading.Event,
                         except Exception as e:  # noqa: BLE001
                             pending = e        # 单切片失败：先收起已完成的别家切片再抛
                             break
+                        if not qs:
+                            # S2-31：空题切片不记完成（否则续跑永久缺口）
+                            _log(base, f"  ⚠️ 切片 {sid_r} 未产出任何题目——不计入断点，"
+                                       f"续跑会重试该切片")
+                            continue
                         with ckpt_lock:
                             done_sids.add(sid_r)
                             result_by_sid[sid_r] = qs
@@ -1006,6 +1040,8 @@ def _stage_generate(*, base: Path, meta_path: Path, cancel: threading.Event,
                             sid_r, qs = fut.result()
                         except Exception:       # noqa: BLE001  已失败切片不回填
                             continue
+                        if not qs:
+                            continue            # S2-31：空题切片同样不回填（保持续跑会重试）
                         if sid_r not in done_sids:
                             done_sids.add(sid_r)
                             result_by_sid[sid_r] = qs
@@ -1043,6 +1079,13 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     if meta.get("stage") == "done":
         return {"stage": "done", "questions": meta.get("final_count", 0), "resumed": True}
+    # S3-22（R8+W）：区分「用户取消」与「进程崩溃」——原实现两者在恢复路径上不可分辨，
+    # 崩溃后用户不知道上次是否正常结束。这里在续跑前留一行可查的痕迹。
+    _prev_stage = str(meta.get("stage") or "")
+    if _prev_stage and _prev_stage not in ("done", "cancelled", "error") \
+            and (base / "progress.json").exists():
+        _log(base, f"  ⚠️ 检测到上次异常中断（阶段停在「{_prev_stage}」，非正常结束/取消）"
+                   f"——本次按断点续跑；已完成切片的题目不会重出")
     if seed is None:
         seed = int(meta.get("seed") or 42)
     random.seed(seed)
