@@ -587,7 +587,9 @@ def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
             try:
                 web_materials = json.loads(ckpt_file.read_text(encoding="utf-8"))
                 web_materials_text = ws.digest_for_prompt(web_materials)
-                _log(base, f"  网络检索：使用项目缓存（{len(web_materials)} 条）")
+                _n_conf = sum(1 for m in web_materials if m.get("conflict"))
+                _log(base, f"  网络检索：使用项目缓存（{len(web_materials)} 条"
+                           + (f"，其中 {_n_conf} 条与教材冲突已隔离" if _n_conf else "") + "）")
             except Exception:  # noqa: BLE001
                 web_materials = []
         elif inc_flag.exists():
@@ -642,6 +644,11 @@ def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
                 _log(base, f"  {ln}")
             web_materials = materials
             web_materials_text = ws.digest_for_prompt(materials)
+            # S2-12（R8+W）：冲突素材已与可信素材分节隔离，留痕条数便于事后核对
+            _n_conf = sum(1 for m in materials if m.get("conflict"))
+            if _n_conf:
+                _log(base, f"  ⚠️ 网络素材中 {_n_conf} 条与教材冲突——已单独成节并标注"
+                           f"「禁止作为题干/答案依据」；若答案误用其数值，门禁① 数值核验会拦下")
             (base / "网络参考素材.json").write_text(
                 json.dumps(materials, ensure_ascii=False, indent=2), encoding="utf-8")
             if cancel.is_set():

@@ -531,13 +531,30 @@ def run_search_rounds(client: Any, subject: str, chapter: str, keywords: str,
 
 
 def digest_for_prompt(materials: list[dict[str, Any]]) -> str:
-    """进入 MedGen 的参考素材文本（题目引用标注 [源:网 URL]）。"""
+    """进入 MedGen 的参考素材文本（题目引用标注 [源:网 URL]）。
+
+    S2-12（R8+W）：**冲突素材隔离**。原实现把 conflict 条目与可信条目混在同一个列表里，
+    只靠一句「conflict 条目不得作为正确答案依据」的文本提示约束模型——那是**提示级**控制，
+    不是程序级控制。现在把两类**分成两节**：可信素材在上，冲突素材单独成节并显式标注
+    「仅供了解争议、禁止作为题干/答案依据」。
+
+    程序级兜底：即便模型仍误用冲突素材的数值，门禁① 的数值核验（`gates/numeric_check.py`）
+    会要求正确选项的临床数值能在**教材切片**里找到出处 → 误用会被判 fail 并被 MedFix 纠正。
+    """
     if not materials:
         return ""
-    lines = ["## 网络检索参考素材（考纲/真题/指南，供选题与答案校准；"
-             "conflict 条目不得作为正确答案依据）"]
-    for i, m in enumerate(materials, 1):
-        tag = "【与教材冲突-勿用答案】" if m.get("conflict") else ("【可信】" if m.get("trusted") else "")
+    ok = [m for m in materials if not m.get("conflict")]
+    bad = [m for m in materials if m.get("conflict")]
+    lines = ["## 网络检索参考素材（考纲/真题/指南，供选题与答案校准）"]
+    for i, m in enumerate(ok, 1):
+        tag = "【可信】" if m.get("trusted") else ""
         lines.append(f"{i}. {tag}{m.get('title', '')} · {m.get('url', '')}\n"
                      f"   {m.get('snippet', '')}")
+    if bad:
+        lines += ["", "## ⚠️ 与教材冲突的素材（**禁止**作为题干/答案依据）",
+                  "> 以下条目与教材口径不一致，仅用于了解争议点；"
+                  "**不得**据此出题、不得据此修改答案或解析。"]
+        for i, m in enumerate(bad, 1):
+            lines.append(f"C{i}. 【与教材冲突-勿用答案】{m.get('title', '')} · {m.get('url', '')}\n"
+                         f"   {m.get('snippet', '')}")
     return "\n".join(lines)

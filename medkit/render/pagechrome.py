@@ -10,6 +10,16 @@
 - 产物页全部为自包含 HTML（零 CDN、零第三方）。
 """
 
+# S2-4（R8+W）：产物页自带 CSP——产物是**单文件、零外部引用**的静态页，因此可以下很紧的策略。
+# ⚠️ 注意 `connect-src 'self'` 不能写成 `'none'`：押题卷判分后会把错题**回流到本机 API**
+# （`fetch("/api/library/mistakes/sync-paper")`，同源相对路径）。写成 'none' 会让该功能静默失效——
+# 这是 2026-09-17 由浏览器层用例 `test_paper_case_subquestions_sync_individually`
+# 以 `TypeError: Failed to fetch` 抓出来的真实回归。
+# `'self'` 已足够：外部主机一律封死，本机同源回流保留。
+PRODUCT_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+               "img-src data:; font-src data:; connect-src 'self'; object-src 'none'; "
+               "base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+
 # 主题变量（dark / light 双主题，径向渐变背景）
 THEME_VARS = """\
 :root{--bg:#0a1226;--card:rgba(18,32,62,.85);--line:rgba(120,180,255,.18);--txt:#dbeafe;--dim:#8aa4cc;--good:#34d399;--bad:#f87171;--miss:#fbbf24;--acc:#38bdf8;--bgc1:#12305e;--bgc2:#060d1e}

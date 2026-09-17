@@ -98,7 +98,7 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
                     kb = round(Path(p).stat().st_size / 1024)
                 except Exception as e:  # noqa: BLE001
                     _errs.record("qbank_html.render_media", "静默容错（U-15 留痕）", e=e)
-                out.append(f'<p class="hint">⚠️ 本题含图（{ref}'
+                out.append(f'<p class="hint">⚠️ 本题含图（{html_mod.escape(ref)}'
                            + (f"，约 {kb}KB" if kb else "")
                            + "）——体积过大未嵌入本页，请回 MedKit「项目详情 → 图片素材」查看原图。</p>")
     tbl = str(q.get("data_table") or "")
@@ -205,9 +205,20 @@ def _md_media(q: dict[str, Any]) -> list[str]:
         out.append(tbl if "\n" in tbl else tbl.replace("|", " | "))
         out.append("")
     if q.get("image_ref"):
-        out.append(f"🖼 **本题含图片**（{q.get('image_ref')}）：请查看 HTML 版（题库.html）中的图。")
+        # S2-1（R8+W）：image_ref 原样进 Markdown——`[`/`]`/反引号/换行可破坏文档结构，
+        # 且它可能来自上传文件名。这里只取 basename 并转义 Markdown 特殊字符。
+        out.append(f"🖼 **本题含图片**（{_md_escape_ref(q.get('image_ref'))}）："
+                   f"请查看 HTML 版（题库.html）中的图。")
         out.append("")
     return out
+
+
+def _md_escape_ref(raw: Any) -> str:
+    """Markdown 安全化 image_ref：只留文件名 + 转义结构字符（S2-1）。"""
+    name = Path(str(raw or "")).name
+    for ch in ("\\", "`", "*", "_", "[", "]", "<", ">", "|"):
+        name = name.replace(ch, "\\" + ch)
+    return name.replace("\n", " ").replace("\r", " ")
 
 
 def _esc_md(s: Any) -> str:
@@ -1030,7 +1041,7 @@ def export_paper_html(questions: list[dict[str, Any]], title: str = "押题卷",
 
 def _page(title: str, body: str, extras: str = "") -> str:
     """产物页外壳：共用主题（pagechrome）+ 各页自身样式。"""
-    from .pagechrome import BASE_CSS, THEME_BTN, THEME_SCRIPT, THEME_VARS
+    from .pagechrome import BASE_CSS, PRODUCT_CSP, THEME_BTN, THEME_SCRIPT, THEME_VARS
 
     own_css = """
 main{max-width:860px;margin:0 auto}
@@ -1086,6 +1097,7 @@ details.q .qs:hover{color:var(--acc)}
 """
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="{PRODUCT_CSP}">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:,">
 <title>{html_mod.escape(title)} · MedKit</title>
@@ -1096,6 +1108,7 @@ details.q .qs:hover{color:var(--acc)}
 </style></head><body><main>{body}</main>
 {THEME_BTN}
 {THEME_SCRIPT}
+<p class="hint">⚠️ 本页由 AI 辅助生成，仅供复习参考，<strong>不能替代教材、指南与临床判断</strong>；数值与结论请以现行教材/指南为准，用药与诊疗决策务必核对原始出处。</p>
 </body></html>"""
 
 

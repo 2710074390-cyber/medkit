@@ -243,10 +243,11 @@ def review_to_html(md_text: str, title: str = "复习手册",
     else:
         raw = md_lib.markdown(md_text, extensions=["tables", "fenced_code", "nl2br"])
         body = _augment(sanitize_html(raw, out_dir))
-    from .pagechrome import BASE_CSS, THEME_BTN, THEME_SCRIPT, THEME_VARS
+    from .pagechrome import BASE_CSS, PRODUCT_CSP, THEME_BTN, THEME_SCRIPT, THEME_VARS
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="{PRODUCT_CSP}">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:,">
 <title>{html_mod.escape(title)} · MedKit</title>
@@ -313,4 +314,5 @@ function rfFont(d){{
 try{{const f=parseInt(localStorage.getItem('medkit-rf-font')||'')||0;
   if(f) document.querySelector('main').style.setProperty('--fs',f+'px');}}catch(e){{}}
 </script>
+<p class="hint">⚠️ 本页由 AI 辅助生成，仅供复习参考，<strong>不能替代教材、指南与临床判断</strong>；数值与结论请以现行教材/指南为准，用药与诊疗决策务必核对原始出处。</p>
 </body></html>"""
