@@ -37,3 +37,38 @@ updates:
           - "freezegun"
           - "ruff"
           - "pip-audit"
+
+  # S2-20（R8+W）：原配置只覆盖 pip——workflow 里的 actions 与前端 npm 依赖没有固定更新通道，
+  # 版本靠人工盯。补齐两个生态（PR 同样走既有 CI 总闸）。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    commit-message:
+      prefix: "chore(npm)"
+
+# S2-23（R8+W）：`requirements.lock` 与 `THIRD_PARTY_NOTICES.md` 是**手写/半自动**产物，
+# dependabot 不会维护它们。改依赖后必须同步两者，否则锁文件漂移——该漂移已由
+# `tests/test_lock_closure.py`（闭包 == lock）+ `pack/check-package.py --strict`（产物闭包 ⊆ lock）
+# 在 CI 里自动拦截，不再依赖人工记得。

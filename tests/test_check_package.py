@@ -43,6 +43,49 @@ def test_main_missing_dist_returns_0(tmp_path):
     assert m.main([str(tmp_path / "none")]) == 0
 
 
+# ---- S2-19 / S2-18：把「空操作」变成真守卫 ----
+
+def test_main_strict_missing_dist_returns_1(tmp_path):
+    """--strict 下「没产物」即失败——原实现恒 return 0 使 CI 该步成为空操作（S2-19）。"""
+    m = _load()
+    assert m.main([str(tmp_path / "none"), "--strict"]) == 1
+
+
+def test_closure_drift_detects_undeclared(tmp_path):
+    """产物里出现 lock 闭包之外的发行包 → 必须被识别为「构建机环境污染」（S2-18）。"""
+    m = _load()
+    root = tmp_path / "MedKit"
+    internal = root / "_internal"
+    internal.mkdir(parents=True)
+    (internal / "attrs-26.1.0.dist-info").mkdir()          # 未声明
+    (internal / "pydantic-2.13.4.dist-info").mkdir()       # 已声明
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("pydantic==2.13.4\n", encoding="utf-8")
+    extras, _missing = m.closure_drift(root, lock)
+    assert extras == ["attrs"], f"应识别出未声明的 attrs，实际 {extras}"
+
+
+def test_strict_fails_on_undeclared_extra(tmp_path):
+    m = _load()
+    root = tmp_path / "MedKit"
+    internal = root / "_internal"
+    internal.mkdir(parents=True)
+    (internal / "attrs-26.1.0.dist-info").mkdir()
+    # 通过真实仓库 lock 走一遍 main()：未声明包在 --strict 下必须让整体失败
+    assert m.main([str(root), "--strict"]) == 1
+
+
+def test_closure_no_drift_when_all_declared(tmp_path):
+    m = _load()
+    root = tmp_path / "MedKit"
+    internal = root / "_internal"
+    internal.mkdir(parents=True)
+    (internal / "pydantic-2.13.4.dist-info").mkdir()
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("pydantic==2.13.4\n", encoding="utf-8")
+    assert m.closure_drift(root, lock) == ([], 0)
+
+
 # ---- U-24：spec 体积断言——excludes 必须拦下与本应用无关的大件，防误差膨胀 ----
 # 这几件一旦被分析器过度收集，绿色免安装包会凭空膨胀数十~数百 MB，且运行时全部用不到。
 def _spec_excludes() -> list[str]:

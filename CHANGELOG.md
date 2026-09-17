@@ -78,6 +78,41 @@
 - **S3-18（R8+W）核心备份带回滚点**：核心备份原排除全部 `.bak`，连 `.pre-db-*.bak`（迁移/导入回滚点）
   一起丢掉；现只跳过 `-wal/-shm` 与 `.corrupt-*`（无恢复价值），保留真正的回滚点。
 
+### 供应链（Security / Fixed）
+
+- **S2-24（R8+W P1）starlette 升到 1.6.0**（原 1.2.1，低于 CVE-2026-54283 修复线 1.3.1）：
+  fastapi 0.136.3 的约束是 `starlette>=0.46.0`（**无上限**），故直接升版即可，无需联动 fastapi。
+  升版后全量 **573 passed / 0 failed**、浏览器层 **37 passed**。新增守卫
+  `test_starlette_meets_cve_fix_line`（防止被误降级回去）。
+- **S2-17（R8+W）`requirements.lock` 加全平台 `--hash=sha256:` 钉版**：原 lock 只钉版本不钉哈希，
+  同一 `==x.y.z` 若被上游重新上传（或投毒）仍会被静默接受。新增可复跑生成器
+  `pack/gen-lock-hashes.py`（查 PyPI JSON 取该版本**全部发布文件**的 sha256——必须列全平台，
+  否则在别的平台 `--require-hashes` 会因「该平台产物无已知哈希」而失败）。实测
+  `pip install --require-hashes --dry-run -r requirements.lock` 通过。
+- **S2-16（R8+W）CI 漏洞审计对象改为产物实际闭包**：原 `pip-audit -r requirements.txt` 审的是
+  **浮动声明**，pip 会解析到「最新」版本，与真正打包进去的锁定版本不同——等于「审计图 ≠ 产物图」
+  （starlette CVE 正是这样漏网的）。现审计 `requirements.lock`，浮动侧仅作前瞻提示（`::warning::`，不判闸）。
+- **S2-20（R8+W）workflow 的 actions 全部 pin 到完整 commit SHA**（`actions/checkout`、
+  `actions/setup-python`、`actions/cache` 共 7 处），不再用可变的 `@v4`/`@v5` 标签；
+  `dependabot.yml` 补 `github-actions` 与 `npm` 两个生态（原只覆盖 pip）。
+- **S2-19（R8+W）新增真实打包 job**：原 `check-package.py` 在 CI 上因「未构建 dist」直接
+  `[跳过] … return 0`，等于空操作，真实的纯净断言只存在于维护者本机。现 CI 增加 `package` job
+  （windows-latest，装 lock → PyInstaller 构建 → `check-package.py --strict`），并给脚本加了
+  `--strict`（无产物即失败）。
+- **S2-18（R8+W）产物闭包断言**：`pack/check-package.py` 新增「`dist/_internal` 里的发行包必须是
+  `requirements.lock` 闭包子集」检查——把「产物实际闭包 ≠ lock/notices」从人工比对变成自动判定。
+  实测当前产物含 **4 个未声明发行包**（`attrs` / `email-validator` / `importlib-metadata` /
+  `itsdangerous`，构建机环境污染），另有 33 个已声明依赖未随产物保留 dist-info（→ 需重出包修复，
+  已在 `THIRD_PARTY_NOTICES.md` 如实记录）。
+- **S2-22（R8+W）`THIRD_PARTY_NOTICES.md` 闭包补漏**：34 项 → **38 项**（漏掉的正是
+  `uvicorn[standard]` 的 4 个 extras：`httptools` / `python-dotenv` / `watchfiles` / `websockets`），
+  并同步 `starlette` 版本。⚠️ **同时更正一处事实错误**：报告原文称产物含「LGPL chardet」，
+  实测 `chardet 7.4.3` 的元数据为 **`License-Expression: 0BSD`**（宽松），非 LGPL-2.1
+  （后者适用于 chardet ≤5.x）；且产物内的 `chardet/` 是**残件**（缺顶层 `__init__.py`、无 dist-info）。
+- **S2-23（R8+W）新增锁文件漂移守卫**（`tests/test_lock_closure.py`）：从 `requirements.txt`
+  按已装元数据推导完整运行时闭包（含 extras/marker），断言与 `requirements.lock` **完全一致**
+  （实测 38 == 38）；另断言 notices 闭包条目数 == lock 条目数。CI 增加独立步骤跑该文件。
+
 ### 医学事实门禁（Fixed）
 
 - **S1-2（R8+W P0）新增不依赖 LLM 的数值锚点**（`gates/numeric_check.py`）：MedQC 的 F1 事实性
@@ -155,6 +190,9 @@
   无源文本跳过、逐字照抄源文本判 `SRC_COPY`、正常命题不误报、不传源文本时向后兼容、
   以及**接线级**用例（门禁① 真的调用了两条通道且会剔除未达标题）。
   四处注入**各自**做过反向验证（注入即红；其中「核对干扰项」的注入是防回归对照）。
+- **B5（R8+W）新增 17 例**（`tests/test_lock_closure.py` 5 例 + `tests/test_check_package.py` 新增
+  4 例 + 既有 8 例）：锁文件与运行时闭包强等、starlette ≥1.3.1、notices 条目数与 lock 一致、
+  4 个 `uvicorn[standard]` extras 双处齐备、`--strict` 无产物即失败、未声明发行包可被识别。
 
 ## [0.10.3] - 2026-09-16
 
