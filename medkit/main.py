@@ -118,6 +118,12 @@ async def _lifespan(_app: FastAPI):
                 # 审查（2026-08）：打开失败不再静默——打印可访问地址到控制台
                 print(f"⚠️ 未能自动打开浏览器（{e}），请手动访问 http://127.0.0.1:{port}")
         threading.Thread(target=_open, daemon=True).start()
+    # S3-13（R8+W）：启动时检查/收紧数据目录权限（POSIX 收紧、Windows 只告警）。
+    # 不接线的话这个函数就是死代码——守卫用例 test_config_dir_hardening_is_wired 盯着这行。
+    _dir_warn = cfg.harden_config_dir()
+    if _dir_warn:
+        errs.record("main.lifespan", _dir_warn)
+        print(f"⚠️ {_dir_warn}")
     yield
     # shutdown：无全局资源需清理（线程均为 daemon；文件写均原子）
 

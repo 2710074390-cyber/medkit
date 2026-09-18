@@ -366,7 +366,13 @@ def migrate() -> int:
 
 
 def downgrade_to(ver: int) -> int:
-    """回滚到指定版本（配回滚 SQL）。调用方应先确认备份。"""
+    """回滚到指定版本（配回滚 SQL）。调用方应先确认备份。
+
+    S3-20（R8+W）留档：本函数**有意不接入任何路由**——schema 回滚会丢列，
+    而没有配套的数据回滚就等于静默丢数据；保留它是为**人工排障/取证**留一条可用路径，
+    不是漏接的死代码。若将来要做「应用内回滚」，必须先有 pre-rollback 全量备份 +
+    重启令牌，二者缺一不可。
+    """
     cur_ver = user_version()
     if cur_ver in (0,) + tuple(MIGRATIONS) and ver == 0 and cur_ver in MIGRATIONS:
         with tx(write=True) as cur:

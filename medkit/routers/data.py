@@ -8,8 +8,11 @@
 - `clear` 破坏性：必须匹配确认短语；自动先做完整备份；清「学习数据 + 项目 + 会话/日志 + exports
   （保留 `exports/backups`）」，保留应用配置（config.json / presets / prompts）；
   未能删除的项**如实回执** `ok=false` + `failed`，绝不谎报成功（S2-13）。
-- `restore`（导入恢复）**不在此轮提供**：运行中覆盖 SQLite 有 WAL/线程缓存一致性问题，需
-  重启令牌机制与产品交互定案后再做（见 AGENT_HANDOFF / 优化清单 U-20 段）。
+- `restore`（导入恢复）**仍不提供自动端点**（S3-20 / R8+W 复核后维持原结论）：运行中覆盖
+  SQLite 有 WAL/线程缓存一致性问题，需**重启令牌机制 + 产品交互定案**后再做。
+  本轮只做**安全收口**：`backup` 回执里补 `restore_hint`，把**手动恢复步骤**（退出应用 →
+  解压覆盖 → 重启）明确写给用户，使用户可见缺口闭合，而不引入半成品的自动恢复。
+  → 自动化前置条件见 `docs/reviews/修复方案_R8+W_2026-09-17.md` 的「未执行」表。
 """
 
 import asyncio
@@ -164,7 +167,15 @@ async def data_backup(body: dict[str, Any] | None = None) -> dict[str, Any]:
         _errs.record("data.backup", "备份失败", e=e)
         raise HTTPException(500, "备份失败，请重试或检查磁盘空间")
     return {"ok": True, "file": Path(path).name, "path": path, "size": size,
-            "hint": f"已备份到 {path}"}
+            "hint": f"已备份到 {path}",
+            # S3-20（R8+W）：应用内**不提供**自动恢复（原因见模块 docstring：运行中覆盖
+            # SQLite 有 WAL/连接缓存一致性问题），但把**手动恢复路径**写进回执，
+            # 让用户知道备份怎么用——原实现只给「已备份到 X」，用户无从下手。
+            "restore_hint": (
+                "恢复方式：① 退出 MedKit；② 解压该 zip，把其中的 "
+                "config.json / presets / library / projects / sessions "
+                "覆盖回数据目录；③ 重新启动。"
+                "覆盖前请先把当前数据目录整份另存一份——恢复属不可逆操作。")}
 
 
 @router.post("/api/data/open")

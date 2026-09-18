@@ -24,6 +24,56 @@ from .providers import get_provider
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".medkit"
+
+
+_DIR_WARN: str | None = None
+
+
+def dir_permission_warning() -> str | None:
+    """数据目录权限告警（None = 正常）。由 `harden_config_dir()` 在启动时置位。"""
+    return _DIR_WARN
+
+
+def harden_config_dir(path: Path | None = None) -> str | None:
+    """把数据目录收紧到「仅本用户可访问」（S3-13 / R8+W）。返回告警文案（None = 正常）。
+
+    - **POSIX**：目录权限过宽（组/其他可读或可写）→ `chmod 0o700`。这是本应用自有目录，
+      收紧不会影响他人，属低风险高收益。
+    - **Windows**：**只检查、不修改**——读 `icacls`，若 `BUILTIN\\Users` / `Everyone` 有访问权
+      则返回告警文案交上层常驻展示。不程序化改 ACL 的原因：Windows ACL 继承规则复杂，
+      误删继承项可能把用户自己锁在目录外（低收益、高风险），故只提示不动手。
+    """
+    p = path or CONFIG_DIR
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return f"数据目录不可创建：{e}"
+    if os.name != "nt":
+        try:
+            mode = p.stat().st_mode & 0o777
+            if mode & 0o077:
+                p.chmod(0o700)
+        except OSError as e:  # noqa: BLE001  权限收紧失败不影响使用，但要留痕
+            _errs.record("config.harden_config_dir", "chmod 收紧失败", e=e)
+        return None
+    try:
+        import subprocess
+        # ⚠️ 不能用 text=True：icacls 输出走系统代码页（中文 Windows 是 GBK），
+        # 按 UTF-8 解码会在读取线程里抛 UnicodeDecodeError，stdout 变 None → 检查静默失效。
+        out = subprocess.run(["icacls", str(p)], capture_output=True, timeout=8)
+        text = (out.stdout or b"").decode("utf-8", errors="ignore").lower()
+    except Exception as e:  # noqa: BLE001  无 icacls / 超时 → 无法检查，留痕即可
+        _errs.record("config.harden_config_dir", "icacls 检查失败", e=e)
+        return None
+    open_principals = [k for k in ("everyone", "builtin\\users", "users:") if k in text]
+    global _DIR_WARN
+    if open_principals:
+        _DIR_WARN = ("数据目录权限较宽（" + "、".join(open_principals) + " 可访问）——"
+                     "目录内含 API Key 与学习数据，建议手动收紧："
+                     f'icacls "{p}" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"')
+        return _DIR_WARN
+    _DIR_WARN = None
+    return None
 CONFIG_FILE = CONFIG_DIR / "config.json"
 PROMPTS_DIR_USER = CONFIG_DIR / "prompts"   # 提示词影子副本（打包后安装目录只读，可玩性 3A）
 PRESETS_DIR = CONFIG_DIR / "presets"        # 用户预设 JSON（可玩性 2C）
