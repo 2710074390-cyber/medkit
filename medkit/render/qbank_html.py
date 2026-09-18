@@ -575,7 +575,7 @@ def _paper_head(title: str, questions: list[dict[str, Any]], dropped_n: int,
     """押题卷页头：标题 / 计时条 / 缺选项提示 / 练习自测说明 / noscript 静态兜底 + `<script>` 开标签。"""
     return f"""
 <h1>{html_mod.escape(title)}</h1>
-<p class="meta">共 {len(questions)} 题 · 作答自动保存 · <button class="mini" onclick="window.print()">🖨 打印</button>
+<p class="meta"><strong>本卷由 AI 依据教材/考纲生成，非官方真题，仅供自测参考</strong> · 共 {len(questions)} 题 · 作答自动保存 · <button class="mini" onclick="window.print()">🖨 打印</button>
   <label style="margin-left:12px;font-size:12.5px"><input type="checkbox" id="ctMode" onchange="ctToggle()"> 限时模式</label>
   <input type="number" id="ctMin" value="60" min="5" max="240" style="width:56px;margin-left:4px;padding:1px 4px;font-size:12.5px" title="限时分钟数（到点自动判分）"> 分钟
   <span class="hint" style="font-size:11.5px;margin-left:6px">默认练习计时（不锁定），自行提交判分</span>

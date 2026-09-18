@@ -10,7 +10,8 @@ const sseAborts = new Map();   // anchorId → AbortController（在途流式）
 const LEARN_STATE = { weak: "待加强", shaky: "需复习", solid: "较熟练", mastered: "已掌握" };
 function learnChip(state) {
   const txt = LEARN_STATE[state] || state || "未知";
-  return `<span class="learn-chip ${esc(state || "")}">${txt}</span>`;
+  // S3-1（R8+W）：`txt` 在未知 state 时等于入参本身，原实现未转义 → 标签体注入面。
+  return `<span class="learn-chip ${esc(state || "")}">${esc(txt)}</span>`;
 }
 /* PRD 6.4.1：解析关键词高亮——医学解析高频关键词加粗标红（先 esc 再替换，安全无注入） */
 const HL_KEYWORDS = ["首选药", "首选", "金标准", "确诊", "禁忌证", "禁忌症", "禁用", "一线", "特效药", "不良反应", "并发症", "鉴别诊断"];

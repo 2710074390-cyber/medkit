@@ -1,3 +1,8 @@
+/* S3-3（R8+W）：文件名清洗——只保留 basename，剥掉路径分隔与控制字符 */
+function _baseName(name) {
+  const s = String(name || "").replace(/[\\/]+/g, "/").split("/").pop() || "";
+  return s.replace(/[\u0000-\u001f\u007f]/g, "").trim() || "MedKit记忆卡.apkg";
+}
 /* exported GRADE3_MAP, LETTERS, MEM_GRADE3, RVC_STATES, a, ankiHelp, ankiPreview, bg, blob, body, border, brief, card, cardEl, cards, cd, cur, d, done, due, el, expCardsHint, expHint, fillReviewSubjects, full, gradeBusy, grades, loadReviewCtx, m, memCard, memDel, memExportApkg, memExportTxt, memGrade, memGrade3, meta, msg, old, opts, pct, q, qcardFlip, qs, queueBusy, r, renderMemoryCards, renderSmReview, renderStudyProgress, resp, rvCard, rvChip, rvDel, rvGrade, rvGrade3, rvHint, rvHintGen, rvQueueAll, rvSliceExpand, rvSliceHTML, rvStudyKeys, rvSubject, s, sec, sel, sl, st, stem, strip, studyDueBase, studyDueDate, studyDueResetIfStale, subs, t, todayStr, total, url */
 /* ---- M5：复习计划（SM-2 间隔重复）---- */
 const RVC_STATES = {
@@ -434,7 +439,9 @@ async function memExportApkg(btn) {
     a.href = url;
     const cd = resp.headers.get("content-disposition") || "";
     const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-    a.download = m ? decodeURIComponent(m[1]) : "MedKit记忆卡.apkg";
+    // S3-3（R8+W）：服务端给的 content-disposition 只取 basename——
+    // 原样赋给 a.download 时，含路径分隔符/控制字符的名字会被浏览器按原样使用（越界写/怪名）。
+    a.download = m ? _baseName(decodeURIComponent(m[1])) : "MedKit记忆卡.apkg";
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 500);
     toast(`已导出 ${total} 张记忆卡 .apkg（Anki 双击即可导入）`);

@@ -43,7 +43,11 @@ jobs:
         # 前端静态防线：拼错标识符静态即报（原先只有运行时才炸）。
         # 不引入打包器——产物仍是零构建、零 CDN 的原生 <script src>。
         run: |
-          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          # S3-16（R8+W）：`npm ci` 失败不再静默回退到 `npm install`——回退会弱化 lock 约束
+          # （按 package.json 重新解析依赖树），使 lock 与 package.json 的漂移被掩盖。
+          npm ci --no-fund
+          # npm 侧审计（仅开发工具链 eslint，不进产物）：有高危只告警，不阻断构建
+          npm audit --audit-level=high || echo "::warning::npm 侧存在高危告警（仅开发工具链，不进产物）"
           npm run lint
       - name: Dependency vulnerability audit (U-16)
         # 已知漏洞即失败。过渡期如遇「上游未修复但已评估为不可达」的条目，

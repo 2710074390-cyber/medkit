@@ -79,7 +79,21 @@ def is_prerelease(v: str) -> bool:
 
 
 def check(timeout: float = 8.0) -> dict[str, Any]:
+    """检查 GitHub Releases 是否有新版本。
+
+    S3-14（R8+W）：新增**关闭开关**——原实现每次启动都会外呼 api.github.com，用户无从关闭。
+    配置项 `update_check` 为 false 时直接返回 skipped（**不发起任何网络请求**）。
+    """
     current = __version__
+    try:
+        from . import config as _cfg
+        if _cfg.load().get("update_check") is False:
+            return {"current": current, "latest": None, "has_update": False,
+                    "html_url": RELEASES_PAGE, "notes": None, "skipped": True}
+    except Exception as e:  # noqa: BLE001  配置不可读 → 按默认（开启）继续
+        # U-15：不得静默吞异常（零容忍守卫会拦），一律留痕。
+        from . import errors as _errs
+        _errs.record("update.check", "读取 update_check 开关失败，按默认开启继续", e=e)
     try:
         r = httpx.get(RELEASES_API, timeout=timeout, follow_redirects=True,
                       headers={"Accept": "application/vnd.github+json",

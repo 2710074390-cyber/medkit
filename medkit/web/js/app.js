@@ -472,7 +472,7 @@ async function loadStart() {
         ${recent.length ? recent.map(p => `
           <button class="start-proj" data-pid="${esc(p.pid)}" onclick="openRecentProject(this)">
             <span class="proj-stage">${esc(p.stage_label)}</span>
-            <span class="proj-name">${esc(p.subject || "未命名课题")} · ${esc(p.exam || "未设考试")}${p.target ? " · " + p.target + " 题" : ""}</span>
+            <span class="proj-name">${esc(p.subject || "未命名课题")} · ${esc(p.exam || "未设考试")}${p.target ? " · " + esc(p.target) + " 题" : ""}</span>
             ${p.running ? '<span class="spin"></span>' : ""}
           </button>`).join("")
         : `<div class="hint">还没有课题——去「题库」上传教材，AI 帮你生成题库</div>`}

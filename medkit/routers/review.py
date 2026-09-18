@@ -358,9 +358,22 @@ async def regen_question(pid: str, body: RegenBody) -> dict[str, Any]:
 
 
 def _regen_question_sync(pid: str, qid: str) -> dict[str, Any]:
-    """regen 同步主体：per-pid 写锁内执行（锁等待与 LLM 阻塞都不落回事件循环）。"""
-    with _pid_lock(pid):
-        return _regen_question_locked(pid, qid)
+    """regen 同步主体：per-pid 写锁内执行（锁等待与 LLM 阻塞都不落回事件循环）。
+
+    M2-03（R8+W）：补**在飞去重**。原实现只有「管线运行中」检查 + per-pid 写锁——
+    连点两次会**串行**拿到写锁各掷一次，同一道题被 LLM 重掷两遍（双份计费），
+    前端按钮禁用挡不住并发端口。这里用 dedupe 按 `pid+qid` 登记，第二次直接 409。
+    """
+    from ..core import dedupe
+
+    key = f"regen:{pid}:{qid}"
+    if dedupe.begin(key):
+        raise HTTPException(409, "该题正在重掷中，请稍候（勿重复提交）")
+    try:
+        with _pid_lock(pid):
+            return _regen_question_locked(pid, qid)
+    finally:
+        dedupe.end(key)
 
 
 def _regen_question_locked(pid: str, qid: str) -> dict[str, Any]:

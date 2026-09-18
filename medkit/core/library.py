@@ -725,8 +725,11 @@ def delete_subject_with_backup(subject: str) -> dict[str, Any]:
     if DB_FILE.exists():
         with dbs.tx(write=True) as cur:
             counts: dict[str, int] = {}
+            # S3-11（R8+W）：原漏了 syllabus_items / realexam_freq——两表都带 subject 列，
+            # 删科目后残留孤儿行，同名重建时旧条目会「复活」并污染覆盖度/考频权重。
             for table in ("mistakes", "knowledge", "explains",
-                          "review_cards", "tutor_sessions", "cards"):
+                          "review_cards", "tutor_sessions", "cards",
+                          "syllabus_items", "realexam_freq"):
                 try:
                     cur.execute(f"DELETE FROM {table} WHERE subject = ?", (subject,))
                     counts[table] = max(int(cur.rowcount), 0)
@@ -739,6 +742,8 @@ def delete_subject_with_backup(subject: str) -> dict[str, Any]:
             "memory_cards": counts.get("cards", 0),
             "sessions": counts.get("tutor_sessions", 0),
             "explains": counts.get("explains", 0),
+            "syllabus_items": counts.get("syllabus_items", 0),
+            "realexam_freq": counts.get("realexam_freq", 0),
         }, "backup": str(backup)}
 
     n_m = n_k = 0
