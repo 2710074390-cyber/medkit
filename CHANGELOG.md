@@ -124,6 +124,20 @@
   补记、在 `THIRD_PARTY_NOTICES.md` 补「同源站使用场景」小节——**均明确标注口径待产品/法务定版，
   不预设结论**（两种读法并列 + R1~R5 待办）。**R1「同源」语义定版属产品/法务决策，代码侧不代为决定。**
 
+### 数据可靠性（Fixed，R8+W P2 第一批）
+
+- **S3-19 素材会话改原子写**：`core/sessions.py::save_session` 原为裸 `write_text`——
+  崩溃/断电会留下半截 JSON，下次读取即损坏。统一改走 `fsutil.write_json_atomic`。
+- **S2-28 `import_from_json` 的 JSON 改名移出事务**：原在 `with tx(write=True)` **块内**执行
+  `path.rename(bak)`，commit 失败时 DB 已回滚但文件已改名——**双轨短暂分叉**（JSON 没了、
+  DB 里也没有）。现改为登记待改名项，**commit 成功之后**再统一改名。
+- **S3-21 `meta.json` 读-改-写加锁**：原 `_set_stage` 与另外 4 处 meta 写入各写各的、无锁 →
+  两处并发修改会互相覆盖（lost update）。现统一走 `_update_meta()`：**锁内**读-改-写、
+  **只改指定字段**（不再整份覆盖内存里的旧快照）。
+- **S3-23 `substeps.jsonl` 裁剪改原子**：原裁剪是「读全部 → 裸 `write_text` 覆盖」，
+  崩溃会留下**截断的 jsonl**（读取方虽逐行容错，但半截行会丢事件）。现改为临时文件 +
+  同卷 `replace`（原子），读取方永远看到完整行。
+
 ### 医学门禁与并发/脱敏（Fixed，R8+W P1 收口）
 
 - **S2-7 答案键字母越界补拦**：原 `options_check` 只验「非空 + 单字母」，`answer="F"` 而只有 A~E 时

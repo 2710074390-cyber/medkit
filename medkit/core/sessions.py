@@ -41,8 +41,10 @@ def save_session(name: str, role: str, slices: list[dict[str, Any]],
             "slice_count": len(clean),
             "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "slices": clean}
-    (_dir() / f"{sid}.json").write_text(
-        json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    # S3-19（R8+W）：原为裸 write_text——崩溃/断电会留下半截 JSON，下次读即损坏。
+    # 统一走 fsutil.write_json_atomic（唯一临时名 + 同卷 rename）。
+    from .fsutil import write_json_atomic
+    write_json_atomic(_dir() / f"{sid}.json", data)
     return {k: v for k, v in data.items() if k != "slices"}
 
 

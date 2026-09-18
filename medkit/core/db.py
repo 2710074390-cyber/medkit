@@ -518,6 +518,7 @@ def import_from_json() -> dict[str, str]:
     lib = LIBRARY_DIR
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     result: dict[str, str] = {}
+    to_rename: list[tuple[Path, Path]] = []   # S2-28：commit 成功后才改名
     with tx(write=True) as cur:
         for table, (fname, cols) in IMPORT_MAP.items():
             path = lib / fname
@@ -537,14 +538,19 @@ def import_from_json() -> dict[str, str]:
                 "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
                 (f"imported::{table}", ts),
             )
-            # 导入成功后原 JSON 改名（不再被当成活数据；回滚走 .pre-db-*.bak）。
-            # 标签与 migrate 备份的 .pre-db-<ts> 区分，避免与同秒备份名冲突（Windows rename 不覆盖）。
+            # S2-28（R8+W）：**改名不在这里做**——原实现在 tx 块内 rename，commit 失败时
+            # DB 回滚了但文件已改名，双轨短暂分叉（JSON 没了、DB 里也没有）。
+            # 改为登记待改名项，**commit 成功之后**再改名（见下方 with 块外）。
             bak = path.with_name(f"{path.name}.pre-db-import-{ts}-{uuid.uuid4().hex[:4]}.bak")
-            try:
-                path.rename(bak)
-            except OSError:
-                pass
+            to_rename.append((path, bak))
             result[table] = f"imported {len(rows)}"
+    # commit 已成功（tx 正常退出）→ 此时改名才安全；回滚走 .pre-db-*.bak。
+    # 标签与 migrate 备份的 .pre-db-<ts> 区分，避免同秒备份名冲突（Windows rename 不覆盖）。
+    for _path, _bak in to_rename:
+        try:
+            _path.rename(_bak)
+        except OSError:
+            pass
     return result
 
 

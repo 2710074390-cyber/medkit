@@ -180,7 +180,12 @@ def _substep(base: Path, stage: str, step: str, label: str,
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
             lines = path.read_text(encoding="utf-8").splitlines()
             if len(lines) > _SUBSTEP_KEEP:
-                path.write_text("\n".join(lines[-_SUBSTEP_KEEP:]) + "\n", encoding="utf-8")
+                # S3-23（R8+W）：裁剪原为裸 write_text 覆盖——崩溃会留下**截断的 jsonl**
+                # （读取方 projects.py:195 逐行容错，但半截行会丢事件）。
+                # 改为临时文件 + 同卷 replace（原子），读取方永远看到完整行。
+                _tmp = path.with_name(path.name + ".trim")
+                _tmp.write_text("\n".join(lines[-_SUBSTEP_KEEP:]) + "\n", encoding="utf-8")
+                _tmp.replace(path)
         except OSError:
             pass
 
@@ -292,10 +297,28 @@ def _run_substep(base: Path, stage: str, step: str, label: str, fn,
     return None, last_err
 
 
+# S3-21（R8+W）：meta.json 是「读-改-写」热点（_set_stage / usage 回写 / contract_warnings /
+# image_warning / 终态），原先各写各的、无锁 → 两处并发修改会互相覆盖（lost update）。
+# 统一走 _update_meta：锁内读-改-写、只改指定字段，不整份覆盖。
+_META_LOCK = threading.Lock()
+
+
+def _update_meta(meta_path: Path, **fields: Any) -> dict[str, Any]:
+    """锁内读-改-写 meta.json（只改传入字段），返回更新后的 meta。"""
+    with _META_LOCK:
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta.update(fields)
+        _write_json_atomic(meta_path, meta)
+        return meta
+
+
 def _set_stage(proj_dir: Path, meta_path: Path, stage: str, msg: str) -> None:
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta["stage"] = stage
-    _write_json_atomic(meta_path, meta)
+    _update_meta(meta_path, stage=stage)
     (proj_dir / "stage.json").write_text(
         json.dumps({"stage": stage, "msg": msg, "updated": datetime.now().isoformat()}),
         encoding="utf-8")
@@ -526,10 +549,9 @@ def _record_usage_on_exit(pid: str, *, cancelled: bool) -> None:
         from .providers import get_provider as _gp  # noqa: PLC0415
         price = (_gp(cfg.load().get("provider", "")) or {}).get("price")
         est_cost = usage.estimate_cost_cny(snap["prompt_tokens"], snap["completion_tokens"], price)
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        meta["usage"] = {**snap, "est_cost_cny": round(est_cost, 2) if est_cost is not None else None,
-                         "price_unit": "元/1M token（官网为准）"}
-        _write_json_atomic(meta_path, meta)
+        _update_meta(meta_path, usage={
+            **snap, "est_cost_cny": round(est_cost, 2) if est_cost is not None else None,
+            "price_unit": "元/1M token（官网为准）"})
         label = "取消前" if cancelled else "失败前"
         _log(base, f"  💰 {label}实际消耗：输入 {snap['prompt_tokens']} token + "
                    f"输出 {snap['completion_tokens']} token"
@@ -1237,8 +1259,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
     _log(base, f"  出题完成：{len(questions)} 题")
     # NX-03（R-2）：软校验契约告警计数落项目 meta（学习中心概览卡可见；0 也会覆盖旧值）
-    meta["contract_warnings"] = len(contract_bad)
-    _write_json_atomic(meta_path, meta)
+    _update_meta(meta_path, contract_warnings=len(contract_bad))
     if contract_bad:
         _log(base, f"  ⚠️ 本批 {len(contract_bad)} 条输出未通过 QuestionItem 契约"
                    f"（软校验告警，不影响门禁兜底；已记入 meta contract_warnings）")
@@ -1360,8 +1381,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     # WP-04：已上传图片素材但本批无图题 → 记 visible 提示（前端项目详情展示）
     if image_index and not any(q.get("image_ref") for q in questions):
         _log(base, "  ⚠️ 已有图片素材但本批未产出图题（可稍后重试/加大题量）")
-        meta["image_warning"] = True
-        _write_json_atomic(meta_path, meta)
+        _update_meta(meta_path, image_warning=True)
     (base / "最终产物").mkdir(exist_ok=True)
     # v0.8.1 真题标注（PRD 6.3.2）：题干/章节命中已确认考频条目 → 写回 source_type/source_year
     # （零 LLM；未确认考频不标注，WP-02 红线）
@@ -1472,12 +1492,10 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _log(base, f"  💰 本次实际消耗：输入 {snap['prompt_tokens']} token + "
                    f"输出 {snap['completion_tokens']} token"
                    + (f" ≈ ¥{est_cost:.2f}" if est_cost is not None else ""))
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta["stage"] = "done"
-    meta["final_count"] = len(questions)
-    meta["usage"] = {**snap, "est_cost_cny": round(est_cost, 2) if est_cost is not None else None,
-                     "price_unit": "元/1M token（官网为准）"}
-    _write_json_atomic(meta_path, meta)
+    _update_meta(meta_path, stage="done", final_count=len(questions),
+                 usage={**snap,
+                        "est_cost_cny": round(est_cost, 2) if est_cost is not None else None,
+                        "price_unit": "元/1M token（官网为准）"})
     (base / "stage.json").write_text(
         json.dumps({"stage": "done", "msg": "✅ 全部产物生成完成",
                     "updated": datetime.now().isoformat()}), encoding="utf-8")
