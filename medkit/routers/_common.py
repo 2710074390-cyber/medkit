@@ -1,8 +1,10 @@
 """routers 共享工具（S2 拆分自 main.py）：路径消毒 / meta 容错 / 原子写 / 切片分析 / 常量。"""
 
+import io
 import json
 import re
 import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -78,6 +80,45 @@ def _log_project(base: Path, msg: str) -> None:
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB（对齐 MinerU 精准 API 上限）
 # B-02：图片独立上限——图片只做 OCR 读图，无文本层可解析；20MB 已远高于正文扫描页
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+# M2-04（R8+W）：内容闸——原只校验「扩展名 + 体积」，可上传改名文件（.exe→.docx）
+# 与压缩炸弹（几十 KB 的 docx 解压出几 GB），解析线程被长时间占用（本机 DoS）。
+MAX_UNZIPPED_BYTES = 600 * 1024 * 1024   # 解压后总上限
+MAX_ZIP_RATIO = 200                       # 压缩比上限（超过且总体积可观即视为炸弹）
+_MAGIC: dict[str, tuple[bytes, ...]] = {
+    ".pdf": (b"%PDF-",),
+    ".docx": (b"PK\x03\x04",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".bmp": (b"BM",),
+    ".webp": (b"RIFF",),
+}
+
+
+def _content_guard(data: bytes, suffix: str) -> str | None:
+    """魔数 + 压缩炸弹闸。返回错误文案（None = 通过）。
+
+    注意：`.md`/`.txt` 无魔数，只做炸弹无关的跳过——纯文本文件不存在该风险。
+    """
+    magic = _MAGIC.get(suffix)
+    if magic and not any(data.startswith(m) for m in magic):
+        shown = data[:8].hex(" ")
+        return (f"文件内容与扩展名不符（{suffix} 应以 "
+                f"{magic[0]!r} 开头，实际前 8 字节为 {shown}）——"
+                "请确认文件未改名或损坏")
+    if suffix == ".docx":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                total = sum(i.file_size for i in z.infolist())
+        except Exception:  # noqa: BLE001  非 ZIP 结构 → 明确拒绝
+            return "不是有效的 DOCX（ZIP 结构损坏）——请用 WPS/Office 另存后再上传"
+        if total > MAX_UNZIPPED_BYTES:
+            return (f"解压后体积过大（约 {total // (1024 * 1024)} MB，上限 "
+                    f"{MAX_UNZIPPED_BYTES // (1024 * 1024)} MB）——疑似压缩炸弹，已拒绝")
+        ratio = total / max(len(data), 1)
+        if total > 20 * 1024 * 1024 and ratio > MAX_ZIP_RATIO:
+            return f"压缩比异常（约 {ratio:.0f}:1）——疑似压缩炸弹，已拒绝"
+    return None
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 TEXT_SUFFIXES = {".pdf", ".docx", ".md", ".markdown", ".txt"} | IMAGE_SUFFIXES
 
@@ -135,6 +176,9 @@ def _parse_bytes(name: str, data: bytes, suffix: str) -> dict[str, Any]:
     if len(data) > MAX_FILE_SIZE:
         return {"name": name,
                 "error": "文件超过 200 MB。建议按章节拆分成多个文件（也符合“一次一章”的推荐做法）"}
+    guard = _content_guard(data, suffix)
+    if guard:
+        return {"name": name, "error": guard}
     if suffix in IMAGE_SUFFIXES:
         # B-02：图片走 OCR 且独立上限（20MB 已远超正文扫描页；与文件级 200MB 区分）
         if len(data) > MAX_IMAGE_BYTES:

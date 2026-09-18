@@ -58,9 +58,29 @@ def _dpapi_available() -> bool:
     return sys.platform == "win32"
 
 
+# S3-10 / S3-12（R8+W）：密钥安全状态——供 UI 常驻角标（原只在加密失败时弹一次性 toast）。
+# 取值：None=正常；"plaintext"=加密不可用已回退明文；"decrypt_failed"=密文解不开。
+_SECURITY_WARN: str | None = None
+
+
+def security_warning() -> str | None:
+    """当前密钥存储的安全告警（None = 正常）。供配置页/诊断常驻展示。"""
+    return _SECURITY_WARN
+
+
+def _set_security_warn(kind: str) -> None:
+    global _SECURITY_WARN
+    if _SECURITY_WARN != "decrypt_failed":   # 解密失败优先级更高，不被覆盖
+        _SECURITY_WARN = kind
+
+
 def _protect(data: str) -> str:
     """加密明文 → 'dpapi:<base64>'；非 Windows / 失败时原样返回（回退明文）。"""
-    if not data or not _dpapi_available():
+    if not data:
+        return data
+    if not _dpapi_available():
+        # S3-10（R8+W）：非 Windows / 缺依赖 → 只能明文存储，必须常驻可见（不静默）
+        _set_security_warn("plaintext")
         return data
     try:
         raw = data.encode("utf-8")
@@ -76,16 +96,28 @@ def _protect(data: str) -> str:
             finally:
                 ctypes.windll.kernel32.LocalFree(out_blob.pbData)
     except Exception as e:  # noqa: BLE001  回退明文，不阻塞保存
-        _errs.record("config._protect", "静默容错（U-15 留痕）", e=e)
+        # S3-10：回退明文要**常驻可见**（原仅一次性 toast，重启后用户以为已加密）
+        _set_security_warn("plaintext")
+        _errs.record("config._protect", "DPAPI 加密失败，已回退明文存储", e=e)
+    else:
+        if data:
+            _set_security_warn("plaintext")   # 非 Windows：未加密
     return data
 
 
 def _unprotect(value: str) -> str:
-    """'dpapi:<base64>' → 明文；非法/失败/非 Windows → 原样返回。"""
+    """'dpapi:<base64>' → 明文。
+
+    S3-12（R8+W）：**解不开时返回空串**，不再「原样回吐密文」——原行为会把
+    `dpapi:xxxx` 当成 API Key 发出去，用户看到的是莫名其妙的 401（故障提示错位）。
+    返回空串后调用方走既有的「未配置 Key」提示路径，用户能直接知道要重填 Key。
+    """
     if not value or not value.startswith(_DPAPI_PREFIX):
         return value
     if not _dpapi_available():
-        return value
+        _set_security_warn("decrypt_failed")
+        _errs.record("config._unprotect", "DPAPI 不可用（非 Windows/缺依赖），密文无法解开")
+        return ""
     try:
         blob = base64.b64decode(value[len(_DPAPI_PREFIX):])
         in_blob = _DATA_BLOB(len(blob), ctypes.cast(ctypes.create_string_buffer(blob, len(blob)),
@@ -98,8 +130,14 @@ def _unprotect(value: str) -> str:
             finally:
                 ctypes.windll.kernel32.LocalFree(out_blob.pbData)
     except Exception as e:  # noqa: BLE001
-        _errs.record("config._unprotect", "静默容错（U-15 留痕）", e=e)
-    return value
+        _errs.record("config._unprotect", "DPAPI 解密抛错，密文无法解开", e=e)
+        _set_security_warn("decrypt_failed")
+        return ""
+    # S3-12（R8+W）：走到这里 = CryptUnprotectData 返回 0（密文损坏/换了机器或用户）
+    # 或 base64 非法——**一律返回空串**，绝不把密文原样当 Key 回吐。
+    _set_security_warn("decrypt_failed")
+    _errs.record("config._unprotect", "DPAPI 解密失败（密文损坏或非本机加密），已按未配置处理")
+    return ""
 
 
 def resolve_key(value: str) -> str:

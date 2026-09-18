@@ -11,6 +11,9 @@ class ExtractError(Exception):
     """素材解析失败（含可读提示）。"""
 
 
+MAX_PDF_PAGES = 2000   # M2-04：单份 PDF 页数上限
+
+
 def extract_text(path: str | Path) -> list[dict[str, Any]]:
     p = Path(path)
     if not p.exists():
@@ -33,6 +36,12 @@ def _extract_pdf(p: Path) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     total = 0
     with fitz.open(str(p)) as doc:
+        # M2-04（R8+W）：页数闸——超长 PDF 会把解析线程占住很久（本机 DoS），
+        # 且本软件按「一次一章」设计，数千页的 PDF 本就不该整体上传。
+        if doc.page_count > MAX_PDF_PAGES:
+            raise ExtractError(
+                f"PDF 页数过多（{doc.page_count} 页，上限 {MAX_PDF_PAGES} 页）——"
+                "请按章节拆分后再上传")
         for i, page in enumerate(doc):
             text = (page.get_text() or "").strip()
             if not text:

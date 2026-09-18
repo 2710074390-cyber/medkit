@@ -186,7 +186,7 @@ def extract_outline(text: str, client: Any = None,
     ``client`` 注入便于离线测试；``schema`` 供测试注入 mock 契约校验（默认逐科契约
     :class:`OutlineSubject`，与 prompt 输出 ``{name, chapters}`` 对齐）。
     """
-    from ..agents import get_client, load_prompt
+    from ..agents import get_client, render_prompt
     from .llm import LLMError
     from .schema import OutlineSubject
 
@@ -195,7 +195,10 @@ def extract_outline(text: str, client: Any = None,
         return None
     client = client or get_client("gen")
     model = schema or OutlineSubject
-    prompt = load_prompt("syllabus_extract.md")
+    # S3-9（R8+W）：`syllabus_extract.md` 声明了 `{subject_text}` 输入，原实现却用 load_prompt
+    # **原样加载**（占位符永不替换），正文改由 user 消息下发——prompt 与代码口径不一致，
+    # 系统提示里长期挂着一个字面量 `{subject_text}`。现改走 render_prompt 真正渲染，
+    # 与 medexplain/medgen/medtutor 的写法对齐；user 消息退化为触发语。
     merged: list[dict[str, Any]] = []
     errors: list[str] = []
     for name, body in subjects:
@@ -204,8 +207,9 @@ def extract_outline(text: str, client: Any = None,
         try:
             # 标题行随正文下发：模型按提示词第 6 条取「原文科目名」，不猜名
             raw = client.chat_json(
-                [{"role": "system", "content": prompt},
-                 {"role": "user", "content": f"{name}\n{body}"}],
+                [{"role": "system", "content": render_prompt(
+                    "syllabus_extract.md", subject_text=f"{name}\n{body}")},
+                 {"role": "user", "content": "请按上述规约抽取该科目的结构化条目（只输出 JSON）。"}],
                 temperature=0.1, max_tokens=16000, schema=model)
         except LLMError as e:
             errors.append(f"{name}: {e}")
