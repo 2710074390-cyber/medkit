@@ -34,6 +34,45 @@ datas = [
 # NX-02（R-3）：jieba 词典（dict.txt ≈5MB）不随包自动收集——缺词典则 FTS 分词静默退化
 datas += collect_data_files("jieba")
 
+
+# S2-18 / S2-22（R8+W）：随产物保留各依赖的 dist-info（内含 LICENSE / COPYING 原文）。
+# PyInstaller 默认**剥掉** dist-info，导致产物长期报「33 个已声明依赖缺 dist-info」——
+# 而 THIRD_PARTY_NOTICES 明确承诺「随产物保留 LICENSE 原文」。这里按 requirements.lock
+# 的**闭包**精确收集（不收集 pyinstaller 等构建期依赖，避免产物虚胖）。
+def _lock_closure_names() -> set[str]:
+    import re as _re
+    from pathlib import Path as _P
+
+    lock = _P("requirements.lock")
+    if not lock.exists():
+        return set()
+    names: set[str] = set()
+    for line in lock.read_text(encoding="utf-8").splitlines():
+        m = _re.match(r"^([A-Za-z0-9_.\-]+)==([^\s#\\]+)", line)
+        if m:
+            names.add(m.group(1).lower().replace("_", "-"))
+    return names
+
+
+def _dist_info_datas() -> list[tuple[str, str]]:
+    import sysconfig
+    from pathlib import Path as _P
+
+    want = _lock_closure_names()
+    if not want:
+        return []
+    purelib = _P(sysconfig.get_paths()["purelib"])
+    out: list[tuple[str, str]] = []
+    for d in sorted(purelib.glob("*.dist-info")):
+        base = d.name[: -len(".dist-info")]
+        nm = base.rsplit("-", 1)[0].lower().replace("_", "-")
+        if nm in want:
+            out.append((str(d), d.name))
+    return out
+
+
+datas += _dist_info_datas()
+
 a = Analysis(
     ["run_medkit.py"],
     pathex=["."],

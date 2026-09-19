@@ -124,6 +124,24 @@
   补记、在 `THIRD_PARTY_NOTICES.md` 补「同源站使用场景」小节——**均明确标注口径待产品/法务定版，
   不预设结论**（两种读法并列 + R1~R5 待办）。**R1「同源」语义定版属产品/法务决策，代码侧不代为决定。**
 
+### 打包产物（Fixed，R8+W 收尾）
+
+- **S2-18 / S2-22 产物补全依赖 dist-info（许可证义务落地）**：PyInstaller **默认剥掉** `*.dist-info`，
+  而 `THIRD_PARTY_NOTICES.md` 承诺「随产物保留 LICENSE 原文」——原产物因此长期报
+  「**33 个已声明依赖未随产物保留 dist-info**」。现 `medkit.spec` 新增
+  `_lock_closure_names()` + `_dist_info_datas()`：按 `requirements.lock` 的**闭包**精确收集
+  （不收集 pyinstaller 等构建期依赖，避免产物虚胖）。
+- **实测（干净 venv 重建验证）**：
+  - 新建 venv → `pip install --require-hashes -r requirements.lock`（哈希校验全过）→ PyInstaller 构建；
+  - **产物闭包漂移消失**：原产物含 4 个未声明发行包（attrs / email-validator /
+    importlib-metadata / itsdangerous），干净环境重建后 `check-package.py --strict` 报
+    **「闭包无未声明包」**——证实报告「构建机环境污染」的判断；
+  - 补 dist-info 后：dist-info 从 **5 个 → 38 个**，检查结果由「通过（有警告）」变为
+    **完全通过（零警告）**；
+  - 产物体积 **123 MB → 114 MB**（少的是污染包）。
+  > ⚠️ 说明：本批验证用**独立输出路径**构建（`.workbuddy-ai/tmp/nd2`），**未改动**根目录
+  > `dist/` 里已有的 0.10.3 产物；0.10.4 正式出包仍属发布动作（需代码签名证书）。
+
 ### 发布口径（Docs / Fixed）
 
 - **S3-15 版本「五件套」守卫补全 + README 漂移修正**：原守卫只覆盖

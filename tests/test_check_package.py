@@ -113,3 +113,22 @@ def test_spec_has_license_in_datas():
     # AGPL：许可证正文必须随安装包分发（AGPL「随分发提供许可证」要求）
     src = (ROOT / "medkit.spec").read_text(encoding="utf-8")
     assert '"LICENSE"' in src
+
+
+def test_spec_ships_dist_info_for_license_obligation():
+    """S2-18 / S2-22（R8+W）：spec 必须把 lock 闭包的 dist-info 打进产物。
+
+    PyInstaller **默认剥掉** dist-info，而 `THIRD_PARTY_NOTICES.md` 承诺「随产物保留 LICENSE 原文」
+    —— 原产物因此长期报「33 个已声明依赖缺 dist-info」。2026-09-19 实测：补齐后
+    `check-package.py --strict` 从「通过（有警告）」变为**完全通过**（38 个 dist-info）。
+    本用例锁住该修复，防止回归。
+    """
+    src = (ROOT / "medkit.spec").read_text(encoding="utf-8")
+    assert "def _dist_info_datas(" in src, "缺少 dist-info 收集函数"
+    # ⚠️ 必须**整行**匹配：子串匹配会把 `# datas += _dist_info_datas()` 这类注释也算命中
+    # （反向验证实测：注释掉该行时子串断言仍然通过 = 假绿）。
+    lines = [ln.strip() for ln in src.splitlines()]
+    assert "datas += _dist_info_datas()" in lines, "收集函数未接到 datas（或被注释掉）"
+    assert "def _lock_closure_names(" in src, "未按 requirements.lock 闭包限定范围（会混入构建期依赖）"
+    # 范围限定必须真的读 lock（否则会把 pyinstaller 等构建期依赖也打进产物）
+    assert "requirements.lock" in src
