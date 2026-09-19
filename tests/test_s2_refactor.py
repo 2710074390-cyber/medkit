@@ -29,6 +29,47 @@ def test_version_single_source():
     assert f'"{medkit.__version__}"' in iss, "pack/version.iss 应与 __version__ 一致"
 
 
+def test_version_declared_pieces_agree():
+    """发布口径「五件套」的**声明侧四件**必须一致（S3-15 / R8+W）。
+
+    原守卫只覆盖 `__init__` / `APP_VERSION` / `version.iss` **三件**——CHANGELOG 与 README
+    无人看管，于是 0.10.4 声明了但 README 仍写 v0.10.3（README 漂移正是这么漏出去的）。
+    """
+    ver = medkit.__version__
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## [{ver}]" in changelog, f"CHANGELOG 缺少 {ver} 版本段"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"v{ver}" in readme or f"（{ver}）" in readme, f"README 未提及当前版本 {ver}"
+
+
+def test_readme_download_points_at_existing_artifact():
+    """README 里写给用户双击的安装包名，**必须真实存在**（否则用户下载即 404）。"""
+    import re as _re
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    names = set(_re.findall(r"MedKit-Setup-[\w.\-]+\.exe", readme))
+    assert names, "README 未给出安装包文件名"
+    inst = ROOT / "dist-installer"
+    for n in names:
+        assert (inst / n).exists(), f"README 指向不存在的安装包：{n}"
+
+
+def test_readme_marks_unreleased_version():
+    """若当前 `__version__` 还没有对应安装包，README 必须显式标注「未发布/构建中」。
+
+    这是「声明版本领先于产物」时的诚实口径——否则用户会以为下载到的就是最新修复版
+    （2026-09-16 的「同号不同物」事故正是这类信息不对称）。
+    """
+    ver = medkit.__version__
+    inst = ROOT / "dist-installer"
+    has_artifact = inst.is_dir() and any(inst.glob(f"MedKit-Setup-{ver}.exe"))
+    if has_artifact:
+        return
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "尚在构建中" in readme or "未发布" in readme or "构建中" in readme, \
+        f"{ver} 无安装包，README 必须标注未发布状态"
+
+
 def test_run_medkit_console_utf8_prevents_gbk_crash(monkeypatch):
     """打包版（cmd 默认 GBK codepage）print emoji 曾抛 UnicodeEncodeError 致入口崩溃。
     回归：_console_utf8 必须把 stdout/stderr 重配为 UTF-8 + errors=replace。"""
