@@ -124,6 +124,28 @@
   补记、在 `THIRD_PARTY_NOTICES.md` 补「同源站使用场景」小节——**均明确标注口径待产品/法务定版，
   不预设结论**（两种读法并列 + R1~R5 待办）。**R1「同源」语义定版属产品/法务决策，代码侧不代为决定。**
 
+### 代码签名（新增脚本，R8+W 收尾）
+
+- **新增 `pack/sign-release.ps1`**：把「签名」这一步固化成一条命令。审查项 **M5-07** 里的
+  「签名」一直没落地——不是不想做，而是**本机没有证书**，且签名步骤**没有任何脚本承载**
+  （每换一台机器都要重新摸索顺序）。现在：有证书时一条命令签完并**回验**，
+  没证书/没工具时**明确报错退出**（绝不静默跳过——否则"发布了个未签名产物"没人会发现）。
+- **顺序已固化**（`build.bat` 按此接线）：PyInstaller → 签 `dist/MedKit/MedKit.exe` →
+  Inno Setup → 签安装包 → **最后**才跑 `make_release.py` 打 zip + 生成 SHA256 清单。
+  顺序反了清单就对不上签名后的字节。
+- **`build.bat` 接线**：设置环境变量 `MEDKIT_SIGN_THUMBPRINT` 即自动签名；未设置时**明确提示跳过**
+  （而不是静默）。签名失败即中断构建。
+- **踩坑留档（三条，都写进了测试）**：
+  1. **PowerShell 5.1 读无 BOM 的 `.ps1` 会按系统代码页（GBK）解码** → 中文注释被解坏 →
+     解析报错且行号对不上。脚本必须存为 **UTF-8 with BOM**（有守卫锁住）。
+  2. **参数设 `Mandatory` 会让缺参时进入交互式询问** → CI/批处理直接挂死（实测卡在
+     「请为以下参数提供值: Thumbprint:」）。改为手动校验 + 快速失败。
+  3. **不用 here-string**：其收尾标记必须顶格，缩进进代码块会解析失败——
+     连**注释里**写出那个两字符标记也会炸解析（踩过两次）。
+- 本机现状：**无代码签名证书、无 signtool**（`CurrentUser\My` / `LocalMachine\My` 均无代码签名证书，
+  Windows SDK 未安装）→ v0.10.4 以未签名发布，Release 说明已告知 SmartScreen 与绕过方式。
+  拿到证书后：`winget install Microsoft.WindowsSDK.10.0.22621` → 跑签名脚本即可。
+
 ### 发布产物（Release v0.10.4）
 
 - **GitHub Release**：https://github.com/2710074390-cyber/medkit/releases/tag/v0.10.4

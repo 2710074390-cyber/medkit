@@ -67,6 +67,23 @@ if exist "%ISCC%" (
 )
 
 echo.
+echo === 代码签名（可选：需证书）===
+rem R8+W / M5-07：签名步骤原先没有任何脚本承载，于是每换一台机器都要重新摸索。
+rem 现在固化在这里：设置 MEDKIT_SIGN_THUMBPRINT 环境变量即自动签名，否则明确跳过（不是静默）。
+rem ⚠️ 必须在 make_release.py **之前**——签名会改变文件字节，zip 与 SHA256 清单要覆盖签名后的产物。
+if defined MEDKIT_SIGN_THUMBPRINT (
+  powershell -NoProfile -ExecutionPolicy Bypass -File pack\sign-release.ps1 -Thumbprint "%MEDKIT_SIGN_THUMBPRINT%"
+  if errorlevel 1 (
+    echo [错误] 代码签名失败（产物未签名，请勿发布）。
+    pause
+    exit /b 1
+  )
+) else (
+  echo [提示] 未设置 MEDKIT_SIGN_THUMBPRINT，跳过签名。
+  echo        产物将未签名，Windows 首次运行可能弹 SmartScreen。签名见 pack\sign-release.ps1 头部说明。
+)
+
+echo.
 echo === 生成绿色版 zip + SHA256 清单（S2-22 / M5-07）===
 rem R8+W：原脚本只出 dist\MedKit 与安装包，绿色版 zip 与校验清单**没有脚本**——
 rem 2026-09-20 出 0.10.4 时这两步是手工做的，于是「sha256 清单」在审查里长期挂着。
