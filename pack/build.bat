@@ -65,4 +65,16 @@ if exist "%ISCC%" (
   echo [提示] 未找到 Inno Setup 编译器（ISCC.exe），跳过安装包构建。
   echo        需要时装：下载 ghproxy.net 上的 innosetup 安装器或从 jrsoftware.org 获取。
 )
+
+echo.
+echo === 生成绿色版 zip + SHA256 清单（S2-22 / M5-07）===
+rem R8+W：原脚本只出 dist\MedKit 与安装包，绿色版 zip 与校验清单**没有脚本**——
+rem 2026-09-20 出 0.10.4 时这两步是手工做的，于是「sha256 清单」在审查里长期挂着。
+python pack\make_release.py
+if errorlevel 1 (
+  echo [错误] 发布产物生成失败。
+  pause
+  exit /b 1
+)
+
 pause

@@ -124,6 +124,26 @@
   补记、在 `THIRD_PARTY_NOTICES.md` 补「同源站使用场景」小节——**均明确标注口径待产品/法务定版，
   不预设结论**（两种读法并列 + R1~R5 待办）。**R1「同源」语义定版属产品/法务决策，代码侧不代为决定。**
 
+### 发布产物（Release v0.10.4）
+
+- **GitHub Release**：https://github.com/2710074390-cyber/medkit/releases/tag/v0.10.4
+  （上一版正式 Release 是 v0.10.1——0.10.2/0.10.3 只出了产物、从未发 Release）
+- **产物与校验**（`sha256sum -c SHA256SUMS.txt` 可直接核对）：
+
+```
+91401779876214d0759c84d6b2ebda37e09e86416651d15f58bff8726657634b  MedKit-Setup-0.10.4.exe
+5dd1c27aaa215d47e7bc0a754078d760a1ba1b443fe575018ea54e56f8f20d53  MedKit-0.10.4-portable.zip
+```
+
+- **新增 `pack/make_release.py`**：固化「绿色版 zip + SHA256 清单」两步。原 `build.bat`
+  只跑到「PyInstaller 出 dist/MedKit + Inno Setup 出安装包」，这两步**没有脚本**（0.10.4 是手工做的）
+  ——审查项 **M5-07「无可复现 CI 构建/签名/sha256 清单」**正是这么长期挂着的。现已接线进 `build.bat`。
+- **已验证**：
+  - 从 Release **下载回来**的两个产物与本地构建物 **SHA256 逐字节一致** ✓（"用户下载到的 == 我们构建的"）；
+  - 绿色版 zip **可复现**：重建后哈希不变（`zipfile.write` 保留源文件 mtime）；
+  - 安装包**全链路**：静默安装 → 启动冒烟（HTTP 200）→ 卸载无残留 ✓。
+- ⚠️ **未做代码签名**（无证书）→ Windows 首次运行可能弹 SmartScreen，Release 说明里已写明绕过方式。
+
 ### 打包产物（Fixed，R8+W 收尾）
 
 - **S2-18 / S2-22 产物补全依赖 dist-info（许可证义务落地）**：PyInstaller **默认剥掉** `*.dist-info`，
