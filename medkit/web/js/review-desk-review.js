@@ -603,7 +603,8 @@ async function diffPrompt(nameOrEl) {
 }
 
 /* ---- 首启欢迎向导（医学生视角，3 步）----
-   触发：未配置 Key 且从未完成引导；完成或「跳过」写 localStorage，关闭/ESC 不写（下次再提示） */
+   触发：从未完成引导；完成或「跳过」写 localStorage，关闭/ESC 不写（下次再提示）
+   v0.10.5：不再以「有无 Key」为门槛——首次使用均展示；第 2 步按是否已配 Key 动态渲染。 */
 let wzStep = 0;
 function wzDone() {
   try { localStorage.setItem("medkit-onboarded", "1"); } catch (e) { /* ignore */ }
@@ -634,20 +635,33 @@ function wzRender() {
     btns.innerHTML = `<button class="act" id="wz_next">下一步：连接 AI（2 分钟）</button>`;
     $("wz_next").onclick = () => { wzStep = 1; wzRender(); };
   } else if (wzStep === 1) {
-    const provs = (state.providers || []).filter(p => p.register_url);
-    body.innerHTML = `
-      <div class="hint" style="line-height:1.9">出题需要一个大模型「API Key」——相当于你和 AI 服务商之间的<b>充值卡</b>。
-      推荐注册 <b>DeepSeek</b>（便宜，充值 ¥10 可出多套题）：点官网注册 → 充值 → 复制 Key，回到本软件「我的 → 连接服务商」粘贴保存即可。</div>
-      ${provs.map(p => `<div class="wprov"><svg class="ic" style="width:20px;height:20px;color:var(--accent);flex:none"><use href="#i-key"></use></svg>
-        <b>${esc(p.name)}</b><span>${esc(p.note || "")}</span>
-        <a class="provlink" href="${esc(p.register_url)}" target="_blank" rel="noopener">官网注册 ↗</a></div>`).join("")}
-      <div class="hint" style="margin-top:10px">不知道选哪个？先用 DeepSeek 就够了。稍后再配置也不影响了解软件。</div>`;
-    btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
-      <button class="act" id="wz_next">我已拿到 Key（去配置）</button>
-      <button class="act gray" id="wz_later">稍后配置，先看看</button>`;
-    $("wz_back").onclick = () => { wzStep = 0; wzRender(); };
-    $("wz_next").onclick = () => { wzDone(); showTab("mine"); $("api_key").focus(); };
-    $("wz_later").onclick = () => { wzStep = 2; wzRender(); };
+    // v0.10.5：已配置 Key 的首次用户不重复引导配置——直接显示「已连接 ✓」并前进
+    const hasKey = !!(state.cfg && state.cfg.api_key_masked);
+    if (hasKey) {
+      const prName = (state.providers || []).find(p => p.id === (state.cfg && state.cfg.provider));
+      body.innerHTML = `
+        <div class="hint" style="line-height:1.9">你已经连接了 <b>${esc(prName ? prName.name : "AI 服务商")}</b> ✓ ——出题能力已就绪，无需重复配置。</div>
+        <div class="hint" style="margin-top:10px">下一步：上传你的教材与老师划的重点，就能生成第一套题。也可以先「载入示例」，30 秒看懂效果。</div>`;
+      btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
+        <button class="act" id="wz_next">下一步：选择开始方式</button>`;
+      $("wz_back").onclick = () => { wzStep = 0; wzRender(); };
+      $("wz_next").onclick = () => { wzStep = 2; wzRender(); };
+    } else {
+      const provs = (state.providers || []).filter(p => p.register_url);
+      body.innerHTML = `
+        <div class="hint" style="line-height:1.9">出题需要一个大模型「API Key」——相当于你和 AI 服务商之间的<b>充值卡</b>。
+        推荐注册 <b>DeepSeek</b>（便宜，充值 ¥10 可出多套题）：点官网注册 → 充值 → 复制 Key，回到本软件「我的 → 连接服务商」粘贴保存即可。</div>
+        ${provs.map(p => `<div class="wprov"><svg class="ic" style="width:20px;height:20px;color:var(--accent);flex:none"><use href="#i-key"></use></svg>
+          <b>${esc(p.name)}</b><span>${esc(p.note || "")}</span>
+          <a class="provlink" href="${esc(p.register_url)}" target="_blank" rel="noopener">官网注册 ↗</a></div>`).join("")}
+        <div class="hint" style="margin-top:10px">不知道选哪个？先用 DeepSeek 就够了。稍后再配置也不影响了解软件。</div>`;
+      btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
+        <button class="act" id="wz_next">我已拿到 Key（去配置）</button>
+        <button class="act gray" id="wz_later">稍后配置，先看看</button>`;
+      $("wz_back").onclick = () => { wzStep = 0; wzRender(); };
+      $("wz_next").onclick = () => { wzDone(); showTab("mine"); $("api_key").focus(); };
+      $("wz_later").onclick = () => { wzStep = 2; wzRender(); };
+    }
   } else {
     body.innerHTML = `
       <div class="hint" style="line-height:1.9">准备好了？两种开始方式任选：</div>
@@ -686,8 +700,8 @@ function maybeShowWizard() {
     if (localStorage.getItem("medkit-onboarded")) return;
     if (sessionStorage.getItem("medkit-wz-seen")) return;   // 本会话已看过（关闭/ESC 过）→ 不重复弹
   } catch (e) { return; }
-  const c = state.cfg;
-  if (!c || c.api_key_masked) return;   // 已有 Key → 老用户，不打扰
+  // v0.10.5：不再以「有无 Key」为门槛——首次使用（从未完成/跳过引导）均展示；
+  // 已有 Key 的用户在第 2 步看到「已连接 ✓」并跳过配置动作，不打扰。
   wzStep = 0; wzRender();
   $("wizard_mask").style.display = "flex";
 }

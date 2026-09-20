@@ -6,6 +6,60 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
+## [Unreleased]
+
+> 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
+
+## [0.10.5] - 2026-09-20
+
+> **本批为何改**：2026-09-20 v1 代码审查报告经逐条实证核验产出勘误版
+> （`docs/reviews/代码审查报告_勘误版_2026-09-20.md`），按勘误后的技术债清单执行
+> P4/P3/P2 改进。本批**无功能变更、无 prompt 变更**，均为工程加固；ruff/eslint/mypy 全绿。
+
+### Added
+
+- **P3 类型检查基线（mypy）**：`pyproject.toml` 新增 `[tool.mypy]`（py3.12、ignore-missing-imports、
+  warn_unused_ignores/warn_redundant_casts；暂不开 disallow_untyped_defs），CI verify job 新增
+  阻断式 `mypy medkit` 步骤，`requirements-dev.txt` 增 `mypy>=1.13`。全包 73 个源文件
+  `Success: no issues found`（修复 19 个既有文件的 59 处类型问题）。
+- **P3 错误码统一**：新增 `medkit/core/error_codes.py`（`ErrorCode` 字符串枚举，五成员
+  LLM/SEARCH/MINERU/PIPELINE/INTERNAL_ERROR，value 与历史线上字符串完全一致）；`main.py`
+  的 `_err_response`、4 个异常处理器与兜底 500 全部改走枚举，消除字符串/类混用。
+- **P3 生命周期关闭清理**：`state.py` 新增 `RUN_THREADS` 登记；管线线程（`medkit-pipeline-{pid}`）
+  与 OCR 线程（`medkit-ocr-{jid}`）在 finally 中注销；`core/db.py` 新增幂等 `shutdown()`
+  （WAL `wal_checkpoint(PASSIVE)` 后关闭主线程连接）；`main.py` lifespan 关闭段新增
+  `_shutdown_runtime(join_timeout=5.0)`——置位全部取消事件、按 deadline join、关闭数据库，
+  全程 best-effort 不阻塞退出。此前 lifespan 关闭段为空。
+- **新手引导（v0.10.5 首启体验）**：开始页空状态新增「三步上手卡」（连接 AI → 上传教材与教师重点 → 载入示例体验；点过「先逛逛」本会话不再显示，有课题后自然消失）；首启欢迎向导不再以「有无 API Key」为门槛——首次使用均展示，已配 Key 用户第 2 步显示「已连接 ✓」并跳过配置动作；侧栏新增 MedAgentWork 技能包 v2.1 外链。
+- **浏览器测试基座修复**：`tests/browser` 首次真跑（此前缺 chromium 一直整体 skip）暴露首启向导遮罩拦截全部点击的基座缺陷——隔离环境无 Key 时向导必然弹出；现于 `page` fixture 预置「已跳过引导」前置状态（localStorage 完成标记 + sessionStorage 本会话已见），37 个浏览器用例全绿。
+- **前端契约闸门**：新增 `tests/test_v15_frontend_handler_exposure.py`——`index.html` 与各 JS
+  模板字符串中的内联 `on*="fn()"` 处理器，其标识符必须在某分片有顶层声明或 `window.X` 挂载
+  （与 `eslint.config.js` 的 ownDeclarations 同口径），把「拼错/漏暴露只在点击时 ReferenceError」
+  变为静态闸门。
+
+### Fixed
+
+- **（mypy 顺带发现的潜伏 bug）MedQC 并发质检结果结构不一致**：`agents/medqc.py` 并发路径
+  `run()` 返回 `(i, dict)` 元组被原样存入 `results[i]`，而串行路径存 dict、下游统一按
+  `r["issues"]` 聚合——多批次 + 并发（默认路径）必崩。现 `run()` 直接返回 dict，
+  `results` 类型为 `list[dict | None]`，聚合跳过 None。
+- **（mypy 顺带发现的潜伏 bug）`routers/review.py` 嵌套 except 同名变量**：两处外层
+  `except ... as e` 内再写 `except ... as e`，Python 在内层块结束即删除 `e`，回滚也失败时
+  外层 `raise HTTPException(...) from e` 触发 `NameError`（掩盖原始异常）。内层改名 `e2`。
+- **P4 笔误**：`core/config.py` 文件头注释 DPAPI 密文前缀误写为 `dbapi:`，更正为 `dpapi:`
+  （实现本就正确，仅注释错）。
+
+### Changed（经评估不改，记录决策）
+
+- **P2 前端不迁移 ESM**：维持「经典脚本 + 零构建 + 零 CDN」，与团队 2026-09-16 留档决策
+  （`tests/test_v15_frontend_split.py` 文件头）一致；ESM 会改 `index.html` 加载语义，
+  风险收益不成立。改以上述新增静态闸门收敛跨文件显式暴露契约。
+- **P2 `orchestrator.py` / `core/library.py` 不做文件级拆分**：仓库已有 U-10 闸门
+  （全仓函数 <400 行、管线阶段函数必须抽取且 `_run_project_impl` 仅做编排）固化了真正有价值的
+  函数级拆分；约 15 个测试文件以 `monkeypatch.setattr(模块级常量/函数)` 为契约、另有源码级守卫
+  要求 `_substep` 等物理留在 `orchestrator.py`，机械拆文件需重写守卫或引入循环间接层。
+  现仅在两文件头部补「文件导航」目录注释，零行为变化。
+
 ## [0.10.4] - 2026-09-17
 
 > **本版为何要 bump**：2026-09-17 全面代码审查（build-web-apps 插件三路深查：后端质量 /

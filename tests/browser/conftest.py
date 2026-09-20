@@ -148,5 +148,13 @@ def page(browser):
     ctx = browser.new_context(viewport={"width": 1280, "height": 800})
     pg = ctx.new_page()
     pg.set_default_timeout(15000)
+    # 首启向导（review-desk-review.js 的 wizard_mask）是用户首次使用的引导层，
+    # 在隔离测试环境（无 API Key）下必然弹出并拦截全部点击——对被测功能是无关噪声。
+    # 预置「已跳过引导」前置状态：localStorage 完成标记 + sessionStorage 本会话已见，
+    # 向导遮罩不再出现（v0.10.5 起向导不再以有无 Key 为门槛，更需显式注入此前置状态）。
+    pg.add_init_script(
+        "localStorage.setItem('medkit-onboarded','1');"
+        "sessionStorage.setItem('medkit-wz-seen','1');"
+    )
     yield pg
     ctx.close()

@@ -454,7 +454,41 @@ async function loadStart() {
     const rv = d.review || {};
     const my = d.mastery || {};
     const recent = (projs.projects || []).slice(0, 3);
-    box.innerHTML = `
+    /* v0.10.5：新手三步上手卡——尚无任何课题时展示（checklist 式空状态引导）；
+       本会话内点过「先逛逛」则不再显示；有课题后自然消失 */
+    let ob = "";
+    try {
+      if (!sessionStorage.getItem("medkit-ob-dismiss")) {
+        const projCount = (projs.projects || []).length;
+        if (projCount === 0) {
+          const hasKey = !!(state.cfg && state.cfg.api_key_masked);
+          ob = `<div class="onboard" id="onboard_card">
+            <div class="ob-head">
+              <div><b>三步上手 Med<b>Kit</b></b><span>还没生成过课题——照着走一遍，约 5 分钟出第一套题</span></div>
+              <button class="mini-btn" onclick="obDismiss()">先逛逛</button>
+            </div>
+            <div class="ob-steps">
+              <div class="ob-step${hasKey ? " done" : ""}">
+                <span class="ob-n">${hasKey ? "✓" : "1"}</span>
+                <div class="ob-t"><b>连接 AI</b><span>${hasKey ? "已配置 API Key" : "注册 DeepSeek 获取 API Key（充值 ¥10 可出多套题）"}</span></div>
+                ${hasKey ? "" : `<button class="ob-btn" onclick="showTab('mine')">去配置</button>`}
+              </div>
+              <div class="ob-step">
+                <span class="ob-n">2</span>
+                <div class="ob-t"><b>上传教材与教师重点</b><span>PDF / Word / MD / 图片都行，一次一个章节最稳</span></div>
+                <button class="ob-btn" onclick="showTab('bank');document.getElementById('dz_textbook').scrollIntoView({behavior:'smooth'})">去上传</button>
+              </div>
+              <div class="ob-step">
+                <span class="ob-n">3</span>
+                <div class="ob-t"><b>生成第一套题</b><span>先「试出一题」看效果，再正式生成题库</span></div>
+                <button class="ob-btn" onclick="loadSample()">载入示例体验</button>
+              </div>
+            </div>
+          </div>`;
+        }
+      }
+    } catch (e) { /* ignore */ }
+    box.innerHTML = `${ob}
       <div class="start-stats">
         <div class="start-stat"><b>${rv.due || 0}</b><span>今日待复习</span></div>
         <div class="start-stat"><b>${rv.new || 0}</b><span>新卡待学</span></div>
@@ -487,6 +521,23 @@ async function loadStart() {
     box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
 }
+/* v0.10.5：三步卡「先逛逛」——本会话不再显示（隐藏卡片 + sessionStorage 标记） */
+function obDismiss() {
+  const el = $("onboard_card");
+  if (el) el.style.display = "none";
+  try { sessionStorage.setItem("medkit-ob-dismiss", "1"); } catch (e) { /* ignore */ }
+}
+window.obDismiss = obDismiss;
+/* v0.10.5：三步卡/空状态「载入示例体验」——无 Key 先定向连接页，有 Key 直达示例试出题 */
+function loadSample() {
+  if (!(state.cfg && state.cfg.api_key_masked)) {
+    toast("试出一题需要用 API Key——请先完成「我的 → 连接服务商」配置（充值 ¥10 可出多套题）", false);
+    showTab("mine"); $("api_key").focus();
+    return;
+  }
+  showTab("bank"); $("btn_sample").click();
+}
+window.loadSample = loadSample;
 /* ---- ① 考试计划（v0.10.0：多场考试，localStorage；兼容旧单场键） ---- */
 const EXAM_KEY = "medkit-exams";
 let _examSeq = 0;

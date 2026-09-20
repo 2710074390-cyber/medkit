@@ -134,7 +134,10 @@ async function loadProjects() {
     box.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-mine"></use></svg>
       <div class="sub">还没有项目 · 上传教材与教师重点，生成你的第一套题库</div>
-      <button class="act" onclick="document.getElementById('tab-bank').scrollIntoView()">去上方「新建课题」↑</button>
+      <div class="btns" style="justify-content:center;margin-top:4px">
+        <button class="act" onclick="document.getElementById('tab-bank').scrollIntoView({behavior:'smooth'})">去上方「新建课题」↑</button>
+        <button class="act gray" onclick="loadSample()">载入示例体验</button>
+      </div>
     </div>`;
     return;
   }
