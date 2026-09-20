@@ -159,13 +159,15 @@ def split_subjects(text: str) -> list[tuple[str, str]]:
     if idx >= 0:
         body = body[idx:]
     out: list[tuple[str, str]] = []
-    cur_name, cur_lines = "", []
+    cur_name = ""
+    cur_lines: list[str] = []
     for raw in body.splitlines():
         m = _OUTLINE_TOP_RE.match(raw)
         if m and len(out) <= 16:
             if cur_name:
                 out.append((cur_name, "\n".join(cur_lines)))
-            cur_name, cur_lines = m.group(2).strip(), []
+            cur_name = m.group(2).strip()
+            cur_lines = []
         elif cur_name:
             cur_lines.append(raw)
     if cur_name:
@@ -379,7 +381,8 @@ def chapter_items_text(subject: str = "", limit: int = 800,
 def list_subjects(source: str = "all") -> list[dict[str, Any]]:
     """有大纲条目的科目清单（含章/条目计数；source 限定 all|seed|teacher）。"""
     dbs.migrate()   # U-09：schema 按需确保（原由路由层调用，收敛到 core）
-    where, params = "", ()
+    where = ""
+    params: tuple[Any, ...] = ()
     if source != "all":
         where, params = "WHERE source = ?", (source,)
     with dbs.tx(write=False) as cur:   # R4-08：纯读路径不开写事务（避免抢写锁）
@@ -423,7 +426,7 @@ def sync_teacher() -> dict[str, Any]:
     """
     dbs.migrate()
     root = _proj_dir()
-    stats = {"projects": 0, "slices": 0, "items": 0, "subjects": []}
+    stats: dict[str, Any] = {"projects": 0, "slices": 0, "items": 0, "subjects": []}
     if not root.is_dir():
         return stats
     subject_set: set[str] = set()
@@ -478,7 +481,7 @@ _KP_CLEAN_RE = re.compile(
     r"^\s*(?:重点掌握|考试大纲要求|应掌握|需掌握|重点|考点|掌握|熟悉|了解)\s*[:：]?\s*")
 
 
-def extract_teacher_kps(drafts: list[dict[str, str]], cap: int = 200) -> list[dict[str, str]]:
+def extract_teacher_kps(drafts: list[dict[str, Any]], cap: int = 200) -> list[dict[str, str]]:
     """教师重点草稿 → 知识点名（「知识点提取」步骤，零 LLM）。
 
     规范化：去首部「重点/掌握/熟悉…」前缀与尾部标点噪声；压缩空白；超 40 字在最后一个
@@ -573,7 +576,7 @@ def replace_teacher_chapters(pairs: list[tuple[str, str]]) -> int:
     return replaced
 
 
-def add_teacher_items(drafts: list[dict[str, str]]) -> dict[str, Any]:
+def add_teacher_items(drafts: list[dict[str, Any]]) -> dict[str, Any]:
     """教师重点草稿 → 落库（source='teacher'，幂等 IDOR 更新）。返回统计。"""
     dbs.migrate()
     added = 0
@@ -628,6 +631,7 @@ def import_teacher_file(path: str | Path, subject: str = "",
     if err is not None:
         return {"mode": "error", "subject": subject, "drafts": [],
                 "added": 0, "total": 0, "knowledge": [], "note": err, "error": True}
+    assert parsed is not None
     base: dict[str, Any] = {"mode": parsed["mode"], "subject": parsed["subject"],
                             "drafts": parsed["drafts"], "knowledge": parsed.get("knowledge", []),
                             "note": parsed["note"]}
@@ -651,6 +655,7 @@ def import_teacher_file_preview(path: str | Path, subject: str = "",
     if err is not None:
         return {"mode": "error", "subject": subject, "drafts": [],
                 "added": 0, "total": 0, "knowledge": [], "note": err, "error": True}
+    assert parsed is not None
     base: dict[str, Any] = {"mode": parsed["mode"], "subject": parsed["subject"],
                             "drafts": parsed["drafts"], "knowledge": parsed.get("knowledge", []),
                             "note": parsed["note"]}

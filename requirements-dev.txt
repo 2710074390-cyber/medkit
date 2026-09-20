@@ -6,3 +6,4 @@ freezegun>=1.5     # IMP-09: freeze clock for time tests (SM-2 due / 24h idempot
 setuptools<81      # NX-08(R-6): jieba 0.42.1 depends on pkg_resources (deprecated; dropped in setuptools>=81; pin until new release)
 pip-audit>=2.7     # U-16: dependency CVE audit (CI step `pip-audit -r requirements.txt`); known vulns only, no conflicts (pip check handles those)
 pytest-cov>=5      # U-12: coverage (CI `--cov=medkit --cov-fail-under=80`; optional locally)
+mypy>=1.13         # P3: 静态类型检查（CI `mypy medkit`；2026-09-20 基线 0 error，只升不降；配置见 pyproject [tool.mypy]）

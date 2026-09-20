@@ -49,7 +49,7 @@ def _save_jobs_to_disk() -> None:
     调用方需已持有 OCR_LOCK（或保证无并发写）；cancel Event 不可序列化，落盘时剔除。"""
     try:
         OCR_JOB_DIR.mkdir(parents=True, exist_ok=True)
-        snapshot = {k: {kk: vv for kk, vv in j.items() if kk != "cancel"}
+        snapshot = {k: {kk: vv for kk, vv in j.items() if kk not in ("cancel", "_thread")}
                     for k, j in OCR_JOBS.items()}
         tmp = _jobs_file().with_suffix(".json.tmp")
         tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -143,6 +143,7 @@ def _run_ocr_job(job: dict[str, Any], tmp_path: str, name: str, suffix: str) -> 
         _ocr_job_set(jid, "failed", f"识别异常：{e}")
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+        job.pop("_thread", None)   # 线程终态后移除引用（shutdown 只 join 在飞线程）
 
 
 @router.post("/api/ocr/start")
@@ -167,14 +168,16 @@ async def ocr_start(file: UploadFile = File(...),
     tmp_path = str(OCR_JOB_DIR / f"{jid}{suffix}")
     await asyncio.to_thread(Path(tmp_path).write_bytes, data)  # v0.5：≥200MB 写盘移出事件循环
 
-    job = {"id": jid, "name": file.filename, "role": role, "state": "queued",
-           "msg": "排队中…", "result": None, "created": time.time(),
-           "cancel": threading.Event()}
+    job: dict[str, Any] = {"id": jid, "name": file.filename, "role": role, "state": "queued",
+                           "msg": "排队中…", "result": None, "created": time.time(),
+                           "cancel": threading.Event()}
     with OCR_LOCK:
         OCR_JOBS[jid] = job
         _save_jobs_to_disk()   # B34：新任务即落盘（重启后仍在）
-    threading.Thread(target=_run_ocr_job, args=(job, tmp_path, file.filename, suffix),
-                     daemon=True).start()
+    t = threading.Thread(target=_run_ocr_job, args=(job, tmp_path, file.filename, suffix),
+                         daemon=True, name=f"medkit-ocr-{jid}")
+    job["_thread"] = t
+    t.start()
     return {"job_id": jid, "state": "queued"}
 
 

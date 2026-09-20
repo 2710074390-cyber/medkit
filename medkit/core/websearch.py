@@ -278,10 +278,12 @@ def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") 
                 if not isinstance(p, dict):
                     continue
                 for an in (p.get("annotations") or []):
-                    if isinstance(an, dict) and str(an.get("url") or "").startswith("http"):
-                        _push(out, an.get("url"),
-                              an.get("title") or an.get("url_text") or "",
-                              an.get("snippet") or an.get("text") or "")
+                    if isinstance(an, dict):
+                        url = an.get("url")
+                        if isinstance(url, str) and url.startswith("http"):
+                            _push(out, url,
+                                  an.get("title") or an.get("url_text") or "",
+                                  an.get("snippet") or an.get("text") or "")
             # ② 正文中的裸 URL（不含被禁域名；差量去重）
             text = "".join(str(p.get("text", "")) for p in (it.get("content") or [])
                            if isinstance(p, dict))

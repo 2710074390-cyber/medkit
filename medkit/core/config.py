@@ -2,7 +2,7 @@
 
 安全：密钥仅存本机文件；UI 显示掩码。
 S2（2026-08 审计）：Windows 下 API Key 用 DPAPI（CryptProtectData，ctypes 零依赖）
-加密落盘：dbapi: 前缀 + base64 密文，绑定当前用户账户；macOS/Linux 回退明文。
+加密落盘：dpapi: 前缀 + base64 密文，绑定当前用户账户；macOS/Linux 回退明文。
 迁移：读到旧明文 → 下次保存时自动升级为密文。
 """
 

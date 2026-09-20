@@ -8,6 +8,27 @@ U1/U2（2026-08 审计）：可取消（Event）+ 断点续跑（每切片落 ch
 取消≠丢弃：已生成题目保留，重新运行自动从断点继续。
 U3：切片出题 ThreadPoolExecutor(≤3) 并发（结果按配额顺序回填，id 稳定）。
 U5：结束时把实际 usage（token）与估算成本写入 meta。
+# ─────────────────────────────────────────────────────────────────────────────
+# 文件导航（管线编排单模块；约 1.5k 行）
+# 为什么不做文件级拆分：tests/test_u_batch2_engine.py 的 U-10 闸门要求阶段函数与
+# _run_project_impl 物理保留在本模块，另有约 15 个测试以 monkeypatch 模块级符号
+# （常量/锁/_substep/_update_meta/_stage_* 等）为契约、test_r8w_p2_data.py 为源码级
+# 守卫；真正有价值的函数级拆分已由「全仓函数 <400 行 + 阶段函数已抽取」两道闸门固化。
+#
+#   常量/异常 ..................... FIX_ROUNDS_GATE / PAPER_DEFAULT / PIPELINE_CONCURRENCY /
+#                                 RENDER_MAX_OPTIONS / PIPELINE_STAGES / PipelineError(+Cancelled)
+#   进度·子步骤·meta 咽喉点 ....... _log / _write_json_atomic / _substep / _substeps_terminate /
+#                                 _run_substep / _update_meta / _set_stage / _set_progress
+#   人工复核清单·渲染前终检 ....... _append_review_list / _append_contract_review /
+#                                 _append_unverified_review / _append_manual_section / _render_precheck
+#   抽样·图片门禁 ................. _sample_paper_exact / _sample_paper / _save_paper_ids /
+#                                 _gate_image_refs / select_paper_stable
+#   断点·图片索引·取消 ............ _load_checkpoint / _save_checkpoint / build_image_index /
+#                                 _review_slice_digest / _cancel_out / _record_usage_on_exit
+#   四阶段函数 .................... _stage_websearch / _stage_generate / _stage_gate1 / _stage_qc_fix
+#   编排主体 ...................... run_project / _run_project_impl（内含 ⓪~⑦ 阶段行内注释）/
+#                                 _set_progress_clear
+# ─────────────────────────────────────────────────────────────────────────────
 U6：查重门禁（n-gram Jaccard >0.8 → warn → MedFix 改写）。
 """
 
@@ -404,7 +425,7 @@ def _save_paper_ids(base: Path, paper_qs: list[dict[str, Any]]) -> None:
 
 
 def _gate_image_refs(questions: list[dict[str, Any]],
-                     image_sids: set[str]) -> tuple[list[dict[str, Any]], list[str]]:
+                     image_sids: set[str]) -> tuple[list[dict[str, Any]], list[str | None]]:
     """B28：image_ref 门禁——任何 image_ref 不在 image_sids 中都剔除并返回被剔除 id。
     不再要求 image_sids 非空：未传图项目的幻觉 image_ref 同样被拦截（防伪图题零提示）。"""
     dropped = [q.get("id") for q in questions
@@ -967,9 +988,9 @@ def _stage_generate(*, base: Path, meta_path: Path, cancel: threading.Event,
                     slice_by_sid: dict[str, dict[str, Any]], gen_client: Any,
                     subject: str, exam: str, ratios: dict[str, int],
                     teacher_text: str, requirements: str, knobs: dict[str, str],
-                    bloom: dict[str, int], web_materials_text: str,
+                    bloom: Optional[dict[str, int]], web_materials_text: str,
                     web_ref_quota: int, exam_text: str, extra_text: str,
-                    syllabus_text: str, image_sections: list[dict[str, Any]],
+                    syllabus_text: str, image_sections: str,
                     ) -> tuple[list[dict[str, Any]], bool, list[int], set[str]]:
     """① MedGen 出题（按章节切片并发 + 断点续跑 + 可取消）。
 

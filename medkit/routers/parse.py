@@ -29,7 +29,7 @@ async def parse_files(files: list[UploadFile] = File(...),
             return {"name": f.filename,
                     "error": f"不支持的类型 {suffix}（支持 PDF/DOCX/MD/TXT；图片需开启 OCR）"}
         data = await f.read()
-        return await asyncio.to_thread(_parse_bytes, f.filename, data, suffix)
+        return await asyncio.to_thread(_parse_bytes, f.filename or "未命名文件", data, suffix)
 
     results = await asyncio.gather(*(process(f) for f in files))
     return {"role": role, "results": list(results)}

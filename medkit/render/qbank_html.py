@@ -78,7 +78,8 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
             out.append('<p class="hint">⚠️ 本题含图（' + html_mod.escape(ref)
                        + "）——图片索引缺失或素材已删，请回 MedKit「项目详情 → 图片素材」查看原图。</p>")
         else:
-            p = info.get("path") if isinstance(info, dict) else info
+            raw_p = info.get("path") if isinstance(info, dict) else info
+            p: Path | str = raw_p if isinstance(raw_p, (str, Path)) else ""
             cap = ((info.get("caption") if isinstance(info, dict) else "") or "")
             try:
                 data = Path(p).read_bytes()
@@ -95,7 +96,7 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
                 # D9：图过大未能内嵌——保留题面并给可读提示（不回项目也看得懂）
                 kb = 0
                 try:
-                    kb = round(Path(p).stat().st_size / 1024)
+                    kb = round(Path(p).stat().st_size / 1024) if p else 0
                 except Exception as e:  # noqa: BLE001
                     _errs.record("qbank_html.render_media", "静默容错（U-15 留痕）", e=e)
                 out.append(f'<p class="hint">⚠️ 本题含图（{html_mod.escape(ref)}'
@@ -134,7 +135,7 @@ def _case_blocks(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     index: dict[tuple, int] = {}
     for q in questions:
         gk = q.get("group_kind")
-        key = None
+        key: tuple[str, Any] | None = None
         if gk == "case" and q.get("case_id"):
             key = ("case", str(q.get("case_id")))
         elif gk == "option_group" and isinstance(q.get("group"), dict):
@@ -234,8 +235,9 @@ def _esc_md(s: Any) -> str:
 
 def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = True) -> list[str]:
     src = _src_text(q)
+    qtype = str(q.get("type") or "")
     out = [f"{prefix} {_esc_md(q.get('id'))} · "
-           f"{_esc_md(TYPE_LABELS.get(q.get('type'), q.get('type', '')))} · "
+           f"{_esc_md(TYPE_LABELS.get(qtype, qtype))} · "
            f"{_esc_md(q.get('bloom', ''))}"
            + (f" · {_esc_md(src)}" if src else "")]
     out.append(f"**{_esc_md(q.get('subtopic', ''))}**")

@@ -5,7 +5,25 @@
 
 数据模型（对齐设计文档 v0.7 §2）：
 - mistakes: 一次错题记录（来源：押题卷同步/文本/图片OCR/文件）
-- knowledge: 由错题的 know_tags/topic 归并出的知识点，含掌握度状态机 weak→shaky→solid→mastered
+- knowledge: 由错题的 know_tags/topic 归并出的知识点，含掌握度状态机 # ─────────────────────────────────────────────────────────────────────────────
+# 文件导航（个人学习库单模块；约 1.3k 行）
+# 为什么不做文件级拆分：约 30 处测试以 monkeypatch 本模块常量（LIBRARY_DIR/DB_FILE 等）
+# 与函数（_now/_write_back/list_* 等）为契约，拆成子模块会让补丁失效或被迫引入间接层；
+# 函数规模由 U-10「全仓函数 <400 行」闸门约束。
+#
+#   存储底座（JSON↔SQL 双态） .... LIBRARY_DIR / MISTAKES_FILE / KNOWLEDGE_FILE / DB_FILE /
+#                                 _StoreView / _backfill_json_once / _store / _load / _save /
+#                                 _write_back / heal_mojibake
+#   状态与得分（纯函数） .......... compute_state / compute_score / compute_priority
+#   错题 CRUD·导入·导出·备份 ...... add_mistake / batch_add / sync_from_paper / update_mistake /
+#                                 delete_mistake / batch_mark_learned / batch_reset /
+#                                 parse_import_text / import_mistakes_file / export_* / backup
+#   知识点掌握度 .................. log_knowledge_event / log_knowledge_events / record_quiz /
+#                                 record_review / get_mastery_view / recommend /
+#                                 delete_subject_with_backup
+#   近期活动时间线 ................ ACTIVITY_EVENTS / recent_activity
+# ─────────────────────────────────────────────────────────────────────────────
+weak→shaky→solid→mastered
 """
 
 import hashlib
@@ -1206,8 +1224,8 @@ _TEXT_FIELDS = ("name", "subject", "chapter", "topic", "question",
                 "answer", "analysis", "user_answer", "error_reason")
 
 
-def heal_mojibake(s: str) -> str | None:
-    """cp1252→utf-8 可逆修复；不可逆/无中文 → None（不动原值）。"""
+def heal_mojibake(s: Any) -> str | None:
+    """cp1252→utf-8 可逆修复；非字符串/不可逆/无中文 → None（不动原值）。"""
     if not isinstance(s, str) or not s:
         return None
     try:

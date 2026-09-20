@@ -252,6 +252,27 @@ def reset_conn() -> None:
     _local.conn = None
 
 
+def shutdown() -> None:
+    """进程关闭时（lifespan shutdown）在主线程调用：best-effort 被动 WAL 检查点后关闭本线程连接。
+
+    - 只处理**当前线程**（主线程在启动 migrate/import 时打开的）连接；工作线程各自持有
+      线程局部连接，随 daemon 线程终止由 SQLite 释放。
+    - wal_checkpoint(PASSIVE) 不等待读锁、不会抛 SQLITE_BUSY，仅把已落盘的 WAL 帧尽量回写，
+      减少关闭后残留的 -wal 体积；任何失败都不阻断退出。
+    - 幂等：无连接时直接返回，重复调用安全。
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        return
+    try:
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+    except sqlite3.Error:
+        pass
+    finally:
+        conn.close()
+        _local.conn = None
+
+
 @contextmanager
 def tx(write: bool = True) -> Iterator[sqlite3.Cursor]:
     """事务上下文。write=True 用 BEGIN IMMEDIATE（写锁先行）——并发读-改-写串行化，杜绝丢失更新。"""

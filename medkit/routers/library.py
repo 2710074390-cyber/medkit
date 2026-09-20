@@ -320,7 +320,7 @@ def _explain_key(body: ExplainBody) -> str:
     return f"explain:{body.subject}|{body.kp_name}|{body.kp_id}"
 
 
-def _resolve_subject_kp(body: ExplainBody) -> tuple[str, str, list[dict[str, Any]]]:
+def _resolve_subject_kp(body: "ExplainBody | TutorStartBody") -> tuple[str, str, list[dict[str, Any]]]:
     """解析 subject + kp_name；kp_id 或 mistake_id 优先回填科目/知识点。"""
     subject, kp_name = body.subject.strip(), body.kp_name.strip()
     mistakes = lib.list_mistakes()
@@ -904,6 +904,8 @@ def tutor_answer(body: TutorAnswerBody, _guard: None = Depends(_tutor_answer_gua
         }
     updated = tut.record_answer(session["id"], body.user_answer, score, gap,
                                 result["next_question"])
+    if updated is None:
+        raise HTTPException(404, "提问会话不存在")
     lib.record_quiz(kp_name, score)
     return {
         "session": updated, "score": score, "gap": gap,
@@ -1102,8 +1104,9 @@ def cards_export_txt(subject: str = "") -> Any:
 
     lines = ["#separator:tab", "#html:true", ""]
     for c in sorted(cards, key=lambda x: (str(x.get("kind", "")), str(x.get("front", "")))):
+        kind = str(c.get("kind") or "concept")
         row = [_esc_anki(c.get("front") or ""), _esc_anki(c.get("back") or ""),
-               _esc_anki(CARD_KIND_LABELS.get(c.get("kind"), c.get("kind") or "concept")),
+               _esc_anki(CARD_KIND_LABELS.get(kind, kind)),
                _esc_anki(c.get("kp_name") or c.get("subject") or "")]
         lines.append("\t".join(row))
     from ..core.fsutil import safe_filename

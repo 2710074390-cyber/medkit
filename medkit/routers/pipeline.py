@@ -19,7 +19,7 @@ from ..core.config import resolve_key
 from ..core.cost import estimate_run
 from ..core.llm import LLMClient
 from ..gates import options_check, trace_check
-from ..state import CANCELLING, RUN_LOCK, RUNNING
+from ..state import CANCELLING, RUN_LOCK, RUN_THREADS, RUNNING
 from ._common import _log_project, _read_meta_checked, _safe_pid, _write_meta_atomic, proj_dir
 
 router = APIRouter()
@@ -43,7 +43,10 @@ def run_project(pid: str) -> dict[str, Any]:
             raise HTTPException(409, "该项目正在生成中（可点「停止」或稍候查看 /status）")
         ev = threading.Event()
         RUNNING[pid] = ev
-    threading.Thread(target=_run_pipeline_thread, args=(pid, ev), daemon=True).start()
+        t = threading.Thread(target=_run_pipeline_thread, args=(pid, ev),
+                             daemon=True, name=f"medkit-pipeline-{pid}")
+        RUN_THREADS[pid] = t
+    t.start()
     return {"ok": True, "started": True}
 
 
@@ -85,6 +88,7 @@ def _run_pipeline_thread(pid: str, cancel_ev: threading.Event) -> None:
     finally:
         with RUN_LOCK:
             RUNNING.pop(pid, None)
+            RUN_THREADS.pop(pid, None)
             CANCELLING.pop(pid, None)
 
 

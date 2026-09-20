@@ -10,7 +10,7 @@ import os
 import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 from .core import config as cfg
 
@@ -66,11 +66,13 @@ def setup_logging(log_dir: Optional[Path] = None) -> Path:
                              backupCount=_BACKUP_COUNT, encoding="utf-8")
     fh.setFormatter(fmt)
     fh.addFilter(RedactingFilter())
-    fh._medkit = True  # type: ignore[attr-defined]  幂等标记
+    # 幂等标记打在 handler 上（测试与二次 setup 均按此属性识别）；标准库 Handler 无此属性，
+    # 经 cast(Any) 赋值，避免 type: ignore 与 ruff B010（禁止 setattr 常量属性）。
+    cast(Any, fh)._medkit = True
     sh = logging.StreamHandler()
     sh.setFormatter(fmt)
     sh.addFilter(RedactingFilter())
-    sh._medkit = True  # type: ignore[attr-defined]
+    cast(Any, sh)._medkit = True
 
     root.addHandler(fh)
     root.addHandler(sh)

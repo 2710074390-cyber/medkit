@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruff pip-audit
+          python -m pip install ruff pip-audit mypy
           if [ "${{ runner.os }}" = "Windows" ]; then
             python -m pip install -r requirements.lock -r requirements-dev.txt
           else
@@ -39,6 +39,9 @@ jobs:
           fi
       - name: Lint (Python)
         run: python -m ruff check .
+      - name: Type check (mypy, P3)
+        # 2026-09-20 建立基线（首轮 59 errors 清零）；配置见 pyproject.toml [tool.mypy]，基线只升不降
+        run: python -m mypy medkit
       - name: Lint (frontend, U-17)
         # 前端静态防线：拼错标识符静态即报（原先只有运行时才炸）。
         # 不引入打包器——产物仍是零构建、零 CDN 的原生 <script src>。

@@ -9,6 +9,7 @@ from .core import config as cfg
 
 RUNNING: dict[str, threading.Event] = {}          # pid → 取消 Event（生成中）
 RUN_LOCK = threading.Lock()
+RUN_THREADS: dict[str, threading.Thread] = {}     # pid → 管线线程（lifespan 关闭时 join 用）
 CANCELLING: dict[str, bool] = {}                     # R3-09：pid → 已请求取消、尚未停稳（前端展示「正在取消中…」）
 
 OCR_JOBS: dict[str, dict] = {}                    # job_id → job dict

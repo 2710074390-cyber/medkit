@@ -92,7 +92,7 @@ def summary(subject: str = "") -> dict[str, Any]:
     by_state = {s: 0 for s in state_names}
     answered_rounds = 0
     for s in sessions:
-        st = s.get("state")
+        st = str(s.get("state") or "")
         by_state[st] = by_state.get(st, 0) + 1
         answered_rounds += len(s.get("rounds") or [])
     tutor = {

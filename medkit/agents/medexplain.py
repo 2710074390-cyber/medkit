@@ -140,11 +140,11 @@ def explain_knowledge(client: Any,
 def _sources_of(slices_text: str, web_materials: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """从注入内容里抽取【教材·…】与【网: …】来源清单（供前端溯源展示）。"""
     sources: list[dict[str, Any]] = []
-    for m in re.finditer(r"【教材切片\s*([^】]+)】", slices_text):
-        sources.append({"kind": "textbook", "title": m.group(1).strip(), "url": ""})
-    for m in web_materials[:6]:
-        url = m.get("url") or ""
-        sources.append({"kind": "web", "title": (m.get("title") or "")[:60], "url": url})
+    for mt in re.finditer(r"【教材切片\s*([^】]+)】", slices_text):
+        sources.append({"kind": "textbook", "title": mt.group(1).strip(), "url": ""})
+    for wm in web_materials[:6]:
+        url = wm.get("url") or ""
+        sources.append({"kind": "web", "title": (wm.get("title") or "")[:60], "url": url})
     return sources[:10]
 
 

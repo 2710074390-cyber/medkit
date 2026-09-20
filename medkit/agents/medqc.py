@@ -145,10 +145,10 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
                             "reason": "空题库，跳过质检（0 分不视为 PASS）"}],
                 "summary": "空题库"}
     batches = [questions[i:i + BATCH_SIZE] for i in range(0, len(questions), BATCH_SIZE)]
-    results: list[dict[str, Any]] = [None] * len(batches)  # type: ignore[list-item]
+    results: list[dict[str, Any] | None] = [None] * len(batches)
 
-    def run(i: int, batch: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
-        return i, _qc_batch_once(client, batch, slice_by_sid)
+    def run(batch: list[dict[str, Any]]) -> dict[str, Any]:
+        return _qc_batch_once(client, batch, slice_by_sid)
 
     def _call_progress(done: int) -> None:
         if on_progress:
@@ -168,7 +168,7 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
         # R3S-03：ContextVar 不随线程池提交传播——每次 submit 在主线程 copy_context()
         # （每个 worker 拿到独立副本，避免共享 Context 并发 enter 报错）
         with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            futures = [(i, ex.submit(contextvars.copy_context().run, run, i, b))
+            futures = [(i, ex.submit(contextvars.copy_context().run, run, b))
                        for i, b in enumerate(batches)]
             for i, fut in futures:
                 results[i] = fut.result()
@@ -182,6 +182,8 @@ def qc_batch(client: Any, questions: list[dict[str, Any]],
     decisions: set[str] = set()
     summaries: list[str] = []
     for r in results:
+        if r is None:   # 理论不可达（到达聚合说明各批均已回填）；类型与防御双保险
+            continue
         issues += r["issues"]
         scores.append(r["score"])
         decisions.add(r["decision"])

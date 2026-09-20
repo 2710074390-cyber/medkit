@@ -70,11 +70,15 @@ def _dir_size(p: Path) -> int:
 def data_summary() -> dict[str, Any]:
     root = cfg.CONFIG_DIR
     projects_dir = Path(cfg.load()["projects_dir"])
-    _size_paths = [("config", "config.json"), ("presets", "presets"), ("library", "library"),
-                   ("projects", None), ("prompts", "prompts")]
-    size = {}
+    _size_paths: list[tuple[str, str | None]] = [
+        ("config", "config.json"), ("presets", "presets"), ("library", "library"),
+        ("projects", None), ("prompts", "prompts")]
+    size: dict[str, int] = {}
     for name, rel in _size_paths:
-        size[name] = _dir_size(projects_dir) if name == "projects" else _dir_size(root / rel)
+        if name == "projects":
+            size[name] = _dir_size(projects_dir)
+        elif rel is not None:
+            size[name] = _dir_size(root / rel)
     size["total"] = _dir_size(root)
 
     counts: dict[str, Any] = {"projects": 0}

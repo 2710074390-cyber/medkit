@@ -154,12 +154,13 @@ def export_memory_apkg(cards: list[dict[str, Any]], subject: str, deck_key: str,
     for c in sorted(cards, key=lambda x: (str(x.get("kind", "")), str(x.get("front", "")))):
         # C-05：记忆卡 guid = 卡 id（无 id 时回退 front+back 哈希）——同库重导不重复
         _cid = str(c.get("id") or "") or (str(c.get("front") or "") + str(c.get("back") or ""))
+        kind = str(c.get("kind") or "concept")
         deck.add_note(genanki.Note(
             model=model,
             fields=[_esc_anki(c.get("front") or ""), _esc_anki(c.get("back") or ""),
-                    _esc_anki(CARD_KIND_LABELS.get(c.get("kind"), c.get("kind") or "concept")),
+                    _esc_anki(CARD_KIND_LABELS.get(kind, kind)),
                     _esc_anki(c.get("kp_name") or c.get("subject") or "")],
-            tags=[_sanitize_tag(str(c.get("kind") or "concept")),
+            tags=[_sanitize_tag(kind),
                   _sanitize_tag(subject or "未分类")],
             guid=genanki.guid_for(str(deck_key) + _cid),
         ))

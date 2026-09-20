@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from . import db as dbs
 from .schema import RealexamNorm, validate_or_repair
@@ -93,7 +93,7 @@ def analyze(text: str, subject: str = "") -> dict[str, Any]:
                     break
             else:
                 unmatched += 1
-    out = {
+    out: dict[str, Any] = {
         "drafts": [{"subject": k[0], "chapter": k[1], "item": k[2], "freq": v,
                     "year": _dominant_year(year_hits.get(k))}
                    for k, v in drafts.items()],
@@ -116,7 +116,8 @@ def _dominant_year(years: Optional[dict[str, int]]) -> str:
 # ---------------------------------------------------------------- 人工确认门
 def list_drafts(subject: str = "", confirmed: Optional[bool] = None) -> list[dict[str, Any]]:
     dbs.migrate()
-    where, params = [], []
+    where: list[str] = []
+    params: list[Any] = []
     if subject:
         where.append("subject = ?")
         params.append(subject)
@@ -255,7 +256,7 @@ def analyze_llm(client: Any, text: str, subject: str = "", enabled: bool = False
     user = f"科目：{subject or '（未指定）'}\n真题文本：\n{(text or '')[:max_chars]}"
     raw = client.chat_json([{"role": "system", "content": NORM_SYSTEM},
                             {"role": "user", "content": user}], temperature=0.2)
-    norm = validate_or_repair(raw, RealexamNorm, repair_fn)
+    norm = cast(Optional[RealexamNorm], validate_or_repair(raw, RealexamNorm, repair_fn))
     if norm is None:
         return None
     drafts = [item.model_dump() for item in norm.items]

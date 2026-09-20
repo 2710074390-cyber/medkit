@@ -184,7 +184,8 @@ def _norm_answer(s: Any) -> str:
 
 def _option_group_key(q: dict[str, Any]) -> Any:
     """选项组身份键：优先 group.id；无 id 回退选项元组（与渲染层 _case_blocks 同口径）。"""
-    grp = q.get("group") if isinstance(q.get("group"), dict) else {}
+    raw_group = q.get("group")
+    grp = raw_group if isinstance(raw_group, dict) else {}
     gid = grp.get("id")
     return gid if gid is not None else tuple(str(o) for o in (grp.get("options") or []))
 
@@ -296,8 +297,8 @@ def _review_questions_locked(pid: str, body: ReviewBody) -> dict[str, Any]:
         if bak.exists():
             try:
                 write_json_atomic(f, json.loads(bak.read_text(encoding="utf-8")))
-            except Exception as e:  # noqa: BLE001  回滚失败：保留备份文件供手工恢复
-                _errs.record("review._review_questions_locked", "静默容错（U-15 留痕）", e=e)
+            except Exception as e2:  # noqa: BLE001  回滚失败：保留备份文件供手工恢复
+                _errs.record("review._review_questions_locked", "静默容错（U-15 留痕）", e=e2)
         raise HTTPException(500, f"重渲染失败，已回滚本次修改：{type(e).__name__}（见日志；可稍后重试）") from e
     finally:
         bak.unlink(missing_ok=True)
@@ -436,8 +437,8 @@ def _regen_question_locked(pid: str, qid: str) -> dict[str, Any]:
         if bak.exists():
             try:
                 write_json_atomic(f, json.loads(bak.read_text(encoding="utf-8")))
-            except Exception as e:  # noqa: BLE001
-                _errs.record("review._regen_question_locked", "静默容错（U-15 留痕）", e=e)
+            except Exception as e2:  # noqa: BLE001
+                _errs.record("review._regen_question_locked", "静默容错（U-15 留痕）", e=e2)
         raise HTTPException(500, f"重掷后重渲染失败，已回滚：{type(e).__name__}（见日志）") from e
     finally:
         bak.unlink(missing_ok=True)

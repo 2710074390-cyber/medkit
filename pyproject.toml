@@ -34,3 +34,14 @@ exclude_lines = [
     "raise NotImplementedError",
 ]
 show_missing = true
+
+# P3（2026-09-20）：mypy 静态类型检查基线。首轮扫描 59 errors / 19 files 已全部清零，
+# 基线「只升不降」——新增代码不得引入新错误（CI 阻断）。
+# 三方包无 stubs（openai / pymupdf(fitz) / python-docx / genanki / jieba / py-fsrs 等），
+# 统一忽略缺失导入；warn_unused_ignores 防止 type: ignore 腐烂。
+# 暂不开启 disallow_untyped_defs / check_untyped_defs：存量未标注函数较多，作为后续渐进收紧项。
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true

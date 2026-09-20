@@ -47,7 +47,7 @@ class CardScheduler(Protocol):
     name: str
 
     def grade(self, card: dict[str, Any], quality: int,
-              now: datetime = None) -> dict[str, Any]:  # pragma: no cover - 协议
+              now: datetime | None = None) -> dict[str, Any]:  # pragma: no cover - 协议
         ...
 
 
@@ -76,16 +76,17 @@ class FsrsScheduler:
 
     @staticmethod
     def _to_data(c: Any) -> dict[str, Any]:
+        state = getattr(c, "state", None)
+        due = getattr(c, "due", None)
+        last_review = getattr(c, "last_review", None)
         return {
             "card_id": getattr(c, "card_id", None),
-            "state": getattr(c, "state", None).name
-            if getattr(c, "state", None) is not None else "Learning",
+            "state": state.name if state is not None else "Learning",
             "step": getattr(c, "step", 0),
             "stability": getattr(c, "stability", None),
             "difficulty": getattr(c, "difficulty", None),
-            "due": getattr(c, "due", None).isoformat() if getattr(c, "due", None) else None,
-            "last_review": (getattr(c, "last_review", None).isoformat()
-                            if getattr(c, "last_review", None) else None),
+            "due": due.isoformat() if due is not None else None,
+            "last_review": last_review.isoformat() if last_review is not None else None,
         }
 
     @staticmethod
@@ -104,7 +105,7 @@ class FsrsScheduler:
         )
 
     def grade(self, card: dict[str, Any], quality: int,
-              now: datetime = None) -> dict[str, Any]:
+              now: datetime | None = None) -> dict[str, Any]:
         _load_ratings()
         now = now or _utcnow()
         q = max(0, min(int(quality), 5))
@@ -139,7 +140,7 @@ class Sm2Scheduler:
     name = "sm2"
 
     def grade(self, card: dict[str, Any], quality: int,
-              now: datetime = None) -> dict[str, Any]:
+              now: datetime | None = None) -> dict[str, Any]:
         from . import review as rev
 
         if now is not None:

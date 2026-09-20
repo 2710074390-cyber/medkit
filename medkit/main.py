@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .core import db as dbs
 from .core import errors as errs
+from .core.error_codes import ErrorCode
 from .core.llm import LLMError
 from .core.mineru import MinerUError
 from .core.orchestrator import PipelineError
@@ -70,7 +71,7 @@ def _allowed_origins() -> set[str]:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """lifespan：启动（日志初始化 + 开浏览器）/ 关闭（预留清理）。"""
+    """lifespan：启动（日志初始化 + 建库补导 + OCR 恢复 + 开浏览器）/ 关闭（取消在飞任务 + DB 收尾）。"""
     try:
         setup_logging()
     except Exception as e:  # noqa: BLE001  日志失败不阻塞启动
@@ -125,7 +126,44 @@ async def _lifespan(_app: FastAPI):
         errs.record("main.lifespan", _dir_warn)
         print(f"⚠️ {_dir_warn}")
     yield
-    # shutdown：无全局资源需清理（线程均为 daemon；文件写均原子）
+    # shutdown：通知在飞 AI 任务取消（停止烧 token）+ 短暂宽限落 checkpoint/终态 + 关闭 DB 连接
+    _shutdown_runtime()
+
+
+def _shutdown_runtime(join_timeout: float = 5.0) -> None:
+    """lifespan 关闭路径（best-effort，任何异常都不阻断退出）：
+
+    1. 给所有在飞管线/OCR 线程置取消信号——LLM 流式读取与 MinerU 轮询会尽快停止，不再烧 token；
+    2. 留最多 ``join_timeout`` 秒宽限，让线程落 checkpoint/写终态（线程均为 daemon，超时不强杀）；
+    3. 主线程 SQLite 连接做被动 WAL 检查点后关闭。
+    """
+    alive: list[threading.Thread] = []
+    try:
+        with RUN_LOCK:
+            for pid, ev in list(RUNNING.items()):
+                ev.set()
+                CANCELLING.setdefault(pid, True)
+            alive.extend(t for t in RUN_THREADS.values() if t.is_alive())
+        with OCR_LOCK:
+            for job in OCR_JOBS.values():
+                canc = job.get("cancel")
+                if isinstance(canc, threading.Event):
+                    canc.set()
+                t = job.get("_thread")
+                if isinstance(t, threading.Thread) and t.is_alive():
+                    alive.append(t)
+    except Exception as e:  # noqa: BLE001  关闭路径不留异常
+        errs.record("main._shutdown_runtime", "发送取消信号失败", e=e)
+    deadline = time.monotonic() + max(0.0, join_timeout)
+    for t in alive:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        t.join(timeout=remaining)
+    try:
+        dbs.shutdown()
+    except Exception as e:  # noqa: BLE001
+        errs.record("main._shutdown_runtime", "DB 关闭失败", e=e)
 
 
 app = FastAPI(title="MedKit · 医学题库工坊", version=APP_VERSION, lifespan=_lifespan)
@@ -176,17 +214,21 @@ async def _guard_local(request: Request, call_next):
 
 
 # ---------------------------------------------------------------- 统一异常体系（S2）
-def _err_response(status: int, exc: Exception, code: str) -> JSONResponse:
+def _err_response(status: int, exc: Exception, code: ErrorCode) -> JSONResponse:
     # U-15：留痕 + 计数（原始信息进日志/诊断，对外回显前统一脱敏）
-    errs.record(code, str(exc))
+    errs.record(code.value, str(exc))
     return JSONResponse(status_code=status,
-                        content={"detail": errs.redact(str(exc)), "error_code": code})
+                        content={"detail": errs.redact(str(exc)), "error_code": code.value})
 
 
-app.add_exception_handler(LLMError, lambda _r, e: _err_response(502, e, "LLM_ERROR"))
-app.add_exception_handler(SearchError, lambda _r, e: _err_response(502, e, "SEARCH_ERROR"))
-app.add_exception_handler(MinerUError, lambda _r, e: _err_response(502, e, "MINERU_ERROR"))
-app.add_exception_handler(PipelineError, lambda _r, e: _err_response(500, e, "PIPELINE_ERROR"))
+app.add_exception_handler(LLMError,
+                          lambda _r, e: _err_response(502, e, ErrorCode.LLM_ERROR))
+app.add_exception_handler(SearchError,
+                          lambda _r, e: _err_response(502, e, ErrorCode.SEARCH_ERROR))
+app.add_exception_handler(MinerUError,
+                          lambda _r, e: _err_response(502, e, ErrorCode.MINERU_ERROR))
+app.add_exception_handler(PipelineError,
+                          lambda _r, e: _err_response(500, e, ErrorCode.PIPELINE_ERROR))
 
 
 # H-3：未捕获异常统一兜底——结构化 500 + 中文可读提示 + 完整 traceback 入日志。
@@ -196,11 +238,11 @@ async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse
     logging.getLogger("medkit.main").exception(
         "未捕获异常（%s %s）: %s", request.method, request.url.path, exc)
     # U-15：进入错误计数与诊断清单（用户可查「按钮点了没反应」的原因）
-    errs.record("INTERNAL_ERROR", str(exc),
+    errs.record(ErrorCode.INTERNAL_ERROR.value, str(exc),
                 path=request.url.path, method=request.method)
     return JSONResponse(status_code=500, content={
         "detail": f"服务器内部错误（{exc.__class__.__name__}），详情已写入日志，可查看 ~/.medkit/logs/medkit.log",
-        "error_code": "INTERNAL_ERROR",
+        "error_code": ErrorCode.INTERNAL_ERROR.value,
     })
 
 
@@ -328,7 +370,15 @@ from .routers.review import (  # noqa: E402, F401
     review_questions,
 )
 from .routers.search import SearchTestBody, search_backends, search_test  # noqa: E402, F401
-from .state import OCR_JOBS, OCR_LOCK, OCR_SEM, RUN_LOCK, RUNNING  # noqa: E402, F401
+from .state import (  # noqa: E402, F401
+    CANCELLING,
+    OCR_JOBS,
+    OCR_LOCK,
+    OCR_SEM,
+    RUN_LOCK,
+    RUN_THREADS,
+    RUNNING,
+)
 
 prs = _prs          # 预设模块
 ws = _ws            # websearch 模块

@@ -147,7 +147,7 @@ def _parse_questions(data: Any, slice_: dict[str, Any],
         try:
             QuestionItem.model_validate(q)
         except ValidationError as e:
-            first = e.errors()[0] if e.errors() else {}
+            first: dict[str, Any] = dict(e.errors()[0]) if e.errors() else {}
             logger.warning("MedGen 输出未通过 QuestionItem 契约（question=%r）：%s",
                            str(q.get("question", ""))[:40],
                            first.get("msg", str(e)))
