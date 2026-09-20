@@ -132,3 +132,145 @@ def test_spec_ships_dist_info_for_license_obligation():
     assert "def _lock_closure_names(" in src, "未按 requirements.lock 闭包限定范围（会混入构建期依赖）"
     # 范围限定必须真的读 lock（否则会把 pyinstaller 等构建期依赖也打进产物）
     assert "requirements.lock" in src
+
+
+# ---------------------------------------------------------------- R8+W：测试产物加固
+
+def _dirty(tmp_path, *rel_paths, dirs=()):
+    """构造一个只含指定条目的假产物目录。"""
+    root = tmp_path / "MedKit"
+    (root / "_internal").mkdir(parents=True, exist_ok=True)
+    (root / "MedKit.exe").write_text("x", encoding="utf-8")
+    for d in dirs:
+        (root / d).mkdir(parents=True, exist_ok=True)
+    for rel in rel_paths:
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x", encoding="utf-8")
+    return root
+
+
+def test_blacklist_covers_test_reports_logs_and_debug(tmp_path):
+    """R8+W：黑名单必须覆盖测试报告 / 覆盖率 / 测试缓存 / 日志 / 临时 / 调试产物。
+
+    原表只有「样例/种子/测试目录/字节码」四类——测试报告、覆盖率、日志、调试符号
+    这些同样是「不该进安装包」的东西，且混进去没人会发现。
+    """
+    m = _load()
+    cases = [
+        "_internal/.coverage",
+        "_internal/coverage.xml",
+        "_internal/htmlcov/index.html",
+        "_internal/.pytest_cache/CACHEDIR.TAG",
+        "_internal/junit.xml",
+        "_internal/app.log",
+        "_internal/run.pdb",
+        "_internal/backup.bak",
+        "_internal/debugpy/_vendored/x.py",
+        "tests/test_foo.py",
+        "_internal/conftest.py",
+    ]
+    for rel in cases:
+        root = _dirty(tmp_path / rel.replace("/", "_").replace(".", "_"), rel)
+        hits = m.check_dist(root)
+        assert hits, f"黑名单漏检：{rel}"
+
+
+def test_test_only_modules_detected(tmp_path):
+    """R8+W：测试专用依赖要按**模块名**拦（闭包检查只看 dist-info，裸目录形式会漏判）。"""
+    m = _load()
+    for mod in ("_pytest", "pluggy", "coverage", "playwright", "debugpy", "iniconfig"):
+        root = _dirty(tmp_path / mod, dirs=[f"_internal/{mod}"])
+        hits = m.test_only_modules(root)
+        assert hits == [f"_internal/{mod}"], f"{mod} 未被识别：{hits}"
+
+
+def test_test_source_files_detected(tmp_path):
+    """R8+W：测试源码文件（不限目录）必须被拦——单测源码进产物是信息泄露。"""
+    m = _load()
+    for name in ("test_foo.py", "foo_test.py", "test_bar.pyc"):
+        root = _dirty(tmp_path / name, f"_internal/pkg/{name}")
+        hits = m.test_files(root)
+        assert hits == [f"_internal/pkg/{name}"], f"{name} 未被识别：{hits}"
+
+
+def test_legit_files_not_flagged(tmp_path):
+    """对照组：正常运行时文件不得误报（避免守卫因误报被关掉）。"""
+    m = _load()
+    root = _dirty(tmp_path / "ok",
+                  "_internal/medkit/web/app.js",
+                  "_internal/medkit/prompts/medgen.md",
+                  "_internal/LICENSE",
+                  "_internal/setuptools/_vendor/importlib_metadata/__init__.py")
+    assert m.check_dist(root) == []
+    assert m.test_only_modules(root) == []
+    assert m.test_files(root) == []
+
+
+def test_main_returns_1_on_dirty_dist(tmp_path, capsys):
+    """端到端：脏产物必须让 main() 返回 1（不是只打印警告）。"""
+    m = _load()
+    root = _dirty(tmp_path / "d", "tests/test_x.py", dirs=["_internal/_pytest"])
+    rc = m.main([str(root), "--strict"])
+    out = capsys.readouterr().out
+    assert rc == 1, f"脏产物竟返回 {rc}"
+    assert "测试专用内容" in out
+
+
+def test_main_returns_0_on_clean_dist(tmp_path, capsys):
+    """对照组：干净产物返回 0。"""
+    m = _load()
+    root = _dirty(tmp_path / "c", "_internal/medkit/web/index.html")
+    rc = m.main([str(root), "--strict"])
+    assert rc == 0, capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- R8+W：构建环境体检
+
+def _load_build_env():
+    spec = importlib.util.spec_from_file_location(
+        "check_build_env", ROOT / "pack" / "check-build-env.py")
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_setuptools_is_not_treated_as_dev_only():
+    """`setuptools` 写在 requirements-dev.txt 里，但 jieba 运行期要 pkg_resources。
+
+    若把它当 dev 专用，体检会误报、还会误导人把它从产物里剔掉 → jieba 直接崩。
+    """
+    m = _load_build_env()
+    names = m.dev_only_names()
+    assert "setuptools" not in names, "setuptools 被误判为 dev 专用（运行期需要它）"
+    for must in ("pytest", "playwright", "pip-audit"):
+        assert must in names, f"{must} 应被识别为 dev 专用"
+
+
+def test_build_env_check_wired_before_pyinstaller():
+    """接线级：build.bat 必须在 PyInstaller **之前**跑环境体检，且失败即中断。
+
+    ⚠️ 匹配**调用形态**（含 `check-build-env.py` 且非 rem/echo）——只匹配文件名会被
+    echo 提示行骗过（本会话踩过 4 次同类问题）。
+    """
+    src = (ROOT / "pack" / "build.bat").read_text(encoding="utf-8")
+    lines = [ln.strip() for ln in src.splitlines()]
+    env_calls = [i for i, ln in enumerate(lines)
+                 if "check-build-env.py" in ln and not ln.startswith(("rem", "echo"))]
+    pyi_calls = [i for i, ln in enumerate(lines)
+                 if "PyInstaller" in ln and "-m" in ln and not ln.startswith(("rem", "echo"))]
+    assert env_calls, "build.bat 未调用环境体检（或被注释）"
+    assert pyi_calls, "build.bat 未调用 PyInstaller"
+    assert min(env_calls) < min(pyi_calls), "体检必须在 PyInstaller 之前"
+    seg = src[src.index("check-build-env.py"):]
+    assert "errorlevel 1" in seg[:600], "体检失败后未中断构建"
+
+
+def test_spec_excludes_test_only_packages():
+    """spec 必须主动排除测试/开发专用包（前置一道闸，不只靠事后检查）。"""
+    spec = (ROOT / "medkit.spec").read_text(encoding="utf-8")
+    seg = spec[spec.index("excludes=["):spec.index("]", spec.index("excludes=["))]
+    for pkg in ("pytest", "_pytest", "coverage", "playwright", "debugpy", "pluggy"):
+        assert f'"{pkg}"' in seg, f"spec excludes 缺 {pkg}"
+    assert '"setuptools"' not in seg, "setuptools 是运行期依赖，不得排除"

@@ -87,7 +87,9 @@ def test_build_bat_wires_signing_optional():
     invocations = [ln for ln in lines
                    if "sign-release.ps1" in ln and "-File" in ln
                    and not ln.startswith(("rem", "echo"))]
-    rel_idx = next((i for i, ln in enumerate(lines) if ln.startswith("python pack\\make_release.py")), None)
+    # 同 test_release_artifacts：不写死解释器前缀（R8+W 起统一走 "%PY%"）
+    rel_idx = next((i for i, ln in enumerate(lines)
+                    if "make_release.py" in ln and not ln.startswith(("rem", "echo"))), None)
     assert invocations, "build.bat 未真正调用签名脚本（或被注释/仅被 echo 提及）"
     sign_idx = next(i for i, ln in enumerate(lines) if ln in invocations)
     assert rel_idx is not None, "build.bat 未调用 make_release.py"

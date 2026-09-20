@@ -107,10 +107,13 @@ def test_build_bat_wires_make_release():
     下一个出包的人照样手工打 zip。
     """
     src = (ROOT / "pack" / "build.bat").read_text(encoding="utf-8")
-    # ⚠️ 整行匹配：子串匹配会被 `rem python pack\make_release.py` 这类**注释掉**的调用骗过
-    # （反向验证实测：注释掉该行时子串断言仍然通过 = 假绿）。
+    # ⚠️ 只认「调用形态」（非 rem/echo 且含脚本名），且**不写死解释器前缀**：
+    # ① 子串匹配会被 `rem python pack\make_release.py` 这类注释掉的调用骗过（实测假绿）；
+    # ② R8+W 起统一走 `"%PY%"`（支持 MEDKIT_BUILD_PYTHON 指定干净环境），
+    #    写死 `startswith("python ")` 会让改前缀时守卫误报——本会话真被误报过一次。
     lines = [ln.strip().lstrip("@").strip() for ln in src.splitlines()]
-    calls = [ln for ln in lines if ln.startswith("python pack\\make_release.py")]
+    calls = [ln for ln in lines
+             if "make_release.py" in ln and not ln.startswith(("rem", "echo"))]
     assert calls, "build.bat 未真正调用发布产物脚本（或被注释掉）→ 等于没做"
     # 且失败要中断（不能静默跳过）
     seg = src[src.index(calls[0]):]

@@ -86,6 +86,13 @@ a = Analysis(
     # （可能是分析器过度收集环境里已装包所致；运行时不需要）
     excludes=[
         "tkinter", "unittest", "pytest",
+        # R8+W：测试/开发专用依赖 —— 主动排除（不只靠事后 check-package 拦）。
+        # 这些包一旦被环境里的无关 import 牵连进来，就会以「裸模块目录」形式进产物，
+        # 而闭包检查只看 dist-info，可能漏判；在 spec 里排除是更前置的一道闸。
+        "_pytest", "pluggy", "iniconfig", "coverage", "mock", "nose", "nose2",
+        "hypothesis", "freezegun", "playwright", "pyee", "debugpy",
+        "pip_audit", "pip_api", "pytest_cov", "pytest_timeout",
+        "pdb", "bdb", "doctest", "pydoc",
         "cv2", "pyarrow", "onnxruntime", "scipy", "pandas",
         "matplotlib", "PIL", "numpy", "torch", "transformers",
         "sentence_transformers", "sklearn", "seaborn",

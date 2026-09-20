@@ -20,14 +20,38 @@ import re
 import sys
 from pathlib import Path
 
-# 黑名单：命中即失败（路径小写比较；目录/文件均可）
+# 黑名单：命中即失败（路径小写比较；目录/文件均可）。
+# R8+W 加固：原表只覆盖「样例/种子/测试目录/字节码」，漏了**测试报告、覆盖率产物、日志、
+# 临时/备份文件、调试符号**——这些同样是「不该进安装包」的东西，且一旦混进去没人会发现。
 BLACKLIST_SUBSTRINGS = (
+    # ① 学科/样例数据（WP-12）
     "syllabus_seed_306.json",
     "samples",
-    "tests",
-    "__pycache__",
     "medkit/data",
+    # ② 测试用例与夹具
+    "tests/",
+    "conftest.py",
+    "fixtures/",
+    # ③ 测试报告 / 覆盖率 / 测试缓存
+    ".coverage",
+    "coverage.xml",
+    "htmlcov",
+    ".pytest_cache",
+    ".benchmarks",
+    "junit",
+    # ④ 日志与临时/备份文件
+    ".log",
+    ".tmp",
+    ".bak",
+    "~$",
+    # ⑤ 调试产物（Windows 调试符号 / 调试器）
+    ".pdb",
+    ".dsym",
+    "debugpy",
+    # ⑥ 字节码
+    "__pycache__",
     ".pyc",
+    ".pyo",
 )
 
 # 允许出现在产物里、但不属于 lock 闭包的发行包（空 = 不允许任何例外）。
@@ -52,6 +76,52 @@ def check_dist(root: Path) -> list[str]:
         if any(b in rel for b in BLACKLIST_SUBSTRINGS):
             found.append(rel)
     return found
+
+
+# 测试/开发专用依赖的**模块名**（PEP 503 归一化前的 import 名）。
+# 为什么还要单独拦一遍：闭包检查以 `*.dist-info` 为准，若这些包被 PyInstaller 以
+# **裸模块目录**形式收集进来（没有 dist-info），闭包检查会漏判——这里按模块名直接拦。
+TEST_ONLY_MODULES = (
+    "_pytest", "pytest", "pluggy", "iniconfig", "coverage", "coverage_html",
+    "mock", "nose", "nose2", "hypothesis", "freezegun", "playwright", "pyee",
+    "debugpy", "pip_audit", "pip_api", "pytest_cov", "pytest_timeout",
+    "mypy", "ruff", "black", "isort", "flake8", "pylint",
+    "pdb", "bdb", "doctest", "cProfile",
+)
+
+_TEST_FILE_RE = re.compile(r"^(test_.*|.*_test)\.py[co]?$", re.IGNORECASE)
+
+
+def _payload_root(root: Path) -> Path:
+    """产物内容根：onedir 布局在 `_internal/`，兼容非 onedir 布局。"""
+    internal = root / "_internal"
+    return internal if internal.is_dir() else root
+
+
+def test_only_modules(root: Path) -> list[str]:
+    """产物里出现的测试/开发专用**模块**（目录或同名 .py/.pyd）。返回相对路径列表。"""
+    base = _payload_root(root)
+    if not base.is_dir():
+        return []
+    wanted = {m.lower() for m in TEST_ONLY_MODULES}
+    hits: list[str] = []
+    for p in sorted(base.iterdir()):
+        if p.name.split(".")[0].lower() in wanted:
+            hits.append(p.relative_to(root).as_posix())
+    return hits
+
+
+def test_files(root: Path) -> list[str]:
+    """产物里出现的**测试源码文件**（不限目录）。
+
+    单测源码进产物既是信息泄露（暴露内部断言与测试样例），也会让用户以为这是开发包。
+    这里扫文件名模式而非固定目录——测试文件可能被放到任何位置。
+    """
+    if not root.exists():
+        return []
+    return [p.relative_to(root).as_posix()
+            for p in sorted(root.rglob("*"))
+            if p.is_file() and _TEST_FILE_RE.match(p.name)]
 
 
 def lock_closure(lock_path: Path) -> set[str]:
@@ -123,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     bad = check_dist(root)
+    tmods = test_only_modules(root)
+    tfiles = test_files(root)
     extras, missing_info = closure_drift(root, lock_path)
     rc = 0
 
@@ -132,6 +204,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {rel}")
         if len(bad) > 50:
             print(f"  … 共 {len(bad)} 项")
+        rc = 1
+
+    if tmods or tfiles:
+        print("[失败] 产物含测试专用内容（测试依赖 / 测试源码一律不得进安装包）：")
+        for rel in (tmods + tfiles)[:50]:
+            print(f"  - {rel}")
+        if len(tmods) + len(tfiles) > 50:
+            print(f"  … 共 {len(tmods) + len(tfiles)} 项")
+        print("       成因见 pack/BUILD-ENV.md：在装了 dev 依赖的环境里构建会把它们带进来。")
         rc = 1
 
     if extras:
@@ -147,11 +228,12 @@ def main(argv: list[str] | None = None) -> int:
               f"（THIRD_PARTY_NOTICES 要求随产物保留 LICENSE 原文，出包后请抽查）")
 
     if rc == 0:
+        clean = "无样例/种子/测试/字节码/测试报告/日志/调试产物；无测试专用依赖"
         if extras:
             print(f"[通过（有警告）] 纯净安装包检查：{root}"
-                  f"（无样例/种子/测试/字节码；但产物含 {len(extras)} 个未声明发行包，见上方警告）")
+                  f"（{clean}；但产物含 {len(extras)} 个未声明发行包，见上方警告）")
         else:
-            print(f"[通过] 纯净安装包检查：{root}（无样例/种子/测试/字节码；闭包无未声明包）")
+            print(f"[通过] 纯净安装包检查：{root}（{clean}；闭包无未声明包）")
     return rc
 
 

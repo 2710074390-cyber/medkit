@@ -124,6 +124,58 @@
   补记、在 `THIRD_PARTY_NOTICES.md` 补「同源站使用场景」小节——**均明确标注口径待产品/法务定版，
   不预设结论**（两种读法并列 + R1~R5 待办）。**R1「同源」语义定版属产品/法务决策，代码侧不代为决定。**
 
+### 构建流程加固：保证安装包不含测试产物（Fixed，R8+W）
+
+> 完整说明见 **`pack/BUILD-ENV.md`**。本条回应「安装包里不得含测试用例/测试数据/测试报告/
+> 临时日志/调试文件/测试专用依赖」这一要求。
+
+**先说结论**：当前 `dist/MedKit` 实测**已无任何测试产物**（详见下方验证）。但流程原先**不保证**
+这一点——只有「事后检查」且覆盖不全，所以本批把闸门补齐。
+
+**可能原因（三条，按主次）**：
+1. **构建解释器不隔离（主因）**：`build.bat` 原先直接用 PATH 上的 `python -m PyInstaller`，
+   没有环境隔离也不校验环境。若该环境装过 pytest / playwright / pip-audit / freezegun，
+   PyInstaller 的依赖分析会把它们及其传递依赖一并收集进产物。
+   —— 0.10.3 产物混入 `attrs` / `email-validator` / `importlib-metadata` / `itsdangerous`
+   （`check-package.py` 报的「4 个未声明发行包」）以及 `tzdata`(605 文件) / `chardet` / `brotli` /
+   `fontTools` / `pywin32` 就是这个原因：**同一份源码在干净环境重建后它们全部消失**
+   （123 MB → 114 MB，检查从「通过（有警告）」变为**完全通过**）。
+2. **只有事后检查、没有构建前拦截**：`check-package.py` 在构建完成之后才跑，发现问题时产物已出。
+3. **检查与排除范围不全**：黑名单原先只有「样例/种子/测试目录/字节码」四类，
+   **不含**测试报告、覆盖率、测试缓存、日志、临时/备份、调试产物；spec 的 `excludes`
+   也没排 `_pytest`/`pluggy`/`iniconfig`/`coverage`/`playwright`/`debugpy` 等
+   ——这类包**不带 dist-info 也能以裸模块目录被收集**，闭包检查会漏判。
+
+**排除范围（明确清单）**：
+- **路径**：`tests/`、`conftest.py`、`fixtures/`、`samples`、`medkit/data`、
+  `syllabus_seed_306.json`、`.coverage`、`coverage.xml`、`htmlcov`、`.pytest_cache`、
+  `.benchmarks`、`junit`、`.log`、`.tmp`、`.bak`、`~$`、`.pdb`、`.dSYM`、`debugpy`、
+  `__pycache__`、`.pyc`、`.pyo`
+- **文件名模式**：`test_*.py`、`*_test.py`（含 `.pyc`/`.pyo`，不限目录）
+- **测试/开发专用依赖**：`_pytest`、`pytest`、`pluggy`、`iniconfig`、`coverage`、`mock`、
+  `nose`/`nose2`、`hypothesis`、`freezegun`、`playwright`、`pyee`、`debugpy`、`pip_audit`、
+  `pip_api`、`pytest_cov`、`pytest_timeout`、`mypy`、`ruff`、`black`、`isort`、`flake8`、
+  `pylint`、`pdb`、`bdb`、`doctest`、`cProfile`
+- **闭包**：`_internal/` 下的发行包必须是 `requirements.lock` 闭包的子集（例外清单刻意留空）
+- ⚠️ **必须保留**：`setuptools`——它写在 `requirements-dev.txt` 里，但 jieba 运行期
+  `import pkg_resources`，属运行时依赖（`check-build-env.py` 有专门例外，避免误报与误删）
+
+**配置调整（四项，均已落地）**：
+| 位置 | 调整 |
+|---|---|
+| `pack/check-build-env.py`（**新增**） | 构建前体检：当前解释器若装了 dev 专用依赖 → **拒绝构建**（`--allow-dirty` 可放行但警告）。口径 = `requirements-dev.txt` − `requirements.txt`/`lock` − 运行时例外 |
+| `pack/build.bat` | ① 新增体检步骤（失败即中断）；② 支持 `MEDKIT_BUILD_PYTHON` 指定干净解释器；③ 全部调用统一走 `%PY%` |
+| `medkit.spec` | `excludes` 补齐测试/开发专用包（PyInstaller 侧前置排除） |
+| `pack/check-package.py` | 黑名单扩到六类；新增「测试源码文件」与「测试专用依赖」两项检查 |
+
+**验证**：
+- 干净产物实测：`[通过] …（无样例/种子/测试/字节码/测试报告/日志/调试产物；无测试专用依赖；闭包无未声明包）`；
+- **反向自检**：往产物副本塞 `tests/test_x.py` / `_internal/_pytest/` / `coverage.xml` /
+  `app.log` / `run.pdb` → 检查器**全部报失败**（12 项命中）；
+- 环境体检实测：系统 Python（装过 dev 依赖）→ **拒绝构建**并给出干净 venv 配方；
+- 5 处注入反向验证（注入即红）：黑名单去 `.log`、测试依赖检查空转、
+  去掉 `setuptools` 例外、摘掉 build.bat 体检调用、摘掉 spec 排除。
+
 ### 代码签名（新增脚本，R8+W 收尾）
 
 - **新增 `pack/sign-release.ps1`**：把「签名」这一步固化成一条命令。审查项 **M5-07** 里的
