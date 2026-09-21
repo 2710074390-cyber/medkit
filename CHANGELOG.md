@@ -23,7 +23,11 @@
 - **windows Install deps 拆分**：lock（带 --hash，pip 进入哈希模式）与 requirements-dev.txt
   （浮动约束）混装被强制 == 钉死而失败（`--require-hashes must use ==`）——拆成两条命令，
   lock 独立哈希校验、dev 工具保持浮动。
-## [0.10.5] - 2026-09-20
+
+- **requirements.txt 钉死对齐 lock（S2-23）**：浮动区间（fastapi>=0.110 / openai>=1.30 等）
+  会随 pip 解析漂移到新一代闭包（openai 3.x 引入 httpcore2/httpx2/truststore），CI ubuntu
+  按 requirements.txt 安装后用环境元数据推导闭包，与 lock 比对即红。全部改为 == 与 lock
+  逐条一致；lock（--hash）仍为复现构建唯一来源。## [0.10.5] - 2026-09-20
 
 > **本批为何改**：2026-09-20 v1 代码审查报告经逐条实证核验产出勘误版
 > （`docs/reviews/代码审查报告_勘误版_2026-09-20.md`），按勘误后的技术债清单执行
