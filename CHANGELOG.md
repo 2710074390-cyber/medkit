@@ -29,6 +29,12 @@
   按 requirements.txt 安装后用环境元数据推导闭包，与 lock 比对即红。全部改为 == 与 lock
   逐条一致；lock（--hash）仍为复现构建唯一来源。## [0.10.5] - 2026-09-20
 
+- **S2-23 平台语义修正**：闭包推导按 Windows 验证环境 evaluate marker（覆盖 sys_platform
+  等）——ubuntu 上 `uvicorn[standard]` 的 uvloop（`sys_platform != "win32"`）不再误入闭包
+  与 Windows 生成的 lock 恒不一致。
+- **requirements.txt 注释 ASCII 化**：头部说明改英文——`pip_requirements_parser` 在
+  Windows 用 locale codec（cp1252）解码，中文注释导致 windows CI 的 pip-audit 崩溃
+  （UnicodeDecodeError）。
 > **本批为何改**：2026-09-20 v1 代码审查报告经逐条实证核验产出勘误版
 > （`docs/reviews/代码审查报告_勘误版_2026-09-20.md`），按勘误后的技术债清单执行
 > P4/P3/P2 改进。本批**无功能变更、无 prompt 变更**，均为工程加固；ruff/eslint/mypy 全绿。
