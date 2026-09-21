@@ -189,7 +189,12 @@ async def data_open_dir() -> dict[str, Any]:
     root = cfg.CONFIG_DIR
     root.mkdir(parents=True, exist_ok=True)
     try:
-        await asyncio.to_thread(os.startfile, str(root))
+        # Windows-only：os.startfile 不存在于非 Windows typeshed（Linux CI mypy attr-defined 误报）。
+        # getattr 规避静态误报；运行时非 Windows 平台显式按「不支持」处理而非静默失败。
+        opener = getattr(os, "startfile", None)
+        if opener is None:
+            raise RuntimeError("os.startfile 不可用（非 Windows 平台）")
+        await asyncio.to_thread(opener, str(root))
     except Exception as e:  # noqa: BLE001
         _errs.record("data.open_dir", "打开数据目录失败", e=e)
         raise HTTPException(500, f"无法打开数据目录：{str(root)}")

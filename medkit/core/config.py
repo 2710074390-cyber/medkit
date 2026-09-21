@@ -15,7 +15,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import errors as _errs
 from .fsutil import write_json_atomic
@@ -133,18 +133,21 @@ def _protect(data: str) -> str:
         _set_security_warn("plaintext")
         return data
     try:
+        # Windows-only：ctypes.windll 仅在 win32 存在。cast(Any) 规避 Linux/CI mypy
+        # typeshed 的 attr-defined 误报（_dpapi_available() 已保证仅 Windows 走到这里）。
+        windll = cast(Any, ctypes).windll
         raw = data.encode("utf-8")
         in_blob = _DATA_BLOB(len(raw), ctypes.cast(ctypes.create_string_buffer(raw, len(raw)),
                                                    ctypes.POINTER(ctypes.c_ubyte)))
         out_blob = _DATA_BLOB()
-        if ctypes.windll.crypt32.CryptProtectData(
+        if windll.crypt32.CryptProtectData(
                 ctypes.byref(in_blob), None, None, None, None, 1,  # CRYPTPROTECT_UI_FORBIDDEN
                 ctypes.byref(out_blob)):
             try:
                 blob = ctypes.string_at(out_blob.pbData, out_blob.cbData)
                 return _DPAPI_PREFIX + base64.b64encode(blob).decode("ascii")
             finally:
-                ctypes.windll.kernel32.LocalFree(out_blob.pbData)
+                windll.kernel32.LocalFree(out_blob.pbData)
     except Exception as e:  # noqa: BLE001  回退明文，不阻塞保存
         # S3-10：回退明文要**常驻可见**（原仅一次性 toast，重启后用户以为已加密）
         _set_security_warn("plaintext")
@@ -169,16 +172,17 @@ def _unprotect(value: str) -> str:
         _errs.record("config._unprotect", "DPAPI 不可用（非 Windows/缺依赖），密文无法解开")
         return ""
     try:
+        windll = cast(Any, ctypes).windll   # Windows-only，见 _protect 注释
         blob = base64.b64decode(value[len(_DPAPI_PREFIX):])
         in_blob = _DATA_BLOB(len(blob), ctypes.cast(ctypes.create_string_buffer(blob, len(blob)),
                                                     ctypes.POINTER(ctypes.c_ubyte)))
         out_blob = _DATA_BLOB()
-        if ctypes.windll.crypt32.CryptUnprotectData(
+        if windll.crypt32.CryptUnprotectData(
                 ctypes.byref(in_blob), None, None, None, None, 1, ctypes.byref(out_blob)):
             try:
                 return ctypes.string_at(out_blob.pbData, out_blob.cbData).decode("utf-8")
             finally:
-                ctypes.windll.kernel32.LocalFree(out_blob.pbData)
+                windll.kernel32.LocalFree(out_blob.pbData)
     except Exception as e:  # noqa: BLE001
         _errs.record("config._unprotect", "DPAPI 解密抛错，密文无法解开", e=e)
         _set_security_warn("decrypt_failed")

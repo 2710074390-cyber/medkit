@@ -10,6 +10,14 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed
+
+- **CI mypy 平台误报修复**：mypy 步骤上线后 Ubuntu CI 报 5 处 `attr-defined`——
+  `ctypes.windll`（`core/config.py` DPAPI，4 处）与 `os.startfile`（`routers/data.py`）为
+  Windows 专属 API，Linux typeshed 无此属性（本地 Windows 绿、CI Linux 红）。改用
+  `cast(Any, ctypes).windll` / `getattr(os, "startfile", None)`（非 Windows 显式按不支持处理），
+  Windows 与 Linux 双平台 mypy 均 0 issues。
+
 ## [0.10.5] - 2026-09-20
 
 > **本批为何改**：2026-09-20 v1 代码审查报告经逐条实证核验产出勘误版
