@@ -18,6 +18,11 @@
   `cast(Any, ctypes).windll` / `getattr(os, "startfile", None)`（非 Windows 显式按不支持处理），
   Windows 与 Linux 双平台 mypy 均 0 issues。
 
+- **anyio CVE 升级（lock）**：requirements.lock 中 anyio 4.13.0 → 4.14.2（CVE-2026-63374 /
+  CVE-2026-64847，修复版 4.14.2），`pip-audit -r requirements.lock --strict` 恢复绿。
+- **windows Install deps 拆分**：lock（带 --hash，pip 进入哈希模式）与 requirements-dev.txt
+  （浮动约束）混装被强制 == 钉死而失败（`--require-hashes must use ==`）——拆成两条命令，
+  lock 独立哈希校验、dev 工具保持浮动。
 ## [0.10.5] - 2026-09-20
 
 > **本批为何改**：2026-09-20 v1 代码审查报告经逐条实证核验产出勘误版

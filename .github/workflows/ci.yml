@@ -33,7 +33,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ruff pip-audit mypy
           if [ "${{ runner.os }}" = "Windows" ]; then
-            python -m pip install -r requirements.lock -r requirements-dev.txt
+            # requirements.lock 带 --hash（pip 进入哈希模式）；若与浮动声明的
+            # requirements-dev.txt 同一条命令安装，dev 侧的非 == 约束会被强制要求
+            # 钉死版本而失败（--require-hashes must use ==）。拆成两条命令，
+            # lock 独立哈希校验，dev 工具依赖保持浮动。
+            python -m pip install -r requirements.lock
+            python -m pip install -r requirements-dev.txt
           else
             python -m pip install -r requirements.txt -r requirements-dev.txt
           fi
