@@ -1,9 +1,13 @@
-# 运行时依赖「意图声明」（U-16 / S2-23）。
-# 注意：**全部版本必须与 requirements.lock 逐条 == 一致**——浮动区间会随 pip 解析
-# 漂移到新一代闭包（如 openai 3.x 引入 httpcore2/httpx2/truststore），使
-# tests/test_lock_closure.py 的 S2-23 闭包一致性闸门失败（CI ubuntu 按本文件安装，
-# 用当前环境元数据推导闭包与 lock 比对）。升级流程：改这里 → 重生成 lock + 同步
-# THIRD_PARTY_NOTICES.md → 本地全量验证。lock 仍为复现构建（--hash 校验）唯一来源。
+# Runtime dependency intent declaration (U-16 / S2-23).
+# NOTE: versions MUST stay ==-pinned and identical to requirements.lock one-by-one.
+# Floating ranges drift to newer closures (e.g. openai 3.x pulls in
+# httpcore2/httpx2/truststore) and break the S2-23 closure-consistency gate in CI
+# (ubuntu installs from this file, then derives the closure from installed metadata
+# and compares it with the lock). Upgrade flow: edit here -> regenerate the lock +
+# sync THIRD_PARTY_NOTICES.md -> run full local verification. The lock (--hash) stays
+# the single source of truth for reproducible builds.
+# Keep all comments ASCII-only: pip_requirements_parser auto-decodes with the locale
+# codec (cp1252 on Windows) and crashes on non-ASCII bytes (see b360f90).
 fastapi==0.136.3
 uvicorn[standard]==0.49.0
 openai==2.41.0

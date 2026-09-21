@@ -40,12 +40,32 @@ def _lock_names() -> dict[str, str]:
     return out
 
 
+# lock 在 Windows 验证环境生成（S2-23：lock 是「Windows 已验证闭包」）。推导闭包时
+# 必须按 Windows 平台语义 evaluate marker——否则在 ubuntu 上 `uvicorn[standard]` 的
+# `sys_platform != "win32" and extra == "standard"` 依赖（uvloop）会被计入闭包，
+# 与 Windows 生成的 lock（不含 uvloop）恒不一致，S2-23 在 linux 上必然失败
+# （CI 矩阵 ubuntu 即触发，2026-09-21 修复）。忽略平台 marker 的另一面是漏判：
+# 平台相关依赖的增减同样会在 Windows 本地闭环中被发现，语义不减弱。
+_LOCK_PLATFORM_ENV = {
+    "extra": "",
+    "sys_platform": "win32",
+    "platform_system": "Windows",
+    "os_name": "nt",
+    "platform_machine": "AMD64",
+    "python_version": "3.12",
+    "implementation_name": "cpython",
+}
+
+
 def _applies(req: Requirement, extras: frozenset[str]) -> bool:
     """该依赖在「当前已请求的 extras」下是否生效（处理 `extra == "standard"` 这类 marker）。"""
     m = req.marker
     if m is None:
         return True
-    return any(m.evaluate({"extra": e}) for e in (extras or frozenset({""})))
+    env = dict(_LOCK_PLATFORM_ENV)
+    return any(
+        m.evaluate({**env, "extra": e}) for e in (extras or frozenset({""}))
+    )
 
 
 def _runtime_closure() -> set[str]:
