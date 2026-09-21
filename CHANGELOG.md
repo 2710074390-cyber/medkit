@@ -35,7 +35,12 @@
 - **requirements.txt 注释 ASCII 化**：头部说明改英文——`pip_requirements_parser` 在
   Windows 用 locale codec（cp1252）解码，中文注释导致 windows CI 的 pip-audit 崩溃
   （UnicodeDecodeError）。
-> **本批为何改**：2026-09-20 v1 代码审查报告经逐条实证核验产出勘误版
+
+- **requirements.txt 全量镜像 lock（传递依赖钉死）**：click 8.5.0 移除 colorama 依赖使
+  闭包收缩被 S2-23 捕获——直接依赖钉死不够，传递依赖仍浮动。requirements.txt 现与
+  lock 逐条 == 一致（38 包），CI 安装即 lock 闭包；升级时同步两文件。
+- **requirements.lock 头注释 ASCII 化**：中文头注释使英文 Windows runner 的
+  pip-audit（cp1252 解码）崩溃 UnicodeDecodeError。> **本批为何改**：2026-09-20 v1 代码审查报告经逐条实证核验产出勘误版
 > （`docs/reviews/代码审查报告_勘误版_2026-09-20.md`），按勘误后的技术债清单执行
 > P4/P3/P2 改进。本批**无功能变更、无 prompt 变更**，均为工程加固；ruff/eslint/mypy 全绿。
 

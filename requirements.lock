@@ -1,7 +1,9 @@
-# 运行依赖锁定（U-16）：由已验证环境的 pip 元数据解析「运行时依赖闭包」生成
-#   （含 requirements.txt 声明的 extras，如 uvicorn[standard]）。
-# 用途：CI / 复现构建改用本文件；requirements.txt 保留为「意图声明」。
-# 同步：升级依赖后重新生成本文件与 THIRD_PARTY_NOTICES.md。
+# Runtime dependency lock (U-16): generated from the validated environment's pip
+# metadata over the declared runtime closure (incl. requirements.txt extras, e.g.
+# uvicorn[standard]). CI / reproducible builds install from this file; requirements.txt
+# stays the intent declaration. Sync: after upgrading deps, regenerate this file and
+# THIRD_PARTY_NOTICES.md. ASCII-only comments: pip_requirements_parser decodes with
+# the locale codec (cp1252 on Windows) and crashes on non-ASCII bytes.
 annotated-doc==0.0.4 \
     --hash=sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320 \
     --hash=sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4

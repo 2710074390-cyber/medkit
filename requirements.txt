@@ -1,21 +1,47 @@
 # Runtime dependency intent declaration (U-16 / S2-23).
-# NOTE: versions MUST stay ==-pinned and identical to requirements.lock one-by-one.
-# Floating ranges drift to newer closures (e.g. openai 3.x pulls in
-# httpcore2/httpx2/truststore) and break the S2-23 closure-consistency gate in CI
-# (ubuntu installs from this file, then derives the closure from installed metadata
-# and compares it with the lock). Upgrade flow: edit here -> regenerate the lock +
-# sync THIRD_PARTY_NOTICES.md -> run full local verification. The lock (--hash) stays
-# the single source of truth for reproducible builds.
+# NOTE: this file mirrors requirements.lock: every runtime package is ==-pinned
+# to the lock version, so CI installs produce the SAME closure as the lock even on
+# floating transitive dependencies (e.g. click 8.5.0 dropped the colorama dep and
+# silently shrank the closure - S2-23 caught it). When bumping a dependency, edit
+# the lock (or regen it) and copy the version lines here to keep them in sync.
 # Keep all comments ASCII-only: pip_requirements_parser auto-decodes with the locale
 # codec (cp1252 on Windows) and crashes on non-ASCII bytes (see b360f90).
+
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.14.2
+cached-property==2.0.1
+certifi==2026.4.22
+chevron==0.14.0
+click==8.4.1
+colorama==0.4.6
+distro==1.9.0
 fastapi==0.136.3
-uvicorn[standard]==0.49.0
-openai==2.41.0
-pymupdf==1.27.2.3
-python-docx==1.2.0
-httpx==0.28.1
-python-multipart==0.0.32
-markdown==3.10.2
+frozendict==2.4.7
+fsrs==6.3.2   # NX-04/WP-05: memory-card FSRS scheduler (K2 verified; default algo; SM-2 legacy switchable)
 genanki==0.13.1
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.15
 jieba==0.42.1   # IMP-06: slices_fts FTS5 word-split (K1 verified; D2/ADR-002)
-fsrs==6.3.2     # NX-04/WP-05: memory-card FSRS scheduler (K2 verified; default algo; SM-2 legacy switchable)
+jiter==0.15.0
+lxml==6.1.0
+Markdown==3.10.2
+openai==2.41.0
+pydantic==2.13.4
+pydantic_core==2.46.4
+PyMuPDF==1.27.2.3
+python-docx==1.2.0
+python-dotenv==1.2.2
+python-multipart==0.0.32
+PyYAML==6.0.3
+sniffio==1.3.1
+starlette==1.6.0
+tqdm==4.68.1
+typing_extensions==4.15.0
+typing-inspection==0.4.2
+uvicorn==0.49.0
+watchfiles==1.2.0
+websockets==16.0
