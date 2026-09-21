@@ -6,13 +6,22 @@ state 单例（main 与 state 共享同一 RUNNING·OCR_JOBS）/ logging 幂等�
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+# README ↔ dist-installer 产物的耦合只在本地发布流程存在：打包 → 写 README → 本地验证。
+# CI 工作区没有本地产物（dist-installer 不入库），这两个测试的判定前提（文件名必须存在 /
+# 未发布态必须标注）在 CI 上无意义，跳过——由本地发布验证链负责（2026-09-21 CI 首次跑到
+# Test 步时暴露，v0.10.5 发布把 README 改为真实安装包名后触发）。
+_CI = os.environ.get("CI") == "true"
+_SKIP_IF_CI = pytest.mark.skipif(_CI, reason="发布产物/发布态仅在本地发布流程存在")
 
 import medkit  # noqa: E402
 import medkit.main as m  # noqa: E402
@@ -42,6 +51,7 @@ def test_version_declared_pieces_agree():
     assert f"v{ver}" in readme or f"（{ver}）" in readme, f"README 未提及当前版本 {ver}"
 
 
+@_SKIP_IF_CI
 def test_readme_download_points_at_existing_artifact():
     """README 里写给用户双击的安装包名，**必须真实存在**（否则用户下载即 404）。"""
     import re as _re
@@ -54,6 +64,7 @@ def test_readme_download_points_at_existing_artifact():
         assert (inst / n).exists(), f"README 指向不存在的安装包：{n}"
 
 
+@_SKIP_IF_CI
 def test_readme_marks_unreleased_version():
     """若当前 `__version__` 还没有对应安装包，README 必须显式标注「未发布/构建中」。
 
