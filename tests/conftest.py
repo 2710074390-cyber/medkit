@@ -57,8 +57,37 @@ def _isolate_medkit_store(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, attr, store_dir / fname)
     monkeypatch.setattr(cfg, "CONFIG_DIR", tmp_path)  # 兜底：派生路径（ocr/presets）不落真实家目录
     monkeypatch.setattr(cfg, "CONFIG_FILE", tmp_path / "config.json")
+    # R5-01 补（2026-09-27 定位到哨兵触发真因）：**日志**同样重定向。
+    # `main._lifespan` 裸调 `setup_logging()`，该函数第一优先级读 `MEDKIT_LOG_DIR`，
+    # 回落 `cfg.CONFIG_DIR/logs`。只 patch `CONFIG_DIR` 不够稳，根因有两条：
+    #   ① `setup_logging()` 的幂等判据是「根 logger 上是否已有 `_medkit` handler」，
+    #      这是**进程级全局**状态 —— 第一个进入 lifespan 的用例装好 handler 后，
+    #      后续用例（哪怕已 patch 了 CONFIG_DIR）的日志全写进第一个路径；
+    #   ② 一旦那个「第一个」是真实 CONFIG_DIR，整轮日志就落进用户真实
+    #      `~/.medkit/logs/medkit.log`，套件结束哨兵按 sha1 比对必然报差异。
+    # 实测（干净子进程）：`with TestClient(app)` 会打印
+    #   「MedKit 日志已初始化：C:\Users\38063\.medkit\logs/medkit.log」→ 真实日志被写。
+    # 修法：钉住环境变量（第一优先级）+ 用例前后摘掉已存在的 `_medkit` handler，
+    # 保证每条用例的日志只写本用例的 tmp_path。
+    monkeypatch.setenv("MEDKIT_LOG_DIR", str(tmp_path / "logs"))
+    import logging as _logging
+
+    _root = _logging.getLogger()
+    for _h in [h for h in _root.handlers if getattr(h, "_medkit", False)]:
+        _root.removeHandler(_h)
+        try:
+            _h.close()
+        except Exception:  # noqa: BLE001  关闭失败不该影响用例
+            pass
     dbs.reset_conn()
-    return store_dir
+    yield store_dir
+    # 收尾：摘掉本用例期间新装的 handler（含 lifespan 装的），避免泄漏到下一用例
+    for _h in [h for h in _root.handlers if getattr(h, "_medkit", False)]:
+        _root.removeHandler(_h)
+        try:
+            _h.close()
+        except Exception:  # noqa: BLE001  关闭失败不该影响用例
+            pass
 
 
 # ---------------------------------------------------------------- R5-01 防污染哨兵
