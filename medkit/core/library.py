@@ -52,7 +52,11 @@ _LOCK = threading.RLock()   # JSON 模式进程内串行；SQL 模式由 BEGIN I
 
 # 路径 → (表名, 冗余查询列)：query 列是冗余索引，权威数据在 data JSON（无损往返）。
 _M_TABLE = ("mistakes", ("subject", "chapter", "topic", "state",
-                         "miss_count", "learned", "created_at"))
+                         "miss_count", "learned", "created_at",
+                         # EP-01（v8 迁移）：元认知查询列。列只作 WHERE 过滤，
+                         # 权威数据始终在 data JSON（ADR-001），故加列不影响读侧。
+                         "confidence", "error_tag", "ai_error_tag", "tag_match",
+                         "round", "kp_id"))
 _K_TABLE = ("knowledge", ("name", "subject", "chapter", "state",
                           "priority", "score", "attempts", "last_tried"))
 
@@ -370,6 +374,48 @@ def compute_priority(score: float, miss_count: int, last_tried: Optional[str]) -
     return round(min(max(0.50 * (1 - score) + 0.30 * miss_density + 0.20 * recent_miss, 0.0), 1.0), 3)
 
 
+# EP-01 元认知字段（错题归因流水线）。默认值集中在此，供 add_mistake 白名单搬运。
+# **新增字段时必须同时改：本表 + routers/library.py 的 MistakeBody**
+# （两处不一致 = 字段静默丢失，且不报错）。
+_META_FIELD_DEFAULTS: dict[str, Any] = {
+    "confidence": None,          # 看答案前自评 1-5；None = 未填
+    "my_reasoning": "",          # 看答案前的原始想法（≤120 字）
+    "error_tag": "",             # 人工归因（6 类之一或空）
+    "ai_error_tag": "",          # AI 归因
+    "tag_match": None,           # 人工 vs AI 是否一致（0/1；None = 无法判定）
+    "round": "",                 # 复习轮次（早鸟轮/跟课轮/强化轮/冲刺轮）
+    "kp_id": "",                 # 知识点稳定 ID（kpid 派生）
+    "fix": "",                   # 修正陈述（≤25 字）
+    "counterfactual": "",        # 反事实问题
+    "knowledge_ref": "",         # 出处（章节/页码/自己的笔记日期）
+}
+
+
+def _coerce_meta(key: str, v: Any) -> Any:
+    """元认知字段落库前的类型归一（不改语义，只保证类型稳定）。
+
+    - `confidence`：非法（0/6/小数/bool/非数）→ None，**不取默认值**——
+      错题本数据的可信度取决于「未填就是未填」，任何兜底值都会污染校准曲线。
+    - `tag_match`：None 保持 None（"无法判定"与"不一致(0)"是两回事）。
+    - 其余字符串字段统一 str + strip。
+    """
+    if key == "confidence":
+        if v is None or v == "" or isinstance(v, bool):
+            return None
+        if isinstance(v, float) and not v.is_integer():
+            return None
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return None
+        return n if 1 <= n <= 5 else None
+    if key == "tag_match":
+        if v is None or v == "":
+            return None
+        return 1 if str(v) in ("1", "True", "true") or v == 1 else 0
+    return str(v or "").strip()
+
+
 # ---------------------------------------------------------------- 错题 CRUD
 def list_mistakes() -> list[dict[str, Any]]:
     return _load(MISTAKES_FILE)
@@ -404,6 +450,28 @@ def _find(records: list[dict[str, Any]], mid: str) -> Optional[dict[str, Any]]:
     return next((r for r in records if r.get("id") == mid), None)
 
 
+def get_mistake(mid: str) -> Optional[dict[str, Any]]:
+    """按 id 取单条错题（**公开只读入口**）。
+
+    为什么要这个函数：`_find_mistake` 需要的是 store 视图（`{"cur": cursor}`），
+    而 store 视图只能在 `_store()` 事务上下文里拿到。EP-01 的路由层只想"读一条"，
+    若自己拼一个 `{"cur": None}` 的假视图，`_find_mistake` 会走 JSON 分支去取
+    `st["mistakes"]` → KeyError（这是实现 EP-01 时踩到的坑）。
+    故在此提供正经的只读入口：SQL 轨走 `BEGIN`（**非 IMMEDIATE**，读者不抢写锁）
+    的定向单行查；JSON 轨走列表查找。与 `list_mistakes` 的关系 = 单行 vs 全量。
+    """
+    if not mid:
+        return None
+    if _sql_ready(MISTAKES_FILE):
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            return dbs.find_row(cur, _M_TABLE[0], "id = ?", (str(mid),))
+        finally:
+            cur.close()
+    return _find(list(_load(MISTAKES_FILE)), mid)
+
+
 _ID_SEQ = itertools.count()
 
 
@@ -430,7 +498,7 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
             "chapter": str(data.get("chapter", "") or "").strip(),
             "topic": str(data.get("topic", "") or "").strip(),
             "question": str(data.get("question", "") or "").strip(),
-            "options": list(data.get("options") or []),
+            "options": _norm_options(data.get("options")),
             "answer": str(data.get("answer", "") or "").strip(),
             "user_answer": str(data.get("user_answer", "") or "").strip(),
             "correct": bool(data.get("correct", False)),
@@ -449,6 +517,14 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
             "mastery": compute_state(compute_score(0, 1, _now())),
             "_seq": seq,
         }
+        # EP-01（错题归因流水线）：元认知字段。
+        # **为什么必须显式搬运而不能 `record.update(data)`**：本函数的 record 是一张
+        # 白名单式的**固定形状**字典，任何未列出的键都会被静默丢弃。EP-01 的
+        # confidence/my_reasoning/error_tag 等若漏在这里，表现是「录入返回 200、
+        # 库里字段全 None」——一个不报错的功能失效（实现时正是这么踩到的）。
+        # 故：新增元认知字段时**必须同时改这里与 routers.MistakeBody**。
+        for k, v in _META_FIELD_DEFAULTS.items():
+            record[k] = _coerce_meta(k, data.get(k, v))
         # V-09：同 id 覆盖由 INSERT OR REPLACE 的主键语义承担（原 `_find` 需整表在内存）
         st["dirty"]["mistakes"] = True
         _mark_m_row(st, record)   # 单行增量写（新增或同 id 覆盖，均为一行）
@@ -456,6 +532,27 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
     # D-25：入库错题事件（ACTIVITY_EVENTS['mistake'] 已有定义但此前无写入方）
     log_knowledge_events(_kp_key(record), "mistake", note=f"错题 {record.get('id')} 入库")
     return record
+
+
+def _norm_options(v: Any) -> list[str]:
+    """options 归一：dict（``{"A": "文本"}``）→ 文本数组；其它按原样洗成字符串数组。
+
+    EP-01 修正：`list(dict)` 会**静默丢失选项文本**只留 {A,B,C} 三个键
+    （`{"A":"增加"}` → `["A"]`）。这条路径此前不可达（`routers` 的 `MistakeBody`
+    把 options 声明为 `list[str]`，pydantic 会先拒掉 dict），但错题归因流水线
+    直接从 core 调 `add_mistake`，JSONL 导入的《总纲》schema 里 options 正是 dict
+    → 一旦走通就是「选项文字全丢、只剩字母」且**不报错**。
+    故在此收口，成为唯一入口的守卫（不是各处防御式重复）。
+    """
+    if isinstance(v, dict):
+        def _key(k: str) -> tuple[int, str]:
+            return (0, k) if len(k) == 1 else (1, k)
+        return [str(x) for _, x in sorted(v.items(), key=lambda kv: _key(str(kv[0])))]
+    if isinstance(v, (list, tuple)):
+        return [str(x) for x in v]
+    if v is None:
+        return []
+    return [str(v)]
 
 
 def _norm_key(text: str) -> str:
@@ -589,8 +686,11 @@ def update_mistake(mid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
         cur = _find_mistake(st, mid)      # V-09：定向取行
         if cur is None:
             return None
+        # EP-01：元认知字段中的**可编辑子集**。刻意不含 confidence / my_reasoning
+        # （《总纲》§3.4：看完答案就污染了，必须删卡重录，不给事后修补通道）。
         allowed = {"subject", "chapter", "topic", "question", "options", "answer",
-                   "user_answer", "analysis", "error_reason", "know_tags", "bloom", "learned", "correct"}
+                   "user_answer", "analysis", "error_reason", "know_tags", "bloom", "learned", "correct",
+                   "error_tag", "round", "fix", "knowledge_ref", "kp_id"}
         for k, v in patch.items():
             if k in allowed:
                 cur[k] = v

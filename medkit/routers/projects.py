@@ -195,6 +195,16 @@ def _read_substeps(base: Path, limit: int = 50) -> list[dict[str, Any]]:
     return rows[-limit:]
 
 
+# 项目根 / 最终产物目录里的「内部文件」：既不出现在产物列表，也不允许经产物路由下发。
+# **单源常量**——`_project_artifacts()`（列表过滤）与 `project_file()`（下载黑名单）共用，
+# 防止两处漂移。历史缺陷：`progress.json` 只在路由黑名单里、没进列表排除表，于是管线运行
+# 期间它会以产物卡片的形式出现在「我的项目」，点开却是 404「文件不存在」（死链）。
+_INTERNAL_ARTIFACT_NAMES = frozenset({
+    "meta.json", "slices.json", "stage.json", "progress.json",
+    "questions_raw.json", "questions_gate1.json", "checkpoint.json", "paper_ids.json",
+})
+
+
 def _project_artifacts(base: Path) -> list[str]:
     names: list[str] = []
     for d in (base, base / "最终产物"):
@@ -202,9 +212,7 @@ def _project_artifacts(base: Path) -> list[str]:
             continue
         for p in sorted(d.iterdir()):
             if p.is_file() and p.suffix in (".md", ".html", ".json", ".txt", ".apkg") \
-                    and p.name not in ("slices.json", "meta.json", "stage.json",
-                                       "questions_raw.json", "questions_gate1.json",
-                                       "checkpoint.json", "paper_ids.json"):
+                    and p.name not in _INTERNAL_ARTIFACT_NAMES:
                 names.append(p.name)
     return names
 
@@ -266,13 +274,19 @@ def delete_project(pid: str) -> dict[str, Any]:
 
 
 @router.get("/api/projects/{pid}/files/{name}")
-def project_file(pid: str, name: str) -> FileResponse:
+def project_file(pid: str, name: str, dl: int = 0) -> FileResponse:
+    """产物文件下发。
+
+    `dl=1` → `Content-Disposition: attachment`（「下载到本地」按钮用，中文名走 filename*）；
+    缺省 → inline 预览（「在线打开」用：押题卷/题库 HTML 的交互答题依赖同源加载，
+    不能用 attachment，否则浏览器会下载而不是渲染）。
+    """
     pid = _safe_pid(pid)
     if Path(name).name != name:  # 防路径穿越
         raise HTTPException(400, "非法文件名")
     if Path(name).suffix.lower() not in (".md", ".html", ".json", ".txt"):
         raise HTTPException(400, "仅支持预览 md/html/json/txt 产物")
-    if name in ("meta.json", "slices.json", "stage.json", "progress.json"):  # 内部文件不对外预览
+    if name in _INTERNAL_ARTIFACT_NAMES:  # 内部文件不对外预览/下载（与产物列表同一份黑名单）
         raise HTTPException(404, "文件不存在")
     base = proj_dir(pid)
     f = base / name
@@ -284,6 +298,8 @@ def project_file(pid: str, name: str) -> FileResponse:
     suffix = f.suffix
     mime = ("text/html; charset=utf-8" if suffix == ".html"
             else "text/plain; charset=utf-8")
+    if dl:
+        return FileResponse(f, media_type=mime, filename=f.name)
     return FileResponse(f, media_type=mime)
 
 

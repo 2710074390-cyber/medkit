@@ -25,7 +25,7 @@ hiddenimports += collect_submodules("fsrs")
 
 datas = [
     ("medkit/web", "medkit/web"),        # 静态前端（零 CDN）
-    ("medkit/prompts", "medkit/prompts"),  # 提示词模板（medgen/medqc/medfix/medreview/medexplain/medtutor/medcards/syllabus_extract）
+    ("medkit/prompts", "medkit/prompts"),  # 提示词模板（medgen/medqc/medfix/medreview/medexplain/medtutor/medcards/syllabus_extract/error_analysis/socratic_review）
     # U 开源决策：AGPL-3.0 许可证正文随安装包分发（遵守 AGPL「随分发提供许可证」要求）
     ("LICENSE", "."),
     # WP-12 纯净安装包：示例素材（medkit/data）与内置大纲种子（data/syllabus_seed_306.json）

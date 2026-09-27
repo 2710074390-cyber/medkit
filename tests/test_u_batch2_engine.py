@@ -75,7 +75,9 @@ def test_u14_v7_indexes_created_and_rollback():
             "SELECT name FROM sqlite_master WHERE type='index'")}
 
     dbs.reset_conn()
-    assert dbs.migrate() == 7, "MIGRATIONS 末位应为 7"
+    # 不写死版本号：本用例测的是「v7 的索引与回滚」，只要迁移跑到末位即可。
+    # （写死 `== 7` 会在每次加迁移时假红——v8 时已实锤一次。）
+    assert dbs.migrate() == dbs.MIGRATIONS[-1], "迁移应跑到 MIGRATIONS 末位"
     expected = ("idx_mk_subject_state", "idx_kn_subject_state", "idx_ex_subject",
                 "idx_rc_subject_due", "idx_ts_subject_state")
     names = idx_names()
@@ -87,7 +89,7 @@ def test_u14_v7_indexes_created_and_rollback():
     after = idx_names()
     for idx in expected:
         assert idx not in after, f"v7 回滚应删除索引 {idx}"
-    assert dbs.migrate() == 7   # 幂等重升级（IF NOT EXISTS）
+    assert dbs.migrate() == dbs.MIGRATIONS[-1]   # 幂等重升级（IF NOT EXISTS）
 
 
 def test_u15_silent_pass_converged():

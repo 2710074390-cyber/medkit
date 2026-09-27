@@ -255,3 +255,91 @@ def record_answer(sid: str, user_answer: str, score: int,
         s["updated_at"] = _now()
         st["dirty"] = True
     return s
+
+
+# ================================================================ 错题复习会话（EP-01 阶段 3）
+#
+# 复用同一张 `tutor_sessions` 表，用 `kind` 区分两类会话，**不新增表 / 不新增迁移**：
+#
+# | kind          | 起点              | 追什么                       |
+# |---------------|-------------------|------------------------------|
+# | `"kp"`（缺省） | 一个知识点         | 概念阶梯（medtutor.md）       |
+# | `"mistake"`    | 一道已归因的错题   | 学生当初犯错的**那个岔路口**  |
+#
+# 为什么不建新表：① 两者共享全部 CRUD / 锁 / 双轨存储路径，另起一套等于复制
+# `_store()` 的 SQL/JSON 双轨逻辑（本项目历史上双轨复制出过事）；② `kind` 缺省为 "kp"
+# → **既有 son 会话与既有测试零改动**（老记录读出来就是 "kp"）。
+#
+# 错题会话多两个字段：
+# - `mistake_id`：锚定的错题（复习轮次与错题本体联动）；
+# - `stuck`：连续未命中岔路口的轮数 —— `hit_crossroad=False` 时递增，
+#   达到 `STUCK_ROUNDS` 才允许 agent 给**方向性提示**（仍不得给答案）。
+
+STUCK_ROUNDS = 3        # 连续未命中岔路口 → 允许方向性提示（对应提示词 {stuck_rounds}）
+
+
+def start_mistake_session(mistake_id: str, subject: str, kp_name: str = "",
+                          kp_id: str = "", state: str = "weak") -> dict[str, Any]:
+    """开一场错题复习会话（`kind="mistake"`）。
+
+    概念状态由调用方从错题本体/知识点掌握度传入；本函数只负责持久化与初始形状。
+    """
+    with _store() as st:
+        sessions = st["sessions"]
+        sid = f"sr_{int(time.time() * 1000) % 100000000}_{next(_SEQ)}"   # 时间戳+序号防同毫秒撞 id
+        session = {
+            "id": sid, "kind": "mistake", "mistake_id": mistake_id,
+            "subject": subject, "kp_name": kp_name, "kp_id": kp_id or "",
+            "state": state, "streak": 0, "stuck": 0,
+            "current": {"type": "explain", "text": ""},
+            "rounds": [],
+            "created_at": _now(), "updated_at": _now(),
+        }
+        sessions.append(session)
+        st["dirty"] = True
+    return session
+
+
+def record_mistake_answer(sid: str, user_answer: str, score: int, gap: str,
+                          next_question: str, hit_crossroad: bool) -> Optional[dict[str, Any]]:
+    """提交一轮错题复习作答。
+
+    与 `record_answer` 的差别：
+    ① 多记 `hit_crossroad`（本管线最关键的信号）；
+    ② 下一问类型由 `hit_crossroad` 决定——**未命中岔路口就继续追同一个岔路口**，
+       不按五类轮换换档（换了档等于放过了当初那个错误）；
+    ③ `stuck` 累加/归零，供 agent 判断何时给方向性提示。
+    """
+    with _store() as st:
+        sessions = st["sessions"]
+        s = next((x for x in sessions if x.get("id") == sid), None)
+        if s is None:
+            return None
+        if s.get("kind") != "mistake":
+            return None         # 防串用：知识点会话不走本路径
+        rounds = s.get("rounds") or []
+        if len(rounds) >= MAX_ROUNDS:      # 护栏：超轮次不再继续
+            return s
+        cur = s.get("current") or {"type": "explain", "text": ""}
+        qtype, qtext = cur.get("type", "explain"), cur.get("text", "")
+        score = max(0, min(int(score), 3))
+        state, streak = apply_score(s.get("state", "weak"), int(s.get("streak", 0)), score)
+        stuck = int(s.get("stuck", 0))
+        # 命中岔路口 → 清空滞留计数；未命中 → 累加（决定何时放行方向性提示）
+        stuck = 0 if hit_crossroad else stuck + 1
+        rounds.append({
+            "round": len(rounds) + 1, "type": qtype, "question": qtext,
+            "user_answer": user_answer, "score": score, "gap": gap,
+            "hit_crossroad": bool(hit_crossroad), "at": _now(),
+        })
+        # 未命中岔路口 → 不换档（继续追同一个）；命中 → 按五类轮换推进
+        next_type = qtype if not hit_crossroad else next_question_type(qtype, score)
+        s["state"] = state
+        s["streak"] = streak
+        s["stuck"] = stuck
+        s["rounds"] = rounds
+        s["current"] = {"type": next_type, "text": next_question or ""}
+        s["updated_at"] = _now()
+        st["dirty"] = True
+    return s
+

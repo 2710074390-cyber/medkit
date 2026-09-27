@@ -45,6 +45,12 @@ __all__ = [
     "CARD_KIND_LABELS",
     "CardDraft",
     "CardDrafts",
+    "ANALYSIS_TAGS",
+    "FIX_MAX_CHARS",
+    "ErrorAnalysis",
+    "SOCRATIC_SCORE_MIN",
+    "SOCRATIC_SCORE_MAX",
+    "SocraticScore",
     "validate_or_repair",
 ]
 
@@ -415,6 +421,165 @@ class CardDrafts(BaseModel):
         self.cards = keep[:10]
         if not self.cards:
             raise ValueError("未生成任何有效记忆卡")
+        return self
+
+
+# --------------------------------------------------------------------------- ErrorAnalysis
+# EP-01：错题归因流水线的 LLM 输出契约。字段与 prompts/error_analysis.md 的
+# 「归因/考点定位/修正陈述/反事实问题/建议回看的章节」五段结构一一对应。
+#
+# 红线（《总纲》§3.2）：**正确答案必须由用户提供，AI 只负责解释和定位**。
+# 故本契约里**没有 correct / answer 字段**——不是漏了，是不允许模型回写正确答案。
+# 若模型在输出里塞了正确答案类的键，`extra="ignore"` 会丢弃（不给它改答案的通道）。
+ANALYSIS_TAGS = {"知识盲区", "记忆偏差", "机制混淆", "概念偷换", "审题失误", "推理跳步"}
+# 修正陈述上限：提示词写「不超过 25 字」，契约留 2 倍余量容忍模型轻微超发，
+# 但硬顶 60 字——超过就是又写成了一段解析，那正是要避免的"泛泛而谈"。
+FIX_MAX_CHARS = 60
+
+
+class ErrorAnalysis(BaseModel):
+    """错题归因输出契约（prompts/error_analysis.md）。
+
+    - `error_tag`：模型给的归因，**必须**落在 6 类里（自造标签一律判非法 → 走修复/人工）；
+    - `evidence`：判断依据，**要求引用用户原话**——这是让归因可证伪的关键字段；
+    - `fix`：一句可执行的修正陈述（≤60 字）；
+    - `counterfactual`：反事实问题——改一个条件就会选另一项的那种问法；
+    - `where_uncertain`：模型自认不确定处（对应提示词的【待查】/【答案待核实】标记）。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    error_tag: str = ""
+    evidence: str = ""
+    kp_point: str = ""
+    variants: list[str] = Field(default_factory=list)
+    fix: str = ""
+    counterfactual: str = ""
+    review_chapters: list[str] = Field(default_factory=list)
+    where_uncertain: list[str] = Field(default_factory=list)
+
+    @field_validator("error_tag", mode="before")
+    @classmethod
+    def _word_tag(cls, v: Any) -> str:
+        """标签归一：剥空白后必须精确命中 6 类之一；未命中留空（→ model_validator 抛错）。"""
+        return str(v or "").strip()
+
+    @field_validator("kp_point", "fix", "counterfactual", mode="before")
+    @classmethod
+    def _word_str(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+    @field_validator("variants", "review_chapters", "where_uncertain", mode="before")
+    @classmethod
+    def _word_list(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            return [str(x).strip() for x in v if str(x or "").strip()]
+        # 模型偶尔给单个字符串而不是数组 → 视为一项（容错，不以此判非法）
+        return [str(v).strip()] if str(v or "").strip() else []
+
+    @model_validator(mode="after")
+    def _invariants(self) -> "ErrorAnalysis":
+        if self.error_tag not in ANALYSIS_TAGS:
+            raise ValueError(f"error_tag 必须是 6 类之一，收到 {self.error_tag!r}")
+        if not self.evidence:
+            raise ValueError("evidence（判断依据）不能为空——归因必须有出处可复核")
+        if not self.fix:
+            raise ValueError("fix（修正陈述）不能为空——没有可执行结论的分析等于没做")
+        if len(self.fix) > FIX_MAX_CHARS:
+            raise ValueError(f"fix 超过 {FIX_MAX_CHARS} 字（提示词要求 ≤25 字，超发=又写成了泛泛解析）")
+        if len(self.variants) > 3:
+            raise ValueError("variants 最多 2~3 条常见变形考法")
+        return self
+
+
+# EP-01 阶段 3：苏格拉底式错题复习的判分契约（prompts/socratic_review.md 当 task=score）。
+#
+# 与 medtutor.md 的 MEDTutor 判分**不同**：那里的判分对象是「知识点掌握度」，
+# 这里的判分对象是「有没有回到当初那个错误岔路口」——故多一个 `hit_crossroad` 布尔。
+#
+# 红线（《总纲》§3.2）：**本契约没有 answer / correct 字段**。
+# 提示词要求模型"看得到答案但不得转述"，契约层面再堵一道口子：
+# 模型即便把答案塞进 `next_question` 之外的键，`extra="ignore"` 也会丢弃。
+# `next_question` / `gap` 是自由文本，故另有 `test_socratic_never_leaks_answer`
+# 端到端把关（用真答案串做注入，断言不出现在任何返回文本里）。
+SOCRATIC_SCORE_MIN = 0
+SOCRATIC_SCORE_MAX = 3
+
+
+class SocraticScore(BaseModel):
+    """苏格拉底复习单轮判分（prompts/socratic_review.md 当 task=score 的 JSON 输出）。
+
+    - `score`：0~3 整数，禁止鼓励分（直接进掌握度状态机，虚高 = 骗自己）；
+    - `gap`：一句具体差距，必须点到"这一步推理缺的环节"；
+    - `next_question`：下一问（**不得含正确答案**，由端到端守卫把关）；
+    - `hit_crossroad`：本轮是否真的回到并说清当初那个错误岔路口——本管线最关键的信号，
+      为 False 时下一问必须继续追同一岔路口（不得换档）；
+    - `where_uncertain`：模型自认不确定处（【待查】/【答案待核实】）。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    score: int = -1           # -1 = 无法判定（与本项目既有判分口径一致，见 medtutor.score_answer）
+    gap: str = ""
+    next_question: str = ""
+    hit_crossroad: bool = False
+    where_uncertain: list[str] = Field(default_factory=list)
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def _int_score(cls, v: Any) -> int:
+        """归一到 [-1, 3]。非整数/越界/小数 → -1（**不夹取、不截断**）。
+
+        截断与夹取都会把"模型填错了"伪装成"模型判了 0/2 分"，而分数会直接进
+        掌握度状态机 —— 这是与 `errorpipe._coerce_meta` 同一条铁律：
+        **宁可判不了（-1）走重试，不可编一个分出来**。
+        """
+        # bool 是 int 子类：True 不是"1 分"，是模型把字段填错了 → 拒绝
+        if isinstance(v, bool) or v is None:
+            return -1
+        if isinstance(v, float) and not v.is_integer():
+            return -1      # 2.5 分不存在；int(2.5)==2 是静默截断（EP-01 §7.3 同款）
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return -1
+        if n < SOCRATIC_SCORE_MIN or n > SOCRATIC_SCORE_MAX:
+            return -1
+        return n
+
+    @field_validator("gap", "next_question", mode="before")
+    @classmethod
+    def _word_str(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+    @field_validator("hit_crossroad", mode="before")
+    @classmethod
+    def _bool_hit(cls, v: Any) -> bool:
+        """只有明确的真值才算 True——字符串 "false" 不能因为非空就变 True。"""
+        if isinstance(v, bool):
+            return v
+        return str(v or "").strip().lower() in ("true", "1", "yes", "是")
+
+    @field_validator("where_uncertain", mode="before")
+    @classmethod
+    def _word_list(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            return [str(x).strip() for x in v if str(x or "").strip()]
+        return [str(v).strip()] if str(v or "").strip() else []
+
+    @model_validator(mode="after")
+    def _invariants(self) -> "SocraticScore":
+        if self.score < 0:
+            # 无法判定时不要求 gap/next_question（调用方走 retry 分支，不计轮次）
+            return self
+        if not self.gap:
+            raise ValueError("gap 不能为空——判了分却不说差距，等于给个数字就走")
+        if self.score < SOCRATIC_SCORE_MAX and not self.next_question:
+            raise ValueError("未满分的轮次必须给 next_question（继续追问，而非放行）")
         return self
 
 

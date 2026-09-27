@@ -174,16 +174,38 @@ const ART_LABEL = [
   [/anki_export\.txt$/i, "🧠", "Anki 文本"],
   [/\.apkg$/i, "🃏", "Anki 卡包"],
 ];
+/* 产物卡片：每个产物都必须能**下载到本地**，而不是只能开新标签页看原始文本。
+   —— 历史缺陷（用户反馈「网站不能正常下载文档」）：`/api/projects/{pid}/files/{name}`
+   被审查文档定义为「产物下载」端点，但服务端不下发 Content-Disposition、前端对
+   md/txt/html 一律 `target="_blank"` 且不加 `download` → 点「题库 MD / 复习手册 MD /
+   Anki 文本」只会开一个纯文本标签页，用户拿不到文件（得自己 Ctrl+S）。
+   现行契约（与后端 `project_file(dl=1)` 配套）：
+     · .apkg      → /export/apkg（服务端已带 attachment），单链接直接下载；
+     · .html      → 主链接「在线打开」（同源渲染才能答题/判分/打印）+ ⇩ 下载；
+     · .md/.txt/.json → 主链接「下载」（?dl=1 → attachment）+ 👁 在线预览。
+   注意：下载链接一律带 `download` 属性，且**不得**再给文档产物加 `target="_blank"`——
+   后者会把「下载」变成「预览」，正是原缺陷。 */
 function artifactLinks(pid, names) {
   return `<div class="artgrid">` + (names || []).map(n => {
     const hit = ART_LABEL.find(([re]) => re.test(n));
     const [ico, label] = hit ? [hit[1], hit[2]] : ["📃", n];   // C-06：三元组 [正则,图标,标题] 取下标 1/2
-    const href = n.endsWith(".apkg")
-      ? `/api/projects/${encodeURIComponent(pid)}/export/apkg`
-      : `/api/projects/${encodeURIComponent(pid)}/files/${encodeURIComponent(n)}`;
-    const dl = n.endsWith(".apkg") ? " download" : "";
-    return `<a class="artchip" href="${esc(href)}"${dl} target="${n.endsWith(".apkg") ? "" : "_blank"}" rel="noopener">
-      <span class="ai">${ico}</span><span><b>${esc(label)}</b><small>${esc(n)}</small></span></a>`;
+    const head = `<span class="ai">${ico}</span>`
+      + `<span class="artname"><b>${esc(label)}</b><small>${esc(n)}</small></span>`;
+    const base = `/api/projects/${encodeURIComponent(pid)}`;
+    if (n.endsWith(".apkg")) {
+      return `<div class="artchip"><a class="artmain" href="${base}/export/apkg" download
+        title="下载到本地（Anki 双击即可导入）">${head}</a></div>`;
+    }
+    const file = esc(`${base}/files/${encodeURIComponent(n)}`);
+    const dlUrl = `${file}?dl=1`;
+    if (/\.html$/i.test(n)) {
+      return `<div class="artchip">`
+        + `<a class="artmain" href="${file}" target="_blank" rel="noopener" title="在线打开">${head}</a>`
+        + `<a class="artalt" href="${dlUrl}" download title="下载到本地（可离线打开/打印）">⇩</a></div>`;
+    }
+    return `<div class="artchip">`
+      + `<a class="artmain" href="${dlUrl}" download title="下载到本地">${head}</a>`
+      + `<a class="artalt" href="${file}" target="_blank" rel="noopener" title="在线预览">👁</a></div>`;
   }).join("") + `</div>`;
 }
 /* B17：仅重渲染单个产物（后端复用审核渲染层；题库内容不变、无 token 消耗）

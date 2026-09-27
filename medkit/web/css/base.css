@@ -456,6 +456,13 @@
   .artchip b{display:block;font-size:12.5px;color:var(--accent2)}
   .artchip small{display:block;font-size:11px;color:var(--dim);margin-top:1px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 产物卡片双动作：artmain = 主操作（下载 / 在线打开），artalt = 次操作（⇩ 下载 / 👁 预览） */
+  .artchip .artmain{display:flex;align-items:center;gap:10px;flex:1;min-width:0;
+    color:var(--text);text-decoration:none}
+  .artchip .artname{min-width:0}
+  .artchip .artalt{flex:none;border:1px solid var(--line);border-radius:8px;padding:2px 8px;
+    font-size:13px;line-height:1.7;color:var(--dim);text-decoration:none}
+  .artchip .artalt:hover{border-color:var(--accent);color:var(--accent2)}
   @media (max-width:480px){.artgrid{grid-template-columns:1fr 1fr}}
   /* 审核台工具栏 */
   .revtool{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 4px}

@@ -194,3 +194,54 @@
   font-size:14px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--accent2),var(--accent))}
 .subj-mgr-row .grow{flex:1;min-width:0;display:flex;flex-direction:column}
 .subj-mgr-row small{font-size:11px;margin-top:2px}
+
+/* ---- EP-01：元认知视图（校准曲线 / 热力图 / 迁移矩阵 / 减法清单） ---- */
+/* 校准曲线：纯 CSS 柱状图（零依赖）。灰虚线 = 理想校准位（自评 N ↔ 正确率 N/5） */
+.mt-chart{display:flex;align-items:flex-end;gap:10px;height:190px;padding:8px 4px 0;margin-top:6px}
+.mt-col{flex:1;display:flex;flex-direction:column;min-width:0;height:100%}
+.mt-colwrap{position:relative;flex:1;display:flex;align-items:flex-end;justify-content:center;
+  background:var(--card2);border-radius:6px 6px 0 0;overflow:hidden}
+.mt-bar{width:70%;max-width:56px;border-radius:4px 4px 0 0;transition:height .3s}
+.mt-ideal{position:absolute;left:0;right:0;height:0;border-top:1px dashed var(--dim);opacity:.55}
+.mt-collab{text-align:center;font-size:12px;color:var(--text);padding-top:6px;line-height:1.4}
+.mt-collab .hint{margin:0;font-size:11px}
+
+/* 热力图 / 迁移矩阵共用表格骨架。
+   ⚠️ 表格本身**不收缩**：列多时靠外层 .mt-scroll 横向滚动，否则会把页面撑破
+   （390px 窄屏实测溢出 254px——已由 test_meta_view.py 守）。 */
+.mt-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+.mt-heat{border-collapse:separate;border-spacing:2px;width:100%;min-width:340px;font-size:12.5px}
+.mt-heat th,.mt-heat td{padding:5px 6px;text-align:center;border-radius:5px;
+  background:var(--card2);color:var(--text);font-weight:400}
+.mt-heat thead th{background:transparent;color:var(--dim);font-size:11.5px;font-weight:600}
+.mt-heat .mt-rowh{text-align:left;white-space:nowrap;font-weight:600;min-width:76px}
+.mt-heat .mt-rowh .hint{display:inline;margin:0}
+.mt-mig td:last-child,.mt-mig th:last-child{text-align:left}
+
+/* 苏格拉底复习面板（阶段 3）。
+   ⚠️ 唯一**会写数据**的块（开复习会话），视觉上要与只读统计区分开：
+   加左边框强调色 + 稍深的底，让用户知道"这里是动作，不是看板"。 */
+.mt-soc-panel{margin-top:12px;padding:12px 14px;background:var(--card2);
+  border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px}
+.mt-q{margin:8px 0 10px;padding:10px 12px;background:var(--card);
+  border-radius:7px;font-size:14px;line-height:1.6;color:var(--text)}
+.mt-gap{margin:2px 0 8px;padding:8px 10px;background:var(--card);border-radius:6px;
+  font-size:13px;line-height:1.55;color:var(--text);border-left:2px solid var(--warn)}
+.mt-soc-input{width:100%;box-sizing:border-box;padding:9px 11px;border-radius:7px;
+  border:1px solid var(--line);background:var(--card);color:var(--text);
+  font-family:inherit;font-size:13.5px;line-height:1.55;resize:vertical}
+.mt-soc-input:focus{outline:none;border-color:var(--accent)}
+.mt-ok{color:var(--good);font-weight:600}
+.mt-warn{color:var(--warn);font-weight:600}
+.mt-table{border-collapse:collapse;width:100%;min-width:520px;font-size:13px}
+.mt-table th,.mt-table td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--line)}
+.mt-table thead th{color:var(--dim);font-size:11.5px;font-weight:600;white-space:nowrap}
+.mt-table td.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* 窄屏：热力图允许横向滚动，不挤压列宽 */
+@media (max-width:640px){
+  .mt-chart{height:150px;gap:6px}
+  .mt-heat{font-size:11.5px;min-width:300px}
+  .mt-table{min-width:460px}
+  .mt-soc-panel{padding:10px 11px}
+}

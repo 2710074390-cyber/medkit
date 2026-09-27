@@ -425,6 +425,7 @@ try {
       <button data-lv="explain" role="tab" aria-selected="false" title="讲解产物（Alt+3）"><svg class="ic"><use href="#i-book"></use></svg>讲解产物<span class="nb" id="nb_explain"></span></button>
       <button data-lv="tutor" role="tab" aria-selected="false" title="提问学习（Alt+4）"><svg class="ic"><use href="#i-learn"></use></svg>提问学习<span class="nb" id="nb_tutor"></span></button>
       <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲管理（Alt+5）"><svg class="ic"><use href="#i-target"></use></svg>大纲管理<span class="nb" id="nb_syllabus"></span></button>
+      <button data-lv="meta" role="tab" aria-selected="false" title="元认知（Alt+6）"><svg class="ic"><use href="#i-target"></use></svg>元认知<span class="nb" id="nb_meta"></span></button>
     </nav>
 
     <!-- 视图 1/5：概览（闭环总览 + 薄弱点诊断 + 推荐） -->
@@ -604,6 +605,56 @@ try {
         <div id="rex_heat"><div class="hint">暂无已确认频次。</div></div>
       </div>
     </div>
+
+    <!-- 视图 6/6：元认知（EP-01 错题归因流水线：校准/热力图/迁移/减法清单） -->
+    <div class="learnview" id="lv-meta">
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>元认知总览</h2><span class="hint" id="mt_overview_scope"></span></div>
+        <div class="hint" style="margin-bottom:10px">你<b>以为自己会</b>和<b>实际做对</b>之间的差距，才是提分空间。本页数据来自你自己在<b>看答案前</b>填的把握程度与想法——事后无法补填，所以它反映真实的自我判断水平。</div>
+        <div class="btns">
+          <button class="act gray" onclick="mtLoad()">刷新统计</button>
+        </div>
+        <div id="mt_overview"><div class="hint"><span class="spin"></span>汇总中…</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>把握程度校准曲线</h2><span class="hint" id="mt_cal_meta"></span></div>
+        <div class="hint" style="margin-bottom:8px">横轴 = 你当时填的把握程度（1~5），纵轴 = 实际正确率。柱子在灰线上方 = <b>偏保守</b>；下方 = <b>过度自信</b>（最容易丢分的地方）。</div>
+        <div id="mt_cal"><div class="hint"><span class="spin"></span>计算中…</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>错误类型 × 科目 热力图</h2><span class="hint" id="mt_heat_meta"></span></div>
+        <div class="hint" style="margin-bottom:8px">看你在每个科目上「栽在哪一类错误」。占比最高的格子会给一条针对性建议。<b>优先用你自己标的标签</b>；你没标的才用 AI 归因兜底。</div>
+        <div id="mt_heat"><div class="hint"><span class="spin"></span>计算中…</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>跨轮次迁移矩阵</h2><span class="hint" id="mt_mig_meta"></span></div>
+        <div class="hint" style="margin-bottom:8px">同一个知识点，从上一轮到这一轮，你是<b>真的在改善</b>还是<b>一直在换着花样错</b>。</div>
+        <div id="mt_mig"><div class="hint"><span class="spin"></span>计算中…</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>减法清单（本周可以不学的章节）</h2><span class="hint" id="mt_sub_meta"></span></div>
+        <div class="hint" style="margin-bottom:8px">正确率高且量少的章节 → <b>本周不排</b>，把时间让给真正的薄弱项。这不是偷懒，是把有限时间花在边际收益最高的地方。</div>
+        <div id="mt_sub"><div class="hint"><span class="spin"></span>计算中…</div></div>
+      </div>
+
+      <!-- 阶段 3：苏格拉底式错题复习（会写数据：开复习会话） -->
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>苏格拉底复习（把您带回当初那个判断）</h2><span class="hint" id="mt_soc_meta"></span></div>
+        <div class="hint" style="margin-bottom:8px">
+          不做解析、不报答案，只用一个问题把您带回做题时那个岔路口——您得自己讲出
+          <b>当时为什么那么想、现在为什么不能那么想</b>。已过闸门且已归因的错题才能开。
+        </div>
+        <div class="btns">
+          <button class="act gray" onclick="mtLoadSocratic()">刷新列表</button>
+        </div>
+        <div id="mt_soc"><div class="hint"><span class="spin"></span>加载中…</div></div>
+        <div id="mt_soc_panel" class="mt-soc-panel" style="display:none"></div>
+      </div>
+    </div>
   </section>
 </main>
 <div id="toasts" role="status" aria-live="polite"></div>
@@ -637,6 +688,7 @@ try {
 <script src="/assets/js/learn-study.js"></script>
 <script src="/assets/js/learn-live.js"></script>
 <script src="/assets/js/learn-review.js"></script>
+<script src="/assets/js/learn-meta.js"></script>
 <script src="/assets/js/review-desk.js"></script>
 <script src="/assets/js/review-desk-materials.js"></script>
 <script src="/assets/js/review-desk-project.js"></script>

@@ -159,7 +159,48 @@ _V7_DOWN: list[str] = [
     "DROP INDEX IF EXISTS idx_ts_subject_state",
 ]
 
-MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7]  # 版本列表（只增不改）
+# v8（错题归因流水线 EP-01）：元认知字段 + 两张新表。
+# - `mistakes` 补 6 个可空查询列（冗余索引；权威数据仍在 data JSON，遵循 ADR-001）：
+#   confidence(看答案前自评 1-5) / error_tag(人工归因) / ai_error_tag(AI 归因) /
+#   tag_match(两者是否一致，高价值样本标记) / round(复习轮次) / kp_id(知识点稳定 ID)。
+#   **全部可空或空串**：v8 之前的历史错题不受影响，旧前端不传这些字段时行为不变。
+# - `kp_alias`：知识点别名表（kp_id 对齐三轮数据的桥）。
+# - `error_events`：**append-only 流水**，每轮每次作答一条。不复用 mistakes 快照，
+#   因为快照可被用户编辑，会让跨轮次迁移矩阵失真。
+_V8_UP: list[str] = [
+    "ALTER TABLE mistakes ADD COLUMN confidence INTEGER",
+    "ALTER TABLE mistakes ADD COLUMN error_tag TEXT",
+    "ALTER TABLE mistakes ADD COLUMN ai_error_tag TEXT",
+    "ALTER TABLE mistakes ADD COLUMN tag_match INTEGER",
+    "ALTER TABLE mistakes ADD COLUMN round TEXT",
+    "ALTER TABLE mistakes ADD COLUMN kp_id TEXT",
+    """
+    CREATE TABLE IF NOT EXISTS kp_alias (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        subject TEXT, chapter TEXT, topic TEXT, canonical TEXT, kp_id TEXT,
+        created_at TEXT
+    )""",
+    """
+    CREATE TABLE IF NOT EXISTS error_events (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        kp_id TEXT, round TEXT, error_tag TEXT, is_correct INTEGER, occurred_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_mk_conf ON mistakes(confidence)",
+    "CREATE INDEX IF NOT EXISTS idx_mk_etag ON mistakes(error_tag)",
+    "CREATE INDEX IF NOT EXISTS idx_mk_kpid ON mistakes(kp_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mk_round ON mistakes(round)",
+    "CREATE INDEX IF NOT EXISTS idx_kpa_kpid ON kp_alias(kp_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ee_kpid ON error_events(kp_id, round)",
+    "CREATE INDEX IF NOT EXISTS idx_ee_time ON error_events(occurred_at)",
+]
+
+# v8 不可精确回滚：SQLite ALTER ADD COLUMN 无对应 DROP COLUMN 的可靠路径（老版本不支持），
+# 且新增两表若被 DROP 会丢流水。DOWN 留空——回滚兜底依赖升级前的全量自动备份（ADR-005 既有机制）。
+_V8_DOWN: list[str] = []
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -194,6 +235,18 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         for stmt in _V7_UP:
             cur.execute(stmt)
         return
+    if ver == 8:
+        # 幂等防御（照 v6 做法）：重升级路径（测试模拟旧库 / 手工降 user_version）下
+        # 列或表可能已存在；ALTER ADD COLUMN 重复执行会抛 duplicate column name。
+        cur.execute("PRAGMA table_info(mistakes)")
+        cols = {r[1] for r in cur.fetchall()}
+        for stmt in _V8_UP:
+            if stmt.startswith("ALTER TABLE mistakes ADD COLUMN"):
+                col = stmt.rsplit(" ", 2)[-2]
+                if col in cols:
+                    continue
+            cur.execute(stmt)
+        return
     raise ValueError(f"未知迁移版本 {ver}")
 
 
@@ -224,6 +277,11 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 7:
         for stmt in _V7_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 8:
+        # _V8_DOWN 为空（见上）：仅允许回退版本号，结构保持——依赖升级前全量备份兜底。
+        for stmt in _V8_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

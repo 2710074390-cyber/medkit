@@ -10,7 +10,131 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Added
+
+- **错题归因流水线（EP-01）**：新增一条独立数据处理管线，把「考生自己记下的错题」
+  变成可纵向追踪的元认知档案。五阶段：`intake`（归一 + 摩擦闸门）→ `kp_align`
+  （知识点 ID 对齐）→ `attribute`（LLM 归因）→ `persist`（落库 + 追加流水）→
+  `analyze`（四张统计表 + 减法清单）。
+  - 新增模块：`core/errorpipe.py`（编排）、`core/metacog.py`（校准曲线/Brier/
+    JOL 偏差/标签×科目热力图/跨轮次迁移矩阵/减法清单，**全纯函数**）、
+    `core/kpid.py`（kp_id 对齐 + 别名表）、`core/error_events.py`（append-only 流水）、
+    `agents/error_analysis.py` + `prompts/error_analysis.md`（归因 agent）、
+    `routers/errors.py`（`/api/errors/*`，15 端点）。
+  - 新增契约：`schema.ErrorAnalysis`（归因输出；**无 answer/correct 字段**）。
+  - **三条红线有守卫**：① confidence/my_reasoning 必须看答案前填，未过闸门
+    `POST .../attribute` 直接 403、PUT 编辑端点不接受这两字段，并有源码级守卫
+    `test_no_confidence_backfill_endpoint` 拦截将来新增补填通道；② AI 不得回写
+    正确答案（契约无字段 + agent 侧防御 pop + 提示词约束，三层）；③ 归因失败
+    fail-soft——错题本体不受影响。
+  - 离线可用：`stages` 可跳过 `attribute`，全程零 LLM 调用（《总纲》§2.4 离线优先）。
+  - 守卫：`tests/test_errorpipe.py`（50 项，含注入反向验证）。
+
+- **`library.get_mistake(mid)`**：公开的**单条只读**入口（SQL 轨定向单行查 / JSON 轨
+  列表查找）。此前只有 `list_mistakes()`（全量）与私有 `_find_mistake()`（需 store 视图），
+  "读一条"没有正当入口。
+
+- **前端「元认知」视图（`learn-meta.js`，EP-01 阶段 2）**：学习中心新增第 6 个子视图
+  （Alt+6），把四张统计表接到界面上——此前 15 个 API 端点没有界面入口。
+  - 内容：把握程度校准曲线（CSS 柱状图 + 理想校准位虚线 + 过度自信预警）、
+    错误类型 × 科目热力图、跨轮次迁移矩阵（含「换方法」滞留提示）、减法清单
+    （本周可不排的章节）+ 总览计数。
+  - **只发一个请求**：`/api/errors/overview` 已一次返回全部统计，四块各自独立渲染，
+    单块异常只降级该块。
+  - 红线在 UI 侧的体现：该视图**纯只读**，不含任何 `input`/`textarea`/`select`
+    （杜绝事后补填 confidence / my_reasoning 的入口），由
+    `tests/browser/test_meta_view.py::test_meta_view_has_no_confidence_edit_control` 守。
+  - 分片契约：属 `learn` 族，接在 `learn-review.js` 之后；加载期只定义不执行，
+    无跨片前向引用（`test_v15_frontend_split.py` 的 `FAMILIES` 已登记）。
+  - 守卫：`tests/browser/test_meta_view.py`（9 项：导航/真实渲染/空态/500 降级/
+    红线/窄屏溢出），用 `page.route` 注入确定性响应，避免依赖随机种子数据。
+
+- **苏格拉底式错题复习（EP-01 阶段 3 收尾）**：新增 `/api/errors/socratic/*`（4 端点），
+  用一个提问把用户带回**他当初犯错的那个岔路口**——不讲解析、不给答案，
+  逼他自己讲出"当时为什么那么想、现在为什么不能那么想"。
+  - 新增：`agents/socratic_review.py` + `prompts/socratic_review.md`（锚点=用户原话
+    `my_reasoning` + 已确认 `error_tag`）、`schema.SocraticScore`（判分契约）。
+  - **复用不重造**：会话持久化复用既有 `core/tutor.py` 的 `tutor_sessions` 表与
+    双轨存储路径，用 `kind="mistake"` 区分两类会话（缺省 `"kp"` → **既有会话与既有
+    测试零改动**），**不新增表、不新增迁移**。
+  - 追问规则：`hit_crossroad=False` → **不换档**，继续追同一个岔路口
+    （换档等于放过当初那个错误）；`stuck` 累加到 `STUCK_ROUNDS=3` 才允许方向性提示
+    （仍不得给答案）。
+  - **红线三道防线**（前两道原有，第三道本次新增）：
+    ① 提示词明文禁止给/改答案；② 契约无 `answer` 字段（`extra="ignore"` 丢弃）；
+    ③ **出口机械剥离**——`gap`/`next_question` 是自由文本，模型可能"嘴瓢"把答案
+    写进去，故在返回值出口做答案串剥离（归一化后子串匹配，`gap` 命中整段替换为
+    安全文案、`next_question` 命中换一个不含答案的追问）。剥离发生的轮次返回
+    `redacted=True`，前端显式告知用户。
+  - 闸门升级：开复习要求**既过闸门又已归因**（未归因 → 409，不是 403/400 的混淆）
+    ——没有 `error_tag` 就没有锚点，硬开只会问成"再讲一遍这道题"。
+  - 前端：元认知视图新增「苏格拉底复习」卡片（可复习列表按真题频次降序 + 会话面板）。
+    **独立请求** `/socratic/eligible`，与只读统计互不拖累（动作失败不该把看板变成错误态）。
+  - 守卫：`tests/test_socratic.py`（37 项）+ `tests/browser/test_socratic_review.py`（12 项）。
+
+### Changed
+
+- **`mistakes` 表 v8 迁移**：新增 6 个可空查询列（`confidence` / `error_tag` /
+  `ai_error_tag` / `tag_match` / `round` / `kp_id`）与两张新表（`kp_alias` / `error_events`）
+  + 7 个索引。全部可空或空串 → **v8 之前的历史错题与旧前端行为不变**。
+  v8 分支幂等（照 v6 做法先 `PRAGMA table_info` 再 ALTER），重复升级不抛 `duplicate column`。
+- **`library.add_mistake` 支持元认知字段**：此前 record 是固定形状字典，未列出的键
+  **静默丢弃**（表现是「录入返回 200、字段全 None」）。现经 `_META_FIELD_DEFAULTS`
+  白名单搬运 + `_coerce_meta` 类型归一（非法 confidence → None，**不取默认值**）。
+  新增元认知字段时必须同时改本表与 `routers.MistakeBody`，已在注释中写明。
+- **`library.update_mistake` 白名单扩**：允许改 `error_tag` / `round` / `fix` /
+  `knowledge_ref` / `kp_id`；**刻意不含** confidence / my_reasoning（事后不可补填）。
+
 ### Fixed
+
+- **`add_mistake` 的 `options` 静默丢文本**：`list({"A": "增加"})` → `["A"]`，选项文字
+  全丢且不报错。此前不可达（`MistakeBody` 声明 `list[str]`，dict 会被 pydantic 先拒），
+  但错题归因流水线直接从 core 调用、且《总纲》JSONL schema 里 `options` 正是 dict
+  → 一旦走通就是静默数据损坏。现抽 `_norm_options()` 收口（dict/list/None/标量四种
+  输入各有单测）。
+- **`metacog.subtract_plan` 的 cut 退化为 0**：`int(n * 0.25)` 在 `n=2` 时得 0 →
+  减法清单**恒为空**、功能看起来"没反应"。改 `math.ceil`，保证只要有章节就至少给
+  一条「本周不排」建议。
+
+- **EP-01 收口时回归的 3 处（全量 763 passed / 0 failed 为准）**：
+  ① `prompts/error_analysis.md` 含 `{stem}` 等占位符却用裸 `load_prompt` 加载 →
+  改 `render_prompt("error_analysis.md", **_payload(rec))`（占位符渲染与注入防护是既有
+  全目录守卫 `test_r8w_p2_hardening.py` 的硬要求）；
+  ② `errorpipe.py` 进度回调写了裸 `except Exception: pass` → 改
+  `with errs.swallow("errorpipe.progress", ...)`（项目对静默吞异常零容忍，
+  `test_u_batch2_engine.py::test_u15` 逐文件扫）；已做注入反向验证（注入即红）。
+  ③ `test_u_batch2_engine.py::test_u14` 原断言硬编码 `migrate() == 7` →
+  改 `== dbs.MIGRATIONS[-1]`。**教训：测试里不要写死迁移版本号**，否则每加一版迁移
+  就假红一次（v8 时实锤）。
+
+- **减法清单的真题考频恒为空（`_freq_map` 静默降级）**：`routers/errors.py::_freq_map()`
+  用 `hasattr(realexams, "list_freq")` 探测能力后调用 `realexams.list_freq()`，但该模块
+  的公开函数叫 **`freq_view()`**——`list_freq` 从不存在 → `hasattr` 恒为 False →
+  **静默返回空 dict**，减法清单永远带 `freq_missing=True`；表现是「真题考频导进去了却
+  一点没影响减法清单」（白导）。现直接调用确实存在的 `freq_view()`（它已按章节聚合好），
+  并把异常改走 `errs.swallow("errorpipe.freq_map", ...)` 留痕，不再静默吞。
+  守卫：`tests/test_errorpipe.py::test_router_freq_map_reads_confirmed_realexam_freq`
+  （端到端：confirm 后 `_freq_map()` 非空且 `subtract()["freq_missing"] is False`）+
+  `test_freq_map_does_not_probe_nonexistent_helpers`（源码级，**先剥注释再扫**，防
+  「注释里写了目标串」造成假绿）+ `test_freq_view_really_exists`（钉住上游契约）。
+  已做注入反向验证（注入即两处变红）。
+
+- **产物无法下载（用户反馈「网站不能正常下载文档」）**：`/api/projects/{pid}/files/{name}`
+  被审查文档定义为「产物下载」端点，但实现上**不下发 `Content-Disposition`**，前端产物卡片
+  又对 md/txt/html 一律 `target="_blank"` 且不加 `download` → 点「题库 MD / 复习手册 MD /
+  Anki 文本」只会开一个纯文本标签页，用户拿不到文件（得自己 Ctrl+S）。现：
+  ① `project_file` 支持 `?dl=1` → `Content-Disposition: attachment`（中文名走 `filename*`），
+  缺省仍 inline——押题卷/题库 HTML 的「在线打开」依赖同源渲染，不能被 attachment 顶掉；
+  ② 产物卡片改为「主操作 + 次操作」：文档产物主操作直接下载（次操作 👁 预览）、HTML 产物
+  主操作在线打开（次操作 ⇩ 下载）、`.apkg` 单链接下载。
+  守卫：`tests/test_download_artifacts.py`（dl 契约 / 中文名 / 内部文件黑名单 / 前端全目录扫描）
+  与 `tests/browser/test_artifact_download.py`（真实下载与开页行为）；两处守卫均做过注入反向验证。
+
+- **产物列表死链**：`_project_artifacts()` 的排除表与 `project_file()` 的黑名单各写一份，
+  且 `progress.json` 只在后者里 → 管线运行期间它以产物卡片出现在「我的项目」，点开 404
+  「文件不存在」。现抽为**单源常量** `_INTERNAL_ARTIFACT_NAMES`（8 个内部文件）两处共用，
+  并补齐 `questions_raw.json` / `questions_gate1.json` / `checkpoint.json` / `paper_ids.json`
+  的路由侧拦截（此前这些中间产物可经 `/files/` 直接下发）。
 
 - **CI mypy 平台误报修复**：mypy 步骤上线后 Ubuntu CI 报 5 处 `attr-defined`——
   `ctypes.windll`（`core/config.py` DPAPI，4 处）与 `os.startfile`（`routers/data.py`）为

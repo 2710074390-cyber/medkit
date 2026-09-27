@@ -1,0 +1,190 @@
+"""产物「下载」契约回归（2026-09-27）。
+
+背景（用户反馈「网站不能正常下载文档」）：
+`/api/projects/{pid}/files/{name}` 在审查文档里被定义为「产物下载」端点，但实现上
+**不下发 Content-Disposition**，前端产物卡片又对 md/txt/html 一律 `target="_blank"`
+且不加 `download` → 点「题库 MD / 复习手册 MD / Anki 文本」只会开一个纯文本标签页，
+用户拿不到文件。本文件把修复后的契约钉死：
+
+1. `?dl=1` → `Content-Disposition: attachment`（含中文名 filename*）；缺省 → inline
+   （「在线打开」仍要能同源渲染押题卷/题库 HTML，不能被 attachment 顶掉）。
+2. 内部文件（`_INTERNAL_ARTIFACT_NAMES`，含曾造成死链的 `progress.json`）**既不出现在
+   产物列表、也不允许经产物路由下发**——列表过滤与下载黑名单必须是同一份常量。
+3. 前端产物卡片必须提供下载形态：凡是构造产物 `/files/` 链接的分片，都必须同时给出
+   `?dl=1`（扫全目录，不硬编码单个文件名——R3-16 曾因只扫一片而漏检）。
+
+运行：`pytest tests/test_download_artifacts.py -q`（零 LLM、零网络）
+"""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+import medkit.main as m
+from medkit.core import config as cfgmod
+from medkit.routers import projects as proj
+
+ROOT = Path(__file__).resolve().parents[1]
+JS_DIR = ROOT / "medkit/web/js"
+
+# 项目目录里会出现的全部内部文件名（与 proj._INTERNAL_ARTIFACT_NAMES 同源，用于播种探测）
+_SEEDED_INTERNALS = ("meta.json", "slices.json", "stage.json", "progress.json",
+                     "questions_raw.json", "questions_gate1.json", "checkpoint.json",
+                     "paper_ids.json")
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    """隔离 projects_dir 的 TestClient（不碰真实 ~/.medkit）。"""
+    saved = dict(cfgmod.DEFAULTS)
+    saved["projects_dir"] = str(tmp_path / "projects")
+    saved["api_key"] = "sk-test-key"
+    monkeypatch.setattr(cfgmod, "load", lambda: dict(saved))
+    monkeypatch.setattr(cfgmod, "save", lambda c: saved.update(c))
+    # base_url 用 127.0.0.1：Host 校验放行（testserver 会被中间件 403）
+    return TestClient(m.app, base_url="http://127.0.0.1")
+
+
+def _seed(tmp_path: Path, pid: str = "dl_test") -> Path:
+    """播种一个含正常产物 + 全部内部文件的项目目录。"""
+    base = tmp_path / "projects" / pid
+    out = base / "最终产物"
+    out.mkdir(parents=True)
+    (base / "meta.json").write_text(json.dumps(
+        {"pid": pid, "subject": "下载契约测试", "exam": "期末", "stage": "done",
+         "toggles": {}, "target": 10, "quota": [], "created": "2026-09-27T00:00:00"},
+        ensure_ascii=False), encoding="utf-8")
+    (out / "qbank.md").write_text("# 题库\n", encoding="utf-8")
+    (out / "押题卷.html").write_text("<!doctype html><h1>卷</h1>", encoding="utf-8")
+    (out / "anki_export.txt").write_text("正面\t反面\n", encoding="utf-8")
+    # 内部文件全部落在项目根（真实布局：progress.json/stage.json 就在根目录）
+    for n in _SEEDED_INTERNALS:
+        (base / n).write_text("{}", encoding="utf-8")
+    return base
+
+
+# ---------------------------------------------------------------- 1) dl=1 / inline
+def test_dl_flag_switches_to_attachment(client, tmp_path):
+    """`?dl=1` 必须下发 attachment；不带 dl 必须保持 inline（在线打开依赖同源渲染）。"""
+    _seed(tmp_path)
+    r = client.get("/api/projects/dl_test/files/qbank.md?dl=1")
+    assert r.status_code == 200, r.text
+    cd = r.headers.get("content-disposition", "")
+    assert cd.startswith("attachment"), f"dl=1 未下发 attachment：{cd!r}"
+    assert "qbank.md" in cd
+    # 内容照常下发（不比对换行：write_text 在 Windows 上会把 \n 翻成 os.linesep）
+    assert "题库" in r.text
+
+    # 缺省（在线预览/在线打开）：不能带 attachment，否则浏览器会下载而不是渲染
+    r2 = client.get("/api/projects/dl_test/files/qbank.md")
+    assert r2.status_code == 200
+    assert "content-disposition" not in r2.headers, \
+        f"无 dl 时不应下发 Content-Disposition：{r2.headers.get('content-disposition')!r}"
+
+
+def test_dl_flag_handles_non_ascii_filename(client, tmp_path):
+    """中文产物名走 filename*（RFC 5987），不得炸编码。"""
+    _seed(tmp_path)
+    r = client.get("/api/projects/dl_test/files/押题卷.html?dl=1")
+    assert r.status_code == 200, r.text
+    cd = r.headers.get("content-disposition", "")
+    assert cd.startswith("attachment")
+    assert "filename*=utf-8''" in cd, f"中文名未走 filename*：{cd!r}"
+    assert "%E6%8A%BC%E9%A2%98%E5%8D%B7.html" in cd
+
+
+# ---------------------------------------------------------------- 2) 内部文件黑名单（单源）
+def test_internal_artifacts_are_neither_listed_nor_served(client, tmp_path):
+    """内部文件既不出现在产物列表，也不能经产物路由下发。
+
+    回归锚点：`progress.json` 曾只被路由侧拦下、没进列表排除表 → 管线运行期间它以
+    产物卡片形式出现在「我的项目」，点开 404「文件不存在」（死链）。
+    """
+    _seed(tmp_path)
+    status = client.get("/api/projects/dl_test/status")
+    assert status.status_code == 200, status.text
+    listed = set(status.json()["artifacts"])
+
+    # 正常产物必须在列表里（否则本用例会因「列表为空」而假绿）
+    assert {"qbank.md", "押题卷.html", "anki_export.txt"} <= listed, listed
+
+    leaked = sorted(listed & set(_SEEDED_INTERNALS))
+    assert not leaked, f"内部文件泄漏进产物列表：{leaked}"
+
+    for name in _SEEDED_INTERNALS:
+        r = client.get(f"/api/projects/dl_test/files/{name}")
+        assert r.status_code == 404, f"内部文件 {name} 可被下发（HTTP {r.status_code}）"
+        # 带 dl=1 同样不能绕过
+        r2 = client.get(f"/api/projects/dl_test/files/{name}?dl=1")
+        assert r2.status_code == 404, f"内部文件 {name} 可经 dl=1 下发"
+
+
+def test_progress_json_is_a_regression_anchor():
+    """`progress.json` 必须留在单源黑名单里——它正是「死链」缺陷的回归锚点。"""
+    assert "progress.json" in proj._INTERNAL_ARTIFACT_NAMES, \
+        "progress.json 被移出内部文件黑名单：产物列表会出现点不开的死链卡片"
+
+
+def test_list_filter_and_route_blacklist_are_the_same_constant(client, tmp_path):
+    """列表过滤与下载黑名单必须同源——用行为断言：列表排除集 ⊇ 路由 404 集。
+
+    做法：把全部内部名播种进项目，断言「列表里一个都没有」且「路由对每一个都 404」。
+    任一侧漏掉某个名字，两边的差集就会让本用例变红。
+    """
+    _seed(tmp_path)
+    listed = set(client.get("/api/projects/dl_test/status").json()["artifacts"])
+    for name in proj._INTERNAL_ARTIFACT_NAMES:
+        assert name not in listed, f"{name} 未被列表侧排除"
+        assert client.get(f"/api/projects/dl_test/files/{name}").status_code == 404, \
+            f"{name} 未被路由侧拦下"
+
+
+# ---------------------------------------------------------------- 3) 前端下载形态（扫全目录）
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+_LINE_COMMENT_RE = re.compile(r"(?<!:)//[^\n]*")
+
+
+def _js_code_only(path: Path) -> str:
+    """剥离注释后的 JS 源码。
+
+    ⚠️ 必须剥注释：本文件的说明性注释里就写着 `?dl=1`，直接扫原文会让「把下载逻辑
+    删掉、只留注释」的注入照样变绿（实测过：注入回旧形态时源码守卫仍然通过）。
+    只扫代码才能让守卫绑定行为。
+    """
+    src = _BLOCK_COMMENT_RE.sub("", path.read_text(encoding="utf-8"))
+    return _LINE_COMMENT_RE.sub("", src)
+
+
+def test_every_artifact_link_site_offers_download():
+    """凡是构造产物 `/files/` 链接的分片，都必须同时给出 `?dl=1` 下载形态。
+
+    扫**全目录**：R3-16 的教训是守卫只扫单个文件名，导致同目录另一片的同类违规长期漏检。
+    """
+    sites: list[str] = []
+    for f in sorted(JS_DIR.glob("*.js")):
+        code = _js_code_only(f)
+        if "/files/" in code:
+            sites.append(f.name)
+            assert "?dl=1" in code, (
+                f"{f.name} 构造了产物 /files/ 链接却没有 ?dl=1 下载形态——"
+                "产物会退回「只能开新标签页预览、无法下载」")
+    assert sites, "未扫描到任何 /files/ 链接构造点——扫描口径可能失效，需人工确认"
+
+
+def test_artifact_chips_do_not_preview_only_documents():
+    """文档产物（md/txt/json）不得再是「只有 target=_blank、没有 download」的预览链接。"""
+    src = _js_code_only(JS_DIR / "review-desk-project.js")
+    assert "artchip" in src, "未找到产物卡片构造点"
+    # 旧缺陷形态：同一个 <a> 按扩展名动态切 target（非 .apkg 一律 _blank 预览）
+    assert 'target="${n.endsWith' not in src, \
+        "产物卡片仍在按扩展名动态切换 target——文档产物会退回「只能预览、无法下载」"
+    # 主操作必须对文档产物直接下载（dl=1 + download）
+    assert re.search(r'class="artmain" href="\$\{dlUrl\}" download', src), \
+        "文档产物主链接未带 download 属性"
+    # HTML 产物的「在线打开」入口必须保留（同源渲染才能答题/判分/打印）
+    assert re.search(r'class="artmain" href="\$\{file\}" target="_blank"', src), \
+        "HTML 产物的「在线打开」入口被误删"

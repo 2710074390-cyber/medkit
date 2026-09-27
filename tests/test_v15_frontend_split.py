@@ -24,8 +24,10 @@ INDEX = ROOT / "medkit/web/index.html"
 MAX_LINES = 800
 
 # 分片族（按**加载顺序**）——与 index.html 的 <script> 顺序、与拆分时的行区间顺序一致
+# EP-01：learn 族增 learn-meta.js（元认知视图），接在 learn-review.js 之后
 FAMILIES: dict[str, list[str]] = {
-    "learn": ["learn.js", "learn-study.js", "learn-live.js", "learn-review.js"],
+    "learn": ["learn.js", "learn-study.js", "learn-live.js", "learn-review.js",
+              "learn-meta.js"],
     "review-desk": ["review-desk.js", "review-desk-materials.js",
                     "review-desk-project.js", "review-desk-review.js"],
 }
