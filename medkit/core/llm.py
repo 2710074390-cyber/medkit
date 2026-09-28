@@ -61,6 +61,24 @@ def _is_retryable(exc: Exception) -> bool:
     return any(k in msg for k in ("timeout", "timed out", "429", "500", "502", "503", "529", "rate limit", "overloaded"))
 
 
+def _truncated(resp: Any) -> bool:
+    """响应是否被 max_tokens 截断（finish_reason == "length"）。
+
+    存在的理由：**推理模型（reasoning model）的 max_tokens 是「思考 + 正文」的总额度**，
+    思考阶段会把额度吃光，正文一个字都产不出来。此时 SDK 不报错、HTTP 200、
+    `message.content` 是空串——静默失败。实测（2026-09-28，deepseek-v4-flash）：
+    同一道题 20 道里 5 道在 max_tokens=2000 下 `finish_reason=length` + `content=''`，
+    调到 6000 全部正常（reasoning_tokens 最高 3806）。
+
+    故这里**显式区分「截断」与「模型真的返回空」**：前者可重试（放大额度），
+    后者不可（放大也没用）。上游 `chat` 据此决定是否重试。
+    """
+    try:
+        return resp.choices[0].finish_reason == "length"
+    except (AttributeError, IndexError, TypeError):
+        return False
+
+
 class LLMClient:
     def __init__(self, base_url: str, api_key: str, model: str,
                  timeout: float = 300.0, max_retries: int = 2,
@@ -78,6 +96,9 @@ class LLMClient:
     def chat(self, messages: list[dict[str, str]], temperature: float = 0.7,
              json_mode: bool = False, max_tokens: Optional[int] = None) -> str:
         last_err: Optional[Exception] = None
+        # 截断重试用的**可变额度**：必须在循环外持有，否则每轮从 `max_tokens` 参数重建，
+        # 翻倍会失效（实测踩过：重试仍以原额度发同一请求，白烧一次钱且必然再失败）。
+        budget = max_tokens
         for attempt in range(self.max_retries + 1):
             try:
                 kwargs: dict[str, Any] = {
@@ -87,8 +108,8 @@ class LLMClient:
                 }
                 if json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
-                if max_tokens:
-                    kwargs["max_tokens"] = max_tokens
+                if budget:
+                    kwargs["max_tokens"] = budget
                 if self._cancel is not None:
                     # R3-09/B24：带取消事件时走流式——用户点「停止」后提前退出读取，
                     # 不等待整段回复烧完 token（取消时已产生费用仍由 usage 记录）
@@ -113,7 +134,29 @@ class LLMClient:
                 if use is not None:  # U5：记录实际消耗
                     usage.add(getattr(use, "prompt_tokens", 0),
                               getattr(use, "completion_tokens", 0))
+                if _truncated(resp):
+                    # 推理模型把额度全用在思考上 → 正文为空。这是**可重试**的：
+                    # 放大额度重来一次，而不是把空串当结果返回给调用方。
+                    # （旧行为：静默返回 ""，上层只看到「模型输出为空」，无从判断原因）
+                    rt = getattr(getattr(use, "completion_tokens_details", None),
+                                 "reasoning_tokens", 0) or 0
+                    msg = (f"输出被 max_tokens={budget} 截断"
+                           f"（reasoning_tokens={rt}，正文为空）——推理模型需更大额度")
+                    last_err = LLMError(msg)
+                    _errs.record("llm.chat", msg)
+                    if attempt < self.max_retries:
+                        # 额度翻倍（有上限）：2000 → 4000 → 8000
+                        if budget:
+                            budget = min(int(budget) * 2, 32000)
+                        time.sleep(1)
+                        continue
+                    raise last_err
                 return resp.choices[0].message.content or ""
+            except LLMError:
+                # 本类自己抛的语义化错误（截断/取消）：不要被下面的宽 except 重新包一层
+                # `调用失败(...)` 而丢掉诊断信息——那会让调用方只能看到「模型输出为空」，
+                # 无法区分「额度不够」与「模型真的返回空」。
+                raise
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 if attempt < self.max_retries and _is_retryable(e):

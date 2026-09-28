@@ -40,3 +40,6 @@ docs/spikes/k4_out/
 
 .workbuddy-ai/
 .review-run/
+
+# 2026-09-28 事故现场归档（保留证据，不入仓）
+.git.broken-*/
