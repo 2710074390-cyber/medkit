@@ -100,3 +100,68 @@ def test_pack_scripts_are_actually_scanned():
     )
     assert r.returncode != 0, "canary 代码没被 ruff 检查到——pack/ 的扫描面有洞"
     assert "F401" in (r.stdout + r.stderr), r.stdout
+
+
+# ---------------------------------------------------------------- 总闸覆盖面
+# verify.cmd 是用户的「一键总闸」。它的每个步骤都必须：
+#   (1) 在场；(2) 失败时 `goto :fail`（退出码 1）。
+# 缺任一条 → 总闸会打印 "ALL GREEN" 而实际没查，这正是「门禁假绿」。
+#
+# 为什么要有这条守卫：pytest 只覆盖 tests/ 目录，**没人测 verify.cmd 本身**。
+# 若有人删掉第 [4/4] 步（打包纯净检查，R6-11 明确要求总闸须覆盖），
+# pytest 全绿、verify.cmd 也全绿，而那条防线已经没了——静默失效。
+_VERIFY_STEPS = (
+    ("ruff check", "python -m ruff check ."),
+    ("pytest 单测", "python -m pytest -q --ignore=tests/browser"),
+    ("浏览器层", "python -m pytest tests/browser -q"),
+    ("打包纯净检查", "python pack\\check-package.py"),
+)
+
+
+def _verify_cmd_text() -> str:
+    p = ROOT / "verify.cmd"
+    assert p.exists(), "verify.cmd 不存在——总闸没了"
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def test_verify_cmd_has_all_steps():
+    """四个步骤一条都不能少（少一条 = 总闸覆盖面缩水）。"""
+    text = _verify_cmd_text()
+    missing = [name for name, cmd in _VERIFY_STEPS if cmd not in text]
+    assert not missing, (
+        "verify.cmd 缺步骤：%s\n总闸覆盖面缩水了——pytest 全绿不代表总闸查全了。"
+        % missing
+    )
+
+
+def test_verify_cmd_each_step_fails_hard():
+    """每个步骤都必须 `|| goto :fail`——否则失败不退出码，总闸照样打 ALL GREEN。
+
+    只测「命令在场」是不够的：`python -m pytest -q ...` 在场但后面没 `||`
+    时，pytest 红了 verify.cmd 仍返回 0。**检查在场 ≠ 检查会拦。**
+    """
+    text = _verify_cmd_text()
+    for name, cmd in _VERIFY_STEPS:
+        assert cmd + " || goto :fail" in text, (
+            "verify.cmd 的「%s」步骤没有 `|| goto :fail`："
+            "该步失败时总闸仍会返回 0（假绿）。" % name
+        )
+
+
+def test_verify_cmd_has_fail_label():
+    """`:fail` 标签必须存在且 `exit /b 1`——否则 goto 到一个不存在的标签会静默继续。"""
+    text = _verify_cmd_text()
+    assert ":fail" in text, "verify.cmd 没有 :fail 标签，`|| goto :fail` 会落到文件末尾"
+    tail = text.split(":fail", 1)[1]
+    assert "exit /b 1" in tail, ":fail 标签后没有 `exit /b 1`——失败不会变成非零退出码"
+
+
+def test_verify_cmd_browser_step_is_skippable():
+    """浏览器层有 SKIP_BROWSER 旁路（本机无 chromium 时的正常态），但必须**显式**跳过。
+
+    防的是「用 SKIP_BROWSER 把浏览器层永久关掉」这种软性失守：
+    步骤仍须在文件里，且跳过时要打日志（不能无声）。
+    """
+    text = _verify_cmd_text()
+    assert "SKIP_BROWSER" in text, "浏览器层缺少 SKIP_BROWSER 旁路（无浏览器环境会卡死）"
+    assert "skipping browser tests" in text, "SKIP_BROWSER 跳过时没有日志——无声跳过不可接受"
