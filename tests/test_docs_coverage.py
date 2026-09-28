@@ -199,3 +199,103 @@ def test_readme_test_count_is_not_stale():
         f"（允许 ±5%：{low:.0f}~{high:.0f}）。"
         f"README 的「质量」行已陈旧到失去参考价值，请同步更新。"
     )
+
+
+# ---------------------------------------------------------------------------
+# 文档内「仓库相对路径」引用的完整性
+#
+# 2026-09-29 实测发现的真实缺陷：多份活跃文档把提示词写成 `prompts/xxx.md`，
+# 但仓库里**没有 `prompts/` 目录**（正确位置是 `medkit/prompts/`）。
+# 同类还有 `tests/_asyncio_util.py`（实际落在 `tests/conftest.py`）。
+# 这类错误不会报错、不影响测试，只是**把人指向一个不存在的地方**——
+# 正是本文件开头说的「文档不参与 CI，所以它会静默过期」。
+# ---------------------------------------------------------------------------
+
+# 只认这几个确定前缀，避免把示例路径、URL、命令参数误判为文件引用
+_PATH_PREFIXES = ("docs/", "pack/", "tests/", "medkit/", "prompts/")
+
+# 显式豁免：每条都必须写明理由（豁免不等于"不用管"，是"已知且合理"）
+# 键必须与 `_norm_ref()` 的输出一致（已 rstrip("/")），否则豁免静默失效——
+# 实测踩过：这里写 `docs/design/` 带斜杠，归一后是 `docs/design`，对不上。
+_PATH_EXEMPT = {
+    # 该目录曾被清理，报告在*记载这个动作*，路径已不存在是正常的历史事实
+    "docs/design": "已删除的空目录，引用出现在'已删除'的记录里",
+    # 报告记录的是"当时的计划文件名"，实际实现换了落点（已在原文加更正说明）
+    "tests/_asyncio_util.py": "计划名，实际落在 tests/conftest.py（原文已更正）",
+}
+
+
+def _norm_ref(s: str) -> str:
+    """去掉 pytest 节点 id（`::test_x`）与行号后缀（`:25-33`）。"""
+    s = re.sub(r"::.*$", "", s)
+    s = re.sub(r":\d+(-\d+)?.*$", "", s)
+    return s.rstrip("/")
+
+
+def _resolve(ref: str):
+    """把引用解析为存在的路径；容忍省略扩展名（`docs/README` → `docs/README.md`）。"""
+    p = ROOT / ref
+    if p.exists():
+        return p
+    for ext in (".md", ".py", ".json", ".txt", ".html", ".js", ".css", ".iss"):
+        if (ROOT / (ref + ext)).exists():
+            return ROOT / (ref + ext)
+    return None
+
+
+def _active_docs():
+    """活跃文档 = 排除历史快照与历史审查产物（它们记录的是当时的状态）。
+
+    - `docs/archive/`：历史快照，路径按当时事实写，不该按现在校正
+    - `docs/reviews/`：历史审查产物，同上
+    - `0.10.0-*.md`：规划任务书，列的是**待创建**的文件
+    """
+    for f in sorted((ROOT / "docs").glob("**/*.md")):
+        if "archive" in f.parts or "reviews" in f.parts:
+            continue
+        if f.name.startswith("0.10.0-"):
+            continue
+        yield f
+
+
+@pytest.mark.parametrize("doc", list(_active_docs()), ids=lambda p: p.name)
+def test_active_doc_path_refs_exist(doc):
+    """活跃文档里反引号标注的仓库内路径，必须真实存在（或已显式豁免）。
+
+    判据刻意保守：只认 5 个确定前缀 + 反引号包裹，避免把散文、示例、
+    命令片段误判成文件引用。宁可漏检，不可误伤（误伤会逼人删守卫）。
+    """
+    text = doc.read_text(encoding="utf-8")
+    missing = []
+    for m in re.finditer(r"`([^`\s]+)`", text):
+        raw = m.group(1)
+        if not raw.startswith(_PATH_PREFIXES):
+            continue
+        if any(c in raw for c in "*?<>{}"):   # 通配符 / 占位符，非具体路径
+            continue
+        ref = _norm_ref(raw)
+        if not ref or ref in _PATH_EXEMPT:
+            continue
+        if _resolve(ref) is None:
+            missing.append(raw)
+
+    assert not missing, (
+        "%s 引用了不存在的仓库内路径：\n  %s\n"
+        "要么改正路径，要么在 _PATH_EXEMPT 里登记并写明理由。"
+        % (doc.relative_to(ROOT), "\n  ".join(sorted(set(missing))))
+    )
+
+
+def test_path_exempt_entries_are_still_needed():
+    """豁免清单不许留"已经不需要"的条目。
+
+    否则豁免会只增不减，慢慢把守卫稀释成空壳——
+    这正是「守卫阈值不许写成预算式」的同一个毛病。
+    """
+    stale = []
+    for ref, _reason in _PATH_EXEMPT.items():
+        if _resolve(ref) is not None:
+            stale.append(ref)
+    assert not stale, (
+        "这些豁免路径现在已存在，应从 _PATH_EXEMPT 移除：%s" % stale
+    )
