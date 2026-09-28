@@ -117,4 +117,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo.
+echo === 发布五件套一致性检查（2026-09-28 事故后新增）===
+rem 事故背景：0.10.5 的 __version__ / version.iss / README 早已指向 0.10.5，
+rem 但 dist-installer\MedKit-Setup-0.10.5.exe 是 EP-01 落库**之前**构建的——
+rem **文件名对，内容旧**。只看文件名会误判「五件套已对齐」。
+rem 本检查把「名对 + 内容对」都变成可机器判定：版本号四处一致、
+rem CHANGELOG 有对应小节、SHA256 独立复算、产物内 prompts/web 与源码逐字节比对。
+"%PY%" pack\check-release-consistency.py --strict
+if errorlevel 1 (
+  echo [错误] 发布五件套不一致，产物可能为旧版本内容，请勿发布。
+  pause
+  exit /b 1
+)
+
 pause

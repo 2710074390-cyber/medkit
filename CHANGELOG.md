@@ -10,6 +10,19 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+## [0.10.5] - 2026-09-28
+
+> **本版为何要 bump**：EP-01「错题归因流水线」全五阶段落地（新增 5 个核心模块 +
+> 15 个 API 端点 + 3 个前端视图），另含产物下载修复与 R5-01 测试污染修复。
+> 按 SemVer，新增功能 + 实验性管线需 bump；定为 `0.10.5`（该号此前已 bump 进
+> `__version__` 与 README，本版补齐 CHANGELOG 使其五件套自洽）。
+>
+> **发布产物**：`dist-installer/MedKit-Setup-0.10.5.exe`
+> （SHA256 `72b403ae4427f09349224d47e8d8567be7afcb9829b7df84b02bd50d32223b68`）
+> + `MedKit-0.10.5-portable.zip`
+> （SHA256 `c0ca1fd4d2d6cca3a1871c220c6b693bd8a647c51cd298719b9c2b7f821e8317`），
+> 2026-09-28 用干净环境重建，已通过五件套一致性与隔离冒烟验证。
+
 ### Added
 
 - **错题归因流水线（EP-01）**：新增一条独立数据处理管线，把「考生自己记下的错题」
@@ -200,6 +213,25 @@
   外层 `raise HTTPException(...) from e` 触发 `NameError`（掩盖原始异常）。内层改名 `e2`。
 - **P4 笔误**：`core/config.py` 文件头注释 DPAPI 密文前缀误写为 `dbapi:`，更正为 `dpapi:`
   （实现本就正确，仅注释错）。
+- **发布五件套「名对内容旧」**：`0.10.5` 的 `__version__` / `pack/version.iss` / README
+  早已指向 0.10.5，但 `dist-installer/MedKit-Setup-0.10.5.exe` 是 **EP-01 落库之前**
+  构建的——**文件名对、内容旧**。仅看文件名会误判「五件套已对齐」，装机会得到一个不含
+  错题归因流水线的包。**修复**：用 `.buildenv` 干净环境重建 onedir + 安装包；
+  并从**最终安装包**（`/EXTRACT` 解出 418 文件）逐字节比对 `prompts/`（10 个）与
+  `web/` 全部资源，确认与源码一致；`/api/health` 隔离冒烟返回
+  `{"ok":true,"version":"0.10.5","stage":"ready"}`。
+- **发布流程缺「一致性门禁」（同源缺陷）**：此前没有任何脚本验证「版本号四处一致 +
+  CHANGELOG 已收口 + SHA256 独立复算 + **产物内容**与源码一致」，全靠人记。
+  **新增** `pack/check-release-consistency.py`（五项检查，`--strict` 供发布用）并接进
+  `pack/build.bat` 末段（失败即中断）；`tests/test_release_artifacts.py` 新增 5 项守卫
+  （含**反向验证**用例：篡改产物内容必须报红）。守卫经三处注入验证：改 `version.iss`、
+  篡改产物 prompt、改 SHA256 声明、注释 `build.bat` 调用、去掉 `--strict` —— 全部注入即红。
+- **产物冒烟会污染真实 `~/.medkit`（我的操作错误，已留档）**：直接启动解包产物做冒烟时，
+  `main._lifespan` 的 `dbs.migrate()` 读取真实数据目录，把你的库从 v7 就地升到 v8。
+  **零数据丢失**（自动备份 `medkit.db.pre-db-20260928-120015.bak` 完整），已回滚至 v7
+  （sha1 `94c58db5`，`integrity_check = ok`）。**修复**：新增
+  `pack/smoke-run-isolated.py` —— 把 `USERPROFILE`/`HOME`/`MEDKIT_LOG_DIR` 整体重定向到
+  临时目录后再启动并探活 `/api/health`，跑完即清理。**今后任何产物冒烟必须走它。**
 
 ### Changed（经评估不改，记录决策）
 
