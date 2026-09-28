@@ -10,13 +10,20 @@
 
 故本文件断言的是**准入的计数与原因**、以及**字段映射的逐项对应**，
 而不是「脚本能跑完」。
+
+## 为什么端到端那半段不再 `pytest.skip`（2026-09-29 修）
+
+`test_end_to_end_against_isolated_store` 原先在"隔离库落库失败"时走 skip，
+理由是"环境相关"。但这一段是**唯一**在真实写入路径（`library.add_mistake`）
+上验证字段名与产品一致的地方；一旦它变成 skip，
+字段映射那半段就永远处于"未被验证"状态，而报告仍显示全绿
+（skip 与 pass 在 CI 里退出码相同）。故改为**断言**：
+落库必须成功、计数必须等于 5。
 """
 
 import importlib.util
 import json
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -191,9 +198,16 @@ def test_end_to_end_against_isolated_store(tmp_path, monkeypatch):
     r = subprocess.run([sys.executable, "-c", code], env=env,
                        capture_output=True, text=True, encoding="utf-8",
                        errors="ignore", cwd=str(ROOT))
-    if r.returncode != 0:
-        pytest.skip("隔离库落库失败（环境相关）：%s" % (r.stderr or "")[-200:])
-    assert (r.stdout or "").strip() == "5"
+    # 不许 skip：这是"在产品真实写入路径上落库"，失败即代表 add_mistake
+    # 与隔离 HOME 的组合坏了——若放过，端到端那半段就永远测不到。
+    # （2026-09-29 修：原为 pytest.skip，见本文件头部说明。）
+    assert r.returncode == 0, (
+        "隔离库落库失败（`library.add_mistake` 在隔离 HOME 下 rc=%s）：\n%s"
+        % (r.returncode, (r.stderr or "")[-800:])
+    )
+    assert (r.stdout or "").strip() == "5", (
+        "落库后 count_mistakes() 期望 5，实得 %r（stdout）" % (r.stdout or "").strip()
+    )
 
     out = tmp_path / "real.json"
     r2 = subprocess.run(

@@ -10,6 +10,24 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（测试守卫 · 门禁假绿）
+
+- **封掉三处「看不懂就放行」的 skip**（`pytest.skip` 在 CI 里与 pass 退出码相同，
+  等价于静默失效）：
+  - `tests/test_docs_coverage.py::test_readme_test_count_is_not_stale`：
+    原先「README 没写 N 项 pytest」与「解析不出 `--collect-only` 收集数」都走 skip
+    → 删掉 README 那个数字、或 pytest 升版改尾行格式，守卫都会静默变绿。改为断言。
+  - `tests/test_release_artifacts.py::test_installer_payload_contains_sources`：
+    原先产物不存在即 skip——但「产物不存在」恰是本守卫要防的情形。改为按前提分流：
+    `CI=true` 才放行，**本地缺产物即红**。
+  - `tests/test_stage0_export_cases.py::test_end_to_end_against_isolated_store`：
+    原先落库失败即 skip（理由"环境相关"）→ 真实写入路径的字段名验证永远测不到。改为断言。
+- **新增元守卫** `test_docs_coverage.py::test_no_silent_skip_in_doc_guards`：
+  本文件出现 `pytest.skip(...)` 调用即红。判据用 **AST**（`Call` 的 `func` 为
+  `pytest.skip`），不用子串匹配——第一版用「剥注释后 `"pytest.skip" in code`」，
+  反向验证时注入 `pytest.skip("x")` **没有变红**（token 被空格 join 成
+  `pytest . skip`）。已做注入反向验证：真实调用 ⇒ 红，docstring 提及 ⇒ 绿（不自锁）。
+
 ## [0.10.5] - 2026-09-28
 
 > **本版为何要 bump**：EP-01「错题归因流水线」全五阶段落地（新增 5 个核心模块 +

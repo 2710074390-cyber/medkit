@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 
@@ -167,11 +168,27 @@ def test_readme_test_count_is_not_stale():
 
     只扫「已实现功能」章节——里程碑章节的历史数字（`pytest 203 全绿`）
     是当时事实，应当豁免。
+
+    ## 为什么两处缺口都是 fail 而不是 skip（2026-09-29 修）
+
+    此前「README 没写 N 项 pytest」与「解析不出收集数」两个分支都走 `pytest.skip`。
+    在 CI 里 **skip 与 pass 的退出码相同**（`-q` 不带 `--strict-markers` 之类时
+    并不区分），所以这两个分支等价于「**看不懂就放行**」：
+
+    - 只要有人把 README 里那行删掉 / 改个措辞 → 守卫静默失效且报告全绿；
+    - 只要 pytest 改了尾行格式（版本升级）→ 同样静默失效。
+
+    这与本项目 `test_lint_gate.py::test_ruff_available` 的处理一致：
+    **前提条件不成立时必须红，不能 skip**——因为忽略这个守卫的代价
+    （README 数字陈旧 4 倍、无人发现）正是它存在的理由。
     """
     section = _current_feature_section()
     m = re.search(r"\*\*(\d+)\s*项\s*pytest\*\*", section)
-    if not m:
-        pytest.skip("README 未以「**N 项 pytest**」形式声明测试总数（格式已变，需同步守卫）")
+    assert m, (
+        "README「已实现功能」章节里找不到「**N 项 pytest**」形式的测试总数声明。"
+        "该数字是面向用户的量级参考，不许悄悄删掉或换措辞——"
+        "若确实要改格式，请同步更新本守卫。"
+    )
 
     claimed = int(m.group(1))
 
@@ -187,8 +204,11 @@ def test_readme_test_count_is_not_stale():
     )
     tail = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
     mm = re.search(r"(\d+)\s+tests? collected", tail)
-    if not mm:
-        pytest.skip(f"未能从 pytest 输出解析收集数（输出尾行：{tail!r}）")
+    assert mm, (
+        f"未能从 `pytest --collect-only` 的输出解析收集数（尾行：{tail!r}）。"
+        f"rc={proc.returncode}。多半是 pytest 版本变了输出格式——"
+        f"**不许 skip**，否则本守卫会静默失效；请修解析正则。"
+    )
 
     actual = int(mm.group(1))
     tolerance = 0.05
@@ -298,4 +318,55 @@ def test_path_exempt_entries_are_still_needed():
             stale.append(ref)
     assert not stale, (
         "这些豁免路径现在已存在，应从 _PATH_EXEMPT 移除：%s" % stale
+    )
+
+
+# ---------------------------------------------------------------------------
+# 元守卫：本文件不许用 skip 掩盖"前提不成立"
+# ---------------------------------------------------------------------------
+
+
+def test_no_silent_skip_in_doc_guards():
+    """本文件里出现 `pytest.skip(...)` 调用即红。
+
+    ## 为什么（2026-09-29 实测修掉的真缺陷）
+
+    本文件此前有两处 `pytest.skip`：「README 没写 N 项 pytest」与
+    「解析不出 --collect-only 的收集数」。它们看起来是"环境不满足就放过"的
+    合理降级，但在 CI 里 **skip 与 pass 的退出码同为 0**，
+    于是等价于「**看不懂就放行**」：
+
+    - 删掉 README 那个数字 → 守卫静默失效，报告仍全绿；
+    - pytest 升版改了尾行格式 → 同上。
+
+    这正是本项目反复出现的「门禁假绿」第 (d) 类
+    （对照 `test_no_sleep_gambling.py` 里修掉的 `except SyntaxError: continue`）。
+    判据必须**拦在哪一步**：前提不成立时红，而不是绿。
+
+    ## 判据用 AST，不用子串匹配（2026-09-29 踩坑后改）
+
+    第一版用「剥注释再 `"pytest.skip" in code`」。**反向验证时注入一句
+    `pytest.skip("模拟的静默放行")`，守卫却没有变红**——查下来是剥壳实现
+    把 token 用空格 join，`pytest.skip` 变成 `pytest . skip`，
+    子串永远匹配不上。
+
+    教训：**"剥壳后再做子串匹配" 这条路本身就是脆的**。
+    改用 AST 找 `Call` 节点，`func` 是 `Attribute(value=Name('pytest'),
+    attr='skip')` —— 这才是真身，不依赖任何文本拼接方式。
+    """
+    tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if (isinstance(f, ast.Attribute) and f.attr == "skip"
+                and isinstance(f.value, ast.Name) and f.value.id == "pytest"):
+            offenders.append(node.lineno)
+    assert not offenders, (
+        "tests/test_docs_coverage.py 第 %s 行出现 pytest.skip——"
+        "文档守卫的前提不成立时必须红，不能 skip"
+        "（skip 在 CI 里与 pass 退出码相同，等价于静默放行）。"
+        "若确有正当理由，请改为断言并在 docstring 里写明为什么它不会沦为假绿。"
+        % sorted(offenders)
     )

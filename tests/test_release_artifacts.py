@@ -173,11 +173,33 @@ def test_installer_payload_contains_sources(consist_mod):
     """五件套第 5 项（事故核心）：产物内 prompts/web 必须与源码逐字节一致。
 
     这是本次事故的**直接守卫**——「文件名对、内容旧」必须被判红。
-    dist 不存在时跳过（CI/未构建环境），但一旦存在就必须通过。
+
+    ## 为什么不是裸 `pytest.skip`（2026-09-29 修）
+
+    此前写「dist 不存在时跳过（CI/未构建环境）」。问题是：**"产物不存在"
+    恰恰是本守卫要防的情形之一**。若某次本地构建失败、`dist/` 被清掉，
+    裸 skip 会让守卫变绿——用户以为"五件套一致"，实际连产物都没有。
+
+    改为**按前提分流**：
+    - CI（`CI=true`）：产物本就不在仓库里，skip 正当（与 `test_s2_refactor`
+      的 `_SKIP_IF_CI` 同一口径）；
+    - 本地：产物缺失即**红**，因为本地出现"声称发布但没产物"就是事故前兆。
+
+    判据从"不存在就放过"改成"**只在 CI 里放过**"——这才是拦在了对的地方。
     """
     v = consist_mod.v_from_init()
-    if consist_mod.installer_exists(v) is None and not (ROOT / "dist" / "MedKit").exists():
-        pytest.skip("未构建产物（无 dist/MedKit 且无 dist-installer 安装包）")
+    has_artifact = (consist_mod.installer_exists(v) is not None
+                    or (ROOT / "dist" / "MedKit").exists())
+    if not has_artifact:
+        is_ci = __import__("os").environ.get("CI") == "true"
+        if is_ci:
+            pytest.skip("CI 环境不携带发布产物（本地构建才会生成）")
+        raise AssertionError(
+            f"本地环境找不到发布产物（无 dist-installer/MedKit-Setup-{v}.exe，"
+            f"也无 dist/MedKit）。这不是环境问题——本地跑发布守卫时产物必须在场，"
+            f"否则「五件套一致」无从谈起。请先跑 pack/build.bat，"
+            f"或在 CI 环境（CI=true）下运行。"
+        )
     ok, detail = consist_mod.installer_contains_sources(v)
     assert ok, f"产物内容与源码不一致：{detail}"
 
