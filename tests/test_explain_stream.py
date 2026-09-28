@@ -129,44 +129,59 @@ def test_explain_stream_canceled_no_save(iso, monkeypatch):
 
 # ---------------------------------------------------------------- R5-02 流生命周期去重
 def test_concurrent_duplicate_stream_409(iso, monkeypatch):
-    """R5-02：流进行期间的第二个同 key 请求必须 409（锁随流生命周期持有，不是响应返回即释放）。"""
+    """R5-02：流进行期间的第二个同 key 请求必须 409（锁随流生命周期持有，不是响应返回即释放）。
+
+    **2026-09-29 重写本用例**——原写法靠 TestClient + 双线程 Event 竞态，
+    实测 **32 次里 9 次拿到 200**（假绿），且**根因在 TestClient 本身**：
+
+        c.stream(...) 是**阻塞**的——它在返回响应对象之前就消费完了整个流。
+        带时间戳的实测（`.workbuddy-ai/tmp/e2e/probe_testclient_stream.py`）：
+            0.000 dedupe.begin
+            0.312 chat_stream: yield#1
+            3.312 chat_stream: sleep 结束     ← sleep(3) 在「进入 with 块」之前就跑完了
+            3.312 dedupe.end                  ← 锁已释放
+            3.328 with 块内：status=200       ← 此时才进入 with 块
+        即**在 `with` 块内永远观察不到锁被持有**。原用例之所以偶尔过，
+        只靠 `SlowClient` 内 `locked.set()` 与主线程调度的偶然交错。
+
+    **新写法**（对齐 `tests/test_r8w_p1_remaining.py::test_tutor_guard_holds_lock_and_releases`
+    的既有范式）：直接驱动守卫生成器，绕开 HTTP 层的阻塞语义 ⇒ **确定性**。
+    被验证的语义不变：**锁在飞期间，第二个同 key 请求必须 409**。
+
+    分工（三层都不重叠）：
+      · 本用例：守卫在「锁被持有」时确实回 409（确定）
+      · `test_gen_close_releases_dedupe_and_sets_cancel`：断连 → 释放锁（确定，经 aclose()）
+      · `test_dedupe_released_after_stream_end`：流结束 → 释放锁、不永久误伤（确定，经 HTTP）
+      · `tests/test_explain_guard_no_selflock.py`：守卫不得持锁（否则自锁）
+    """
+    from fastapi import HTTPException
+
     import medkit.routers.library as rl
+    from medkit.core import dedupe
 
-    # A 线程进入流后通知主线程开火；主线程确认 409 后再放行 A（保持连接打开）
-    locked = threading.Event()
-    release_a = threading.Event()
+    body = rl.ExplainBody(subject="儿科学", kp_name="生长发育", use_web=False)
+    key = rl._explain_key(body)
+    dedupe.end(key)                       # 清场（进程级 set，可能被别的用例残留）
 
-    class SlowClient:
-        def chat_stream(self, messages, temperature=0.5, max_tokens=None):
-            yield {"delta": "第一段…", "usage": None, "canceled": False}
-            time.sleep(3)   # 慢流：gen 停在 chat_stream 内，流锁持有中
-            locked.set()
-            yield {"delta": "第二段…", "usage": None, "canceled": False}
+    # 模拟「A 的 gen() 已 begin，流仍在飞」⇒ 锁被持有
+    assert dedupe.begin(key) is False, "清场后应能登记成功"
+    try:
+        # 并发的第二个同 key 请求：守卫必须直接 409（窥视到锁在飞）
+        gen = rl._explain_start_guard(body)
+        with pytest.raises(HTTPException) as ei:
+            next(gen)
+        assert ei.value.status_code == 409, (
+            "锁在飞期间的第二个同 key 请求必须 409（实为 %d）" % ei.value.status_code
+        )
+        assert "正在生成" in ei.value.detail
 
-    monkeypatch.setattr(rl, "_explain_client", lambda cancel=None: SlowClient())
-    c = _client()
-    body = {"subject": "儿科学", "kp_name": "生长发育", "use_web": False}
-    result: dict = {}
-
-    def consume_a():
-        try:
-            with c.stream("POST", "/api/library/explain/stream", json=body) as r:
-                assert r.status_code == 200, r.text
-                locked.set()          # 响应的首帧已回 → gen 已过 dedupe.begin
-                release_a.wait(10)    # 保持连接打开，直到主线程完成 409 断言
-            result["a_ok"] = "closed"
-        except Exception as e:  # noqa: BLE001
-            result["a_err"] = repr(e)
-
-    ta = threading.Thread(target=consume_a)
-    ta.start()
-    assert locked.wait(10), "A 未能在超时内进入流"
-    r2 = c.post("/api/library/explain/stream", json=body)
-    assert r2.status_code == 409, f"并发重复请求应 409（实为 {r2.status_code}: {r2.text}）"
-    assert "正在生成" in r2.json()["detail"]
-    release_a.set()
-    ta.join(10)
-    assert result.get("a_ok") or "a_err" in result, result
+        # 反向：锁释放后，同样的守卫必须放行（否则永久误伤=另一种故障）
+        dedupe.end(key)
+        gen2 = rl._explain_start_guard(body)
+        next(gen2)                        # 不抛 = 放行
+        gen2.close()
+    finally:
+        dedupe.end(key)
 
 
 def test_gen_close_releases_dedupe_and_sets_cancel(iso, monkeypatch, run_coro):
