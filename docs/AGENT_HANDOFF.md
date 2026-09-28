@@ -8,6 +8,8 @@
 
 | 日期 | commit | 变更 |
 | - | - | - |
+| 2026-09-28 | `21795b0` | **发布收尾 + EP-01 文档结清**：① 0.10.5 五件套同步（`89f6e24`）——`CHANGELOG` 补 `## [0.10.5]` 小节；**新增 `pack/check-release-consistency.py`**（6 项一致性门禁，已接线进 `build.bat`，失败 `exit /b 1`）；**新增 `pack/smoke-run-isolated.py`**（隔离 HOME 的产物冒烟，防污染真实 `~/.medkit`）。② `dist-installer/` 收敛 1.6 GB→218 MB（`470f44b`，22 个历史产物移入 `archive/dist-installer/`）。③ EP-01 两份文档结清（`21795b0`）——去重复段、统一数字口径、加「落地状态」列。 |
+| 2026-09-28 | `72f3ea5`→ | **EP-01 错题归因流水线（阶段 1~3，随 0.10.5 发布）**：**这是自 0.10.0 以来最大的功能增量**（2473 行新代码 / 22 个 `/api/errors/*` 端点 / 2 个新提示词 / schema **v8**）。新模块：`core/errorpipe.py`（五阶段编排）· `core/kpid.py`（知识点 ID 对齐）· `core/metacog.py`（**纯函数**元认知统计）· `core/error_events.py`（append-only 流水）· `agents/error_analysis.py` + `agents/socratic_review.py` · `routers/errors.py` · `web/js/learn-meta.js`。详见 `docs/错题归因流水线_EP-01_设计与实现.md`（该文档 §7 列了 10 类「不报错的功能失效」踩坑记录）与 `docs/考研错题分析专项重构方案_2026-09-27.md`。**衔接要点见本文 §7**。 |
 | 2026-09-16 | 本批 | **R7 验收 + V 批次（V-01~V-05）**：① **验收**——U-01~U-24 逐项机械核验 **23/23 通过**（U-17 部分、U-23 未执行）；反向验证 6 项「回退即红」全有效；总闸 ruff ✅ / pytest 512 ✅ / browser **35 例可跑**（上轮「浏览器层不可用」结论**已失效**）/ check-package ✅ / npm lint ✅。详见 `docs/验收与改进报告_2026-09-16_R7.md`。② **🔴 P0 发布完整性**——0.10.2 产物构建于 09-15 20:37/20:38，晚于它的四笔提交（`beecdcf` 前端崩溃修复 / `1e8cb2a` 数据管理+日志脱敏+AGPL LICENSE / `b360f90` 讲解流竞态 / `ced0f6d`）未进包；**逐字节取证**：旧产物 `learn.js` == `d0e6d10` 源码而非 HEAD。已 bump **0.10.3** 重出包，旧产物改名 `*-pre-u17` 隔离（V-01）。③ **性能**（实测驱动）：**V-02 读放大**——`dashboard` 为取一个计数全量解析 mistakes 表、并把 knowledge 表整表读两遍 → 新增 `library.count_mistakes()`（`COUNT(*)`）+ `recent_activity(kps=…)` 复用，**144.5→83.8ms**（−42%）；**V-03 单行写放大**——`_store()` 退出对脏表 `replace_all`（全表 DELETE+重插，3000 行库单次 103ms）→ 新增 `db.upsert_rows()` + `library._StoreView`（惰性读）+ `_mark_kp_row/_mark_m_row`（显式登记单行），**`record_quiz` 67.6→15.7ms**（−77%），**缺省登记集为空即退回全表替换**（宁慢不丢），等价性由 `tests/test_v03_rowwise_write.py` 6 例保证。④ **测试网**：V-04 静默 `except Exception: pass` 守卫由「≤5 预算式」收紧为「**=0 零容忍**」（反向验证：注入 1 处即红）；V-05 修 `test_cleanup_stale_sessions` **时间敏感 flake**（按列表下标取会话，跨秒时下标含义改变 → 改为按 `kp_name` 定位 + 递增时间戳确定性复现）。 |
 | 2026-09-15 | `be0ffdc`→`b4ebd45` | **仓库事故恢复 + R6 工程审查批次 1**：① **事故** `.git` 被整体删除（后从回收站恢复）→ 对象库损坏（`55c4225` 对象消失、`8f98d44` 根树缺失）+ `master` 被重置回 `9a9058a`。按「备份 → 保全 → 导出悬空对象 → 重建 → 立即推送」恢复：`r5-batch0-1` 分支保全 `eb7855a`（R5 批次 0+1 唯一完整提交），悬空对象导出至 `.git/lost-found/` 并异地归档；R5 批次 2 与其余未提交工作按工作区内容重建为 `be0ffdc`；**内容零损失**。详见 `docs/reviews/仓库恢复记录_2026-09-15.md`。② **§4 陷阱清单新增 12/13/14 条**（未推送提交禁 gc/prune、提交后立即 push、并发时 git 写操作收敛单线）。③ **R6-01 总闸转绿**：`verify.cmd`/CI 单测步显式 `--ignore=tests/browser`（浏览器层 session 级 Playwright 同步上下文会占住线程事件循环，致 `asyncio.run()` 用例必失败——本地红/CI 绿的分叉根因）；`tests/conftest.py` 新增 `run_coro` fixture 并改接 3 个用例；ruff 清零 4 处 + 修正 1 处 invalid noqa。详见 `docs/工程审查改进指南_2026-09-15.md`（R6-01~R6-22）。 |
 | 2026-09-01 | 本批 | **R5 全链路复核批次 0/1/2（P0/P1）**：① **数据安全** `tests/conftest.py` 补全 7 个 JSON 文件常量隔离 + session 级家目录哈希哨兵（R5-01；此前测试回落 JSON 直接写真实 `~/.medkit`，实机两次复现）；R5-04 取证修订——备份目录顶层 113KB mistakes.json 实为 08-27 20:43 后测试垃圾，真实数据（1 错题/4 知识点/1 复习卡/1 提问会话）从**污染前**备份 + WAL 回放恢复（`pack/recover-user-data.py`，先快照可回退）· ② **流式主路径** R5-02 dedupe 移入 gen() 首帧前/finally + 守卫降级 `dedupe.is_active` 窥视（实验证实本 FastAPI 版本 Depends teardown 在流完成后执行，守卫持锁会与 gen 内锁自锁）；R5-03 两流式端点 `cancel_ev` 上传 client + gen finally 置位 + `LLMClient.chat_stream` finally `stream.close()` 中止 provider 连接；R5-C-02 usage 累计→取消/异常处快照落账 · ③ **流程信任链** R5-05 提交自查三步（见 §4.11）；CHANGELOG/R4 报告 R4-01/R4-02 失实条目加勘误注 · ④ 体验兜底 R5-A-01 模板键 `medkit-tpl-<pid>`、R5-B-01 assets 累计 600MB 上限、R5-B-05/15 删除复核（残留即 500）+ 孤儿项「残留目录，可清理」；测试 18+2+2 新增，离线全量基线不回归（R5-01 哨兵同时守卫后续每次全量测试） |
@@ -217,3 +219,63 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
 - **批次 F（RAG 无原文回退）**：讲解/提问/复习提示三处检索未命中 → 「先说明 + 联网补充 + 模型知识输出」；`explain_knowledge` 返回 `grounded`、讲解产物存 `grounded`、tutor 响应带 `grounded`/`note`、`_resolve_search_fn()` 统一后端解析、MedTutor 注入 `web_materials`；前端复习卡提示一键「结合网络与模型知识生成提示」（成本前置）、讲解卡片「无教材原文」标签、tutor 首问/判分提示。
 - 待办（后迭代）：每日推送上限/考前加大强度（BE-2）· 速刷手势 · 统计图表 · 离线 SW · 虚拟滚动。
 - 验证：每批 `verify.cmd`（ruff → pytest 单元 → 浏览器）全绿后立即提交（见 §4 第 7 条多 Agent 并发警示）。
+
+## 7. 错题归因流水线（EP-01）· 接手必读
+
+> 功能全貌见 `docs/错题归因流水线_EP-01_设计与实现.md`（**该文档 §7 是核心价值**——
+> 记录了 10 类「不报错的功能失效」的踩坑过程）。本节只讲**接手时必须知道的约束**。
+
+### 7.1 三条不可动的设计红线
+
+| 红线 | 是什么 | 违反后果 | 守卫 |
+|---|---|---|---|
+| **答案只能由用户提供** | `error_analysis` / `socratic_review` **绝不判对错** | 归因可信度崩塌（《总纲》§3.2 红线） | `tests/test_socratic.py` 泄漏用例 + `_strip_answer_echo` 出口剥离 |
+| **confidence 不可补填** | 录入时必填；**无补填端点**，PUT 也拒改该字段 | 校准曲线失真，元认知数据资产作废 | `test_guard_actually_catches_backfill_route`（路由表扫描，**注入反向验证过**） |
+| **AI 标签与人工标签并列** | `error_tag`（人）与 `ai_error_tag`（AI）**分列存储**，派生 `tag_match` | 覆盖其一即失去「不一致样本」这个最高价值数据 | `metacog.agreement()` 端到端用例 |
+
+### 7.2 三个「看着能用其实不通」的已知断点（已修，但同类错误易复发）
+
+它们都属于**静默降级**——不抛异常、不写日志、功能看起来在跑。**新增代码时优先怀疑这三处**：
+
+1. **`hasattr` 探测不存在的函数** → 恒 `False` → 静默返回空。
+   实例：`_freq_map()` 探测 `realexams.list_freq`（真名是 `freq_view`）→ 减法清单的
+   `freq_missing` **永远为 `True`**。**禁止用 `hasattr` 做能力探测**；直接调用存在的函数，
+   异常走 `errs.swallow`。
+2. **白名单字典静默丢弃新键** → `library.add_mistake` 的 record 是固定形状，
+   `confidence`/`my_reasoning` 全被丢掉但 API 返 200。
+   **新增元认知字段必须同时改 `_META_FIELD_DEFAULTS` + `routers.library.MistakeBody`**。
+3. **`list(dict)` 静默丢文本** → `list({"A": "增加"}) == ["A"]`，选项文字全丢且不报错。
+   JSONL 的 `options` **是 dict**，唯一格式转换点是 `errorpipe._norm_options()`。
+
+### 7.3 源码扫描类守卫的强制写法
+
+本项目已**第五次**踩同一个根因（见实现说明 §7.5/§7.7/§7.9/§7.10）：
+
+> **「扫文本」类守卫必须先明确「扫的是哪一层」。**
+> - 扫**源码** → 先剥注释（**多行 `/* */` 先于单行 `(?<!:)//`**），再抹掉字符串字面量
+> - 扫 **UI** → 只扫**控件**（`button`/`a`/`label`）的可点击文本，**不扫说明文案**
+>
+> 顺序写反或层次搞错，会**同时**造成假绿（删代码留注释）与假红（注释里解释了原因）。
+
+### 7.4 v8 迁移
+
+- `MIGRATIONS = [1..8]`；`mistakes` +6 列 + `kp_alias` / `error_events` 两新表。
+- **必须幂等**：v8 分支先 `PRAGMA table_info` 探测列，否则测试模拟旧库时抛 `duplicate column`。
+- `_V8_DOWN = []`（`ALTER ADD COLUMN` 不可精确回滚）→ **依赖 ADR-005 升级前自动备份**。
+- 新模块（kpid/error_events）**不提供 JSON 回落分支**，一律 `dbs.migrate()`（对齐 ADR-006）。
+
+### 7.5 产物冒烟的正确姿势（血的教训）
+
+**任何启动产物的冒烟测试必须走 `pack/smoke-run-isolated.py`。**
+
+起因：2026-09-28 我直接启动解包后的安装包做冒烟，`main._lifespan` 里的 `dbs.migrate()`
+**把用户真实 `~/.medkit` 的库从 v7 升到了 v8**（`USERPROFILE` 指向真实家目录）。
+零数据损失（自动备份在），但这是**和 2026-09-15 毁 `.git` 同一个错误模式：
+动手前没隔离会影响用户真实数据的作用域**。
+
+该脚本会重定向 `USERPROFILE` / `HOME` / `MEDKIT_LOG_DIR` 到临时目录，
+并扫 **127.0.0.1:4880-4889** 的 `/api/health` 判就绪。
+
+**注意两个反直觉点**：
+- `MEDKIT_PORT` 是**输出不是输入**——`run_medkit.py::pick_port()` 会硬扫 4880-4889 并**覆盖**它；
+- 环境里有 `http_proxy=127.0.0.1:62171`，探测 **127.0.0.1 必须用无代理 opener**，否则 502。

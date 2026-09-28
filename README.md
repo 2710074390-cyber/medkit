@@ -89,15 +89,31 @@ medkit/
 ├── medkit/
 │   ├── main.py                 # FastAPI + 静态前端（Host/Origin 守卫）
 │   ├── core/                   # config / providers / llm / cost / usage / extract / slice / quota / mineru(OCR) / db(SQLite·迁移) / syllabus / realexams / gap / scheduler(FSRS·SM-2) / cards / websearch / library / review / explain / tutor
-│   ├── agents/                 # medgen / medqc / medfix / medreview
-│   ├── prompts/                # 从 MedAgentWork Prompt版本/ 模板化迁移
+│   │                           # ↑ 生成链                             ↑ 学习内核
+│   │                           # EP-01 错题归因：errorpipe(五阶段编排) / kpid(知识点ID对齐) / metacog(纯函数统计) / error_events(流水)
+│   ├── agents/                 # medgen / medqc / medfix / medreview / error_analysis(归因) / socratic_review(苏格拉底)
+│   ├── prompts/                # 从 MedAgentWork Prompt版本/ 模板化迁移（含 error_analysis.md / socratic_review.md）
 │   ├── gates/                  # options_check / bloom_check / trace_check / dedup_check
-│   └── web/                    # 零 CDN 单页 UI
-└── tests/                      # test_smoke / test_pipeline_offline / test_api（TestClient）
+│   ├── routers/                # 17 个既有路由域 + errors.py（/api/errors/* · 22 端点）
+│   └── web/                    # 零 CDN 单页 UI（learn-meta.js = 元认知视图）
+├── pack/                       # build.bat / medkit.spec / check-release-consistency.py(五件套门禁) / smoke-run-isolated.py(隔离冒烟)
+├── docs/                       # AGENT_HANDOFF.md(交接入口) / 错题归因流水线_EP-01_设计与实现.md / 考研错题分析专项重构方案_2026-09-27.md
+└── tests/                      # 814 项（单元 813+1skip / 浏览器层 60，分进程跑）
 ```
 
 ## 已实现功能（v0.10.5）
 
+- **错题归因流水线（EP-01 · v0.10.5 新增）**：把「考生自己记下的错题」变成**可纵向追踪的元认知档案**——记录的不只是「我选错了」，而是「我**为什么**选错、当时**有多确信**、这个错因**跨轮次怎么演变**」。
+  - **五阶段管线**（`core/errorpipe.py`，可任意跳过子集）：`intake` 归一录入 → `kp_align` 知识点对齐 → `attribute` LLM 归因 → `persist` 落库 → `analyze` 统计。**P3 是唯一有外部依赖的阶段**，跳过即全程零 LLM（离线可用，医院/图书馆场景）。
+  - **录入闸门（刻意保留摩擦）**：`confidence`（1-5 事前自评）与 `my_reasoning`（原始推理）**必须当场填**，缺任一则 `gate_ok=False`——可入库但**禁止进入归因**。**不提供补填接口**（路由扫描测试钉死），因为事后补填会让校准曲线失真、数据资产作废。
+  - **红线：AI 不判对错，正确答案由考生提供**。归因只做「解释与定位」（产出 `ai_error_tag` / `counterfactual` / `fix` / 建议回看章节），并与人工 `error_tag` 比对派生 `tag_match` ——**不一致的题是最高价值样本**。
+  - **五组元认知统计**（`core/metacog.py`，**全纯函数、零 IO**）：校准曲线 + Brier 分数 + JOL 偏差 · 标签×科目热力图 · 跨轮次迁移矩阵（同 tag 三轮不变 → 标红「换方法」）· 人工/AI 归因一致率 · **减法清单**（「建议别看什么」，按 题量×正确率×**近三年真题频次** 加权，频次来自生成链留下的 `realexam_freq` 表）。
+  - **知识点 ID 对齐**（`core/kpid.py`）：`sha1(subject|chapter|norm(topic))` 前缀 + 别名表，解决同一考点在三轮里的不同表述（「心输出量」/「心排出量」/「CO」）→ 跨轮次迁移矩阵可信的前提。**不做 embedding 自动聚类**（错归会污染不可逆档案，人工确认别名表成本更低）。
+  - **纵向追踪走流水不走快照**：`error_events` 表 append-only，每轮每次作答一条；`mistakes` 是**可编辑快照**。迁移矩阵从流水算——快照会被用户改，流水不会。
+  - **苏格拉底复习**：复习同一题时不直接给解析，先问「你认为正确的是哪个，为什么」，答完才给。**不设默认**（单题耗时 3-5 倍，早鸟轮是负收益），仅对高价值题（`tag_match=0` 或「confidence=5 但做错」）启用。红线②在自由文本字段上有**出口机械剥离**（`_strip_answer_echo`）——提示词与契约两道防线挡不住模型把答案写进 `gap`/`next_question`。
+  - **数据规模**：schema **v8** 迁移（`mistakes` +6 列 + `kp_alias` / `error_events` 两新表），全部可空、**幂等**（`PRAGMA table_info` 防御）、走 ADR-005 升级前自动备份。既有 17 个路由文件与 `/api/library/*` 行为不变。
+  - **22 个端点** `/api/errors/*`：录入 `intake` · 归因 `cards/{id}/attribute` · 闸门 `cards/{id}/gate` · 统计 `stats/{calibration,heatmap,migration,agreement}` · 减法 `subtract` · 概览 `overview` · 知识点 `kp/{resolve,list,register,merge}` · 导入导出 `import|export/jsonl` · 苏格拉底 `socratic/{eligible,start,answer,{sid}}` · 轮次 `rounds` · 自检 `health`
+  - **数据出口**：JSONL 是**唯一备份格式**（用户数据不可再生，需可携带）；`GET /api/errors/export/jsonl` 全量导出，`POST /api/errors/import/jsonl` 回灌。
 - **服务商 BYOK**：DeepSeek / 智谱 GLM / 通义千问 / Kimi（月之暗面）预置（卡片带官网注册跳转）+ 自定义 OpenAI 兼容端点；双模型档（下拉选择，获取模型列表后默认选最新，支持手动输入）；测试连接（30s 超时）；**保存配置空 Key = 保留原值**；**Key 落盘 DPAPI 加密**（Windows，ctypes 零依赖；旧明文自动升级）；**多服务商 Key 存档**（切换服务商自动归档旧 Key，切回免重填；「API Key 管理」卡片统一查看掩码/切换/删除，仿 Cherry Studio）
 - **素材解析**：PDF(文本层)/DOCX/MD/TXT/图片；章节切片；教师重点词频配额加权；线程池执行不阻塞
 - **素材库复用（S3）**：解析结果可「保存为素材会话」（`~/.medkit/sessions/`），**跨项目复用**；多个会话**合并载入为教材**（多教材合并出题，quota 跨 session 按章加权）；项目**配置模板**一键存/取（科目/题型配比/Bloom/旋钮/附加要求）
@@ -125,7 +141,7 @@ medkit/
 - **复习场景优化（第五轮）**：复习手册阅读体验——字号调节（A−/A＋/默认，记忆偏好）、阅读进度条、目录吸顶、回顶部按钮；复习计划到期卡「查看提示」（懒加载教材原文切片，零 LLM，关键词 top-k）；薄弱点清单行内「讲解/提问/铺卡」直达；首启向导纳入学习中心
 - **导出与回顾（第六轮）**：项目详情「预览 Anki 卡样」（弹窗看前 3 张卡正反面与标签，导出前心里有数）；题库页 Bloom 层级过滤 + 题型/Bloom/关键词过滤状态本地记忆（重开保持）+ 一键重置；押题卷**成绩留存**（最近 10 次，重开显示「上次/最佳 · 用时」）；页签快捷键 title 提示（Ctrl+1~5）
 - **主题单源与审核效率（第七轮）**：新增 `render/pagechrome.py`——题库/押题卷/复习手册三套产物页主题（双主题变量/基础样式/明暗切换脚本）**单一来源**，改一处全生效、防漂移；审核台**批量操作**（多选勾选 → 批量改 Bloom / 批量剔除恢复，标题实时计数）+ 单题「复制」题面全文到剪贴板
-- **质量**：**192 项 pytest**（冒烟 / 离线管线含断点续跑·取消·案例组 / API 层 TestClient 含 Key 存档闭环 / S1 回归四件套 / S2 重构契约 / S3 apkg·案例结构·素材会话 / v0.6 更新检查 mock / v0.7 学习闭环与讲解·复习·仪表盘 / 迁移与乱码修复 / 押题卷与题库回归 / **S0 存储底座**：db 迁移·回滚·备份·导入幂等、library/review/explain/tutor SQL 模式端到端、并发 100/100 无丢失）+ ruff 干净 + PyInstaller exe 冒烟
+- **质量**：**814 项 pytest**（813 passed + 1 skipped；含冒烟 / 离线管线含断点续跑·取消·案例组 / API 层 TestClient 含 Key 存档闭环 / S1 回归四件套 / S2 重构契约 / S3 apkg·案例结构·素材会话 / v0.6 更新检查 mock / v0.7 学习闭环与讲解·复习·仪表盘 / 迁移与乱码修复 / 押题卷与题库回归 / **S0 存储底座**：db 迁移·回滚·备份·导入幂等、library/review/explain/tutor SQL 模式端到端、并发 100/100 无丢失 / **EP-01 错题归因**：`test_errorpipe` 54 + `test_socratic` 37 + `test_metacog` 统计 / **发布五件套一致性** `test_release_artifacts` 14）+ **浏览器层 60 项**（Playwright，独立进程）+ ruff 干净 + eslint `--max-warnings 0` + PyInstaller exe 冒烟
 
 ## 服务商与模型（2026-08 官方信息核查版）
 
