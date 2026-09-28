@@ -8,6 +8,19 @@ REM  SKIP_BROWSER=1  -> skip the Playwright browser step (no browser env)
 REM  SKIP_MYPY=1     -> skip the mypy step (mypy not installed)
 REM  未构建 dist 时打包纯净检查自动跳过（check-package.py 自带该分支）
 REM ============================================================
+REM  「工具缺失」的处理策略（2026-09-29 明确，分两类，不许含糊）：
+REM    · **必须装**（缺失即 FAIL，不跳过）：ruff、pytest。
+REM      理由：两者都在 requirements-dev.txt 里声明，且 README 明确声称
+REM      「ruff 干净」「N 项 pytest」——工具缺失时这些声明**无从验证**，
+REM      跳过就等于让报告假绿。ruff 此前**根本没在任何依赖文件里声明**
+REM      （2026-09-29 补上 ruff>=0.6），当时新克隆会静默跳过 lint。
+REM    · **可跳过**（缺失时打印 [跳过] + 安装命令，继续跑）：mypy、pip-audit、
+REM      npm/eslint、Playwright。理由：它们相对独立，缺了不影响其余步骤的可信度；
+REM      且各自有 pytest 侧守卫兜底（test_lint_gate 的 test_ruff_available
+REM      / test_ruff_is_declared_as_dev_dependency 等）。
+REM    判据：**`[跳过]` 必须能被看见**，且跳过分支里不得出现 `exit /b 0`
+REM    （由 tests/test_lint_gate.py::test_verify_cmd_skips_are_explicit_and_audited 守卫）。
+REM ============================================================
 REM  与 CI 的等价性（2026-09-29 修）：本文件此前只跑 4 步，而 CI 的 verify job
 REM  跑 8 个阻断步骤——**本地「一键全绿」并不等于 CI 绿**，这是门禁不对称。
 REM  实测代价：88b647f（EP-01 阶段 2/3）引入 16 个 mypy 类型错误，

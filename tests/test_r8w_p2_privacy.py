@@ -27,18 +27,56 @@ def test_harden_config_dir_creates_dir(tmp_path):
     assert d.is_dir(), "应顺带创建数据目录"
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="Windows 的 os.chmod 不支持 POSIX 权限位（只支持只读位），无法在本机验证")
 def test_harden_config_dir_posix_tightens(tmp_path, monkeypatch):
-    """POSIX 分支：权限过宽必须被收紧到 0700。"""
-    import os as _os
+    """POSIX 分支：权限过宽必须被收紧到 0700。
 
+    ## 为什么不再 `skipif(sys.platform == "win32")`（2026-09-29 修）
+
+    原来这条在 Windows 上**整条跳过**，理由是「`os.chmod` 不支持 POSIX 权限位」。
+    但这等于说：**本机（开发机就是 Windows）的 POSIX 收紧逻辑从未被验证过**——
+    而 skip 与 pass 在 CI 里退出码相同，报告照样全绿。
+
+    实际上该分支只有**两个**平台相关的接缝，两个都可以 patch：
+    - `os.name`（决定走哪个分支）→ `monkeypatch.setattr(cfgmod.os, "name", "posix")`；
+    - `Path.chmod`（真正落权限）→ 换成记录调用的替身（Windows 上真实 `os.chmod`
+      只能切只读位，所以不能真调，但我们**只需证明它被以 0o700 调用**）。
+
+    `st_mode & 0o077` 的读入在 Windows 上返回 `0o777`（实测），
+    因此「过宽 → 触发收紧」这条路径在本机也能真实走到。
+    """
     d = tmp_path / "d"
     d.mkdir()
-    _os.chmod(d, 0o755)
+    modes: list[int] = []
+    monkeypatch.setattr(Path, "chmod",
+                        lambda self, m, **kw: modes.append(m))
+
     monkeypatch.setattr(cfgmod.os, "name", "posix")
-    cfgmod.harden_config_dir(d)
-    assert (d.stat().st_mode & 0o777) == 0o700, "权限未被收紧"
+    assert cfgmod.harden_config_dir(d) is None, "收紧成功时应返回 None（无告警）"
+    assert modes == [0o700], (
+        "权限未被收紧：期望恰好一次 chmod(0o700)，实为 %r" % (modes,)
+    )
+
+
+def test_harden_config_dir_posix_noop_when_already_tight(tmp_path, monkeypatch):
+    """反向：权限本来就紧（无组/其他位）时**不得**多此一举 chmod。
+
+    否则每次启动都写一次权限位，既无意义又可能干扰只读挂载。
+    判据是「chmod 一次都没被调用」——只断言返回 None 是不够的。
+    """
+    d = tmp_path / "d"
+    d.mkdir()
+    calls: list[int] = []
+    monkeypatch.setattr(Path, "chmod", lambda self, m, **kw: calls.append(m))
+    # 伪造一个"已经很紧"的 stat 结果（0o700 → & 0o077 == 0）
+    real_stat = Path.stat
+
+    class _St:
+        st_mode = 0o700 | 0o040000  # 目录位 | 0700
+
+    monkeypatch.setattr(Path, "stat", lambda self, **kw: _St() if self == d else real_stat(self, **kw))
+    monkeypatch.setattr(cfgmod.os, "name", "posix")
+    assert cfgmod.harden_config_dir(d) is None
+    assert calls == [], "权限已紧仍调用 chmod（实为 %r）" % (calls,)
 
 
 def test_harden_config_dir_windows_never_modifies(tmp_path, monkeypatch):

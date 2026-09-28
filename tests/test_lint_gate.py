@@ -34,11 +34,29 @@ def _ruff_cmd() -> list:
 
 
 def _run_ruff(args: list):
+    """跑 ruff。**缺失即红，不 skip**（2026-09-29 修）。
+
+    原先 `except (FileNotFoundError, TimeoutExpired): pytest.skip(...)`——
+    但 ruff 缺失恰恰意味着 README 的「ruff 干净」**根本没被验证**，
+    而 skip 与 pass 退出码相同 ⇒ 报告全绿。实测该路径确实会静默跳过
+    （用假二进制路径跑 `_run_ruff` 得到 `Skipped`）。
+
+    更糟的是它此前**真会发生**：`ruff` 没有在任何依赖文件里声明
+    （`requirements-dev.txt` / `requirements.txt` / `requirements.lock` 全无），
+    新克隆装完依赖后 lint 门禁就是静默放行的。两个洞同日一起补：
+    本函数改 fail + `requirements-dev.txt` 补 `ruff>=0.6`。
+    """
     try:
         return subprocess.run(_ruff_cmd() + args, cwd=str(ROOT),
                               capture_output=True, text=True, timeout=180)
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        pytest.skip("ruff 不可用：%s" % e)
+    except FileNotFoundError as e:
+        pytest.fail(
+            "ruff 不可用（%s）。README 声称「ruff 干净」，而本守卫是它唯一的背书——"
+            "缺失时必须红，不能 skip（skip 在 CI 里等同 pass）。"
+            "请 `pip install -r requirements-dev.txt`（已声明 ruff）。" % e
+        )
+    except subprocess.TimeoutExpired as e:
+        pytest.fail("ruff 超时（%s）——lint 门禁未能完成，不得视为通过" % e)
 
 
 def test_ruff_available():
@@ -46,6 +64,24 @@ def test_ruff_available():
     r = _run_ruff(["--version"])
     if r.returncode != 0:
         pytest.fail("ruff 不可用（README 声称跑过它）：%s" % (r.stderr or r.stdout))
+
+
+def test_ruff_is_declared_as_dev_dependency():
+    """ruff 必须出现在依赖声明里，否则新克隆的 lint 门禁会静默失效。
+
+    2026-09-29 实测：`ruff` 在 `requirements-dev.txt` / `requirements.txt` /
+    `requirements.lock` 里**全无声明**，但 `verify.cmd` 第 1 步与 README
+    都依赖它。本用例把「声明」这件事本身钉住——防的是「守卫依赖的工具
+    没人负责装」这类跨文件的静默缺口。
+    """
+    dev = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
+    lines = [ln.strip() for ln in dev.splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    assert any(ln.split(">=")[0].split("==")[0].strip().lower() == "ruff"
+               for ln in lines), (
+        "requirements-dev.txt 未声明 ruff——verify.cmd 第 1 步与 README"
+        "「ruff 干净」都依赖它，不声明则新克隆静默跳过 lint。"
+    )
 
 
 def test_repo_is_ruff_clean():
@@ -233,3 +269,98 @@ def test_verify_cmd_browser_step_is_skippable():
     text = _verify_cmd_text()
     assert "SKIP_BROWSER" in text, "浏览器层缺少 SKIP_BROWSER 旁路（无浏览器环境会卡死）"
     assert "skipping browser tests" in text, "SKIP_BROWSER 跳过时没有日志——无声跳过不可接受"
+
+
+def test_verify_cmd_declares_missing_tool_policy_for_every_step():
+    """**必须装**的步骤不得有「缺工具就跳过」分支（2026-09-29 实测的不对称）。
+
+    ## 发现过程
+
+    `verify.cmd` 里各步对「工具没装」的处理**不一致**：
+    - 第 1 步 ruff：`python -m ruff check . || goto :fail` —— 没装就**直接 FAIL**；
+    - 第 2 步 mypy：`python -m mypy --version >nul 2>&1` + `errorlevel 1` → **[跳过]**。
+
+    这本身可以是对的（我的判断：ruff 与 pytest 属"必须装"，因为 README
+    明确声称「ruff 干净」「N 项 pytest」，缺工具则声明无从验证）。
+    问题是**没有任何地方写明这个分级**——下次谁改都可能把 ruff 也改成跳过，
+    而跳过在 CI 里等同 pass ⇒ lint 声明静默失效。
+
+    本用例把分级钉住：
+      1. 头部必须写明「必须装 / 可跳过」两类及理由；
+      2. 「必须装」的步骤，其命令行**不得被任何跳过分支包住**
+         （2026-09-29 反向验证暴露：只断言命令行「在场」是不够的——
+         把 ruff 那行照抄进一个 `errorlevel 1` + `goto :ruff_done` 分支里，
+         字面断言照样通过。判据必须是「**它不在任何条件分支的保护下直接执行**」）。
+
+    判据实现：定位该行的**物理行号**，向上找最近的 `if ... (` （未闭合的），
+    若存在且其分支体在 goto 跳过标签 → 即为"被包住"，红。
+    简化且可靠的等价判据：**该行必须是它所在「命令块」里的第一条非空、
+    非 REM 行**——即它前面不能紧跟一个未闭合的 `(`。
+    """
+    text = _verify_cmd_text()
+    header = text.split("cd /d", 1)[0]
+    assert "必须装" in header and "可跳过" in header, (
+        "verify.cmd 头部未写明「必须装 / 可跳过」的工具分级——"
+        "缺了这个分级，下次改动可能把必须装的步骤也改成静默跳过。"
+    )
+
+    # 必须装的步骤：命令行必须在场 **且** 不被跳过分支包住。
+    must_install = (
+        "python -m ruff check . || goto :fail",
+        "python -m pytest -q --ignore=tests/browser || goto :fail",
+        "python pack\\check-package.py || goto :fail",
+    )
+    for cmd in must_install:
+        assert cmd in text, "「必须装」步骤的命令行消失：%r" % cmd
+        assert not _is_gated_behind_skip(text, cmd), (
+            "%r 被包在跳过分支里了——工具缺失时会静默跳过，"
+            "而 README 的 lint/test 声明靠它背书。该步必须**无条件执行**。" % cmd
+        )
+
+    # 反向：可跳过的步骤必须打印 [跳过] + 安装指引，不能无声。
+    for marker in ("[跳过] mypy 未安装", "[跳过] pip-audit 未安装",
+                   "[跳过] 未安装 node_modules"):
+        assert marker in text, (
+            "缺少显式跳过提示 %r——无声跳过不可接受" % marker
+        )
+
+
+def _is_gated_behind_skip(text: str, cmd: str) -> bool:
+    """判断 `cmd` 所在行是否被「工具缺失 → goto 跳过」这种分支护住。
+
+    ## 为什么不用"向上找最近的 if"
+
+    2026-09-29 第一版就是这么做的，**注入没红**。原因是跳过块长这样::
+
+        if errorlevel 1 (        <- 41
+          echo   [跳过] ...
+          goto :ruff_done        <- 43
+        )                        <- 44
+        python -m ruff check . || goto :fail   <- 45  cmd 在这
+
+    从 45 向上扫，先撞到 `goto :ruff_done` → 我的循环遇到 `goto :` 就 `break`，
+    **根本没扫到第 41 行的 `if`**。修法：向上扫到**该命令所在命令块的开头**
+    （遇到上一个 `:label` / 文件头 / 空行分隔的 `echo` 段为止），
+    再看这段里是否同时出现「条件判断」与「`goto :` 跳过标签」。
+
+    判据（保守、可证伪）：cmd 行**上方连续区间内**（直到上一个 `echo [n/7]` 标题行）
+    若出现 `if errorlevel` 或 `if "%` 且伴随 `goto :<label>`（非 `:fail`），
+    即判定被跳过分支包住。
+    """
+    lines = [ln.strip() for ln in text.replace("\r\n", "\n").split("\n")]
+    idx = next((i for i, ln in enumerate(lines) if ln == cmd), None)
+    if idx is None:
+        return False
+
+    # 向上找本步骤的起点：最近的 `echo [n/7]` 标题行（每步以它为界）。
+    start = 0
+    for j in range(idx - 1, -1, -1):
+        if lines[j].startswith("echo [") and "/7]" in lines[j]:
+            start = j
+            break
+
+    block = lines[start + 1: idx]
+    has_cond = any(ln.startswith("if ") for ln in block)
+    has_skip_goto = any(ln.startswith("goto :") and ln != "goto :fail"
+                        for ln in block)
+    return has_cond and has_skip_goto

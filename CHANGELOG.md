@@ -10,6 +10,26 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（测试守卫 · 门禁假绿 / 依赖声明缺口）
+
+- **`ruff` 此前没有在任何依赖文件里声明**（`requirements-dev.txt` /
+  `requirements.txt` / `requirements.lock` 全无），但 `verify.cmd` 第 1 步与
+  README「ruff 干净」都依赖它 ⇒ 新克隆装完依赖后 lint 门禁**静默跳过**
+  （实测：用假二进制路径跑 `_run_ruff` 得到 `Skipped`）。已在
+  `requirements-dev.txt` 补 `ruff>=0.6`。
+- **`test_lint_gate.py::_run_ruff` 的「缺工具就 skip」改为 `pytest.fail`**，
+  并新增 `test_ruff_is_declared_as_dev_dependency` 把「声明」这件事钉住。
+- **`test_r8w_p2_privacy.py` 的 POSIX 权限分支原先在 Windows 上整条 `skipif`**
+  ⇒ 开发机（Windows）上该分支**从未被验证**。改为 patch 两个平台接缝
+  （`os.name` 与 `Path.chmod`）使其在任意平台真跑；并补反向用例
+  「权限已紧时不得多此一举 chmod」。
+- **`verify.cmd` 头部补写「工具缺失处理策略」分级**（必须装：ruff / pytest；
+  可跳过：mypy / pip-audit / npm / Playwright），新增守卫
+  `test_verify_cmd_declares_missing_tool_policy_for_every_step`——
+  断言「必须装」的步骤**不得被跳过分支包住**（只断言命令行在场是不够的，
+  反向验证时把 ruff 那行包进 `errorlevel 1 + goto` 分支仍能骗过字面断言）。
+
+
 ### Fixed（测试守卫 · 门禁假绿）
 
 - **封掉三处「看不懂就放行」的 skip**（`pytest.skip` 在 CI 里与 pass 退出码相同，

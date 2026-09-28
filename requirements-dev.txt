@@ -7,3 +7,4 @@ setuptools<81      # NX-08(R-6): jieba 0.42.1 depends on pkg_resources (deprecat
 pip-audit>=2.7     # U-16: dependency CVE audit (CI step `pip-audit -r requirements.txt`); known vulns only, no conflicts (pip check handles those)
 pytest-cov>=5      # U-12: coverage (CI `--cov=medkit --cov-fail-under=80`; optional locally)
 mypy>=1.13         # P3: 静态类型检查（CI `mypy medkit`；2026-09-20 基线 0 error，只升不降；配置见 pyproject [tool.mypy]）
+ruff>=0.6          # 2026-09-29 补漏：verify.cmd 第 1 步与 README「ruff 干净」都依赖它，但此前**没在任何依赖文件里声明**——新克隆装完 requirements-dev 后 `python -m ruff` 不存在，lint 门禁会静默 skip（守卫 test_lint_gate.py 的 skip 分支）。配置见 pyproject [tool.ruff]。
