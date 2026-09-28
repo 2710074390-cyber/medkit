@@ -549,6 +549,14 @@ def _explain_start_guard(body: ExplainBody) -> Iterator[None]:
     不用 begin/end 的原因：本 FastAPI 版本 Depends(yield) 的 teardown 在流完成后才执行，
     守卫若持锁会与 gen() 内同 key 锁互斥（同一请求自锁）——守卫占锁还会依赖
     FastAPI 版本行为（把锁放在响应消费侧之外的机制里是脆弱设计）。
+
+    **「teardown 在流完成后才执行」已实测证实**（2026-09-29，真 uvicorn + 真 HTTP；
+    fastapi 0.136.3 / starlette 1.6.0），事件顺序为：
+        guard:enter → guard:took_lock → resp:headers(200) → gen:start
+        → …流… → gen:end → guard:exit → client:eof
+    即守卫的 yield 生命周期**完整包住**流的生命周期 ⇒ 守卫持锁必然与 gen() 自锁。
+    因此本函数**只能窥视**；把它改成 begin/end 会让每个流式请求自己 409。
+    守卫用例：`tests/test_explain_guard_no_selflock.py`。
     """
     from ..core import dedupe
 
