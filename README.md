@@ -90,11 +90,11 @@ medkit/
 │   ├── main.py                 # FastAPI + 静态前端（Host/Origin 守卫）
 │   ├── core/                   # config / providers / llm / cost / usage / extract / slice / quota / mineru(OCR) / db(SQLite·迁移) / syllabus / realexams / gap / scheduler(FSRS·SM-2) / cards / websearch / library / review / explain / tutor
 │   │                           # ↑ 生成链                             ↑ 学习内核
-│   │                           # EP-01 错题归因：errorpipe(五阶段编排) / kpid(知识点ID对齐) / metacog(纯函数统计) / error_events(流水)
-│   ├── agents/                 # medgen / medqc / medfix / medreview / error_analysis(归因) / socratic_review(苏格拉底)
+│   │                           # EP-01 错题归因：core/errorpipe.py(五阶段编排) / core/kpid.py(知识点ID对齐) / core/metacog.py(纯函数统计) / core/error_events.py(流水)
+│   ├── agents/                 # medgen / medqc / medfix / medreview / agents/error_analysis.py(归因) / agents/socratic_review.py(苏格拉底)
 │   ├── prompts/                # 从 MedAgentWork Prompt版本/ 模板化迁移（含 error_analysis.md / socratic_review.md）
 │   ├── gates/                  # options_check / bloom_check / trace_check / dedup_check
-│   ├── routers/                # 17 个既有路由域 + errors.py（/api/errors/* · 22 端点）
+│   ├── routers/                # 17 个既有路由域 + medkit/routers/errors.py（/api/errors/* · 22 端点）
 │   └── web/                    # 零 CDN 单页 UI（learn-meta.js = 元认知视图）
 ├── pack/                       # build.bat / medkit.spec / check-release-consistency.py(五件套门禁) / smoke-run-isolated.py(隔离冒烟)
 ├── docs/                       # AGENT_HANDOFF.md(交接入口) / 错题归因流水线_EP-01_设计与实现.md / 考研错题分析专项重构方案_2026-09-27.md
@@ -104,15 +104,15 @@ medkit/
 ## 已实现功能（v0.10.5）
 
 - **错题归因流水线（EP-01 · v0.10.5 新增）**：把「考生自己记下的错题」变成**可纵向追踪的元认知档案**——记录的不只是「我选错了」，而是「我**为什么**选错、当时**有多确信**、这个错因**跨轮次怎么演变**」。
-  - **五阶段管线**（`core/errorpipe.py`，可任意跳过子集）：`intake` 归一录入 → `kp_align` 知识点对齐 → `attribute` LLM 归因 → `persist` 落库 → `analyze` 统计。**P3 是唯一有外部依赖的阶段**，跳过即全程零 LLM（离线可用，医院/图书馆场景）。
+  - **五阶段管线**（`core/errorpipe.py`，可任意跳过子集）：`intake` 归一录入 → `kp_align` 知识点对齐 → `attribute` LLM 归因 → `persist` 落库 → `analyze` 统计。**P3 是唯一有外部依赖的阶段**，跳过即全程零 LLM（离线可用，医院/图书馆场景）。归因走 `agents/error_analysis.py` + `prompts/error_analysis.md`。
   - **录入闸门（刻意保留摩擦）**：`confidence`（1-5 事前自评）与 `my_reasoning`（原始推理）**必须当场填**，缺任一则 `gate_ok=False`——可入库但**禁止进入归因**。**不提供补填接口**（路由扫描测试钉死），因为事后补填会让校准曲线失真、数据资产作废。
   - **红线：AI 不判对错，正确答案由考生提供**。归因只做「解释与定位」（产出 `ai_error_tag` / `counterfactual` / `fix` / 建议回看章节），并与人工 `error_tag` 比对派生 `tag_match` ——**不一致的题是最高价值样本**。
   - **五组元认知统计**（`core/metacog.py`，**全纯函数、零 IO**）：校准曲线 + Brier 分数 + JOL 偏差 · 标签×科目热力图 · 跨轮次迁移矩阵（同 tag 三轮不变 → 标红「换方法」）· 人工/AI 归因一致率 · **减法清单**（「建议别看什么」，按 题量×正确率×**近三年真题频次** 加权，频次来自生成链留下的 `realexam_freq` 表）。
   - **知识点 ID 对齐**（`core/kpid.py`）：`sha1(subject|chapter|norm(topic))` 前缀 + 别名表，解决同一考点在三轮里的不同表述（「心输出量」/「心排出量」/「CO」）→ 跨轮次迁移矩阵可信的前提。**不做 embedding 自动聚类**（错归会污染不可逆档案，人工确认别名表成本更低）。
-  - **纵向追踪走流水不走快照**：`error_events` 表 append-only，每轮每次作答一条；`mistakes` 是**可编辑快照**。迁移矩阵从流水算——快照会被用户改，流水不会。
-  - **苏格拉底复习**：复习同一题时不直接给解析，先问「你认为正确的是哪个，为什么」，答完才给。**不设默认**（单题耗时 3-5 倍，早鸟轮是负收益），仅对高价值题（`tag_match=0` 或「confidence=5 但做错」）启用。红线②在自由文本字段上有**出口机械剥离**（`_strip_answer_echo`）——提示词与契约两道防线挡不住模型把答案写进 `gap`/`next_question`。
+  - **纵向追踪走流水不走快照**：`core/error_events.py`（`error_events` 表 append-only，每轮每次作答一条）；`mistakes` 是**可编辑快照**。迁移矩阵从流水算——快照会被用户改，流水不会。
+  - **苏格拉底复习**（`agents/socratic_review.py` + `prompts/socratic_review.md`）：复习同一题时不直接给解析，先问「你认为正确的是哪个，为什么」，答完才给。**不设默认**（单题耗时 3-5 倍，早鸟轮是负收益），仅对高价值题（`tag_match=0` 或「confidence=5 但做错」）启用。红线②在自由文本字段上有**出口机械剥离**（`_strip_answer_echo`）——提示词与契约两道防线挡不住模型把答案写进 `gap`/`next_question`。
   - **数据规模**：schema **v8** 迁移（`mistakes` +6 列 + `kp_alias` / `error_events` 两新表），全部可空、**幂等**（`PRAGMA table_info` 防御）、走 ADR-005 升级前自动备份。既有 17 个路由文件与 `/api/library/*` 行为不变。
-  - **22 个端点** `/api/errors/*`：录入 `intake` · 归因 `cards/{id}/attribute` · 闸门 `cards/{id}/gate` · 统计 `stats/{calibration,heatmap,migration,agreement}` · 减法 `subtract` · 概览 `overview` · 知识点 `kp/{resolve,list,register,merge}` · 导入导出 `import|export/jsonl` · 苏格拉底 `socratic/{eligible,start,answer,{sid}}` · 轮次 `rounds` · 自检 `health`
+  - **22 个端点** `medkit/routers/errors.py` 的 `/api/errors/*`：录入 `intake` · 归因 `cards/{id}/attribute` · 闸门 `cards/{id}/gate` · 统计 `stats/{calibration,heatmap,migration,agreement}` · 减法 `subtract` · 概览 `overview` · 知识点 `kp/{resolve,list,register,merge}` · 导入导出 `import|export/jsonl` · 苏格拉底 `socratic/{eligible,start,answer,{sid}}` · 轮次 `rounds` · 自检 `health`
   - **数据出口**：JSONL 是**唯一备份格式**（用户数据不可再生，需可携带）；`GET /api/errors/export/jsonl` 全量导出，`POST /api/errors/import/jsonl` 回灌。
 - **服务商 BYOK**：DeepSeek / 智谱 GLM / 通义千问 / Kimi（月之暗面）预置（卡片带官网注册跳转）+ 自定义 OpenAI 兼容端点；双模型档（下拉选择，获取模型列表后默认选最新，支持手动输入）；测试连接（30s 超时）；**保存配置空 Key = 保留原值**；**Key 落盘 DPAPI 加密**（Windows，ctypes 零依赖；旧明文自动升级）；**多服务商 Key 存档**（切换服务商自动归档旧 Key，切回免重填；「API Key 管理」卡片统一查看掩码/切换/删除，仿 Cherry Studio）
 - **素材解析**：PDF(文本层)/DOCX/MD/TXT/图片；章节切片；教师重点词频配额加权；线程池执行不阻塞
