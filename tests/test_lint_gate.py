@@ -108,13 +108,36 @@ def test_pack_scripts_are_actually_scanned():
 # 缺任一条 → 总闸会打印 "ALL GREEN" 而实际没查，这正是「门禁假绿」。
 #
 # 为什么要有这条守卫：pytest 只覆盖 tests/ 目录，**没人测 verify.cmd 本身**。
-# 若有人删掉第 [4/4] 步（打包纯净检查，R6-11 明确要求总闸须覆盖），
+# 若有人删掉「打包纯净检查」（R6-11 明确要求总闸须覆盖），
 # pytest 全绿、verify.cmd 也全绿，而那条防线已经没了——静默失效。
+#
+# 2026-09-29 扩充：原先只有 4 步，而 CI 的 verify job 有 8 个阻断步骤。
+# 实测代价：88b647f 引入 16 个 mypy 类型错误，因 mypy 只在 CI 跑、
+# 本地无从发现，静默存在 2 天。**本地「一键全绿」≠ CI 绿**，这是门禁不对称。
+# 现补齐 mypy / eslint / pip-audit 三步（CI 侧另有 -m migration 与
+# --cov-fail-under 属分组/度量，已在 verify.cmd 头部注明不纳入的理由）。
 _VERIFY_STEPS = (
     ("ruff check", "python -m ruff check ."),
+    ("mypy 类型检查", "python -m mypy medkit"),
     ("pytest 单测", "python -m pytest -q --ignore=tests/browser"),
     ("浏览器层", "python -m pytest tests/browser -q"),
+    ("前端 lint", "call npm run lint"),
+    ("依赖审计", "python -m pip_audit -r requirements.lock --strict"),
     ("打包纯净检查", "python pack\\check-package.py"),
+)
+
+# CI 的 verify job 里对**本地可跑**有意义的阻断步骤（命令片段 → 说明）。
+# 用于 test_verify_cmd_covers_ci_blocking_steps：verify.cmd 必须覆盖它们，
+# 否则「本地全绿」不能代表 CI 绿。
+# 有意不含：`pytest -m migration`（已含在全量里）、`--cov-fail-under=80`（度量）、
+# `pip check`（CI 干净 runner 上才有意义，本机无关包会稳定误红）。
+_CI_BLOCKING_STEPS = (
+    ("python -m ruff check", "ruff"),
+    ("python -m mypy medkit", "mypy"),
+    ("--ignore=tests/browser", "pytest 单测"),
+    ("npm run lint", "eslint"),
+    ("pip_audit -r requirements.lock", "pip-audit（锁定闭包）"),
+    ("pack/check-package.py", "打包纯净"),
 )
 
 
@@ -154,6 +177,51 @@ def test_verify_cmd_has_fail_label():
     assert ":fail" in text, "verify.cmd 没有 :fail 标签，`|| goto :fail` 会落到文件末尾"
     tail = text.split(":fail", 1)[1]
     assert "exit /b 1" in tail, ":fail 标签后没有 `exit /b 1`——失败不会变成非零退出码"
+
+
+def test_verify_cmd_covers_ci_blocking_steps():
+    """verify.cmd 必须覆盖 CI verify job 的阻断步骤（本地全绿 ⇒ CI 绿）。
+
+    为什么单列一条：`test_verify_cmd_has_all_steps` 只能证明「我列的步骤都在」，
+    证明不了「**该列的都已列**」——CI 新增一步而这里没跟进时它照样绿。
+    本条把 CI 的阻断项当**外部事实来源**，补上这个方向。
+    （同 3e92d84 修的「两个 glob 自比」是同一类问题：判据要有独立基线。）
+    """
+    text = _verify_cmd_text()
+    missing = [desc for frag, desc in _CI_BLOCKING_STEPS if frag not in text]
+    assert not missing, (
+        "verify.cmd 未覆盖 CI 的阻断步骤：%s\n"
+        "本地「一键全绿」将不代表 CI 绿——请补齐，或在 verify.cmd 头部"
+        "写明「有意不纳入」的理由。" % missing
+    )
+
+
+def test_verify_cmd_skips_are_explicit_and_audited():
+    """每个 SKIP_* 开关都必须在文件头被解释，且**不得**用于跳过整体。
+
+    判据（2026-09-29）：跳过是合理的（没装浏览器/没装 mypy 的机器要能跑），
+    但必须「明示 + 有理由」，否则跳过会变成事实上的关守卫。
+    这里守住两点：
+      1. 每个 `%SKIP_XXX%` 都在头部注释里出现（有解释）；
+      2. 不含 `exit /b 0` 出现在跳过分支里（跳过 ≠ 提前成功退出）。
+    """
+    text = _verify_cmd_text()
+    import re
+    switches = set(re.findall(r"%([A-Z_]+)%", text))
+    assert switches, "verify.cmd 里没有找到任何 SKIP_* 开关——判据可能失效"
+    header = text.split("cd /d", 1)[0]
+    unexplained = [s for s in switches if s not in header]
+    assert not unexplained, (
+        "以下开关没有在 verify.cmd 头部解释：%s" % sorted(unexplained)
+    )
+    # 跳过分支不得直接 `exit /b 0`（那会让总闸在没查完的情况下报成功）
+    for s in switches:
+        marker = 'if "%s"="1" (' % s
+        if marker in text:
+            branch = text.split(marker, 1)[1].split(")", 1)[0]
+            assert "exit /b 0" not in branch, (
+                "%s 的跳过分支里出现 `exit /b 0`——总闸会在没跑完的情况下报成功" % s
+            )
 
 
 def test_verify_cmd_browser_step_is_skippable():

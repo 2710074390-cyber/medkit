@@ -14,7 +14,7 @@
 """
 
 import threading
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -29,6 +29,23 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------- 请求模型
+class _ImportStats(TypedDict):
+    """`import_jsonl` 的返回体。
+
+    显式 TypedDict（2026-09-29）而非裸 dict 字面量：原先 `stats = {...}`
+    因值是异构的（int 与 list 混排）被 mypy 推断为 `dict[str, object]`，
+    于是 `stats["errors"].append(...)` 与 `stats["skipped"] += 1` 全被
+    判为对 `object` 操作（7 条 error）。运行时本来是对的，**静态类型丢了**。
+    这类「同键异类型」的 dict 一律用 TypedDict 明确契约。
+    """
+    total: int
+    gated: int
+    ungated: int
+    created: int
+    skipped: int
+    errors: list[str]
+
+
 class IntakeBody(BaseModel):
     """单条错题录入（含元认知字段）。
 
@@ -239,7 +256,7 @@ def kp_merge(body: MergeBody) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 导入导出 / 自检
 @router.post("/api/errors/import/jsonl")
-def import_jsonl(body: dict[str, Any]) -> dict[str, Any]:
+def import_jsonl(body: dict[str, Any]) -> _ImportStats:
     """批量导入 JSONL 错题（《总纲》§3.1 schema）。
 
     `dry_run=True` 只做归一与闸门体检，不落库——**先看清缺什么再决定要不要录**。
@@ -249,8 +266,8 @@ def import_jsonl(body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(items, list):
         raise HTTPException(status_code=400, detail="items 必须是数组")
 
-    stats = {"total": len(items), "gated": 0, "ungated": 0,
-             "created": 0, "skipped": 0, "errors": []}
+    stats = _ImportStats(total=len(items), gated=0, ungated=0,
+                         created=0, skipped=0, errors=[])
     for i, it in enumerate(items, 1):
         if not isinstance(it, dict):
             stats["errors"].append(f"第 {i} 条不是对象，已跳过")

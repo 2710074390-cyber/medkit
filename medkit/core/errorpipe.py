@@ -299,15 +299,15 @@ def _write_meta(mid: str, rec: dict[str, Any]) -> Optional[dict[str, Any]]:
     patch = {k: rec[k] for k in META_FIELDS if k in rec}
     if not patch:
         return library.get_mistake(mid)
-    with library._store() as st:  # type: ignore[attr-defined]
-        cur = library._find_mistake(st, mid)  # type: ignore[attr-defined]
+    with library._store() as st:
+        cur = library._find_mistake(st, mid)
         if cur is None:
             return None
         for k, v in patch.items():
             cur[k] = v
-        cur["last_tried"] = library._now()  # type: ignore[attr-defined]
+        cur["last_tried"] = library._now()
         st["dirty"]["mistakes"] = True
-        library._mark_m_row(st, cur)  # type: ignore[attr-defined]
+        library._mark_m_row(st, cur)
         return dict(cur)
 
 

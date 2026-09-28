@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -584,11 +584,14 @@ class SocraticScore(BaseModel):
 
 
 # --------------------------------------------------------------------------- validate_or_repair
+_M = TypeVar("_M", bound=BaseModel)
+
+
 def validate_or_repair(
     raw: Any,
-    model: type[BaseModel],
+    model: type[_M],
     repair_fn: Optional[Callable[[Any, ValidationError], Any]] = None,
-) -> Optional[BaseModel]:
+) -> Optional[_M]:
     """契约校验 + 自动修复（ADR-003）。
 
     1. ``model.model_validate(raw)`` 一次；
@@ -597,6 +600,12 @@ def validate_or_repair(
     4. 仍失败（或未提供 ``repair_fn``）→ 返回 ``None``，调用方走人工复核清单。
 
     ``repair_fn(raw, exc)`` 应返回一个可 ``model_validate`` 的 dict，或返回 ``None`` 表示无法修复。
+
+    返回类型是**泛型** ``Optional[_M]``（2026-09-29）：此前写死 ``Optional[BaseModel]``，
+    导致调用方拿到的静态类型是基类，``obj.score`` 这类字段访问被 mypy 判为
+    「BaseModel has no attribute ...」——运行时明明是对的，静态却报错。
+    改成 ``type[_M]`` + ``Optional[_M]`` 后，``validate_or_repair(raw, SocraticScore)``
+    静态类型即 ``Optional[SocraticScore]``，字段可见。**类型注解要贴着真实契约写。**
     """
     try:
         return model.model_validate(raw)
