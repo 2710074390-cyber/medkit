@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 
 import pytest
 from fastapi import HTTPException
@@ -150,6 +149,25 @@ def test_subjects_unclassified_not_counted(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------- R4-17 cards_generate 去重
 def test_cards_generate_dedupe_409(monkeypatch, tmp_path):
+    """R4-17：在飞期间的重复提交 → 409（防连点双扣费）。
+
+    **2026-09-29 消除时序赌注**（原写法 `t.start(); time.sleep(0.15)`）：
+
+    原写法有两个 sleep 赌注，且余量都很小——
+      · `_slow_gen` 睡 0.4s：保证首单**还没结束**
+      · 主线程睡 0.15s：保证首单**已经开始**
+    ⇒ 只在「线程启动开销 < 0.15s」时成立。实测把线程启动延迟人为放大：
+        延迟 0.00~0.14s → 409 ✓
+        延迟 ≥ 0.16s    → **判据崩塌**（开火时在飞锁尚未持有）
+    正常机器上余量够用，但高负载 / CI 冷启动 / 慢文件系统会突破它
+    ——与 `test_explain_stream.py::test_concurrent_duplicate_stream_409`
+    曾出现的 flaky 是同一类问题（那个余量更小，已实际翻车）。
+
+    **新写法**：用 **Event 握手**——被测函数进入后**主动通知**，
+    主线程收到信号才开火；并用另一个 Event 把首单**卡住**，
+    从而**精确控制「在飞」窗口**，全程无 sleep 赌注。
+    被验证的语义不变：在飞期间的重复提交必须 409；结束后不得永久锁死。
+    """
     import medkit.state as state
     from medkit.routers.library import CardsGenerateBody
 
@@ -158,11 +176,22 @@ def test_cards_generate_dedupe_409(monkeypatch, tmp_path):
     monkeypatch.setattr(lib_router.expl, "get_explain",
                         lambda eid: {"id": eid, "subject": "内科学", "kp_name": "肺通气"})
 
-    def _slow_gen(client, rec):
-        time.sleep(0.4)
-        return []
+    entered = threading.Event()   # 首单已进入 generate_cards（= 锁已持有）
+    release = threading.Event()   # 主线程放行首单
+    calls = {"n": 0}
 
-    monkeypatch.setattr(lib_router.medcards, "generate_cards", _slow_gen)
+    def _blocking_gen(client, rec):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # 只让**首单**阻塞：它占住「在飞」窗口，主线程才有机会验证 409。
+            # 后续调用（去重失效时会走到这里）直接返回——否则两个调用会一起
+            # 卡在同一个 release 上，症状从「没 409」变成「用例自己超时」，
+            # 让失败原因变得难读。（写这条时踩过：注入验证时症状不直观。）
+            entered.set()
+            assert release.wait(10), "首单未被放行——用例自身超时"
+        return []                 # 无 drafts → 502 契约失败
+
+    monkeypatch.setattr(lib_router.medcards, "generate_cards", _blocking_gen)
     body = CardsGenerateBody(explain_id="e1")
     first: dict[str, int] = {}
 
@@ -175,11 +204,20 @@ def test_cards_generate_dedupe_409(monkeypatch, tmp_path):
 
     t = threading.Thread(target=_call)
     t.start()
-    time.sleep(0.15)                                # 第一单在飞中
-    with pytest.raises(HTTPException) as ei:
-        lib_router.cards_generate(body)             # 重复提交 → 409
-    assert ei.value.status_code == 409
-    t.join()
+
+    # 等**状态**（首单确实已持锁），而不是等一个时长
+    assert entered.wait(10), "首单未能在超时内进入 generate_cards"
+
+    try:
+        with pytest.raises(HTTPException) as ei:
+            lib_router.cards_generate(body)         # 重复提交 → 409
+        assert ei.value.status_code == 409, (
+            "在飞期间的重复提交必须 409（实为 %d）" % ei.value.status_code
+        )
+    finally:
+        release.set()
+        t.join(10)
+
     assert first["r"] == 502                        # 首单正常走完（无 drafts → 502 契约失败）
     # 在飞结束 → 可再次提交（不永久锁死；本次同样 502）
     with pytest.raises(HTTPException) as ei:
