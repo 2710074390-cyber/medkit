@@ -33,10 +33,55 @@ FAMILIES: dict[str, list[str]] = {
 }
 
 DECL_RE = re.compile(r"(?:^|[;}])\s*(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)")
-CALL_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
-KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "typeof", "function",
-            "Object", "Array", "JSON", "document", "window", "String", "Number",
-            "Boolean", "parseInt", "parseFloat", "setTimeout", "console", "await"}
+# R9（2026-09-27）：**裸标识符引用**也要算 —— 函数名当值传递同样在加载期求值。
+# 旧实现用 `CALL_RE = ...\s*\(` 只认「带括号的调用」，于是这些真实形态全部漏检：
+#   `$("wz_skip").onclick = wzDone;`            （review-desk-review.js:708）
+#   `loadConfig().then(maybeShowWizard);`       （review-desk-review.js:744）
+#   `const x = mtSetMeta;`                      （声明右侧同样是加载期求值）
+# 反向验证：4 种形态注入后旧扫描器全绿，新扫描器 4/4 红、对照组不假红。
+IDENT_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)")
+# 字面量 / 内建 / 语法关键字：出现在标识符位置但永远不是「本地函数引用」
+NON_IDENT = {
+    "if", "for", "while", "switch", "catch", "return", "typeof", "function", "await",
+    "new", "do", "else", "in", "of", "this", "true", "false", "null", "undefined",
+    "Object", "Array", "JSON", "document", "window", "String", "Number", "Boolean",
+    "parseInt", "parseFloat", "setTimeout", "clearTimeout", "console", "Math", "Date",
+    "Map", "Set", "Promise", "Error", "localStorage", "location", "history", "fetch",
+    "RegExp", "Symbol", "encodeURIComponent", "decodeURIComponent", "isNaN", "alert",
+    "requestAnimationFrame", "URL", "Blob", "FileReader", "AbortController",
+    "async", "let", "const", "var", "class", "export", "default",
+}
+
+
+def _referenced_idents(line: str) -> set[str]:
+    """从加载期立即执行的一行里，提取**被引用的本地标识符**（调用 + 裸引用都算）。
+
+    只做「宁多勿少」的保守提取：多报的后果是该函数被判为「更早片需要它」，
+    由定义位置的比较自然淘汰；漏报才会让真前向引用逃逸。
+    """
+    out: set[str] = set()
+    for m in IDENT_RE.finditer(line):
+        name = m.group(1)
+        if name in NON_IDENT:
+            continue
+        # 排除对象字面量的 key（`{foo: 1}`）与属性访问后缀（`.foo`）——前者由 `:` 判定，
+        # 后者由 IDENT_RE 的负向后顾 `(?<![\w$.])` 已挡住。
+        after = line[m.end():]
+        if after.lstrip().startswith(":") and not after.lstrip().startswith("::"):
+            # `foo: bar` 形态 → foo 是 key，不是引用；但 `foo ? a : b` 的 foo 是引用。
+            # 保守判据：key 只出现在 `{`/`,` 之后，这里退化为「排除紧跟冒号且前面是 { 或 ,」。
+            before = line[:m.start()].rstrip()
+            if before.endswith("{") or before.endswith(","):
+                continue
+        out.add(name)
+    return out
+
+
+
+def _declared_names_in_line(line: str) -> str:
+    """该行 `const|let|var` **声明出来的名字**（单个；用于从引用集里剔除自身）。"""
+    m = re.match(r"^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)", line)
+    return m.group(1) if m else ""
 
 
 def _script_srcs() -> list[str]:
@@ -45,42 +90,100 @@ def _script_srcs() -> list[str]:
 
 
 def _declared_in(text: str) -> set[str]:
-    return {m.group(1) for m in DECL_RE.finditer(text)}
+    """**顶层**声明的名字（经典脚本下才进入共享全局作用域）。
+
+    R9（2026-09-27）：旧实现是 `DECL_RE.finditer(text)` 全文件无差别扫描 + `setdefault`。
+    这会把**函数体内的局部** `let v = null`（learn.js:80）、`const s = sessionStorage...`
+    （learn.js:135）也当成顶层声明；更糟的是 `setdefault` 让「第一次出现」获胜——
+    若局部变量先出现，还会把真正的顶层定义位置记错。
+    实测后果：补上「裸标识符引用」扫描后，`v` / `s` 这类单字母局部变量被误报为
+    「跨片前向引用」（3 处假红）。修法 = 只认花括号深度 0 处的声明。
+    """
+    names: set[str] = set()
+    depth = 0
+    for line in text.split("\n"):
+        if depth == 0:
+            for m in DECL_RE.finditer(line):
+                names.add(m.group(1))
+        depth += line.count("{") - line.count("}")
+    return names
+
+
+def _in_block_comment(lines: list[str]) -> list[bool]:
+    """逐行标记该行是否属于注释（`/* ... */` 块注释内部，或 `//` 单行注释）。
+
+    R9（2026-09-27）：旧实现只判 `stripped.startswith(("/*", "*", "//", "}"))`，
+    **只识别「以 `*` 开头」的续行**。而本仓库的注释续行常以普通文字开头，例如
+    `learn-live.js:250` 的 `   D-21：busy 禁用防连点（与 gradeBusy 同风格）——…`，
+    于是注释里提到的 `gradeBusy` 被当成加载期引用，误报为「跨片前向引用」（假红）。
+    修法 = 显式做块注释状态机，而不是靠行首字符猜。
+    """
+    flags: list[bool] = []
+    in_block = False
+    for line in lines:
+        if in_block:
+            flags.append(True)
+            if "*/" in line:
+                in_block = False
+            continue
+        s = line.lstrip()
+        if s.startswith("//"):
+            flags.append(True)
+        elif s.startswith("/*"):
+            flags.append(True)
+            if "*/" not in s[2:]:
+                in_block = True
+        else:
+            flags.append(False)
+    return flags
 
 
 def _immediate_calls(text: str) -> list[tuple[int, set[str]]]:
-    """返回 [(行号, 该处加载期立即调用的标识符集合)]。
+    """返回 [(行号, 该处加载期立即引用的标识符集合)]。
 
     只取两类「加载期立即执行」的位置：① 顶层 IIFE 的整个块；② 顶层非声明语句（含其整行）。
     箭头回调（addEventListener/onclick/forEach 的 handler）里的事件绑定是**延迟执行**，
     但 `forEach(...)` 本身立即执行——故这里保守地把顶层语句整行计入，宁可多报。
+
+    R9：注释行/块注释内一律跳过（见 `_in_block_comment` 的踩坑记录）。
     """
     lines = text.split("\n")
+    commented = _in_block_comment(lines)
     out: list[tuple[int, set[str]]] = []
     depth = 0
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
-        if depth == 0 and re.match(r"^\(function\b", stripped):
+        if depth == 0 and not commented[i] and re.match(r"^\(function\b", stripped):
             j, d = i, 0
             block: list[str] = []
             while j < len(lines):
-                block.append(lines[j])
+                if not commented[j]:
+                    block.append(lines[j])
                 d += lines[j].count("{") - lines[j].count("}")
                 if d <= 0 and j > i:
                     break
                 j += 1
             body = "\n".join(block)
-            out.append((i + 1, {m.group(1) for m in CALL_RE.finditer(body)} - KEYWORDS))
+            out.append((i + 1, _referenced_idents(body)))
             for k in range(i, j + 1):
                 depth += lines[k].count("{") - lines[k].count("}")
             i = j + 1
             continue
-        if depth == 0 and stripped and not stripped.startswith(("/*", "*", "//", "}")):
-            if not re.match(r"^(async\s+)?function\b", stripped) and not re.match(
-                    r"^(const|let|var)\s", stripped):
-                out.append((i + 1, {m.group(1) for m in CALL_RE.finditer(line)} - KEYWORDS))
+        if depth == 0 and not commented[i] and stripped:
+            if re.match(r"^function\b", stripped):
+                pass    # 函数声明：只是定义，不在加载期求值
+            elif re.match(r"^(const|let|var)\s", stripped):
+                # R9：声明**也要扫**——`const x = mtSetMeta;` 在加载期求值右侧表达式。
+                # 旧实现把整行当「定义」跳过，于是这类前向引用完全漏检（反向验证实测：
+                # 在 learn.js 尾部加 `const _r9probe = mtSetMeta;`（mtSetMeta 定义在第 5 片）
+                # ⇒ 4 passed 全绿）。只把「声明出来的名字本身」排除掉即可。
+                refs = _referenced_idents(line)
+                refs -= {_declared_names_in_line(line)}
+                out.append((i + 1, refs))
+            else:
+                out.append((i + 1, _referenced_idents(line)))
         depth += line.count("{") - line.count("}")
         i += 1
     return out
@@ -127,9 +230,45 @@ def test_no_load_time_forward_reference_across_chunks():
                 for c in sorted(called):
                     j = where.get(c)
                     if j is not None and j > i:
-                        problems.append(f"{fam}: {name}:{lineno} 加载期调用 {c}()，"
+                        problems.append(f"{fam}: {name}:{lineno} 加载期引用 {c}，"
                                         f"但它定义在更晚的 {parts[j]}（第 {j + 1} 片）")
         assert not problems, "存在跨片加载期前向引用（会抛 ReferenceError）：\n  " + "\n  ".join(problems)
+
+
+def test_forward_reference_scan_is_not_vacuous():
+    """元守卫：扫描面必须真的覆盖到东西，否则上一条用例「空跑即绿」。
+
+    ## 为什么要这条（2026-09-27）
+    同目录的 `test_v15_frontend_handler_exposure.py` 有 `assert calls` 防「正则失效 ⇒ 空集 ⇒ 恒绿」，
+    本文件这条却**没有**。而本文件依赖的 `_immediate_calls()` 恰好是最脆的一环：
+    ② 分支靠「行首缩进/关键字」猜「这是不是加载期语句」，正则一改就可能全空。
+
+    同时钉死：扫描面上必须同时存在**带括号调用**与**裸标识符引用**两种形态
+    （后者是 R9 补的漏检点，见 `_referenced_idents` 的 docstring）。
+    """
+    total_calls = 0
+    total_bare = 0
+    for parts in FAMILIES.values():
+        for name in parts:
+            text = (JS_DIR / name).read_text(encoding="utf-8")
+            for _lineno, refs in _immediate_calls(text):
+                total_calls += len(refs)
+                # 裸引用 = 该行里出现但后面不跟 `(` 的标识符
+                pass
+    assert total_calls >= 50, (
+        f"加载期扫描面只剩 {total_calls} 个标识符（历史量级 ~74+）——"
+        "正则/解析可能已失效，上一条用例会因此恒绿。请人工确认 _immediate_calls()。")
+
+    # 直接自检：_referenced_idents 必须同时能抓到「调用」与「裸引用」
+    sample = '$("wz_skip").onclick = wzDone; loadConfig().then(maybeShowWizard);'
+    got = _referenced_idents(sample)
+    assert "loadConfig" in got, "带括号调用形态漏检"
+    assert "maybeShowWizard" in got, "回调（裸标识符）形态漏检 —— R9 的修复点"
+    assert "wzDone" in got, "赋值右侧裸标识符漏检"
+    total_bare = len([1 for _l, r in _immediate_calls(
+        (JS_DIR / "review-desk-review.js").read_text(encoding="utf-8")) if "wzDone" in r])
+    assert total_bare >= 1, "真实文件里的裸标识符引用未被扫到（回归）"
+
 
 
 def test_split_chunks_are_contiguous_in_original_order():
