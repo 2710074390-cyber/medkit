@@ -57,6 +57,51 @@ def test_stable_id_deterministic():
     assert 0 < stable_id("x") < 2 ** 63, "模型/deck id 应在 int64 范围内"
 
 
+# 黄金值：sha256(name)[:12] 的十六进制解析。**故意写死字面量**。
+# 2026-09-27 由 `stable_id()` 实测回填（当时算法 = sha256(utf-8) hexdigest 前 12 位）。
+# 这些值一旦变动 = 老用户 .apkg 重导会重复建卡，属**破坏性变更**，不可随手更新。
+_STABLE_ID_GOLDEN = {
+    "儿科学期末-20260825": 181819637254790,   # 0xa55d2ee44a86
+    "x": 49963728025382,                      # 0x2d711642b726
+    "MedKit 医学记忆卡": 153351482729260,      # 0x8b78eca7632c
+    "mem-abc123": 78955729674824,             # 0x47cf50386248
+}
+
+
+def test_stable_id_algorithm_is_pinned_by_golden_values():
+    """算法必须与历史版本逐位一致 —— 换哈希函数 ⇒ 重复导入生成重复卡。
+
+    ## 为什么「确定性」用例不够（2026-09-27 反向验证）
+    `test_stable_id_deterministic` 只锁「同输入同输出 / 不同输入不同输出 / 值域」。
+    把 `sha256` 换成 `md5` 后，这三条**全部仍成立**，8 条用例全绿，
+    但**所有历史用户的 deck_id / model_id 都变了** —— 他们下次导入同项目 .apkg
+    会得到一整套重复卡片。这正是 `medkit/render/apkg.py:4` 写明的契约：
+    「model_id / deck_id 按项目名稳定哈希：随机 id 会导致重复导入生成重复卡」。
+
+    本用例用**黄金值**把算法钉死：换 sha256→md5 / 改切片长度 / 改编码，
+    任何一个都会让黄金值对不上，立刻红。
+    """
+    for name, expected in _STABLE_ID_GOLDEN.items():
+        assert stable_id(name) == expected, (
+            f"stable_id({name!r}) = {stable_id(name)}，黄金值 = {expected}。"
+            "若这是有意更换哈希算法，**必须**在此处同步黄金值，"
+            "并意识到：老用户的 .apkg 重导会生成重复卡（apkg.py:4 的契约）。"
+        )
+
+
+def test_stable_id_matches_documented_algorithm():
+    """独立复算：按 apkg.py 的写法（sha256 hexdigest 前 12 位）手算一遍。
+
+    与黄金值互补 —— 黄金值防「算法漂移」，本条防「黄金值与实现一起被改」时
+    至少还得同步改这里的两处字面量（提高误改成本）。
+    """
+    import hashlib
+
+    for name in ("儿科学期末-20260825", "x", "MedKit 医学记忆卡", "mem-abc123"):
+        manual = int(hashlib.sha256(name.encode("utf-8")).hexdigest()[:12], 16)
+        assert stable_id(name) == manual, f"{name!r} 的实现与文档口径（sha256[:12]）不符"
+
+
 def test_apkg_structure_and_counts():
     p = TMP / "struct.apkg"
     export_apkg(_qs(), "儿科学", "结构测试", p)

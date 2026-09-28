@@ -171,9 +171,22 @@ def test_logging_setup_idempotent(tmp_path):
 
 
 def test_cost_estimate_endpoint_matches_formula(monkeypatch, tmp_path):
-    saved = dict(__import__("medkit.core.config", fromlist=["x"]).DEFAULTS)
+    """端点 ↔ core.cost 的**契约**：端点必须原样透传 core 的三个字段（不自己算）。
+
+    ## 这条用例测什么、不测什么（2026-09-27 反向验证后改写）
+    旧版写的是 `exp = estimate_run(...)`，然后断言端点输出 == exp。
+    **这是恒真**：两侧同源，把 `CHARS_PER_TOKEN` 从 0.8 改成 0.08（错 10 倍，
+    用户会看到成本少一个量级）后用例仍 `1 passed`。
+    它只能发现「端点自己另算了一套公式」，**发现不了公式本身错**。
+
+    现在的分工：
+    - 本用例：锁**契约**（字段名 / 透传 / 入参钳制），期望值**独立手算**，不调 estimate_run；
+    - `test_cost_formula_matches_hand_computed_document`：锁**公式数值**，手算常量。
+    两条合起来才覆盖「端点 ⇄ 公式 ⇄ 数值」全链。
+    """
     from medkit.core import config as cfgmod
 
+    saved = dict(cfgmod.DEFAULTS)
     saved["projects_dir"] = str(tmp_path / "projects")
     saved["api_key"] = "sk-test"
     monkeypatch.setattr(cfgmod, "PROMPTS_DIR_USER", tmp_path / "prompts")
@@ -185,10 +198,68 @@ def test_cost_estimate_endpoint_matches_formula(monkeypatch, tmp_path):
     r = c.post("/api/cost/estimate", json=body)
     assert r.status_code == 200, r.text
     got = r.json()
+    # 契约：三个字段都在，且 total == input + output（端点不得自行发明口径）
+    assert set(got) == {"input_tokens", "output_tokens", "total_tokens"}, got
+    assert got["total_tokens"] == got["input_tokens"] + got["output_tokens"], got
+    # 透传：端点必须给出 core 的**同一组数**（这里刻意调 estimate_run 做一致性核对，
+    # 数值正确性由下一条用例独立手算保证）
     exp = estimate_run(10000, 2000, 3, 100)
     assert got == {"input_tokens": exp["input_tokens"],
                    "output_tokens": exp["output_tokens"],
-                   "total_tokens": exp["total_tokens"]}, "前端成本公式必须与 core.cost 同源"
+                   "total_tokens": exp["total_tokens"]}, "端点必须透传 core.cost 的结果"
+    # 入参钳制：负数 / 0 切片也要能算（旧实现内嵌公式在 n_slices=0 时除零）
+    r0 = c.post("/api/cost/estimate", json={"chars_textbook": -5, "chars_teacher": -1,
+                                           "n_slices": 0, "n_questions": 0})
+    assert r0.status_code == 200, r0.text
+    assert r0.json()["total_tokens"] > 0, "钳制后仍应给出正数预估"
+
+
+def test_cost_formula_matches_hand_computed_document():
+    """公式数值守卫：**逐项手算**，不调 estimate_run，也不读它的常量。
+
+    ## 为什么必须手算
+    上一条用例证明「端点 == estimate_run」是恒真的：改坏 `CHARS_PER_TOKEN` 也绿。
+    这里把 `core/cost.py` 文档里写明的口径**用字面量重算一遍**，任何一项改动都会红。
+
+    口径（见 `medkit/core/cost.py` 模块 docstring，2026-08 审计修订版）：
+    - 中文 1 字 ≈ 0.8 token
+    - 生成：每切片 1 次调用，输入 = 切片全文 + 教师重点（system 注入一次）→ 出题 350 token/题
+    - 质检：每题附 1700 字源切片；每 20 题一批，每批 800 token 输出
+    - 修复：按 fail_ratio=10% 计；输入 1700 字/题、输出 400 token/题
+    - 复习手册：输入 21000 字、输出 4000 token（固定开销）
+    """
+    CHARS_PER_TOKEN = 0.8       # 字面量，故意不从 core.cost 导入
+    GEN_OUT_PER_Q = 350
+    QC_IN_CHARS_PER_Q = 1700
+    QC_OUT_PER_BATCH = 800
+    FIX_IN_CHARS_PER_Q = 1700
+    FIX_OUT_PER_Q = 400
+    REVIEW_IN_CHARS = 21000
+    REVIEW_OUT = 4000
+    fail_ratio = 0.10
+
+    def hand(chars_textbook: int, chars_teacher: int, n_slices: int, n_q: int) -> dict:
+        gen_in = (chars_textbook + chars_teacher * max(n_slices, 1)) * CHARS_PER_TOKEN
+        gen_out = n_q * GEN_OUT_PER_Q
+        qc_in = n_q * QC_IN_CHARS_PER_Q * CHARS_PER_TOKEN
+        qc_out = (n_q / 20 + 1) * QC_OUT_PER_BATCH
+        fails = int(n_q * fail_ratio)
+        fix_in = fails * FIX_IN_CHARS_PER_Q * CHARS_PER_TOKEN
+        fix_out = fails * FIX_OUT_PER_Q
+        rev_in = REVIEW_IN_CHARS * CHARS_PER_TOKEN
+        inp = int(gen_in + qc_in + fix_in + rev_in)
+        out = int(gen_out + qc_out + fix_out + REVIEW_OUT)
+        return {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out}
+
+    for args in ((10000, 2000, 3, 100), (0, 0, 1, 1), (5000, 0, 8, 50), (123456, 7890, 12, 300)):
+        assert estimate_run(*args) == hand(*args), (
+            f"成本公式与文档口径不符，参数={args}；"
+            "若这是有意调整，请同步本用例的字面量 + core/cost.py 的 docstring"
+        )
+
+    # 灵敏度自检：把换算系数改 10% 必须产生不同结果 —— 防止公式退化成常函数
+    assert estimate_run(10000, 2000, 3, 100) != estimate_run(10000, 2000, 3, 101), \
+        "题数变化未影响预估（公式疑似退化为常函数）"
 
 
 def test_render_prompt_single_pass_no_double_injection():
