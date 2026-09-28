@@ -98,7 +98,7 @@ medkit/
 │   └── web/                    # 零 CDN 单页 UI（learn-meta.js = 元认知视图）
 ├── pack/                       # build.bat / medkit.spec / check-release-consistency.py(五件套门禁) / smoke-run-isolated.py(隔离冒烟)
 ├── docs/                       # AGENT_HANDOFF.md(交接入口) / 错题归因流水线_EP-01_设计与实现.md / 考研错题分析专项重构方案_2026-09-27.md
-└── tests/                      # 858 项（单元 857+1skip / 浏览器层 60，分进程跑）
+└── tests/                      # 895 项（单元 894+1skip / 浏览器层 60，分进程跑）
 ```
 
 ## 已实现功能（v0.10.5）
@@ -141,7 +141,7 @@ medkit/
 - **复习场景优化（第五轮）**：复习手册阅读体验——字号调节（A−/A＋/默认，记忆偏好）、阅读进度条、目录吸顶、回顶部按钮；复习计划到期卡「查看提示」（懒加载教材原文切片，零 LLM，关键词 top-k）；薄弱点清单行内「讲解/提问/铺卡」直达；首启向导纳入学习中心
 - **导出与回顾（第六轮）**：项目详情「预览 Anki 卡样」（弹窗看前 3 张卡正反面与标签，导出前心里有数）；题库页 Bloom 层级过滤 + 题型/Bloom/关键词过滤状态本地记忆（重开保持）+ 一键重置；押题卷**成绩留存**（最近 10 次，重开显示「上次/最佳 · 用时」）；页签快捷键 title 提示（Ctrl+1~5）
 - **主题单源与审核效率（第七轮）**：新增 `render/pagechrome.py`——题库/押题卷/复习手册三套产物页主题（双主题变量/基础样式/明暗切换脚本）**单一来源**，改一处全生效、防漂移；审核台**批量操作**（多选勾选 → 批量改 Bloom / 批量剔除恢复，标题实时计数）+ 单题「复制」题面全文到剪贴板
-- **质量**：**858 项 pytest**（857 passed + 1 skipped；含冒烟 / 离线管线含断点续跑·取消·案例组 / API 层 TestClient 含 Key 存档闭环 / S1 回归四件套 / S2 重构契约 / S3 apkg·案例结构·素材会话 / v0.6 更新检查 mock / v0.7 学习闭环与讲解·复习·仪表盘 / 迁移与乱码修复 / 押题卷与题库回归 / **S0 存储底座**：db 迁移·回滚·备份·导入幂等、library/review/explain/tutor SQL 模式端到端、并发 100/100 无丢失 / **EP-01 错题归因**：`test_errorpipe` 54 + `test_socratic` 37 + `test_metacog` 统计 + 阶段 0 题样导入器 `test_stage0_export_cases` 14 / **发布五件套一致性** `test_release_artifacts` 14）+ **浏览器层 60 项**（Playwright，独立进程）+ ruff 干净 + eslint `--max-warnings 0` + PyInstaller exe 冒烟
+- **质量**：**895 项 pytest**（894 passed + 1 skipped；含冒烟 / 离线管线含断点续跑·取消·案例组 / API 层 TestClient 含 Key 存档闭环 / S1 回归四件套 / S2 重构契约 / S3 apkg·案例结构·素材会话 / v0.6 更新检查 mock / v0.7 学习闭环与讲解·复习·仪表盘 / 迁移与乱码修复 / 押题卷与题库回归 / **S0 存储底座**：db 迁移·回滚·备份·导入幂等、library/review/explain/tutor SQL 模式端到端、并发 100/100 无丢失 / **EP-01 错题归因**：`test_errorpipe` 54 + `test_socratic` 37 + `test_metacog` 统计 + 阶段 0 题样导入器 `test_stage0_export_cases` 14 + 题样预检器 `test_stage0_cases_check` 37 / **发布五件套一致性** `test_release_artifacts` 14）+ **浏览器层 60 项**（Playwright，独立进程）+ ruff 干净 + eslint `--max-warnings 0` + PyInstaller exe 冒烟
 
 ## 服务商与模型（2026-08 官方信息核查版）
 
