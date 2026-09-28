@@ -77,21 +77,30 @@ def _db_fingerprint() -> dict[str, object]:
 _JUDGE_SYS = """你是医学考研错题分析的严格评审。我会给你一道错题的背景信息，
 和一份 AI 生成的归因分析。你的任务是判断这份归因**对考生是否真的有用**。
 
-评分标准（四项，各 0/1 分）：
+评分标准（六项，各 0/1 分）——**逐项对应 ErrorAnalysis 契约的字段，
+不得增删**（`medkit/core/schema.py:440`；《总纲》§3.2 的三个任务）：
 
-1. **标签正确**：`error_tag` 是否真实反映考生的错误性质？给出你判断的标签。
+1. **标签正确**（`error_tag`）：是否真实反映考生的错误性质？给出你判断的标签。
    注意：考生自报的人工标签仅供参考，**可能本身就不准**——不要盲从它。
-2. **证据具体**：`evidence` 是否指向了考生原话或答案偏离的**具体点**，
-   而不是「基础不牢」这类空话？
-3. **修正可背**：`fix` 是否是一句**可背诵、可执行**的结论（不是又一段解析、不是废话）？
-4. **反事实有效**：`counterfactual` 是否真的「改一个条件就会翻转答案」？
+2. **证据具体**（`evidence`）：是否指向了考生原话或答案偏离的**具体点**，
+   而不是「基础不牢」这类空话？**必须能看出引用了考生的哪一句原话。**
+3. **修正可背**（`fix`）：是否是一句**可背诵、可执行**的结论
+   （不是又一段解析、不是废话）？判据：《总纲》要求 ≤25 字的一句话结论。
+4. **反事实有效**（`counterfactual`）：是否真的「改一个条件就会翻转答案」？
    （如果它只是把原题重问一遍、或改的条件不影响答案，判 0）
+5. **变形考法到位**（`variants`）：是否给出了**两种**常见变形考法，
+   且每个变形**都改变了答案**（而不是同义改写题干）？
+   这是《总纲》§3.2 明确要求的第二个交付物——**考生靠它迁移，不是靠背原题**。
+6. **考点定位准确**（`kp_point` + `review_chapters`）：考点是否指到**真正被考的那个点**
+   （不是笼统的章节名）？`review_chapters` 是否给出了可回看的具体章节？
 
-**认可（accept）= 四项中至少 3 项为 1，且第 1 项必须为 1。**
-（标签都判错的分析没有采纳价值，无论其余写得多好。）
+**认可（accept）= 六项中至少 4 项为 1，且第 1 项必须为 1。**
+（标签都判错的分析没有采纳价值，无论其余写得多好。
+ 阈值从 4/4 的「至少 3 项」按比例平移为 6/6 的「至少 4 项」。）
 
 只输出一个 JSON 对象，不要任何其他文字：
-{"tag_judge": "六类标签之一", "tag_ok": 1, "evidence_ok": 1, "fix_ok": 1, "counterfactual_ok": 1,
+{"tag_judge": "六类标签之一", "tag_ok": 1, "evidence_ok": 1, "fix_ok": 1,
+ "counterfactual_ok": 1, "variants_ok": 1, "kp_ok": 1,
  "accept": true, "reason": "一句话说明扣分点（全部满分则写 无扣分）"}"""
 
 
@@ -136,6 +145,16 @@ where_uncertain: {json.dumps(analysis.get("where_uncertain"), ensure_ascii=False
 # ------------------------------------------------------------------ 废话检测（规则层）
 _BANNED = ("扎实基础", "多做题", "好好复习", "加强记忆", "要提高", "建议多看", "认真审题",
            "注意审题", "基础不牢", "回归教材", "多看几遍")
+
+# 六维的展示名（与 _JUDGE_SYS 的评分标准、ErrorAnalysis 契约字段一一对应）
+_DIM_LABEL = {
+    "tag_ok": "标签正确",
+    "evidence_ok": "证据具体",
+    "fix_ok": "修正可背",
+    "counterfactual_ok": "反事实有效",
+    "variants_ok": "变形考法到位",
+    "kp_ok": "考点定位准确",
+}
 
 
 def _boilerplate_scan(analysis: dict) -> list[str]:
@@ -233,6 +252,16 @@ def main() -> int:
     tag_denom = sum(1 for r in rows if r["human_tag"] and r["ok"])
     boiler = sum(1 for r in rows if r["boilerplate"])
 
+    # 六个维度各自的命中率——**必须逐维报出来**：
+    # 单一「认可率」会掩盖「某一维普遍失分」（如 variants 全空）这类系统性问题。
+    # 维度名与 _JUDGE_SYS 的评分标准一一对应，不得增删。
+    DIMS = ("tag_ok", "evidence_ok", "fix_ok", "counterfactual_ok", "variants_ok", "kp_ok")
+    dim_stat = {}
+    for d in DIMS:
+        got = sum(1 for r in judged if r.get("judge", {}).get(d) == 1)
+        dim_stat[d] = {"hit": got, "denom": len(judged),
+                       "rate": round(got / len(judged) * 100, 1) if judged else 0.0}
+
     summary = {
         "total": total,
         "contract_ok": contract_ok,
@@ -242,6 +271,7 @@ def main() -> int:
         "accept_rate_judged": round(rate_judged, 1),
         "accept_rate_total": round(rate_total, 1),
         "gate_70": rate_total >= 70.0,
+        "dims": dim_stat,
         "human_tag_hit": tag_hit,
         "human_tag_denom": tag_denom,
         "boilerplate_cases": boiler,
@@ -269,6 +299,18 @@ def main() -> int:
         f"- 与人工标签一致：{tag_hit}/{tag_denom}",
         f"- 命中套路话的题数：{boiler}",
         f"- 真实库未被写入：{'✅' if summary['db_untouched'] else '❌ 异常！'}",
+        "",
+        "## 六维分项（对应 ErrorAnalysis 契约字段）",
+        "",
+        "| 维度 | 字段 | 命中 | 命中率 |",
+        "|---|---|---|---|",
+        *[f"| {_DIM_LABEL[d]} | `{d.replace('_ok', '')}` | "
+          f"{dim_stat[d]['hit']}/{dim_stat[d]['denom']} | {dim_stat[d]['rate']}% |"
+          for d in DIMS],
+        "",
+        "> 逐维报数的理由：单一「认可率」会掩盖「某一维普遍失分」。",
+        "> 若有维度命中率显著低于其他维，说明 prompt 在该维缺引导，应定向改 prompt —— ",
+        "> 而不是笼统地「回炉重写」。",
         "",
         "## 逐题明细",
         "",
