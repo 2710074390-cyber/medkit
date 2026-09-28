@@ -49,10 +49,9 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from medkit.agents import error_analysis as agent  # noqa: E402
 from medkit.core import db as dbs  # noqa: E402
 from medkit.core.llm import LLMError  # noqa: E402
-from medkit.agents import error_analysis as agent  # noqa: E402
-from medkit.core import metacog  # noqa: E402
 
 CASES_PATH = ROOT / "pack" / "stage0_cases.json"
 OUT_ROOT = ROOT / ".workbuddy-ai" / "tmp" / "stage0"
@@ -168,17 +167,65 @@ def _boilerplate_scan(analysis: dict) -> list[str]:
     return hits
 
 
+def _preflight(cases: list) -> list:
+    """跑模型**之前**的题样闸门（零成本）。
+
+    为什么必须在这里挡：本脚本对题样**零校验**——实测把「答案 E 越界、
+    考生答案 Z 越界、confidence 非数值、human_tag 是无效标签」的坏题样喂进来，
+    它照样跑完、退出 0，并产出一份看起来正常的报告
+    （2026-09-29 实测）。原因是 `tag_hit` 只做「相等则计数」，
+    无效标签的表现是**不命中**而非报错 → 坏题样静默产出假分数。
+
+    判据复用 `stage0-cases-check.py` 的 `check_case`（**单源**，
+    不在此另写一份，否则两处会漂移）。只挡硬问题；软警告放行但打印，
+    因为真实错题本就可能有空 `my_reasoning` 之类。
+    """
+    import importlib.util as _ilu
+
+    chk_path = ROOT / "pack" / "stage0-cases-check.py"
+    spec = _ilu.spec_from_file_location("_stage0_cases_check", chk_path)
+    chk = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(chk)
+
+    tags = chk._tags()
+    problems = []
+    for i, c in enumerate(cases, 1):
+        cid = c.get("id") or "第%d题" % i
+        hard, soft = chk.check_case(c, tags)
+        for msg in hard:
+            problems.append("[硬] %s: %s" % (cid, msg))
+        for msg in soft:
+            print("    [软] %s: %s" % (cid, msg))
+    return problems
+
+
 # ------------------------------------------------------------------ 主流程
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="只跑前 N 题（冒烟）")
     ap.add_argument("--no-judge", action="store_true", help="跳过 AI 评审")
     ap.add_argument("--cases", default=str(CASES_PATH))
+    ap.add_argument("--skip-preflight", action="store_true",
+                    help="跳过题样预检（不建议：坏题样会静默产出假分数）")
     args = ap.parse_args()
 
     cases = json.loads(pathlib.Path(args.cases).read_text(encoding="utf-8"))
     if args.limit:
         cases = cases[: args.limit]
+
+    # 闸门①：题样预检。必须在 make_client() **之前**——否则一旦充值，
+    # 坏题样会让我们先花掉一轮全量的钱，再得到一份无意义的报告。
+    if not args.skip_preflight:
+        print("[预检] 题样体检（零成本）…")
+        problems = _preflight(cases)
+        if problems:
+            print("\n题样不可用，已中止（**未调用任何模型、未花任何额度**）：")
+            for p in problems:
+                print("  " + p)
+            print("\n先修题样，或单跑 `python pack/stage0-cases-check.py --cases %s`"
+                  % args.cases)
+            return 2
+        print("[预检] 通过。\n")
 
     before = _db_fingerprint()
     print(f"[基线] 真实库 {before['path']}")

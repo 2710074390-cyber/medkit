@@ -199,7 +199,6 @@ def do_run(stamp: str) -> None:
 def _summarize(rows: list[dict], before: dict, after: dict) -> dict:
     total = len(rows)
     contract_ok = sum(1 for r in rows if r["ok"])
-    accepted = [r for r in rows if r["ok"]]
     DIMS = ("tag_ok", "evidence_ok", "fix_ok", "counterfactual_ok", "variants_ok", "kp_ok")
     # 规则层维度统计（不依赖第二个 LLM 调用）：
     # 替身模式下「AI 评审」由 Agent 自己做没有意义（自评自夸），
@@ -336,7 +335,7 @@ def _write_report(base: pathlib.Path, rows: list[dict], s: dict, stamp: str) -> 
 
 def _print_summary(s: dict, base: pathlib.Path) -> None:
     print("\n" + "=" * 62)
-    print(f"【Agent 替身模式 · 上界参考，非闸门判定】")
+    print("【Agent 替身模式 · 上界参考，非闸门判定】")
     print(f"契约通过 {s['contract_ok']}/{s['total']}　|　"
           f"套路话命中 {s['boilerplate_cases']} 题　|　"
           f"真实库未被写入：{'✅' if s['db_untouched'] else '❌'}")
