@@ -87,6 +87,25 @@ def _client(script, max_retries=2):
     return c
 
 
+# ------------------------------------------------------------------ 账本隔离
+#
+# ⚠️ 必须 autouse：本文件的用例会反复走到 `chat()` 的记账路径
+# （`usage.add(...)`），而 `usage` 在**没有显式上下文时落在线程局部默认账本**，
+# 该账本**跨用例、跨测试文件持续存在**。若不隔离：
+#   - 本文件会往主线程默认账本累积 token（实测 {110, 12326}）；
+#   - 主线程默认账本是按文件名排序的公共资源，
+#     `test_s1_backend.py::test_usage_contexts_isolated` 断言它「干净」→ 被本文件污染而失败。
+# 这个 bug 是我自己引入的（本文件是我新加的），且只在**全量跑**时暴露、
+# 单跑本文件或单跑 test_s1_backend 都看不见——典型的「顺序依赖型假绿」。
+# 放在 `usage.context()` 里跑即可让记账落在一次性账本上，用完即弃。
+@pytest.fixture(autouse=True)
+def _isolate_usage_ledger():
+    from medkit.core import usage as usage_mod
+
+    with usage_mod.context():
+        yield
+
+
 # ------------------------------------------------------------------ _truncated 单元
 @pytest.mark.parametrize("finish,expected", [
     ("length", True), ("stop", False), ("tool_calls", False), ("content_filter", False),
