@@ -10,6 +10,24 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Added（运维脚本的破坏性安全守卫）
+
+全仓有两个**直接动用户真实库**的运维脚本，此前**零测试覆盖**：
+- `pack/recover-user-data.py`（往 `~/.medkit/library/medkit.db` 写恢复数据）
+- `pack/rollback-json-track.py`（把 `medkit.db` 移走以回落 JSON 轨）
+
+两者设计本身是对的，但那些安全性质**没有任何东西钉住**。新增
+`tests/test_recover_user_data.py`（11 项）与 `tests/test_rollback_json_track.py`（7 项），
+锁住的性质包括：默认 dry-run（不带 `--yes` 时**目录逐字节未变**）、
+移走用 `rename` 而非删除且保留 `.rollback-<ts>` 可反悔、绝不覆盖已存在的活文件、
+污染判定对"无时间戳/无字段"一律判不可信、快照必须发生在 `live.commit()` 之前
+且快照失败必须中止、同一活文件有多个备份时取最早的（确定性）。
+
+全部做注入反向验证：`recover` 4/4 注入即红；`rollback` 5/5 注入即红。
+其中 `rollback` 的「覆盖保护」反向验证暴露了一个**测试设计问题**：
+脚本有两层覆盖检查（计划期 line 83 + 执行期 line 103），
+只删一层时行为用例仍绿（另一层兜住）——遂补结构性用例把**两层分别**钉住。
+
 ### Fixed（测试守卫 · 门禁假绿 / 依赖声明缺口）
 
 - **`ruff` 此前没有在任何依赖文件里声明**（`requirements-dev.txt` /
