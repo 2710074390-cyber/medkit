@@ -33,6 +33,9 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import subprocess
+
+import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
@@ -92,8 +95,10 @@ def _top_level_sleeps(func: ast.FunctionDef) -> list:
     return sleeps
 
 
-def _scan():
-    """产出 (relpath, funcname, lineno) 列表——所有可疑的顶层 sleep。
+def _scan() -> tuple[list[tuple[str, str, int]], list[str]]:
+    """返回 `(可疑 sleep 列表, 解析失败的文件列表)`。
+
+    可疑 sleep 列表元素 = `(文件名, 测试函数名, 行号)`。
 
     实现要点：**不能**只靠 `node.lineno` + `text.splitlines()` 自己数行。
     `node.lineno` 是「从 1 开始的物理行号」，而 `lineno - 1` 只有当
@@ -102,15 +107,23 @@ def _scan():
     end_col_offset) 精确切片，**不依赖函数的定义位置**，
     所以文件里任何位置的 `def test_`（模块级 / 缩进在别处）都能取到。
 
-    **不许静默跳过**：解析失败的文件会被记进 `_UNPARSED` 并**直接让守卫红**。
+    **不许静默跳过**：解析失败的文件**作为第二个返回值显式交回**，
+    并让 `test_scan_never_silently_skips` 变红。
     这是 2026-09-29 反向验证打偏暴露出来的真弱点——当时我的注入脚本写错缩进
     造出了 `IndentationError`，而 `except SyntaxError: continue` 把整个文件
     悄悄跳过，守卫报绿。**「我读不懂它，所以我认为它没问题」正是门禁假绿的
     典型形态**，必须显式失败而不是 continue。仓库里 pytest 本来就会因语法
     错误失败，这条只是把「静默」变成「响亮的失败」。
+
+    **为什么用返回值而不是模块级全局**：曾经的写法是
+    `_UNPARSED[:] = unparsed` + `return out`，第二个事实靠**副作用**传递。
+    那要求「读 `_UNPARSED` 的那条用例必须刚调过 `_scan()`」——
+    一旦有人新增调用方而忘了这层耦合，就会读到**上一次扫描的**（可能为空）
+    结果 ⇒ **静默假绿**。同一个坑我们刚踩过一次，不再留第二次。
+    返回值让两个事实**必须一起拿到**，编译器层面就拆不开。
     """
-    out = []
-    unparsed = []
+    out: list[tuple[str, str, int]] = []
+    unparsed: list[str] = []
     for p in _iter_test_files():
         rel = p.name
         try:
@@ -128,13 +141,7 @@ def _scan():
             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
                 for ln in _top_level_sleeps(node):
                     out.append((rel, node.name, ln))
-    _UNPARSED[:] = unparsed
-    return out
-
-
-# 上一次 _scan() 里解析失败的测试文件（每次 _scan 覆盖写）。
-# 非空 ⇒ 守卫必须红。调用方：test_scan_never_silently_skips。
-_UNPARSED: list[str] = []
+    return out, unparsed
 
 
 def test_no_sleep_gambling_on_other_threads():
@@ -147,8 +154,9 @@ def test_no_sleep_gambling_on_other_threads():
         assert entered.wait(10), "..."
     等**状态**，不等**时长**。
     """
+    hits, _ = _scan()
     bad = []
-    for rel, func, ln in _scan():
+    for rel, func, ln in hits:
         key = "%s::%s" % (rel, func)
         if key in _ALLOWLIST:
             continue
@@ -162,7 +170,8 @@ def test_no_sleep_gambling_on_other_threads():
 
 def test_allowlist_entries_are_still_needed():
     """豁免表不得堆陈尸：每条豁免对应的 (文件, 函数) 必须仍存在。"""
-    scanned = {"%s::%s" % (r, f) for r, f, _ in _scan()}
+    hits, _ = _scan()
+    scanned = {"%s::%s" % (r, f) for r, f, _ in hits}
     stale = [k for k in _ALLOWLIST if k not in scanned]
     assert not stale, (
         "以下豁免已不再对应任何可疑 sleep（函数改名/删了/已改好）——"
@@ -172,8 +181,12 @@ def test_allowlist_entries_are_still_needed():
 
 def test_raw_teardown_check_on_real_repo():
     """现在仓库里应当**没有**可疑的顶层 sleep（本守卫的目标态）。"""
-    _scan()   # 只是确保扫描不抛错
-    bad = [x for x in _scan() if "%s::%s" % (x[0], x[1]) not in _ALLOWLIST]
+    hits, unparsed = _scan()
+    assert not unparsed, (
+        "扫描不完整，无法断言「仓库里没有可疑 sleep」：\n  "
+        + "\n  ".join(unparsed)
+    )
+    bad = [x for x in hits if "%s::%s" % (x[0], x[1]) not in _ALLOWLIST]
     assert bad == [], "仓库里仍有可疑 sleep：%s" % bad
 
 
@@ -185,24 +198,68 @@ def test_scan_never_silently_skips():
     把整个文件跳过，守卫报绿——**假绿**。
     这条用例把「跳过」变成「响亮的失败」。
     """
-    _scan()                      # 触发刷新
-    assert not _UNPARSED, (
+    _, unparsed = _scan()
+    assert not unparsed, (
         "以下测试文件无法解析，被扫描器跳过了——「读不懂就认为没问题」"
-        "正是门禁假绿：\n  " + "\n  ".join(_UNPARSED)
+        "正是门禁假绿：\n  " + "\n  ".join(unparsed)
     )
 
 
+def _tracked_test_files() -> set[str] | None:
+    """从 **git 索引**取 `tests/test_*.py` 的集合——独立于磁盘 glob。
+
+    为什么需要它：`_iter_test_files()` 和 `TESTS.glob()` **用的是同一个 glob**，
+    所以「两个集合相等」对**文件被移出/改名**是**恒真**的盲区——
+    文件不在了，两边一起不含它，断言照样通过。
+    （2026-09-29 实测：把 `test_r8w_p1_remaining.py` 改名成 `.bak` 后
+    `found == actual` 仍为 True，文件数从 83 掉到 82 却无人报警。）
+    git 索引是**另一条**事实来源，能照出「少了一个文件」。
+
+    返回 None 表示拿不到 git（例如源码包已脱离仓库）——
+    此时调用方应**跳过**该断言而不是假装通过。
+    """
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "tests/test_*.py"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return {pathlib.Path(x).name for x in r.stdout.split()}
+
+
 def test_scan_covers_every_test_file():
-    """扫描面必须等于整个 tests/ 目录（防止 glob 写窄了导致漏扫）。
+    """扫描面必须等于整个 tests/ 目录，且**每个文件都真的被读过**。
 
     历史教训：R3-16 的源码扫描只扫了 `review-desk.js`，漏了 `learn.js`。
-    这里断言「发现的文件数 == 目录里 test_*.py 的实际数量」，
-    并且每个被发现的文件都至少被 `ast.parse` 成功解析过。
+    三条断言，缺一不可：
+      1. `_iter_test_files()` == 磁盘 `TESTS.glob("test_*.py")`
+         —— 防「扫描函数自己写窄了」（两个 glob 都改窄时它会失效，故有第 2 条）；
+      2. 扫描面 == **git 索引**里的 `tests/test_*.py`
+         —— 独立事实来源，能照出**文件消失/改名**；
+      3. 文件数 > 50 —— 防整体塌缩成个位数还"自洽"。
+    配套 `test_scan_never_silently_skips` 负责「解析失败即红」。
     """
     found = {p.name for p in _iter_test_files()}
     actual = {p.name for p in TESTS.glob("test_*.py")}
     assert found == actual, (
-        "扫描面与目录不一致（漏扫 = 门禁开口）：\n"
+        "扫描面与磁盘不一致（漏扫 = 门禁开口）：\n"
         "  只扫到: %s\n  应有:   %s" % (sorted(found), sorted(actual))
     )
     assert len(found) > 50, "测试文件数量异常少（%d）——glob 可能写错了" % len(found)
+
+    tracked = _tracked_test_files()
+    if tracked is None:
+        pytest.skip("拿不到 git 索引（脱离仓库？）——跳过「文件消失」这项独立的判据")
+    missing = tracked - found          # git 里有、扫描面没有 → 被漏扫/删了
+    extra = found - tracked            # 扫描面有、git 里没有 → 新文件未入库
+    assert not missing, (
+        "以下测试文件在 git 索引里但**没有被扫描**（被改名/删除/glob 漏掉）"
+        "——这就是 R3-16 那类漏扫：\n  " + "\n  ".join(sorted(missing))
+    )
+    assert not extra, (
+        "以下测试文件在磁盘上但不在 git 索引里（新增未 `git add`）：\n  "
+        + "\n  ".join(sorted(extra))
+    )
