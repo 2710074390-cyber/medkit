@@ -5,6 +5,7 @@ created, slices: [{sid, title, text}]}。文件名即会话 id（uuid），防�
 """
 
 import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -19,8 +20,25 @@ def _dir() -> Path:
     return d
 
 
+# R7（2026-09-27）：与 routers/_common.py::_safe_pid 同规则的全字符白名单。
+# core 不得 import routers（分层单向：routers → core → db/llm），故此处有意重复；
+# 两份由 tests/test_traversal_defense.py 同时锁住一致性。
+_SAFE_SID_RE = re.compile(r"[\w\u4e00-\u9fff-]+")
+
+
 def _safe_sid(sid: str) -> str:
+    """会话 id = uuid hex（见 save_session）。白名单放宽到同 _safe_pid 的规则，
+    容忍测试/历史数据里的 `_`、`-`、中文，同时**保证语料里不会出现路径分隔符**。
+
+    R7 加固：旧实现只做「. / .. / / / \\」黑名单，**NUL 字节可穿过**（`"a\\x00b"` 通过校验）。
+    取证结论：NUL 在 Windows 上 100% 触发 `ValueError: lstat: embedded null character in path`，
+    **删不掉任何文件**（实测 keepme.json 在攻击前后都存在），所以这是纯理论破口、
+    不是可被利用的漏洞。补上是因为它是**对客户端输入的校验缺项**，
+    且与 `_safe_pid` 的严格度不一致；白名单方案顺带消掉了整类隐患。
+    """
     if sid in {"", ".", ".."} or "/" in sid or "\\" in sid:
+        raise ValueError("非法会话 ID")
+    if not _SAFE_SID_RE.fullmatch(sid):
         raise ValueError("非法会话 ID")
     return sid
 

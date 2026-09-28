@@ -5,10 +5,16 @@
 """
 
 import json
+import re
 import time
 from typing import Any
 
 from . import config as cfg
+
+# R7（2026-09-27）：与 routers/_common.py::_safe_pid 同规则的全字符白名单。
+# core 不得 import routers（分层单向），故此处有意重复；两份由
+# tests/test_traversal_defense.py::test_safe_pid_rules_are_identical_across_layers 锁住一致性。
+_SAFE_PID_RE = re.compile(r"[\w\u4e00-\u9fff-]+")
 
 BUILTINS: list[dict[str, Any]] = [
     {
@@ -93,8 +99,17 @@ def save_preset(name: str, desc: str, payload: dict[str, Any]) -> dict[str, Any]
 
 
 def delete_preset(pid: str) -> bool:
-    """返回是否删除成功；内置预设与无效 id 返回 False。"""
+    """返回是否删除成功；内置预设与无效 id 返回 False。
+
+    R7（2026-09-27）：`_safe_pid` 是**调用方义务**（routers/presets.py:34 负责消毒），
+    本函数此前自身不消毒。补上白名单不是防穿越用的——`BUILTINS` 名单恰好含 `".."`/`"."`，
+    历史上测试全靠它兜底（见 tests/test_traversal_defense.py 头注释）——而是防
+    「调用方漏了消毒」时把 pid 拼成越界路径。规则照抄 `_safe_pid`。
+    """
     if any(b["id"] == pid for b in BUILTINS):
+        return False
+    # 防御性：只允许单段安全字符（与 routers/_common._safe_pid 同规则）
+    if not _SAFE_PID_RE.fullmatch(pid or ""):
         return False
     f = cfg.PRESETS_DIR / f"{pid}.json"
     if f.exists():
