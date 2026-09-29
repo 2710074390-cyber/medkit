@@ -38,10 +38,50 @@ def test_save_session_is_atomic(tmp_path, monkeypatch):
 
 
 def test_save_session_source_uses_atomic_writer():
-    """源码级守卫：会话写盘不得回退成裸 write_text。"""
+    """源码级守卫：会话写盘不得回退成裸 write_text。
+
+    ## 旧判据是假绿（2026-09-29 R20 修）
+
+    旧版：
+
+        assert "write_json_atomic" in src
+        assert ").write_text(" not in src.replace("write_json_atomic", "")
+
+    两个毛病：
+    ① `"write_json_atomic" in src` 是**纯文本子串** —— 真身 `sessions.py:63`
+       的**注释**里就有这个词（「统一走 fsutil.write_json_atomic」），
+       所以把真调用（`:65`）整行删掉、注释留着，断言**照样通过**（已实测）。
+    ② 负向那句用 `src.replace("write_json_atomic", "")` 把名字**全局抹掉**再找
+       `.write_text(` —— 既误伤了正常代码，又没检查调用形态。
+
+    现改为 AST：`save_session` 函数体里必须有**真实的** `write_json_atomic(...)`
+    调用（`ast.Call`），且**整个模块**不得有 `.write_text(...)` 调用。
+    这样注释/docstring 里的词不算数。
+    """
+    import ast
+
     src = (ROOT / "medkit" / "core" / "sessions.py").read_text(encoding="utf-8")
-    assert "write_json_atomic" in src, "会话应走原子写"
-    assert ").write_text(" not in src.replace("write_json_atomic", ""), "仍有裸 write_text 落盘"
+    tree = ast.parse(src)
+
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "save_session"), None)
+    assert fn is not None, "sessions.py 里没有 save_session 函数"
+    called = [
+        n.func.attr if isinstance(n.func, ast.Attribute) else
+        (n.func.id if isinstance(n.func, ast.Name) else None)
+        for n in ast.walk(fn) if isinstance(n, ast.Call)
+    ]
+    assert "write_json_atomic" in called, (
+        "save_session 里没有真实的 write_json_atomic(...) 调用"
+        "（注释里提过不算——旧判据就是被注释骗过的）")
+
+    # 全模块不得再出现 .write_text(...) 调用
+    bad = [n for n in ast.walk(tree)
+           if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+           and n.func.attr == "write_text"]
+    assert not bad, (
+        f"sessions.py 里仍有裸 write_text 落盘（第 {[n.lineno for n in bad]} 行）："
+        "崩溃/断电会留下半截 JSON")
 
 
 # ---------------------------------------------------------------- S2-28

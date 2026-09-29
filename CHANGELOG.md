@@ -10,6 +10,56 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 「注释里提过就算数」+ 被 `replace` 打歪的负向判据 R20）
+
+`test_r8w_p2_data.py::test_save_session_source_uses_atomic_writer` 旧版：
+
+```python
+assert "write_json_atomic" in src, "会话应走原子写"
+assert ").write_text(" not in src.replace("write_json_atomic", ""), "仍有裸 write_text 落盘"
+```
+
+两个毛病：
+
+**① 正向是纯文本子串 ⇒ 注释救场。** 真身 `medkit/core/sessions.py:63`
+的**注释**里就写着「统一走 fsutil.write_json_atomic」，
+所以把真调用（`:65`）**整行删掉、注释留着**，断言照样通过。实测：
+
+| `sessions.py` 状态 | 旧判据 |
+|---|---|
+| 真身（有真调用） | 绿 |
+| **删真调用、只留注释** | **绿（假绿）** |
+| 退回裸 `write_text` | 红（但靠的是另一句，非本条） |
+
+**② 负向用 `src.replace("write_json_atomic", "")` 全局抹名** —— 既不检查调用形态，
+又误伤正常代码。
+
+⇒ 改为 AST：`save_session` 函数体里必须有**真实的** `ast.Call` 到
+`write_json_atomic`（注释/docstring 里的词不算数），且**整个模块**不得有
+`.write_text(...)` 调用。
+
+真身注入（`.workbuddy-ai/tmp/inject_r20.py`）：
+
+| 注入 | 结果 |
+|---|---|
+| `sessions.py`：删真调用·只留注释 | **红** ✓（旧判据此处假绿） |
+| `sessions.py`：退回裸 `write_text` | **红** ✓ |
+| `sessions.py`：等价改写（拆多行 + 加注释） | **绿** ✓ |
+| `library.py`：`if _sql_ready(path):` → `if False:` | **红（rc=1）** ✓ |
+
+`medkit/core/sessions.py`、`medkit/core/library.py` 换行归一后逐字节还原一致。
+
+**③ 顺带加固 `test_v10_track_backfill.py::test_wiring_guard`**（同 R15/R20 类）：
+`assert "_sql_ready(" in src` 是纯文本子串，注释里写一句「本该走 `_sql_ready`」
+即可骗过。改为 AST 查**真实调用**（`ast.Call(Name('_sql_ready'))`）。
+
+> **可迁移判据**：① 判源码「某函数被调用了」**一律用 AST 查 `ast.Call`**，
+> 不要用「函数名出现在文本里」——注释、docstring、甚至被注释掉的代码都会骗过它；
+> ② **负向判据里出现 `src.replace(...)` 先把目标抹掉再查**，几乎一定是设计歪了；
+> ③ **注入的退出码要区分 `rc==1`（测试红）与 `rc!=0`（含 4=收集失败）**——
+> 把 `if _sql_ready(path):` 改成**注释**会孤立函数体、`IndentationError`、
+> pytest `rc=4`，那种「红」跟守卫一点关系都没有（本轮踩过）。
+
 ### Fixed（门禁假绿 · 魔数锁定 R19 + 藏在它下面的恒空断言）
 
 两处「用魔数锁定清单」，其中第二处牵出一个**更深的自证式假绿**。

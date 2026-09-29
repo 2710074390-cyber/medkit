@@ -123,8 +123,14 @@ def test_wiring_guard():
     import inspect
 
     for fn in (lib._load, lib._save, lib._store, lib.count_mistakes):
-        src = inspect.getsource(fn)
-        assert "_sql_ready(" in src, f"{fn.__name__} 未走 _sql_ready（切轨会漏补导）"
+        # 2026-09-29 R20：改用 AST 查真实调用 —— 旧版 `"_sql_ready(" in src` 是
+        # 纯文本子串，注释里写一句「这里本来该走 _sql_ready」就能骗过它。
+        fn_tree = ast.parse("\n".join(inspect.getsource(fn).splitlines()))
+        hit = any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "_sql_ready"
+            for n in ast.walk(fn_tree))
+        assert hit, f"{fn.__name__} 未**调用** _sql_ready（注释里提到不算，切轨会漏补导）"
 
     src = inspect.getsource(lib._backfill_json_once)
     tree = ast.parse("\n".join(src.splitlines()))
