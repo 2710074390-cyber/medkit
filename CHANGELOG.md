@@ -10,6 +10,44 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假红 · 前端源码子串断言绑书写格式 R24）
+
+新角度：**同一文件内的判据一致性**。`test_r8w_p2_frontend.py` 的
+`test_base_name_strips_path_and_control` 早在 R12-2 就改成了「跑真身 node」的正确
+范式（并留下「自证式假绿」的说明），但**同文件另三条**仍是源码子串断言 ——
+R3-16 教训的同型复发（「一片改了、旁边的同类没跟着改」）。
+
+真身**双向注入**（`.workbuddy-ai/tmp/inject_r24.py`）实测三处**全部假红**：
+
+| 靶点 | 等价改写注入 | 旧判据 | 新判据 |
+|---|---|---|---|
+| `test_learnchip_body_is_escaped` | `${esc(txt)}` → `${esc( txt )}` | **红**（假红） | 绿 ✓ |
+| `test_dashboard_target_is_escaped` | `esc(p.target)` → `esc( p.target )` | **红**（假红） | 绿 ✓ |
+| `test_anki_download_name_is_basenamed` | `function _baseName(` → 多空格 | **红**（假红） | 绿 ✓ |
+
+三处「削真行为 ⇒ 须红」仍旧全部正确（去转义 / 去清洗 ⇒ `rc=1`）。
+**假红不是小问题**：它逼人删守卫（SOUL 纪律），比没有守卫更糟。
+
+修法（按成本分档）：
+- **① `learnChip` 行为化**：node 里加载真身 `learnChip`，喂
+  `<img src=x onerror=alert(1)>`，断言输出无未转义 `<`。
+  连「拆中间变量 `const safeTxt = esc(txt)`」这种激进等价改写**也仍绿**（已实测）。
+- **③ `_baseName` 结构 + 行为**：剥注释后正则匹配「`a.download` 赋值经过
+  `_baseName(...)` 调用」（容忍空白）+ 反面禁「直接用 `decodeURIComponent`」+
+  跑真身 node 验剥路径。
+- **② 内联模板用容错结构判据**：该处是真身内联模板字面量（`app.js:509`），
+  行为化需构造整个 `recent.map(...)` 闭包，成本过高 ⇒ 剥注释后
+  `re.search(r"\besc\s*\(\s*p\.target\s*\)")`（容忍任意空白）+ 反面禁 `${p.target}`。
+
+**连带修的辅助函数**（同一病根）：`_base_name_body` 旧版 `src.index("function _baseName(")`
+精确匹配 —— 签名加空格即 `IndexError` ⇒ 假红。改正则 `function\s+_baseName\s*\([^)]*\)\s*\{`。
+`_run_learn_chip` 里 JS 侧同样用 `search(/function\s+learnChip\s*\([^)]*\)\s*\{/)` 对齐。
+
+> **可迁移判据**：源码子串断言（`"某调用表达式" in src`）**一律是绑书写格式的**。
+> 分档替换：**能跑真身就跑真身**（行为断言，容忍一切等价改写）；
+> **不能跑**（内联模板/大树依赖）就退到「剥注释 + 容忍空白的调用形态正则」。
+> 判据的验收标准只有一条：**等价改写 ⇒ 绿，削真行为 ⇒ 红**，两头都要量。
+
 ### Fixed（门禁假绿 · 「零断言用例」R23）
 
 本轮换角度扫「**用例根本没有实质断言**」这一形态（前几轮查的都是「断言写错了」，

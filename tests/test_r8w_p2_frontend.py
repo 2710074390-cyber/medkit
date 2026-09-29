@@ -11,6 +11,7 @@
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -36,8 +37,14 @@ def _js(name: str) -> str:
 
 
 def _base_name_body(src: str) -> str:
-    """从 learn-review.js 源码里切出 `_baseName` 函数体。"""
-    body = src[src.index("function _baseName("):]
+    """从 learn-review.js 源码里切出 `_baseName` 函数体。
+
+    R24：用正则容忍 `function  _baseName (` 这类等价书写（旧版 `src.index(
+    "function _baseName(")` 精确匹配 ⇒ 仅多一个空格就 IndexError ⇒ 假红）。
+    """
+    m = re.search(r"function\s+_baseName\s*\([^)]*\)\s*\{", src)
+    assert m, "learn-review.js 里找不到 _baseName 函数定义"
+    body = src[m.start():]                 # 从 `function` 起（含签名），供 node 整体执行
     return body[:body.index("\n}") + 2]
 
 
@@ -70,26 +77,109 @@ def _run_base_name(names: list[str]) -> dict[str, str]:
 
 # ---------------------------------------------------------------- S3-1 / S3-2 / S3-3
 
+_XSS_PAYLOAD = "<img src=x onerror=alert(1)>"
+
+
+def _run_learn_chip(state: str) -> str:
+    """在 node 里跑**真身** `learn.js` 的 `learnChip(state)`，返回渲染结果。
+
+    R24（2026-09-29）：把源码子串断言升级为「跑真身 JS」。
+    `esc` 按 `app.js:7` 的同一实现注入 —— 这正是要**验证真身用了它**。
+    """
+    if shutil.which("node") is None:
+        pytest.fail("需要 node 执行真身 learnChip（不允许静默跳过）")
+    code = (
+        "const fs=require('fs');"
+        "const src=fs.readFileSync(process.argv[1],'utf8');"
+        "const decl=(src.match(/const LEARN_STATE = \\{[^}]*\\};/)||[])[0];"
+        "if(!decl) throw new Error('LEARN_STATE not found');"
+        "const a=src.search(/function\\s+learnChip\\s*\\([^)]*\\)\\s*\\{/);"
+        "if(a<0) throw new Error('learnChip body not found');"
+        "const b=src.indexOf('\\n}', a);"
+        "if(b<0) throw new Error('learnChip body end not found');"
+        "const body=src.slice(a,b)+'\\n}';"
+        "const esc=s=>String(s??'').replace(/[&<>\"']/g,"
+        "c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));"
+        "const fn=new Function('esc', decl+body+'; return learnChip;')(esc);"
+        "process.stdout.write(String(fn(JSON.parse(process.argv[2]))));"
+    )
+    r = subprocess.run(["node", "-e", code, str(WEB / "learn.js"), json.dumps(state)],
+                       capture_output=True, text=True, timeout=30,
+                       encoding="utf-8", errors="replace")
+    assert r.returncode == 0, "node 执行 learnChip 失败：%s" % r.stderr
+    return r.stdout
+
+
+def _strip_js_comments(src: str) -> str:
+    """剥掉 JS 注释（块 + 行），避免「注释里写了目标串」造成的假绿/假红。"""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return re.sub(r"(?<!:)//[^\n]*", "", src)
+
+
 def test_learnchip_body_is_escaped():
-    """S3-1：标签体必须转义（未知 state 时 txt = 入参）。"""
-    src = _js("learn.js")
-    assert '${esc(txt)}' in src, "learnChip 标签体未转义"
-    assert "${txt}" not in src
+    """S3-1：标签体必须转义（未知 state 时 txt = 入参）。
+
+    ## 为什么改成「跑真身」（2026-09-29 R24）
+
+    旧版是源码子串断言：
+
+        assert '${esc(txt)}' in src      # 绑书写格式
+        assert "${txt}" not in src
+
+    **双向注入实测**：`esc( txt )`（仅多两个空格，语义不变）就让断言失败 ——
+    判据绑的是「当时的书写格式」而非「转义这一行为」。拆行、中间变量、
+    `esc(txt) !== '' ? …` 等等价写法都会误红，而**假红会逼人删守卫**。
+
+    现在直接跑真身 `learnChip("<img src=x onerror=alert(1)>")`：
+    渲染结果里不得出现未转义的 `<`。已用注入验证「去掉 esc ⇒ 红」。
+    """
+    out = _run_learn_chip(_XSS_PAYLOAD)
+    assert "<img" not in out, f"learnChip 未转义标签体（XSS 面）：{out!r}"
+    assert "&lt;img" in out, f"learnChip 未转义标签体（XSS 面）：{out!r}"
 
 
 def test_dashboard_target_is_escaped():
-    """S3-2：仪表盘 p.target 必须转义。"""
-    src = _js("app.js")
-    assert "esc(p.target)" in src
-    assert '+ p.target +' not in src, "仍存在未转义的 p.target 插值"
+    """S3-2：仪表盘 p.target 必须转义。
+
+    ## 为什么改成「剥注释后的结构判据」（2026-09-29 R24）
+
+    旧版 `"esc(p.target)" in src` 双向注入实测：`esc( p.target )`（多空格）
+    即假红。但这段是真身**内联模板字面量**（`app.js:509`），行为化需要构造
+    整个 `recent.map(...)` 闭包 —— 成本过高。⇒ 用**容错的调用形态判据**：
+    剥掉注释后，正则匹配 `esc` **调用**且实参是 `p.target`（容忍任意空白）。
+    """
+    code = _strip_js_comments(_js("app.js"))
+    # 正面：必须存在 esc(p.target) 调用（容忍空白/换行）
+    assert re.search(r"\besc\s*\(\s*p\.target\s*\)", code), \
+        "仪表盘 p.target 未过 esc（转义缺失）"
+    # 反面：不得出现**未转义**的 ${p.target} 插值
+    assert not re.search(r"\$\{\s*p\.target\s*\}", code), \
+        "仍存在未转义的 ${p.target} 插值"
 
 
 def test_anki_download_name_is_basenamed():
-    """S3-3：content-disposition 文件名必须过 _baseName。"""
-    src = _js("learn-review.js")
-    assert "function _baseName(" in src, "缺少文件名清洗助手"
-    assert "_baseName(decodeURIComponent(m[1]))" in src, "文件名未清洗"
-    assert "a.download = m ? decodeURIComponent(m[1])" not in src
+    """S3-3：content-disposition 文件名必须过 _baseName。
+
+    ## 为什么改成「跑真身 + 结构判据」（2026-09-29 R24）
+
+    旧版三条子串断言（`"function _baseName(" in src` 等）双向注入实测全假红：
+    函数签名加空格 `function  _baseName( ` 即误红。
+    ⇒ 拆成：**结构**（剥注释后判「下载赋值真的用了 `_baseName(...)` 调用」）
+    + **行为**（跑真身验证清洗真的生效，与 `test_base_name_strips_path_and_control` 同源）。
+    """
+    # ① 结构：剥注释后，`a.download` 赋值必须经过 `_baseName(...)` 调用
+    code = _strip_js_comments(_js("learn-review.js"))
+    m = re.search(r"a\.download\s*=\s*([^;]+);", code)
+    assert m, "未找到 a.download 赋值点"
+    assert "_baseName" in m.group(1), \
+        f"下载文件名未过 _baseName 清洗：{m.group(1)!r}"
+    # ② 反面：不得有「直接用 decodeURIComponent 结果当文件名」的写法
+    assert not re.search(r"a\.download\s*=\s*m\s*\?\s*decodeURIComponent", code), \
+        "下载文件名仍有未清洗分支"
+    # ③ 行为：真身 _baseName 必须真的剥路径（跑 node）
+    got = _run_base_name(["../../etc/x.apkg", "a\\b\\c.apkg"])
+    assert got["../../etc/x.apkg"] == "x.apkg", got
+    assert got["a\\b\\c.apkg"] == "c.apkg", got
 
 
 def test_base_name_strips_path_and_control():
