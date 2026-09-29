@@ -101,19 +101,81 @@ def test_repo_is_ruff_clean():
     )
 
 
+def _ruff_exclude_patterns() -> list[str]:
+    """从 `pyproject.toml` 解析出 `tool.ruff.exclude`（**按 TOML 语义**，不按文本行）。
+
+    用 `tomllib` 而不是字符串切分：旧版 `cfg.split("[tool.ruff.lint", 1)[0]`
+    隐式假设 `[tool.ruff]` 段**永远排在** `[tool.ruff.lint]` 之前——
+    只是文本位置，不是语义。把两段顺序调换（TOML 完全合法）后，
+    切出来的 head 里**一个 exclude 行都扫不到**，循环体空转，
+    守卫静默变绿（实测：`exclude` 里塞了 `pack` 仍判绿）。
+    `tomllib` 按 key 取，与段序、缩进、空格写法全都无关。
+    """
+    import tomllib
+
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    excl = cfg.get("tool", {}).get("ruff", {}).get("exclude", [])
+    # TOML 允许写成单字符串而非数组
+    if isinstance(excl, str):
+        return [excl]
+    return [str(p) for p in excl]
+
+
 def test_pack_dir_is_not_excluded_from_ruff():
     """`pack/` 不得被排除在 ruff 之外。
 
     否则「把目录加进 exclude」就能让 lint 假绿——那是关守卫，不是修代码。
     `pack/` 放的是会被执行的正式脚本（阶段 0 流水线），必须受管。
+
+    ## 判据改走 TOML 语义（2026-09-29 R17 改）
+
+    旧版按文本切段（`cfg.split("[tool.ruff.lint", 1)[0]`），依赖
+    `[tool.ruff]` 排在 `[tool.ruff.lint]` 之前这一**书写顺序**——
+    重排章节后循环空转、守卫静默变绿（真身注入实测）。
+    现改用 `tomllib` 按 key 取值，与段序/缩进/空格无关。
     """
-    cfg = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    head = cfg.split("[tool.ruff.lint", 1)[0]
-    for line in head.splitlines():
-        if line.strip().startswith("exclude"):
-            for bad in ("pack", ".", "tests"):
-                assert '"%s"' % bad not in line, \
-                    "ruff exclude 里出现了 %r，会让 lint 假绿：%s" % (bad, line)
+    patterns = _ruff_exclude_patterns()
+    # 判据是**双向**的：既要有「被排除的目录」这一事实来源在场（否则可能是
+    # 解析失败静默返回空表），又要断言受管目录不在其中。
+    banned = ("pack", "tests", "medkit")
+    hit = [p for p in patterns
+           if p.strip("./\\ ").rstrip("/") in banned]
+    assert not hit, (
+        f"ruff exclude 里出现了受管目录 {hit}（完整 exclude={patterns}）——"
+        "把目录排除出 lint 等于关掉守卫，新增于 `--max-warnings 0` 的门禁形同虚设")
+
+
+def test_pack_dir_exclude_guard_is_not_vacuous():
+    """元守卫：证明「按 TOML 语义取 exclude」抓得住各种写法，且不靠段序。
+
+    自带内存样本，不读真身（真身是注入靶子）。
+    """
+    import tomllib
+
+    def _excl(text: str) -> list[str]:
+        e = tomllib.loads(text).get("tool", {}).get("ruff", {}).get("exclude", [])
+        return [e] if isinstance(e, str) else [str(p) for p in e]
+
+    # ① 正常段序
+    a = '[tool.ruff]\nexclude = ["build", "pack"]\n\n[tool.ruff.lint]\nselect = ["E"]\n'
+    assert "pack" in _excl(a), "[元守卫] 正常段序下未取到 pack"
+
+    # ② 段序调换（旧文本切分会漏）——tomllib 必须照样取到
+    b = '[tool.ruff.lint]\nselect = ["E"]\n\n[tool.ruff]\nexclude = ["pack"]\n'
+    assert "pack" in _excl(b), "[元守卫] 段序调换后漏取 pack → 仍会假绿"
+
+    # ③ 无空格写法
+    c = '[tool.ruff]\nexclude=["pack"]\n'
+    assert "pack" in _excl(c), "[元守卫] exclude= 无空格写法漏取"
+
+    # ④ 单字符串写法（TOML 合法）
+    d = '[tool.ruff]\nexclude = "pack"\n'
+    assert "pack" in _excl(d), "[元守卫] 单字符串 exclude 漏取"
+
+    # ⑤ 判据本体：干净配置不含受管目录
+    clean = _excl('[tool.ruff]\nexclude = ["build", "dist"]\n')
+    banned = ("pack", "tests", "medkit")
+    assert not [p for p in clean if p.strip("./\\ ").rstrip("/") in banned]
 
 
 def test_pack_scripts_are_actually_scanned():
@@ -190,6 +252,21 @@ def _verify_cmd_text() -> str:
     p = ROOT / "verify.cmd"
     assert p.exists(), "verify.cmd 不存在——总闸没了"
     return p.read_text(encoding="utf-8", errors="replace")
+
+
+def test_verify_steps_constant_is_not_empty():
+    """前提自检：`_VERIFY_STEPS` 必须非空且覆盖关键工具。
+
+    下面两条用例（`has_all_steps` / `each_step_fails_hard`）都是
+    `for … in _VERIFY_STEPS` 的形态——**常量被掏空时它们会空转成绿**
+    （2026-09-29 R17 排查：`if`/`for` 包住的断言，容器为空即静默通过）。
+    本用例把「计划表非空」这个前提钉住，让上面两条的绿有意义。
+    """
+    assert _VERIFY_STEPS, "_VERIFY_STEPS 为空——上面两条 for 循环守卫会空转成绿"
+    names = {name for name, _ in _VERIFY_STEPS}
+    must_have = {"ruff check", "mypy 类型检查", "pytest 单测"}
+    assert must_have <= names, (
+        f"_VERIFY_STEPS 少了关键步骤 {must_have - names}——总闸覆盖面缩水")
 
 
 def test_verify_cmd_has_all_steps():

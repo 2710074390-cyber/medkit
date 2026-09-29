@@ -10,6 +10,55 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · TOML 段序依赖 + for 循环空转 R17）
+
+两处判据都属「**判据的成立依赖于一个没被断言的隐含前提**」。
+
+**① `test_lint_gate::test_pack_dir_is_not_excluded_from_ruff` —— 依赖 TOML 段序**
+
+旧判据按**文本**切段：
+
+```python
+head = cfg.split("[tool.ruff.lint", 1)[0]
+for line in head.splitlines():
+    if line.strip().startswith("exclude"):
+        for bad in ("pack", ".", "tests"):
+            assert '"%s"' % bad not in line
+```
+
+它隐式假设 `[tool.ruff]` 段**永远排在** `[tool.ruff.lint]` 之前——这是**书写位置**，
+不是语义。TOML 里段序随意，把两段调换后 `head` 里一个 exclude 行都扫不到，
+循环空转，守卫静默变绿。真身注入实测：
+
+| 注入 `pyproject.toml` | 旧判据 | 新判据 |
+|---|---|---|
+| `exclude` 里加 `pack` | 红 ✓ | 红 ✓ |
+| **段序调换**（`[tool.ruff]` 移到 `[tool.ruff.lint]` 之后）+ `pack` | **绿（假绿）** | 红 ✓ |
+| 无空格写法 `exclude=["pack"]` | 红 ✓ | 红 ✓ |
+
+现判据改用 `tomllib` 按 key 取值（`tool.ruff.exclude`），与段序、缩进、空格、
+单字符串写法全无关；另补元守卫 `test_pack_dir_exclude_guard_is_not_vacuous`
+（5 个变体：正常段序 / 段序调换 / 无空格 / 单字符串 / 干净配置）。
+
+**② `test_lint_gate` 的两条 `for` 循环守卫 —— 容器掏空即空转**
+
+`test_verify_cmd_has_all_steps` 与 `test_verify_cmd_each_step_fails_hard`
+都是 `for … in _VERIFY_STEPS` 形态，**常量被掏空时断言一次都不执行、用例全绿**。
+实测（把 `_VERIFY_STEPS = (…)` 改成 `()`）：
+
+| 用例 | 掏空 `_VERIFY_STEPS` 后 |
+|---|---|
+| `test_verify_cmd_has_all_steps` | **rc=0（空转成绿）** |
+| `test_verify_cmd_each_step_fails_hard` | **rc=0（空转成绿）** |
+| 新增 `test_verify_steps_constant_is_not_empty` | **rc=1（抓住）** |
+
+新增前提自检：`_VERIFY_STEPS` 非空 **且** 含 `ruff check` / `mypy 类型检查` /
+`pytest 单测` 三个关键步骤。
+
+> **可迁移判据**：`for … in <常量>` / `if <条件>:` 包住的断言，
+> 必须先用一条独立断言把**容器非空 / 条件会成立**这个前提钉住——
+> 否则它的「绿」可能只是没跑。
+
 ### Fixed（门禁假绿 · 「排除式判据只禁坏写法、不证明好路径」R16）
 
 `test_r8w_p2_hardening::test_all_prompts_with_placeholders_use_render_prompt`
