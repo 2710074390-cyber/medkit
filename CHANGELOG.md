@@ -10,6 +10,55 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 「排除式判据只禁坏写法、不证明好路径」R16）
+
+`test_r8w_p2_hardening::test_all_prompts_with_placeholders_use_render_prompt`
+（S3-9 全目录守卫）的判据是**单向否定式**：
+
+```python
+if f'load_prompt("{md.name}")' in src_all:
+    bad.append(f"{md.name} 有占位符，却存在裸 load_prompt 调用")
+```
+
+它只禁「有占位符的提示词被**裸 load**」这一种坏写法，**从不**正面要求
+「这个提示词**真的**被 `render_prompt` 渲染」。后果（真身注入实测）：
+
+> 把 `medkit/agents/medgen.py` 的 `render_prompt("medgen.md", **parts)` 整行删掉
+> ——9 个占位符的出题提示词**从此不加载**，生成质量必然崩塌——
+> 守卫**仍然全绿**。
+
+这正是 R12「排除式判据」的老毛病：**只禁一种坏写法，不证明好路径存在**。
+（`syllabus_extract.md` 因为 R15b 另加了专用守卫而侥幸被兜住，
+但 `medgen.md` / `medexplain.md` 等**没有任何专用守卫** ⇒ 洞是真的。）
+
+| 删掉 `medgen.py` 的 render 调用后 | 结果 |
+|---|---|
+| 旧判据（`f'load_prompt("medgen.md")' in src_all`） | **绿（假绿）** |
+| 新判据（AST：该文件名必须出现在某个 `render_prompt` 调用点） | **抓到** |
+
+**现判据两条腿**（一次 AST 全扫，`_prompt_callsites()` 取 `bare` / `rendered` 两个集合）：
+
+1. **正面**：每个有占位符的提示词，必须在某处被 `render_prompt("<name>", …)` 调用；
+2. **反面**：该提示词不得出现在裸 `load_prompt("<name>")` 里（AST 判实参，非子串）。
+
+**反向验证**（真身注入，逐条单跑）：
+
+| 注入 | 期望 | 实测 |
+|---|---|---|
+| 删 `medgen.py` 的 render 调用 | 红 | ✓ rc=1 |
+| 删 `medexplain.py` 的 render 调用 | 红 | ✓ rc=1 |
+| `medgen` 退回裸 `load_prompt` | 红 | ✓ rc=1 |
+| `medgen` 换行写实参 | 绿 | ✓ rc=0 |
+| `medgen` 单引号 | 绿 | ✓ rc=0 |
+| `syllabus` 实参改同一行 | 绿 | ✓ rc=0 |
+
+还原后三个源文件 sha256 与 HEAD blob **逐字节一致**。另补元守卫
+`test_prompt_load_guard_is_not_vacuous`（自带内存样本，不读真身；含「删调用→不算已渲染」
+与「换行/单引号→仍算已渲染」双向）。
+
+> **判据（可迁移）**：**排除式守卫（`X not in src`）必须配一条正面存在性断言**
+> （「好路径真的在」），否则它只证明「没有一种坏写法」，不证明「功能还在」。
+
 ### Fixed（门禁假绿 · 「docstring 里的词也算接线」R15）
 
 `test_v10_track_backfill::test_wiring_guard` 末条判据：

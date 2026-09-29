@@ -33,24 +33,104 @@ def test_syllabus_extract_placeholder_is_rendered():
     assert "生理学" in out and "第一章 绪论" in out
 
 
+def _prompt_callsites():
+    """扫全 `medkit/`，返回 (裸 load_prompt 的文件名集合, render_prompt 的文件名集合)。
+
+    判据走 AST：只看**调用的第一个实参是不是常量文件名**，与书写格式无关。
+    """
+    bare: set[str] = set()
+    rendered: set[str] = set()
+    for p in (ROOT / "medkit").rglob("*.py"):
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)):
+                continue
+            if n.func.id not in ("load_prompt", "render_prompt"):
+                continue
+            if not (n.args and isinstance(n.args[0], ast.Constant)
+                    and isinstance(n.args[0].value, str)):
+                continue
+            name = n.args[0].value
+            (bare if n.func.id == "load_prompt" else rendered).add(name)
+    return bare, rendered
+
+
 def test_all_prompts_with_placeholders_use_render_prompt():
     """S3-9 全目录守卫（R3-16 教训：不要只盯一个文件）。
 
-    规则：提示词里出现 `{var}` 占位符 → 调用点必须用 `render_prompt`；
+    规则：提示词里出现 `{var}` 占位符 → 调用点**必须**用 `render_prompt`；
     只有**没有**占位符的提示词才允许 `load_prompt`。
+
+    ## 判据是**双向**的（2026-09-29 R16 改）
+
+    旧版只做**否定式**检查：`f'load_prompt("{name}")' in src_all` ——
+    即「有占位符的提示词**不许**被裸 load」。它**从不**正面要求
+    「这个提示词**真的**被 render」。后果（真身注入实测）：
+    把 `medgen.py` 的 `render_prompt("medgen.md", **parts)` 整行删掉
+    （= 9 个占位符的生成提示词**从不加载**），守卫**仍然全绿** —— 假绿。
+    这正是 R12「排除式判据」的老毛病：只禁一种坏写法，不证明好路径存在。
+
+    现判据两条腿：
+      ① **正面**：每个有占位符的提示词，必须在某处被 `render_prompt("<name>", …)` 调用；
+      ② **反面**：该提示词不得出现在裸 `load_prompt("<name>")` 里（AST，非子串）。
     """
-    py_files = list((ROOT / "medkit").rglob("*.py"))
-    src_all = "\n".join(p.read_text(encoding="utf-8") for p in py_files)
-    bad: list[str] = []
+    bare, rendered = _prompt_callsites()
+    problems: list[str] = []
     for md in sorted(PROMPTS.glob("*.md")):
         text = md.read_text(encoding="utf-8")
         # 只看「像变量」的占位符（排除 JSON 示例里的普通花括号）
         vars_ = {m for m in re.findall(r"\{([a-z][a-z0-9_]{2,})\}", text)}
         if not vars_:
             continue
-        if f'load_prompt("{md.name}")' in src_all:
-            bad.append(f"{md.name} 有占位符 {sorted(vars_)}，却存在裸 load_prompt 调用")
-    assert not bad, "提示词占位符与加载方式不一致：\n" + "\n".join(bad)
+        if md.name not in rendered:
+            problems.append(
+                f"{md.name} 有占位符 {sorted(vars_)}，但**没有任何 render_prompt 调用点**"
+                "——提示词从不加载，占位符永不替换")
+        if md.name in bare:
+            problems.append(f"{md.name} 有占位符 {sorted(vars_)}，却存在裸 load_prompt 调用")
+    assert not problems, "提示词占位符与加载方式不一致：\n" + "\n".join(problems)
+
+
+def test_prompt_load_guard_is_not_vacuous():
+    """元守卫：证明「正面要求 render 调用点」这一条真能抓到「删掉调用」。
+
+    自带内存样本，不读真身（真身是注入靶子）。
+    """
+    def _scan(files: dict[str, str]):
+        bare: set[str] = set()
+        rendered: set[str] = set()
+        for src in files.values():
+            tree = ast.parse(src)
+            for n in ast.walk(tree):
+                if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)):
+                    continue
+                if n.func.id not in ("load_prompt", "render_prompt"):
+                    continue
+                if not (n.args and isinstance(n.args[0], ast.Constant)
+                        and isinstance(n.args[0].value, str)):
+                    continue
+                (bare if n.func.id == "load_prompt" else rendered).add(n.args[0].value)
+        return bare, rendered
+
+    # ① 正常：render_prompt 在场 ⇒ rendered 命中
+    bare, rendered = _scan({"a.py": 'x = render_prompt("medgen.md", **p)\n'})
+    assert "medgen.md" in rendered and "medgen.md" not in bare
+
+    # ② 削真行为：删掉 render 调用（提示词从不加载）⇒ rendered 为空（可抓）
+    bare, rendered = _scan({"a.py": 'x = "__DEAD__"\n'})
+    assert "medgen.md" not in rendered, "[元守卫] 删掉 render 调用后仍算「已渲染」→ 正面判据无效"
+
+    # ③ 反面：退回裸 load_prompt ⇒ bare 命中
+    bare, rendered = _scan({"a.py": 'x = load_prompt("medgen.md")\n'})
+    assert "medgen.md" in bare, "[元守卫] 裸 load_prompt 未被识别"
+
+    # ④ 等价改写不该被误判：换行 / 空格 / 单引号 / 关键字实参
+    for code in ('x = render_prompt(\n    "medgen.md",\n    **p)\n',
+                 "x = render_prompt('medgen.md', **p)\n",
+                 'x = render_prompt( "medgen.md" , **p )\n'):
+        _, rendered = _scan({"a.py": code})
+        assert "medgen.md" in rendered, f"[元守卫] 等价改写被误判为「未渲染」：{code!r}"
+
 
 
 def test_syllabus_call_site_renders_the_prompt():
