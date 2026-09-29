@@ -98,6 +98,10 @@ REM R6-11（borrow-rules §5）：总闸须覆盖打包纯净检查，此前只�
 echo [7/7] package purity check (pack/check-package.py) ...
 python pack\check-package.py || goto :fail
 
+REM R11（2026-09-27）：spec 的 datas/excludes 守卫在 tests/test_check_package.py（含在上面的全量 pytest 里）。
+REM   反向验证实测：删 datas 的 prompts 行 / 删 web 行 / 删 ("LICENSE",".") 行——旧版守卫全部恒绿。
+REM   现改为 AST 解析 + 「datas 声明的本地路径存在」+「medkit/ 下数据目录被 datas 覆盖或入豁免表（双向）」。
+
 echo.
 echo ============ ALL GREEN ============
 exit /b 0

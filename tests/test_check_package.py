@@ -1,7 +1,7 @@
 """WP-12：纯净安装包检查脚本（pack/check-package.py）单元测试。"""
 
+import ast
 import importlib.util
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,11 +88,54 @@ def test_closure_no_drift_when_all_declared(tmp_path):
 
 # ---- U-24：spec 体积断言——excludes 必须拦下与本应用无关的大件，防误差膨胀 ----
 # 这几件一旦被分析器过度收集，绿色免安装包会凭空膨胀数十~数百 MB，且运行时全部用不到。
+#
+# ## 2026-09-29（R11）：判据从正则改为 AST
+#
+# 旧实现 `re.search(r'excludes\s*=\s*\[(.*?)\]', src, re.S)` 的 `.*?` 是**非贪婪**，
+# 遇到**第一个** `]` 就停。实测（`.workbuddy-ai/tmp/probe_excludes_regex.py`）：
+#   · `"foo[bar]"` 放在列表**中间** → 旧正则得 48 条（AST 49 条），漏掉该项本身；
+#   · `"foo[bar]"` 放在列表**首位** → 旧正则得 **0 条**。
+#
+# **准确表述：这是「假红」风险，不是假绿。** 断言是 `assert heavy in ex`，
+# 所以 ex 变空/变小只会让守卫**误报**（红），不会放过真实遗漏。
+# 危害在于：一旦有人加含方括号的条目（`"foo[bar]"`、正则字符串都很常见），
+# 守卫开始无故变红 ⇒ 下一个人会去**删守卫或删条目**，而不是修判据。
+# 改用 AST 后与文本形态完全解耦。
+def _spec_tree() -> ast.Module:
+    return ast.parse((ROOT / "medkit.spec").read_text(encoding="utf-8"))
+
+
 def _spec_excludes() -> list[str]:
-    src = (ROOT / "medkit.spec").read_text(encoding="utf-8")
-    m = re.search(r'excludes\s*=\s*\[(.*?)\]', src, re.S)
-    assert m, "medkit.spec 缺少 excludes 块"
-    return re.findall(r'"([^"]+)"', m.group(1))
+    """从 `Analysis(..., excludes=[...])` 取 excludes 条目（AST，不受方括号嵌套影响）。"""
+    for node in ast.walk(_spec_tree()):
+        if isinstance(node, ast.keyword) and node.arg == "excludes":
+            assert isinstance(node.value, ast.List), (
+                "medkit.spec 的 excludes= 不是字面量列表——本判据依赖它；"
+                "若确实要改成变量引用，请同步本函数。"
+            )
+            return [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+    raise AssertionError("medkit.spec 缺少 excludes= 参数")
+
+
+def _spec_datas_local_paths() -> list[str]:
+    """`datas` 里声明的**本地源路径**（字面量元组的第一个元素）。
+
+    只取 `datas = [...]` 的字面量部分；`datas += collect_data_files(...)` /
+    `datas += _dist_info_datas()` 这类动态追加不含本地路径，不计入。
+    """
+    out: list[str] = []
+    for node in _spec_tree().body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "datas" for t in node.targets):
+            continue
+        if not isinstance(node.value, ast.List):
+            continue
+        for el in node.value.elts:
+            if (isinstance(el, ast.Tuple) and el.elts
+                    and isinstance(el.elts[0], ast.Constant)):
+                out.append(el.elts[0].value)
+    return out
 
 
 def test_spec_excludes_heavy_libs():
@@ -109,10 +152,155 @@ def test_spec_excludes_no_test_frameworks():
         assert kept_out in ex, f"medkit.spec excludes 遗漏：{kept_out}"
 
 
-def test_spec_has_license_in_datas():
-    # AGPL：许可证正文必须随安装包分发（AGPL「随分发提供许可证」要求）
-    src = (ROOT / "medkit.spec").read_text(encoding="utf-8")
-    assert '"LICENSE"' in src
+def test_spec_excludes_survive_bracket_entries():
+    """回归锁：excludes 里出现含方括号的条目时，解析**不得截断**。
+
+    旧正则 `.*?` 会在第一个 `]` 处停止：`"foo[bar]"` 在列表首位时解析得 **0 条**。
+    由于现有断言写成 `assert heavy in ex`，后果是**守卫误红**（不是假绿）——
+    但无故变红会逼人删守卫或删条目，同样是防线失守。改用 AST 后不会发生。
+    """
+    sample = 'Analysis([], excludes=[\n    "tkinter", "foo[bar]", "pytest",\n])\n'
+    saved = _spec_tree
+    try:
+        globals()["_spec_tree"] = lambda: ast.parse(sample)
+        got = _spec_excludes()
+    finally:
+        globals()["_spec_tree"] = saved
+    assert got == ["tkinter", "foo[bar]", "pytest"], (
+        f"excludes 解析被截断：{got}（正则版会只得到 ['tkinter']）"
+    )
+
+
+# ---- R11：spec 的 data 收集必须**双向**与代码现状一致 ----
+#
+# ## 为什么需要（2026-09-29 反向验证实测）
+#
+# spec 的 `datas` 是**手工白名单**。原守卫只有文本子串断言，实测 4 组注入恒绿：
+#   · 删掉 `("medkit/web", "medkit/web")`     → 绿（零 CDN 前端的全部数据没了）
+#   · 删掉 `("medkit/prompts", "medkit/prompts")` → 绿（提示词模板没了）
+#   · 把 `("LICENSE", ".")` 移走但在注释里留 "LICENSE" 字样 → 绿（子串匹配被绕过）
+# 而 `test_spec_ships_dist_info_for_license_obligation`（有**整行**断言）则能正确变红——
+# 差别就在「子串 vs 整行/AST」，这正是 R9 记的「文本判据脆」的同一类。
+#
+# 判据模型（双向）：
+#   1. spec 声明的每个本地路径必须**存在** → 防「文档写了代码没有」；
+#   2. `medkit/` 下每个含非 `.py` 文件的**顶层目录**，必须被 datas 覆盖，
+#      或登记在 `_DATAS_INTENTIONALLY_EXCLUDED`（带理由）→ 防「新增目录忘同步」。
+
+# 有意不打进产物的数据目录：键 = 相对仓库根的目录，值 = 为什么有意排除。
+# （spec 里注释同样写明了第 1 条的理由；此处是它的**机械可检**版本。）
+_DATAS_INTENTIONALLY_EXCLUDED: dict[str, str] = {
+    "medkit/data": (
+        "WP-12：示例素材与大纲种子仅保留在仓库供开发/CI 使用，不随安装包分发——"
+        "用户自行上传教材/教师重点/官方大纲。spec 第 31-32 行有同口径注释。"
+    ),
+}
+
+# 不构成「数据目录」的后缀白名单（编译产物 / 缓存，不该进 datas）
+_NON_DATA_SUFFIXES = (".pyc", ".pyo")
+
+
+def _top_level_data_dirs() -> dict[str, int]:
+    """`medkit/` 下**直接子目录**里，含非 `.py` 文件者的 {目录: 文件数}。
+
+    只看**顶层子目录**：`web/css`、`web/js` 由 `("medkit/web", "medkit/web")`
+    递归覆盖，单独要求它们出现在 datas 里是错的。
+    纯 Python 包目录（agents/core/gates/render/routers）不含非 `.py` 文件，天然不进结果。
+    """
+    out: dict[str, int] = {}
+    for d in sorted((ROOT / "medkit").iterdir()):
+        if not d.is_dir() or d.name == "__pycache__":
+            continue
+        n = sum(
+            1 for p in d.rglob("*")
+            if p.is_file()
+            and "__pycache__" not in p.parts
+            and not p.name.endswith(_NON_DATA_SUFFIXES)
+            and p.suffix != ".py"
+        )
+        if n:
+            out[f"medkit/{d.name}"] = n
+    return out
+
+
+def test_spec_datas_declared_paths_exist():
+    """spec 声明的每个本地路径都必须真实存在（防「spec 指向不存在的目录」）。"""
+    missing = [p for p in _spec_datas_local_paths() if not (ROOT / p).exists()]
+    assert not missing, (
+        "medkit.spec 的 datas 声明了不存在的路径——打包时会直接报错或静默缺文件：\n  "
+        + "\n  ".join(missing)
+    )
+
+
+def test_spec_datas_covers_every_data_dir():
+    """反向：`medkit/` 下每个数据目录都必须被 datas 覆盖或**登记为有意排除**。
+
+    这条防的是 MEMORY.md 记的那类坑（新增数据目录忘同步 spec，测试全绿但产物缺文件）——
+    jieba 的 `dict.txt` 就是这么踩过一次。缺 `medkit/web` 会让零 CDN 前端白屏；
+    缺 `medkit/prompts` 会让所有 LLM 功能在打包版里直接失败。
+    """
+    declared = set(_spec_datas_local_paths())
+    uncovered = []
+    for d, n in _top_level_data_dirs().items():
+        if d in declared or d in _DATAS_INTENTIONALLY_EXCLUDED:
+            continue
+        uncovered.append(f"{d}（{n} 个数据文件）")
+    assert not uncovered, (
+        "以下数据目录既不在 medkit.spec 的 datas 里，也未登记为「有意排除」：\n  "
+        + "\n  ".join(uncovered)
+        + "\n含义：打包版会缺这些文件，而测试全绿（源码目录能直接读到）。"
+        "请加进 datas，或在 _DATAS_INTENTIONALLY_EXCLUDED 登记并写明理由。"
+    )
+
+
+def test_datas_exclusion_entries_are_still_needed():
+    """`_DATAS_INTENTIONALLY_EXCLUDED` 不得堆陈尸：每条必须仍是**未进 datas**的真目录。
+
+    否则某人把目录加进 datas 后豁免还留着，下次有人删掉 datas 行也不报警——
+    与 `test_no_sleep_gambling.test_allowlist_entries_are_still_needed` 同一判据。
+    """
+    declared = set(_spec_datas_local_paths())
+    live = set(_top_level_data_dirs())
+    stale = [d for d in _DATAS_INTENTIONALLY_EXCLUDED if d in declared or d not in live]
+    assert not stale, (
+        "以下「有意排除」条目已失效（目录已进 datas，或目录已不存在）——"
+        "请从 _DATAS_INTENTIONALLY_EXCLUDED 删除：\n  " + "\n  ".join(stale)
+    )
+
+
+def test_spec_ships_license_in_datas_structurally():
+    """AGPL：`("LICENSE", ".")` 必须以**结构化形式**出现在 `datas` 字面量里。
+
+    ## 取代原 `test_spec_has_license_in_datas`（2026-09-29 R11）
+
+    原实现是 `assert '"LICENSE"' in src` ——**全文子串**匹配，实测可绕过：
+    把 `("LICENSE", ".")` 从 datas 删掉，只在注释里留一句 `# "LICENSE"`，
+    断言**照样通过**（`.workbuddy-ai/tmp/probe_spec_guards.py` 注入 1 复现）。
+
+    这不是「理论上可能」：AGPL 要求「随分发提供许可证」，缺了是**合规问题**，
+    而一个能被子串绕过的断言不构成任何保证。
+    同文件 `test_spec_ships_dist_info_for_license_obligation` 早有正确做法
+    （整行匹配，注释里写明「反向验证实测：注释掉该行时子串断言仍通过」）——
+    本条改用 AST，连「换行/空格/引号风格」的形态差异也一并免疫。
+    """
+    datas_pairs = []
+    for node in _spec_tree().body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "datas" for t in node.targets):
+            continue
+        if not isinstance(node.value, ast.List):
+            continue
+        for el in node.value.elts:
+            if isinstance(el, ast.Tuple) and len(el.elts) == 2:
+                vals = [e.value for e in el.elts if isinstance(e, ast.Constant)]
+                if len(vals) == 2:
+                    datas_pairs.append(tuple(vals))
+
+    assert ("LICENSE", ".") in datas_pairs, (
+        f"AGPL 要求许可证正文随安装包分发，但 datas 里找不到 ('LICENSE', '.')。"
+        f"当前 datas 字面量条目：{datas_pairs}"
+    )
 
 
 def test_spec_ships_dist_info_for_license_obligation():
