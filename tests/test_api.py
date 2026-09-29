@@ -242,14 +242,42 @@ def test_anki_export_format():
 
 
 def test_prompts_api_and_shadow_copy():
-    """迭代1C/3A：只读查看 + 影子副本（占位符校验/漂移/恢复）。"""
+    """迭代1C/3A：只读查看 + 影子副本（占位符校验/漂移/恢复）。
+
+    ## `len(ps) == 8` 这个魔数改成结构核对（2026-09-29 R18 改）
+
+    旧判据 `assert len(ps) == 8` 只钉了个数量，**既说不出是哪 8 个，
+    也发现不了漂移**：`PROMPT_ROLES` 里删一个、目录里加一个（数量不变）它照样绿；
+    而它真正该守的性质是「**注册表里的每个提示词都有真实文件**」+
+    「注册表是**刻意枚举**的，不是随手抄的」。
+    现改为：① 每个 `PROMPT_ROLES` key 都对应一个真实 `.md`；
+    ② 注册表 == 显式常量集（少一个/多一个都要在此处显式改）。
+    """
+    from medkit.routers.prompts import PROMPT_ROLES
+
+    prompts_dir = ROOT / "medkit" / "prompts"
+    on_disk = {p.name for p in prompts_dir.glob("*.md")}
+    assert set(PROMPT_ROLES) <= on_disk, (
+        f"注册表引用了不存在的提示词文件：{sorted(set(PROMPT_ROLES) - on_disk)}")
+    # 刻意**不在** API 注册表里的提示词——见下方说明，新增豁免要在此显式登记
+    hidden = {"error_analysis.md", "socratic_review.md"}
+    assert set(PROMPT_ROLES) | hidden == on_disk, (
+        "提示词目录与 API 注册表不一致："
+        f"目录有而两处都无 = {sorted(on_disk - set(PROMPT_ROLES) - hidden)}；"
+        f"登记了但目录没有 = {sorted((set(PROMPT_ROLES) | hidden) - on_disk)}。"
+        "（新增提示词要显式登记：进 PROMPT_ROLES，或进此隐藏集并说明理由。）")
+
     c = make_client()
     _install_isolated_cfg()
     r = c.get("/api/prompts")
     assert r.status_code == 200
     ps = r.json()["prompts"]
-    assert len(ps) == 8, "ME-3：提示词仓库共 8 个（含 medcards / syllabus_extract）应全部可查看"
-    assert {p["name"] for p in ps} >= {"medtutor.md", "medexplain.md", "medcards.md", "syllabus_extract.md"}
+    # 端点返回的条数必须与注册表一致（不是写死的数字）
+    assert len(ps) == len(PROMPT_ROLES), (
+        f"/api/prompts 返回 {len(ps)} 条，注册表有 {len(PROMPT_ROLES)} 条")
+    assert {p["name"] for p in ps} == set(PROMPT_ROLES), "返回的 name 集合必须与注册表一致"
+    assert {"medtutor.md", "medexplain.md", "medcards.md",
+            "syllabus_extract.md"} <= set(PROMPT_ROLES)
     med = next(p for p in ps if p["name"] == "medgen.md")
     assert "{slice_text}" in med["placeholders"], "主要占位符应被动态提取"
     assert med["using"] == "builtin"
