@@ -5,6 +5,7 @@ deck·model id 按项目名稳定（重复导入不重复卡）/ 特殊字符字
 X 型走自评模型 / 案例题题干带案例前缀。
 """
 
+import atexit
 import json
 import shutil
 import sqlite3
@@ -19,6 +20,12 @@ sys.path.insert(0, str(ROOT))
 from medkit.render.apkg import export_apkg, stable_id  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix="medkit_apkg_"))
+
+# 清理临时目录。**注意不要写成 `def test_apkg_cleanup()`**（2026-09-29 R23）：
+# pytest 会把 `test_` 前缀的**零断言函数**当用例收集并判"通过"——
+# 它虚增用例计数（README 的「N 项 pytest」），且让「无断言用例」这一形态
+# 在扫描里越藏越深。清理属 fixture/钩子职责，用 atexit 更稳（失败路径也执行）。
+atexit.register(lambda: shutil.rmtree(TMP, ignore_errors=True))
 
 
 def _qs() -> list[dict]:
@@ -196,7 +203,3 @@ def test_apkg_b1_group_options_present():
     flds = rows[0][0]
     assert "A. 支原体" in flds and "B. 肺炎链球菌" in flds, f"B1 卡应含共享选项，实际：{flds}"
     con.close()
-
-
-def test_apkg_cleanup():
-    shutil.rmtree(TMP, ignore_errors=True)

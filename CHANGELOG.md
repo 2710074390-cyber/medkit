@@ -10,6 +10,56 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 「零断言用例」R23）
+
+本轮换角度扫「**用例根本没有实质断言**」这一形态（前几轮查的都是「断言写错了」，
+这里查的是「断言不存在」）。用 AST 扫 88 个测试文件、951 个 `test_*` 函数，
+逐个判定「是否含实质断言」（`assert` 非 `True`/非裸 `Name`、或 `pytest.raises`/`fail`）。
+**4 处命中，2 处真缺陷、2 处探针误报**：
+
+**① `test_s3_apkg.py::test_apkg_cleanup` —— 零断言的清理函数被当成用例收集**
+
+```python
+def test_apkg_cleanup():              # ← `test_` 前缀 ⇒ pytest 收集它
+    shutil.rmtree(TMP, ignore_errors=True)
+```
+
+它只删临时目录，**没有任何断言**，却被 pytest 当用例收集并判「通过」。
+后果：虚增 README 的「N 项 pytest」计数，且让「无断言用例」这一形态
+在后续扫描里越藏越深。⇒ 改成模块级 `atexit.register(...)`（清理属钩子职责，
+且失败路径也会执行）。
+
+**② `test_shutdown_lifecycle.py::test_shutdown_is_safe_when_idle_and_idempotent` —— 「不抛异常」当断言**
+
+```python
+def test_shutdown_is_safe_when_idle_and_idempotent():
+    _cleanup_state()
+    m._shutdown_runtime(join_timeout=1)
+    m._shutdown_runtime(join_timeout=1)   # 重复调用不抛错
+```
+
+正是 R21 记过的形态（「『不抛异常』也是一种断言，但不可读且不区分『合法但空』
+与『合法有结果』」）。而 `_shutdown_runtime` 内部两处 `except Exception`
+（`main.py:156`/`:166`）**都是 `errs.record(...)` 而非裸 `pass`** ⇒
+「真出错了」会留下 `code == "main._shutdown_runtime"` 的计数，原版完全不看。
+⇒ 用真身**本就产出的**诊断留痕当判据：空状态关闭后
+`errors.snapshot()["counts"]` 里不得出现该 code。
+
+真身注入（`.workbuddy-ai/tmp/inject_r23.py`）：
+
+| 注入 | 结果 |
+|---|---|
+| 在 `_shutdown_runtime` 里插一条 `errs.record("main._shutdown_runtime", …)` | **红** ✓（新判据抓住留痕） |
+| 还原后再跑 | **绿** ✓ |
+| 把 `def test_apkg_cleanup()` 加回 | 收集数 **9 → 10** ✓（证明它虚增计数） |
+
+`medkit/main.py` 换行归一后逐字节还原一致；`test_s3_apkg.py` 按「本轮改动后的期望内容」核对（非 HEAD）。
+
+> **可迁移判据**：把测试文件当数据扫一遍，**每个 `test_*` 函数必须至少有一条
+> 实质断言**。两类漏网形态：① 只有 `assert <裸变量>`（弱）；② 只有函数调用 +
+> 「不抛异常」（不可见）。清理/夹具函数**一律不要用 `test_` 前缀**——
+> pytest 会把零断言函数当用例收集，虚增计数、掩盖形态。
+
 ### Fixed（门禁假绿 · 「循环非空前提缺失」R22）
 
 `test_download_artifacts.py::test_list_filter_and_route_blacklist_are_the_same_constant`

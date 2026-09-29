@@ -75,9 +75,32 @@ def test_shutdown_cancels_inflight_ocr_and_tolerates_restored_jobs():
 
 
 def test_shutdown_is_safe_when_idle_and_idempotent():
+    """空状态 + 重复调用必须幂等**且不留错误留痕**。
+
+    ## 为什么补「无留痕」断言（2026-09-29 R23）
+
+    原版只有两行调用、靠「不抛异常」当断言。问题有二：
+    ① `_shutdown_runtime` 内部两处 `except Exception`（`main.py:156`/`:166`）
+       **都是 `errs.record(...)` 而不是裸 `pass`** —— 也就是说「真出错了」会留下
+       `code == "main._shutdown_runtime"` 的计数。原版完全不看这个，
+       ⇒ **把 `errs.record` 调用删掉、让异常被静默吞，用例照样绿**（R21 那条
+       「『不抛异常』也是一种断言，但不可读且不区分『合法但空』与『合法有结果』」）。
+    ② 没有 `pytest.raises` 之外的观测点，等于只证「调用返回了」。
+
+    现在把真身**本就产出的**诊断留痕当判据：关闭路径在空状态下**不该记任何错**。
+    """
+    from medkit.core import errors as errs
+
+    errs.reset()
     _cleanup_state()
     m._shutdown_runtime(join_timeout=1)
     m._shutdown_runtime(join_timeout=1)   # 重复调用不抛错
+
+    snap = errs.snapshot()
+    leaked = snap["counts"].get("main._shutdown_runtime", 0)
+    assert leaked == 0, (
+        f"空状态下关闭路径记了 {leaked} 条 `main._shutdown_runtime` 错误——"
+        f"关闭路径应当是 best-effort 且无错误的：{snap['recent']}")
 
 
 def test_db_shutdown_closes_main_thread_connection_and_is_idempotent():
