@@ -26,6 +26,10 @@ REM  跑 8 个阻断步骤——**本地「一键全绿」并不等于 CI 绿**�
 REM  实测代价：88b647f（EP-01 阶段 2/3）引入 16 个 mypy 类型错误，
 REM  因 mypy 只在 CI 跑、本地无从发现，静默存在 2 天后才被本文件补齐时发现。
 REM  现补齐本地可跑且影响结果的项：mypy、eslint、pip-audit。
+REM  该等价关系由 tests/test_ci_gate_parity.py 守卫（2026-09-29 新增）：
+REM  它现场解析 .github/workflows/ci.yml（不靠手写常量），双向覆盖
+REM  「CI 步骤 → 本地有无对应」「CI 关键闸门 → 是否仍在场（含 --strict）」，
+REM  并拦截 continue-on-error / `|| true` / 整段 `|| echo` 软化。
 REM  未补项及理由：
 REM    · `pytest -m migration`：那 6 个用例已含在 pytest 全量里，单列只是 CI 的
 REM      「先失败先报」分组，不增加覆盖。

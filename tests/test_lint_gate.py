@@ -167,6 +167,15 @@ _VERIFY_STEPS = (
 # 否则「本地全绿」不能代表 CI 绿。
 # 有意不含：`pytest -m migration`（已含在全量里）、`--cov-fail-under=80`（度量）、
 # `pip check`（CI 干净 runner 上才有意义，本机无关包会稳定误红）。
+#
+# ⚠️ 本常量是**手写**的，与 ci.yml 无机械联系——CI 新增/删除步骤它不会变。
+# 真正把 ci.yml 当事实来源的守卫是 `tests/test_ci_gate_parity.py`
+# （2026-09-29 新增）：它现场解析 ci.yml，双向覆盖（CI 步骤 → 本地；
+# CI 关键闸门 → 必须在场），并拦截 `--strict` 被去掉 / `continue-on-error` /
+# `|| true` 等弱化手法。本条保留的原因：它检查的是**verify.cmd 侧的片段匹配**，
+# 与那条的解析式比对互补（一个查「本地有没有提到」，一个查「CI 有没有被削弱」）。
+# 2026-09-29 反向验证实测：删除 CI 的 ruff step / 去掉 CI 的 `--strict`，
+# 本条**恒绿**（它只扫 verify.cmd）——所以它不能单独承担「CI 不被弱化」的职责。
 _CI_BLOCKING_STEPS = (
     ("python -m ruff check", "ruff"),
     ("python -m mypy medkit", "mypy"),
@@ -220,8 +229,17 @@ def test_verify_cmd_covers_ci_blocking_steps():
 
     为什么单列一条：`test_verify_cmd_has_all_steps` 只能证明「我列的步骤都在」，
     证明不了「**该列的都已列**」——CI 新增一步而这里没跟进时它照样绿。
-    本条把 CI 的阻断项当**外部事实来源**，补上这个方向。
     （同 3e92d84 修的「两个 glob 自比」是同一类问题：判据要有独立基线。）
+
+    ## 本条的基线**不是**独立的（2026-09-29 反向验证实测后更正）
+
+    上面那句原先写成「本条把 CI 的阻断项当**外部事实来源**」——**不准确**：
+    `_CI_BLOCKING_STEPS` 是手写常量，与 `ci.yml` 无机械联系。实测三组注入
+    （删 CI 的 ruff step / 去掉 CI 的 `--strict` / 删整个 package job）
+    本条**全部恒绿**。
+
+    真正把 ci.yml 当事实来源的是 `tests/test_ci_gate_parity.py`。
+    本条保留的职责只是「verify.cmd 里有没有提到该命令片段」，属互补而非替代。
     """
     text = _verify_cmd_text()
     missing = [desc for frag, desc in _CI_BLOCKING_STEPS if frag not in text]
