@@ -10,6 +10,41 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 「docstring 里的词也算接线」R15）
+
+`test_v10_track_backfill::test_wiring_guard` 末条判据：
+
+```python
+assert "import_from_json" in inspect.getsource(lib._backfill_json_once)
+```
+
+`import_from_json` 在该函数里出现 **2 次**——一次在 docstring
+（"`db.import_from_json()` 本就是为这一步准备的…"），一次是真调用 `dbs.import_from_json()`。
+**把真实调用整行删掉，断言仍然通过**（docstring 里那个词还在）——
+于是 V-10 那个「补导从未被接线 → 切轨后旧数据读空」的 P0 缺陷可以**无声回归**。
+
+| | 删掉真实调用后 |
+|---|---|
+| 旧判据 `"import_from_json" in getsource(fn)` | **True（假绿）** |
+| 新判据 AST `Call(func=Attribute(attr='import_from_json'))` | **0 个（抓住）** |
+
+现判据：AST 找真实调用 + 该调用必须落在 `try` 块内（失败要能退回 JSON 轨，不能裸抛）；
+另补元守卫 `test_backfill_wiring_guard_is_not_vacuous`（含「真身里该串恰好 2 次」的前提自检）。
+
+**同批排查**（`inspect.getsource(fn)` + `"X" in src` 共 3 处，逐条判定命中位置）：
+
+| 判据 | 命中在代码 | 命中在 docstring/注释 | 结论 |
+|---|---|---|---|
+| `_backfill_json_once` / `import_from_json` | 1 | **1** | **假绿 → 已改 AST** |
+| `test_v03_rowwise_write` / `_mark_kp_row(` | 3 处均 code | 0 | 安全（docstring 不含该串） |
+| `test_v03_rowwise_write` / `_mark_m_row(` | 3 处均 code | 0 | 安全 |
+
+**反向验证**：真身注入（删 `library.py` 的 `dbs.import_from_json()` 调用行，docstring 保留）
+⇒ 守卫 `rc=0 → rc=1` 变红；还原后 sha256 与基线一致。
+
+> 这与 R13 的「AST 天然排除注释」是同一枚硬币的反面：**注释/docstring 里的声明不算接线**。
+> 区别在于 R13 是「注释里的词造成**假红**」，本轮是「docstring 里的词造成**假绿**」。
+
 ### Fixed（门禁假绿 · 发布/签名/打包三处「词在 ≠ 判断在」R14）
 
 R13 扫的是「测试里的**源码扫描**判据」；R14 接着扫**发布链路**（`pack/` + `medkit.spec`）——

@@ -103,10 +103,74 @@ def test_no_backfill_when_no_json(json_then_db):
 
 
 def test_wiring_guard():
-    """结构守卫：库域的轨判定必须统一走 `_sql_ready`（不得再裸用 `_store_is_sql` 判定读写）。"""
+    """结构守卫：库域的轨判定必须统一走 `_sql_ready`（不得再裸用 `_store_is_sql` 判定读写）。
+
+    ## 补导调用改用 AST 判据（2026-09-29 R15 改）
+
+    旧版末条：
+
+        assert "import_from_json" in inspect.getsource(lib._backfill_json_once)
+
+    实测**假绿**：`import_from_json` 在该函数里出现 **2 次**——
+    一次在 **docstring**（"`db.import_from_json()` 本就是为这一步准备的…"），
+    一次是真调用 `dbs.import_from_json()`。**把真实调用那一行整行删掉，断言仍然通过**
+    （docstring 里那个词还在），于是「补导从未被接线」这个 P0 缺陷可以无声回归。
+
+    判据改为 AST：必须存在 `Call(func=Attribute(attr='import_from_json'))`
+    ——docstring 是 `ast.Constant`，天然不计入。
+    """
+    import ast
     import inspect
+
     for fn in (lib._load, lib._save, lib._store, lib.count_mistakes):
         src = inspect.getsource(fn)
         assert "_sql_ready(" in src, f"{fn.__name__} 未走 _sql_ready（切轨会漏补导）"
-    assert "import_from_json" in inspect.getsource(lib._backfill_json_once), \
-        "_backfill_json_once 未接 db.import_from_json"
+
+    src = inspect.getsource(lib._backfill_json_once)
+    tree = ast.parse("\n".join(src.splitlines()))
+    calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "import_from_json"
+    ]
+    assert calls, (
+        "_backfill_json_once 里没有对 import_from_json 的**真实调用**"
+        "（docstring 里提到不算）——补导未接线会让切轨后旧数据读空"
+    )
+    # 且该调用必须处在 try 块里（失败要能退回 JSON 轨，不能裸抛）
+    try_calls: set[int] = set()
+    for t in ast.walk(tree):
+        if isinstance(t, ast.Try):
+            for c in ast.walk(t):
+                if isinstance(c, ast.Call):
+                    try_calls.add(id(c))
+    assert any(id(c) in try_calls for c in calls), (
+        "补导调用不在 try 块里——失败会裸抛，无法退回 JSON 轨")
+
+
+def test_backfill_wiring_guard_is_not_vacuous():
+    """元守卫：证明 AST 判据抓得住「删掉真实调用、只在 docstring 里留词」。"""
+    import ast
+    import inspect
+
+    src = inspect.getsource(lib._backfill_json_once)
+
+    def _calls(text: str) -> int:
+        tree = ast.parse("\n".join(text.splitlines()))
+        return len([n for n in ast.walk(tree)
+                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "import_from_json"])
+
+    # 真身绿
+    assert _calls(src) == 1
+    # 文本子串（旧判据）在真身里命中 2 次——说明它包含 docstring 那次
+    assert src.count("import_from_json") == 2, (
+        "若真身只剩 1 次出现，本条证伪用例的前提已变，需同步更新")
+
+    # 证伪：删掉真实调用那一行，docstring 原样保留
+    kept = [ln for ln in src.splitlines(keepends=True)
+            if "dbs.import_from_json()" not in ln]
+    mutated = "".join(kept)
+    assert "import_from_json" in mutated, "docstring 里的词应仍在（这正是旧判据的漏洞）"
+    assert _calls(mutated) == 0, (
+        "删掉真实调用后 AST 判据仍说『有调用』 —— 这条守卫是假绿")
