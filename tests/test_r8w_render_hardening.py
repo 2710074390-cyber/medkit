@@ -240,7 +240,16 @@ def test_fts_match_expr_escapes_token_with_quote(monkeypatch):
 
 
 def test_fts_match_expr_executes_on_quote_query():
-    """真跑一次 FTS5：含引号的查询串不得让 MATCH 报语法错。"""
+    """真跑一次 FTS5：含引号的查询串不得让 MATCH 报语法错。
+
+    ## `assert n >= 0` 是死谓词（2026-09-29 R21 修）
+
+    `count(*)` 永不返回负数 ⇒ `n >= 0` 恒真。本条**实际**能拦下错误查询，
+    靠的是「MATCH 语法错会在 `conn.execute(...)` 抛 `sqlite3.OperationalError`」
+    —— `assert` 根本执行不到。这个隐式机制不可读、且**区分不出**
+    「查询合法但 0 命中」与「查询合法且命中」。⇒ 改成断**期望命中数**：
+    建表插了一行『甲状腺功能减退』，表达式含 `"甲状腺"*` 等前缀项，应当命中 1 行。
+    """
     import sqlite3
 
     from medkit.core import db as _db
@@ -250,7 +259,10 @@ def test_fts_match_expr_executes_on_quote_query():
     try:
         conn.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
         conn.execute("INSERT INTO t VALUES ('甲状腺功能减退')")
+        # 若 expr 语法非法，这一行会抛 sqlite3.OperationalError（用例 error = 红）
         n = conn.execute("SELECT count(*) FROM t WHERE t MATCH ?", (expr,)).fetchone()[0]
-        assert n >= 0
+        assert n == 1, (
+            f"含引号查询应命中那 1 行（expr={expr!r}，实得 {n}）——"
+            "n==0 说明前缀项没生效，n>1 说明 token 去重坏了")
     finally:
         conn.close()

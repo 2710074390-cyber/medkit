@@ -56,9 +56,25 @@ def test_fts_tokens_bigram_and_jieba():
 
 
 def test_fts_match_expr_singleton_filtered():
+    """契约（`db.fts_match_expr`）：前缀式 OR 召回；单字过滤；多 token 用 ` OR ` 连接。
+
+    ## `expr.count(" OR ") >= 0` 是死谓词（2026-09-29 R21 修）
+
+    `count()` 永不返回负数，`>= 0` **恒真** —— 这句断言当时什么也没断。
+    它想守的是「多 token 之间用 ` OR ` 连接」（前缀式 OR 召回），
+    所以要断**具体形态**，而不是拿恒真不等式凑数。
+    """
     assert dbs.fts_match_expr("心") == ""          # 单字前缀噪声大 → 空表达式（回退）
     expr = dbs.fts_match_expr("心衰")
-    assert '"心衰"*' in expr and expr.count(" OR ") >= 0
+    assert '"心衰"*' in expr                       # 前缀式（`*` 才能命中「心力衰竭」）
+    # 「心衰」只切出 1 个 token（≥2 字）⇒ 无 OR 连接
+    assert " OR " not in expr, f"单 token 不应出现 OR 连接：{expr!r}"
+    # 多 token：必须用 ` OR ` 连接（这是前缀式 OR 召回的核心形态）
+    multi = dbs.fts_match_expr("心力衰竭")
+    assert " OR " in multi and multi.count(" OR ") >= 1, (
+        f"多 token 查询应以前缀式 OR 连接：{multi!r}")
+    assert all(part.strip().endswith('"*') for part in multi.split(" OR ")), (
+        f"每个 OR 项都应是前缀式 `\"token\"*`：{multi!r}")
 
 
 def test_reindex_slices_json_mode_noop(tmp_path, monkeypatch):

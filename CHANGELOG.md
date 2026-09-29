@@ -10,6 +10,50 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 「死谓词」恒真判据 R21）
+
+两处断言用了**恒真不等式**，写上去等于没写。它们是「阈值无预算」（方向 B）
+的一个极端形态：**阈值宽到永远满足**。
+
+**① `test_fts.py::test_fts_match_expr_singleton_filtered`**
+
+```python
+assert '"心衰"*' in expr and expr.count(" OR ") >= 0   # count() 永不 <0 ⇒ 后半恒真
+```
+
+后半句想守「多 token 用 ` OR ` 连接」，却写成 `>= 0` —— **恒真**。
+⇒ 拆成具体形态断言：单 token 无 ` OR `、多 token 有 ` OR `、每个 OR 项都是
+前缀式 `"token"*`。
+
+**② `test_r8w_render_hardening.py::test_fts_match_expr_executes_on_quote_query`**
+
+```python
+n = conn.execute("SELECT count(*) FROM t WHERE t MATCH ?", (expr,)).fetchone()[0]
+assert n >= 0                                          # count(*) 永不 <0 ⇒ 恒真
+```
+
+本条**实际**能拦下坏查询，靠的是「MATCH 语法错 → `conn.execute` 抛
+`sqlite3.OperationalError`」这个**隐式**机制，`assert` 根本执行不到。
+它区分不出「查询合法但 0 命中」与「查询合法且命中」。
+⇒ 改成断**期望命中数** `n == 1`（建表插了 1 行）。语法错仍会在 `execute` 抛异常（红），
+但现在 0 命中/重复命中也会被抓。
+
+真身注入（`.workbuddy-ai/tmp/inject_r21.py`，对 `db.py::fts_match_expr`）：
+
+| 注入 `db.py` | 靶点 ① | 靶点 ② |
+|---|---|---|
+| 单字过滤 `len(t)>=2` → `>=1` | **红** ✓ | — |
+| 去前缀星号 `"t"*` → `"t"` | **红** ✓ | **红** ✓ |
+| 等价改写（拆中间变量） | **绿** ✓ | — |
+
+`medkit/core/db.py` 换行归一后逐字节还原一致。
+
+> **可迁移判据**：断言里出现 `>= 0` / `<= <大数>` 而左侧是 `len()` / `count()` /
+> 任何**非负量**，先问一句「这个不等式会不会恒成立」。
+> 计数类量的下界断言（`>= 1`）通常是真的，**`>= 0` 几乎一定是死谓词**。
+> 另外：**「不抛异常」也是一种断言**，但它不可读、且不区分
+> 「合法但空结果」与「合法且有结果」—— 想守它就把**期望结果**写出来。
+
 ### Fixed（门禁假绿 · 「注释里提过就算数」+ 被 `replace` 打歪的负向判据 R20）
 
 `test_r8w_p2_data.py::test_save_session_source_uses_atomic_writer` 旧版：
