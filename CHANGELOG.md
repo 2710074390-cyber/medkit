@@ -10,6 +10,67 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 魔数锁定 R19 + 藏在它下面的恒空断言）
+
+两处「用魔数锁定清单」，其中第二处牵出一个**更深的自证式假绿**。
+
+**① `test_smoke.py::test_providers` —— `assert len(PROVIDERS) == 5`**
+
+它与紧随其后的 `p["id"] in ("deepseek", "zhipu", "qwen", "kimi", "custom")`
+**完全冗余**（锁了集合长度又锁了每个元素），且同样是「删一个真源成员 + 塞一个
+不存在的 id（仍是 5 个）」即恒绿。⇒ 删魔数，改为锁 **id 集合**：
+
+```python
+assert {p["id"] for p in PROVIDERS} == {"deepseek", "zhipu", "qwen", "kimi", "custom"}
+```
+
+**② `test_stage0_cases_check.py::test_authoritative_tags_come_from_schema`
+—— 魔数 `len(TAGS) == 6` 掩盖了一条恒真空断言**
+
+旧版只有两行：
+
+```python
+assert TAGS == set(schema_mod.ANALYSIS_TAGS)   # ← 恒真！
+assert len(TAGS) == 6                          # ← 魔数（唯一会红的）
+```
+
+而 `TAGS = CHK._tags()`，`pack/stage0-cases-check.py:63` 的 `_tags()` 返回的
+**正是** `set(schema_mod.ANALYSIS_TAGS)` —— 第一行等价于 `X == X`，
+**无论真源怎么改都不会红**。它当时「看起来有用」，全靠下面那条魔数兜着；
+本 R19 一删魔数，这条用例直接退化成 no-op（`diag_r19b.py` 实证：真源换成
+臆造标签后断言仍全绿）。**这正是「魔数锁定」最阴的形态——它不只是冗余，
+它还在替一条空断言站岗。**
+
+⇒ 拆成两条**各自独立可证伪**的不变量：
+
+| 不变量 | 判据 | 注入即红 |
+|---|---|---|
+| **值**（标签集内容） | 锁在**显式常量**上（独立真源，非自比） | schema 等长漂移 6→6 ⇒ **红** ✓ |
+| **来源**（脚本真从 schema 读） | AST 扫 `_tags()`：必须引用 `ANALYSIS_TAGS`，且**不得**含集合字面量 | `_tags()` 改手抄字面量 ⇒ **红** ✓ |
+
+等价改写（真源重排 + 换行）⇒ **绿** ✓。
+
+真身注入汇总（`.workbuddy-ai/tmp/inject_r19.py`）：
+
+| 靶点 | 注入 | 结果 |
+|---|---|---|
+| `PROVIDERS` | 真源 `qwen`→`ghost`（等长漂移） | **红** ✓ |
+| `PROVIDERS` | 真源加注释（等价） | **绿** ✓ |
+| `ANALYSIS_TAGS` | schema 等长漂移 6→6 | **红** ✓（旧判据恒绿） |
+| `_tags()` | 改成手抄字面量 | **红** ✓ |
+| `ANALYSIS_TAGS` | 真源重排 + 换行（等价） | **绿** ✓ |
+
+三个被改动文件均以 `git cat-file blob` 还原，**换行归一后**逐字节一致
+（`core.autocrlf=true`：盘上 CRLF / blob LF，直接比 sha256 会永远判不一致——
+本仓已知陷阱，已在探针里修正）。
+
+> **可迁移判据**：
+> ① 凡 `len(<集合>) == <字面数字>` 必须改成集合相等 / `⊆`；
+> ② 改一条魔数前，**先读它上下两行**——魔数常常是某条恒真断言的
+> 「唯一会红的搭档」，你删掉它可能把用例变成 no-op。**恒真断言的典型形态
+> 是「同一真源取值两次相比」（`X == f(X)`），要换成「值锁显式常量」+
+> 「来源锁 AST」两条。**
+
 ### Fixed（门禁假绿 · 魔数锁定缺陷 R18）
 
 `test_api.py::test_prompts_api_and_shadow_copy` 里有一句

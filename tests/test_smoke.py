@@ -27,10 +27,18 @@ def test_json_extract():
 
 def test_providers():
     # 2026-08：按用户要求移除 Ollama；保留 4 预置（+Kimi）+ 自定义
-    assert len(PROVIDERS) == 5
+    #
+    # ## 为什么删掉 `assert len(PROVIDERS) == 5`（2026-09-29 R19）
+    #
+    # 它与**紧随其后**的那条断言完全冗余：`{p["id"] for p in PROVIDERS}`
+    # 逐元素等于真源 id 集合时，长度必然相等；反之若只钉计数，从真源删掉
+    # `qwen` 再塞个臆造的 `ghost`（仍是 5 个）这条魔数照样绿（已用
+    # `diag_r19.py` 实证）。⇒ 改锁**id 集合**这一结构性质，不锁计数。
+    assert {p["id"] for p in PROVIDERS} == {
+        "deepseek", "zhipu", "qwen", "kimi", "custom"}, \
+        "provider id 集合必须与产品声明一致（增删都要在此显式改）"
     assert all(p["id"] != "ollama" for p in PROVIDERS)
     for p in PROVIDERS:
-        assert p["id"] in ("deepseek", "zhipu", "qwen", "kimi", "custom")
         assert p.get("register_url") is not None or p["id"] == "custom"
     assert get_provider("custom")["base_url"] == ""
     assert get_provider("ollama") is None  # 旧配置 → config.load 会回退

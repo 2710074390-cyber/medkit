@@ -67,10 +67,53 @@ def test_valid_case_passes_clean():
 
 
 def test_authoritative_tags_come_from_schema():
-    """标签集必须来自 schema，不是脚本里手写的字面量（防漂移）。"""
+    """标签集必须来自 schema，不是脚本里手写的字面量（防漂移）。
+
+    ## 这条用例原来是个**恒真空断言**（2026-09-29 R19 修）
+
+    旧版只有两行：
+
+        assert TAGS == set(schema_mod.ANALYSIS_TAGS)   # ← 恒真！
+        assert len(TAGS) == 6                          # ← 魔数（唯一会红的）
+
+    而 `TAGS = CHK._tags()`，`pack/stage0-cases-check.py:63` 里
+    `_tags()` 返回的**正是** `set(schema_mod.ANALYSIS_TAGS)` ——
+    于是第一行等价于 `X == X`，**无论真源怎么改都不会红**。
+    它当时能红，全靠下面那条魔数 `== 6` 兜着；R19 一删魔数，这条用例
+    直接退化成 no-op（`diag_r19b.py` 已实证：真源换成臆造标签后仍全绿）。
+
+    ⇒ 拆成两条**各自独立可证伪**的不变量：
+
+    1. **值**：标签集内容锁在**显式常量**上（增删必须在此处显式改）。
+    2. **来源**：检查脚本确实是**从 schema 读**的（AST 判据，
+       拦「脚本里自己手抄一份字面量」这类漂移）。
+    """
     from medkit.core import schema as schema_mod
-    assert TAGS == set(schema_mod.ANALYSIS_TAGS)
-    assert len(TAGS) == 6
+
+    # ① 值：显式常量锁内容（这是独立真源，不是自比）
+    assert TAGS == {"知识盲区", "记忆偏差", "机制混淆", "概念偷换", "审题失误", "推理跳步"}, (
+        f"权威标签集变了：{sorted(TAGS)}。"
+        "若确为产品变更，请同步 schema.ANALYSIS_TAGS、本常量与相关提示词。")
+    assert TAGS == set(schema_mod.ANALYSIS_TAGS), "标签集与 schema 真源不一致"
+
+    # ② 来源：检查脚本必须**引用** schema，而不是自带一份字面量（AST，非文本子串）
+    import ast
+    src = SCRIPT.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "_tags"), None)
+    assert fn is not None, "pack/stage0-cases-check.py 里没有 _tags() 函数"
+    reads_schema = any(
+        isinstance(n, ast.Attribute) and n.attr == "ANALYSIS_TAGS"
+        for n in ast.walk(fn))
+    assert reads_schema, (
+        "_tags() 没有从 schema 读 ANALYSIS_TAGS —— 可能改成手抄字面量了"
+        "（那样 schema 改了它也不会跟着变，正是本用例要防的漂移）")
+    # 该函数里不得出现「硬编码 6 个标签」的集合字面量
+    literal_sets = [n for n in ast.walk(fn)
+                    if isinstance(n, ast.Set) and len(n.elts) >= 2]
+    assert not literal_sets, (
+        "_tags() 里出现了集合字面量 —— 标签应是 schema 单源，不许在此手抄")
 
 
 # ---------------------------------------------------------------- 硬判据
