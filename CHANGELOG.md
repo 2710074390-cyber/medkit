@@ -10,6 +10,55 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 「循环非空前提缺失」R22）
+
+`test_download_artifacts.py::test_list_filter_and_route_blacklist_are_the_same_constant`
+声称守住「产物列表过滤与下载路由黑名单必须同源」，守卫体却是**循环内断言**形态：
+
+```python
+for name in proj._INTERNAL_ARTIFACT_NAMES:      # ← 被遍历的是产品常量
+    assert name not in listed, f"{name} 未被列表侧排除"
+    assert client.get(f"/api/projects/dl_test/files/{name}").status_code == 404, ...
+```
+
+**循环的上界（`_INTERNAL_ARTIFACT_NAMES`）本身就是被测对象** —— 常量被掏空或大幅缩减时
+循环体一次都不跑、用例恒绿，哪怕路由侧一个内部名都没拦下（P0）。
+已用 `.workbuddy-ai/tmp/diag_r22.py` 实证：
+
+```
+真身常量齐全 + 路由侧全漏 => 红（正确）
+常量被掏空 EMPTY   + 路由侧全漏 => 绿（空转！）
+```
+
+另发现本文件的 `_SEEDED_INTERNALS`（第 35 行）是**手抄的产品常量副本**，
+两边可各自漂移而无人发现。⇒ 开循环前补三条前提：
+
+```python
+internal = set(proj._INTERNAL_ARTIFACT_NAMES)
+assert internal, "`_INTERNAL_ARTIFACT_NAMES` 为空——下面的循环会空转成绿。..."
+assert internal == set(_SEEDED_INTERNALS), "产品黑名单与本文件播种清单不一致（手抄副本漂移了）..."
+base = _seed(tmp_path)
+missing_on_disk = [n for n in _SEEDED_INTERNALS if not (base / n).is_file()]
+assert not missing_on_disk, f"播种清单里的文件没落到盘上：{missing_on_disk}"
+```
+
+真身注入（`.workbuddy-ai/tmp/inject_r22.py`，对 `medkit/routers/projects.py`）：
+
+| 注入 | 结果 | 说明 |
+|---|---|---|
+| 掏空常量 `frozenset({...})` → `frozenset()` | **红** ✓ | 旧判据此处空转恒绿，修复后才红 |
+| 删成员（去 `progress.json`） | **红** ✓ | 破坏与播种清单的相等 |
+| 加幽灵成员 | **红** ✓ | 反向漂移 |
+| 路由侧过滤条件去掉常量 | **红** ✓ | 列表侧泄漏 |
+| 成员重排 + 加注释 | **绿** ✓ | 等价改写 |
+
+`medkit/routers/projects.py` 换行归一后逐字节还原一致。
+
+> **可迁移判据**：见到 `for x in <被测常量>:` 后面跟断言，先问三句——
+> ① 这个常量**非空**吗？② 它与**手抄副本**（这里的 `_SEEDED_INTERNALS`）会不会各自漂移？
+> ③ 循环里被断言的东西**真在盘上/真被构造出来**了吗（不是「清单里有、实际没有」）？
+> 「遍历被测对象」的守卫天然是**空转恒绿**：上界塌缩 ⇒ 断言体消失 ⇒ 通过。
+
 ### Fixed（门禁假绿 · 「死谓词」恒真判据 R21）
 
 两处断言用了**恒真不等式**，写上去等于没写。它们是「阈值无预算」（方向 B）

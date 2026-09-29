@@ -134,10 +134,32 @@ def test_list_filter_and_route_blacklist_are_the_same_constant(client, tmp_path)
 
     做法：把全部内部名播种进项目，断言「列表里一个都没有」且「路由对每一个都 404」。
     任一侧漏掉某个名字，两边的差集就会让本用例变红。
+
+    ## 补「循环非空」前提 + 与播种清单对齐（2026-09-29 R22 修）
+
+    下面那条 `for name in proj._INTERNAL_ARTIFACT_NAMES:` 是**循环体内断言**形态：
+    常量被掏空（或大幅缩减）时**循环体一次都不跑、用例恒绿**——
+    哪怕路由侧一个内部名都没拦下，也判绿（纯粹因为没跑，已用 `diag_r22.py` 实证）。
+    另：本文件的 `_SEEDED_INTERNALS` 是**手抄的**产品常量副本，两边可能各自漂移。
+    ⇒ 开循环前先钉三条前提：① 常量非空；② 与播种清单**逐元素相等**；
+    ③ 播种清单里每个名字确实被播种成了文件（防「清单里有、盘上无」）。
     """
-    _seed(tmp_path)
+    internal = set(proj._INTERNAL_ARTIFACT_NAMES)
+    assert internal, (
+        "`_INTERNAL_ARTIFACT_NAMES` 为空——下面的循环会空转成绿。"
+        "至少要有 progress.json（死链回归锚点）。")
+    assert internal == set(_SEEDED_INTERNALS), (
+        "产品黑名单与本文件播种清单不一致（手抄副本漂移了）："
+        f"产品独有 = {sorted(internal - set(_SEEDED_INTERNALS))}；"
+        f"播种独有 = {sorted(set(_SEEDED_INTERNALS) - internal)}。"
+        "两边都要显式改，别只改一处。")
+
+    base = _seed(tmp_path)
+    missing_on_disk = [n for n in _SEEDED_INTERNALS if not (base / n).is_file()]
+    assert not missing_on_disk, f"播种清单里的文件没落到盘上：{missing_on_disk}"
+
     listed = set(client.get("/api/projects/dl_test/status").json()["artifacts"])
-    for name in proj._INTERNAL_ARTIFACT_NAMES:
+    for name in internal:
         assert name not in listed, f"{name} 未被列表侧排除"
         assert client.get(f"/api/projects/dl_test/files/{name}").status_code == 404, \
             f"{name} 未被路由侧拦下"
