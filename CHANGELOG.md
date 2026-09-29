@@ -45,6 +45,34 @@ assert "import_from_json" in inspect.getsource(lib._backfill_json_once)
 > 这与 R13 的「AST 天然排除注释」是同一枚硬币的反面：**注释/docstring 里的声明不算接线**。
 > 区别在于 R13 是「注释里的词造成**假红**」，本轮是「docstring 里的词造成**假绿**」。
 
+**同轮续扫（R15b）**：把「命中落在注释里 ⇒ 绑定的是书写格式而非结构」这条口径推到另 3 处
+`"X" in src` 判据，**全部改为 AST 结构判据**：
+
+| 守卫 | 旧判据（绑书写） | 等价改写即假红（实测） | 现判据 |
+|---|---|---|---|
+| `test_r8w_p2_privacy::test_config_dir_hardening_is_wired` | `"harden_config_dir()" in src` | `harden_config_dir( )`（参数位多一个空格） | AST：存在对 `harden_config_dir` 的 **Call**（`Name` 或 `Attribute` 两条形态） |
+| `test_r8w_p2_hardening::test_syllabus_call_site_renders_the_prompt` | `"render_prompt(\n" in src` | `render_prompt(` 换行改同行 | AST：`render_prompt(<"syllabus_extract.md">, subject_text=...)` |
+| `test_release_artifacts::test_zip_layout_matches_existing_release` | `'f"MedKit/{f.relative_to(DIST).as_posix()}"' in src` | `"MedKit/" + f.relative_to(DIST).as_posix()` / 改循环变量名（2/3 变体假红） | AST：取 `z.write(...)` 的 arcname 表达式（位置第 2 参或 `arcname=`），其字面量片段须含 `MedKit/` 前缀 |
+
+第三条的判据意图是「**zip 内每个文件都装进 `MedKit/` 顶层目录**」，
+旧判据却把 f-string 的**字面拼法**写死 —— 拼接写法与改循环变量名都会假红。
+现判据只看「arcname 里有 `MedKit/` 字样」这一结构事实，写法无关。
+
+**反向验证（真身注入，`pack/make_release.py`）**：
+
+| 注入 | 期望 | 实测 |
+|---|---|---|
+| 去掉 `MedKit/` 前缀 | 红 | ✓ rc=1 |
+| 完全不传 arcname（`z.write(f)`） | 红 | ✓ rc=1 |
+| 拼接写法 `"MedKit/" + ...` | 绿 | ✓ rc=0（旧判据此处假红） |
+| 关键字参数 `arcname=...` | 绿 | ✓ rc=0 |
+| 改循环变量名 `p` | 绿 | ✓ rc=0（旧判据此处假红） |
+
+还原后 sha256 与基线**逐字节一致**。三个文件各补一条元守卫
+（`test_config_dir_hardening_wiring_guard_is_not_vacuous` /
+`test_syllabus_render_guard_is_not_vacuous` /
+`test_zip_layout_guard_is_not_vacuous`），元守卫自带内存样本、不读真身（真身是注入靶子）。
+
 ### Fixed（门禁假绿 · 发布/签名/打包三处「词在 ≠ 判断在」R14）
 
 R13 扫的是「测试里的**源码扫描**判据」；R14 接着扫**发布链路**（`pack/` + `medkit.spec`）——

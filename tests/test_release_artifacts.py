@@ -206,10 +206,79 @@ def test_build_bat_wires_make_release():
     assert "errorlevel 1" in seg[:400], "调用后未检查退出码"
 
 
+def _zip_arcname_expr(src: str):
+    """在 `_zip_portable` 里找到 `z.write(<src>, <arcname>)` 的 **arcname 表达式节点**。
+
+    只认结构、不认写法：`f"MedKit/{...}"` / `"MedKit/" + ...` / `arcname=` 关键字
+    参数都指向同一件事——「每个文件都装进 `MedKit/` 顶层目录」。旧版断言把
+    f-string 的**字面拼法**写死，改写法即假红（见本函数下方反向验证）。
+    """
+    tree = ast.parse(src)
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "_zip_portable"), None)
+    assert fn is not None, "pack/make_release.py 里没有 _zip_portable 函数"
+    write_calls = [n for n in ast.walk(fn)
+                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                   and n.func.attr == "write"]
+    assert write_calls, "_zip_portable 里没有 `z.write(...)` 调用 —— zip 是空的"
+    call = write_calls[0]
+    # arcname 允许位置第 2 参或关键字 arcname=
+    kw = next((k for k in call.keywords if k.arg == "arcname"), None)
+    if kw is not None:
+        return kw.value
+    assert len(call.args) >= 2, (
+        "`z.write` 没有传 arcname —— 文件会装到 zip 根目录，"
+        "用户解压得到一堆散文件而不是 `MedKit/` 文件夹")
+    return call.args[1]
+
+
+def _iter_str_pieces(node):
+    """把表达式里所有**字面量字符串**摊平（含 f-string 的常量片段）。"""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            yield n.value
+
+
 def test_zip_layout_matches_existing_release(pack_mod):
     """绿色版 zip 顶层必须是 `MedKit/`（与历史发布物结构一致，用户解压即得文件夹）。"""
     src = (ROOT / "pack" / "make_release.py").read_text(encoding="utf-8")
-    assert 'f"MedKit/{f.relative_to(DIST).as_posix()}"' in src
+    arc = _zip_arcname_expr(src)
+    pieces = list(_iter_str_pieces(arc))
+    assert any(p == "MedKit/" or p.startswith("MedKit/") for p in pieces), (
+        f"zip 内条目未加 `MedKit/` 顶层前缀（arcname 字面量片段：{pieces}）——"
+        "解压后不是文件夹，与历史发布物结构不符")
+
+
+def test_zip_layout_guard_is_not_vacuous():
+    """反向验证：① 结构等价改写（拼接/改循环变量名）**不能**再假红；② 去掉前缀要红。
+
+    元守卫自带内存样本，不读真身——真身是注入靶子。
+    """
+    _HDR = ("def _zip_portable(ver):\n"
+            "    with zipfile.ZipFile(t, 'w') as z:\n"
+            "        for f in sorted(DIST.rglob('*')):\n"
+            "            if f.is_file():\n")
+    good_variants = {
+        "f-string": _HDR + '                z.write(f, f"MedKit/{f.relative_to(DIST).as_posix()}")\n',
+        "concat": _HDR + '                z.write(f, "MedKit/" + f.relative_to(DIST).as_posix())\n',
+        "arcname-kw": _HDR + '                z.write(f, arcname=f"MedKit/{f.relative_to(DIST).as_posix()}")\n',
+        "renamed-var": _HDR + '                z.write(p, f"MedKit/{p.relative_to(DIST).as_posix()}")\n',
+    }
+    for name, code in good_variants.items():
+        arc = _zip_arcname_expr(code)
+        pieces = list(_iter_str_pieces(arc))
+        assert any(p == "MedKit/" or p.startswith("MedKit/") for p in pieces), \
+            f"[元守卫] 等价改写 `{name}` 被误判为没加前缀 → 守卫假红"
+
+    bad = _HDR + '                z.write(f, f"{f.relative_to(DIST).as_posix()}")\n'
+    with pytest.raises(AssertionError):
+        arc = _zip_arcname_expr(bad)
+        pieces = list(_iter_str_pieces(arc))
+        assert any(p == "MedKit/" or p.startswith("MedKit/") for p in pieces), "缺前缀未被发现"
+
+    no_arc = _HDR + "                z.write(f)\n"
+    with pytest.raises(AssertionError):
+        _zip_arcname_expr(no_arc)
 
 
 # ------------------------------------------------- 发布五件套一致性（2026-09-28 事故）

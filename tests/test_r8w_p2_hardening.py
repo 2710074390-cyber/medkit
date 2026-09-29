@@ -58,12 +58,76 @@ def test_syllabus_call_site_renders_the_prompt():
 
     精确不变式：有占位符的提示词不得被裸 `load_prompt` 加载——只看「代码里出现过
     render_prompt」会漏判（某处 render、另一处 load 也算违规）。
+
+    ## 判据走 AST 而非文本子串（2026-09-29 R15 改）
+
+    旧版末条 `assert 'render_prompt(\\n' in src` 绑**书写格式**：
+    真身写成 `render_prompt(\n    "syllabus_extract.md", …`（换行后接实参）恰好通过，
+    但只要把实参挪上来一行、或在括号后加空格，就会**假红**。
+    要守的性质是「**存在 render_prompt 调用，且它的实参里带 subject_text**」——
+    与换行/空格无关。
     """
     src = (ROOT / "medkit" / "core" / "syllabus.py").read_text(encoding="utf-8")
-    # 只看**调用形式**，不看注释（注释里提到 load_prompt 是允许的）
-    assert 'load_prompt("syllabus_extract.md")' not in src, "仍在裸 load_prompt 加载该提示词"
-    assert "subject_text=" in src, "未把 subject_text 传给 render_prompt"
-    assert 'render_prompt(\n' in src, "未用 render_prompt 渲染占位符"
+    tree = ast.parse(src)
+
+    # ① 不得裸 load_prompt 加载该提示词（AST：调用的第一个实参是那个文件名）
+    bare = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name) and n.func.id == "load_prompt"
+        and n.args and isinstance(n.args[0], ast.Constant)
+        and n.args[0].value == "syllabus_extract.md"
+    ]
+    assert not bare, "仍在裸 load_prompt 加载该提示词（占位符不会被渲染）"
+
+    # ② 必须存在 render_prompt 调用，且**实参里带 subject_text=（关键字或位置无关）**
+    rendered = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name) and n.func.id == "render_prompt"
+        and any(getattr(a, "arg", None) == "subject_text" for a in n.keywords)
+        and n.args and isinstance(n.args[0], ast.Constant)
+        and n.args[0].value == "syllabus_extract.md"
+    ]
+    assert rendered, (
+        "没有对 syllabus_extract.md 的 render_prompt(..., subject_text=...) 调用 ——"
+        "占位符不会被渲染，系统提示里会留着字面量 {subject_text}")
+
+
+def test_syllabus_render_guard_is_not_vacuous():
+    """元守卫：证明 AST 判据抓得住「退回裸 load_prompt」，且不被换行/空格骗过。"""
+    src = (ROOT / "medkit" / "core" / "syllabus.py").read_text(encoding="utf-8")
+
+    def _rendered(text: str) -> int:
+        tree = ast.parse(text)
+        return len([
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name) and n.func.id == "render_prompt"
+            and any(getattr(a, "arg", None) == "subject_text" for a in n.keywords)
+        ])
+
+    assert _rendered(src) == 1, "真身里应恰好 1 处符合形态的 render_prompt 调用"
+
+    # 证伪 ①：等价改写（括号内换行/加空格）必须**仍绿**
+    compact = src.replace('render_prompt(\n                    "syllabus_extract.md"',
+                          'render_prompt("syllabus_extract.md"', 1)
+    assert compact != src, "证伪 ① 注入未生效"
+    assert _rendered(compact) == 1, (
+        "把实参挪到同一行后判据变红 —— 判据仍绑书写格式（旧版 'render_prompt(\\n' 正是如此）")
+
+    # 证伪 ②：退回裸 load_prompt（语义变了，断言 ① 必须红）
+    reverted = src.replace(
+        'render_prompt(\n                    "syllabus_extract.md", subject_text=',
+        'load_prompt(\n                    "syllabus_extract.md", subject_text=', 1)
+    assert reverted != src, "证伪 ② 注入未生效"
+    tree2 = ast.parse(reverted)
+    still = [n for n in ast.walk(tree2)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+             and n.func.id == "load_prompt" and n.args
+             and isinstance(n.args[0], ast.Constant)
+             and n.args[0].value == "syllabus_extract.md"]
+    assert still, "退回裸 load_prompt 后断言 ① 抓不到 —— 守卫是假绿"
 
 
 # ---------------------------------------------------------------- S3-8

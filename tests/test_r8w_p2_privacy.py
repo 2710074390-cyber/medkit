@@ -7,6 +7,7 @@
   并把 `downgrade_to` 为何零调用写进 docstring（不是死代码，是有意不接）。
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -120,11 +121,56 @@ def test_config_dir_hardening_is_wired():
     """S3-13 接线级：`harden_config_dir()` 必须在启动流程里被调用（否则是死代码）。
 
     教训（B10）：只测函数本体 ≠ 测了防线——注入「摘掉调用点」时用例必须变红。
+
+    ## 判据走 AST 而非文本子串（2026-09-29 R15 改）
+
+    旧版 `assert "harden_config_dir()" in src` 绑**书写格式**：
+    真身写 `cfg.harden_config_dir()` 恰好含该串而通过，但只要改成
+    `cfg.harden_config_dir( )`（多一个空格）或把调用拆行，就会**假红**。
+    要守的性质是「**存在对 harden_config_dir 的调用**」，与空格无关。
+    另注：`main.py` 里函数名还出现在**注释**中（"…=死代码——守卫用例…盯着这行"），
+    子串判据会把注释也算命中 ⇒ 用 AST 只认 `Call`。
     """
     src = (ROOT / "medkit" / "main.py").read_text(encoding="utf-8")
-    assert "harden_config_dir()" in src, "启动流程未调用目录加固 → 死代码"
+    tree = ast.parse(src)
+    calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and (
+            (isinstance(n.func, ast.Attribute) and n.func.attr == "harden_config_dir")
+            or (isinstance(n.func, ast.Name) and n.func.id == "harden_config_dir")
+        )
+    ]
+    assert calls, (
+        "启动流程没有**调用** harden_config_dir（注释里提到不算）→ 目录加固是死代码")
     assert "dir_permission_warning" in (ROOT / "medkit" / "core" / "config.py").read_text(
         encoding="utf-8"), "缺少告警读取口"
+
+
+def test_config_dir_hardening_wiring_guard_is_not_vacuous():
+    """元守卫：证明 AST 判据抓得住「摘掉调用点」，且不被注释里的同名串骗过。"""
+    src = (ROOT / "medkit" / "main.py").read_text(encoding="utf-8")
+
+    def _calls(text: str) -> int:
+        tree = ast.parse(text)
+        return len([n for n in ast.walk(tree)
+                    if isinstance(n, ast.Call) and (
+                        (isinstance(n.func, ast.Attribute)
+                         and n.func.attr == "harden_config_dir")
+                        or (isinstance(n.func, ast.Name)
+                            and n.func.id == "harden_config_dir"))])
+
+    assert _calls(src) == 1, "真身里应恰好 1 处调用（形态变了请同步本条用例）"
+
+    # 证伪 ①：注释掉调用行 —— 子串判据会因**注释里的同名串**继续命中
+    commented = src.replace("    _dir_warn = cfg.harden_config_dir()",
+                            "    # _dir_warn = cfg.harden_config_dir()", 1)
+    assert commented != src, "证伪 ① 注入未生效"
+    assert "harden_config_dir" in commented, "注释里仍有该词（正是旧判据的漏洞）"
+    assert _calls(commented) == 0, "注释掉调用后 AST 判据仍说『有调用』——守卫是假绿"
+
+    # 证伪 ②：等价改写（调用里加空格）必须**仍绿**（防假红）
+    spaced = src.replace("cfg.harden_config_dir()", "cfg.harden_config_dir( )", 1)
+    assert _calls(spaced) == 1, "等价改写（多一个空格）被判红 —— 判据仍绑书写格式"
 
 
 def test_harden_config_dir_records_warning(tmp_path, monkeypatch):
