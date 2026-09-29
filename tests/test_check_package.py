@@ -317,9 +317,92 @@ def test_spec_ships_dist_info_for_license_obligation():
     # （反向验证实测：注释掉该行时子串断言仍然通过 = 假绿）。
     lines = [ln.strip() for ln in src.splitlines()]
     assert "datas += _dist_info_datas()" in lines, "收集函数未接到 datas（或被注释掉）"
-    assert "def _lock_closure_names(" in src, "未按 requirements.lock 闭包限定范围（会混入构建期依赖）"
-    # 范围限定必须真的读 lock（否则会把 pyinstaller 等构建期依赖也打进产物）
-    assert "requirements.lock" in src
+
+    # ---- 闭包限定必须是「真的按 lock 算出来的」，不是「全文出现过 lock 一词」----
+    # 2026-09-29 R14：旧判据只有 `"def _lock_closure_names(" in src` + `"requirements.lock" in src`
+    # 两条文本子串。实测**假绿**两种：
+    #   ① `_P("requirements.lock")` 换成 `_P("no-such-file.lock")` —— 文件名字符串仍在别处出现；
+    #   ② `want = _lock_closure_names()` 改成 `want = set()` —— 函数定义还在，返回值却被废
+    #      （= 闭包为空，构建期依赖全混进产物，正是本条要防的）。
+    tree = _spec_tree()
+    closure_fn = next(
+        (n for n in tree.body if isinstance(n, ast.FunctionDef)
+         and n.name == "_lock_closure_names"), None)
+    assert closure_fn is not None, "未找到 _lock_closure_names 定义"
+
+    # ① 函数体里必须**以字面量**指向 requirements.lock（不是变量/拼接/别的 .lock）
+    # ⚠️ 首版写成 `n.value.endswith(".lock")` ⇒ `no-such-file.lock` 也通过（本轮实测的假绿），
+    #    判据比意图宽了一档。必须钉死文件名本身。
+    lock_literals = [n.value for n in ast.walk(closure_fn)
+                     if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    assert "requirements.lock" in lock_literals, (
+        "_lock_closure_names 没有以**字面量**引用 requirements.lock"
+        "（当前含 .lock 的字面量：%r）——"
+        "闭包范围可能已经不按 lock 限定（会混入构建期依赖）"
+        % [v for v in lock_literals if "lock" in v.lower()])
+    # ② 函数必须真返回值（不是被改成恒空集）
+    returns = [n for n in ast.walk(closure_fn) if isinstance(n, ast.Return)]
+    assert returns, "_lock_closure_names 没有 return —— 闭包恒为空"
+    assert any(not (isinstance(r.value, ast.Call) and isinstance(r.value.func, ast.Name)
+                        and r.value.func.id in {"set", "frozenset"} and not r.value.args)
+               for r in returns), (
+        "_lock_closure_names 直接返回空集合——范围限定失效，构建期依赖会进产物")
+    # ③ 调用点必须把结果真的用上（防 `want = set()` 这类掏空）
+    want_calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "want" for t in n.targets)
+        and isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Name)
+        and n.value.func.id == "_lock_closure_names"
+    ]
+    assert want_calls, (
+        "没有 `want = _lock_closure_names()` 形态的赋值——"
+        "范围限定算出来了却没接进过滤逻辑")
+
+
+def test_spec_lock_closure_guard_is_not_vacuous():
+    """元守卫：证明闭包判据抓得住「文件名换掉」与「返回值掏空」。
+
+    ## 首版这里也漏了一次（2026-09-29 R14 自查）
+    判据 ① 最初写的是 `… and n.value.endswith(".lock")`，
+    于是 `_P("no-such-file.lock")` 照样通过 —— **判据比意图宽了一档**，
+    注入实测「仍绿」。现判据钉死 `== "requirements.lock"`。本条证伪用例同时覆盖
+    「换成别的 .lock」与「换成非 .lock」两种，防止再次放宽。
+    """
+    src = (ROOT / "medkit.spec").read_text(encoding="utf-8")
+
+    def _lock_literals(text: str) -> list[str]:
+        fn = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef)
+                  and n.name == "_lock_closure_names")
+        return [n.value for n in ast.walk(fn)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+
+    # 真身绿
+    assert "requirements.lock" in _lock_literals(src)
+
+    # 证伪 ①：换成**别的 .lock**（首版宽判据正是在这里漏的）
+    alt_lock = src.replace('_P("requirements.lock")', '_P("no-such-file.lock")', 1)
+    assert alt_lock != src, "证伪 ① 注入未生效"
+    assert "requirements.lock" not in _lock_literals(alt_lock), (
+        "把锁文件名换成别的 .lock 后仍命中 —— 判据绑的是全文/后缀而不是文件名")
+
+    # 证伪 ②：换成非 .lock 的文件
+    alt_txt = src.replace('_P("requirements.lock")', '_P("requirements.txt")', 1)
+    assert alt_txt != src, "证伪 ② 注入未生效"
+    assert "requirements.lock" not in _lock_literals(alt_txt)
+
+    # 证伪 ③：把 want 直接赋值成空集（函数还在，但范围限定被掏空）
+    emptied = src.replace("want = _lock_closure_names()", "want = set()", 1)
+    assert emptied != src, "证伪 ③ 注入未生效"
+    t3 = ast.parse(emptied)
+    assert not [n for n in ast.walk(t3)
+                if isinstance(n, ast.Assign)
+                and any(isinstance(x, ast.Name) and x.id == "want" for x in n.targets)
+                and isinstance(n.value, ast.Call)
+                and isinstance(n.value.func, ast.Name)
+                and n.value.func.id == "_lock_closure_names"], (
+        "want 被掏空成 set() 后判据仍绿 —— 这条守卫是假绿")
 
 
 # ---------------------------------------------------------------- R8+W：测试产物加固

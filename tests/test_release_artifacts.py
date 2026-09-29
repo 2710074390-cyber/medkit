@@ -5,8 +5,10 @@
 长期挂着。本文件锁住 `pack/make_release.py` 的行为与接线。
 """
 
+import ast
 import hashlib
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -40,10 +42,94 @@ def test_version_reads_single_source(pack_mod):
 
 
 def test_version_not_hardcoded(pack_mod):
-    """源码级：不得把版本号写死在脚本里。"""
+    """源码级：不得把版本号写死在脚本里。
+
+    ## 判据是 AST 而非文本子串（2026-09-29 R14 改）
+
+    旧版只有两条**文本子串**判据：
+
+        assert f'"{medkit.__version__}"' not in src   # ← 只盯当前这一个版本串
+        assert "__version__" in src                   # ← 只要有这个词就算过
+
+    实测两种绕过（都是**语义等价改写**，不是改名）：
+
+    ① 写死**别的**版本号：`V = "1.0.0"` 照样绿（它只查当前值 `0.10.5`）；
+    ② 把单源读法拆成拼接：`getattr(medkit, "__" + "version" + "__")` 仍绿。
+
+    真身结构是 `re.search(r'__version__\\s*=\\s*["\\']([^"\\']+)["\\']', src)`——
+    **用正则从 `medkit/__init__.py` 抠出版本**。所以正确的判据是：
+    函数体里存在对 `medkit/__init__.py` 的读取 + 对 `__version__` 的**正则匹配**，
+    而不是「全文出现过某个版本串」。
+    """
     src = (ROOT / "pack" / "make_release.py").read_text(encoding="utf-8")
-    assert f'"{medkit.__version__}"' not in src, "版本号被写死——应始终读单源"
-    assert "__version__" in src
+    tree = ast.parse(src)
+
+    # 1) 不得在**任何**字符串字面量里写死一个形如 x.y.z 的版本号
+    version_literals = sorted({
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        and _VERSION_RE.fullmatch(n.value.strip())
+    })
+    assert not version_literals, (
+        "make_release.py 里写死了版本号字面量 %r —— 应始终从 medkit/__init__.py 读单源"
+        % version_literals
+    )
+
+    # 2) 单源读法必须**结构在位**：读 __init__.py + 用正则抠 __version__
+    reader = _reader_func(tree)
+    assert reader is not None, "未找到读取版本号的函数（真身是 _version）"
+    body_src = ast.get_source_segment(src, reader) or ""
+    assert re.search(r"__version__", body_src), "读取函数里没有 __version__ 字段名"
+    assert re.search(r"\bre\.(search|match|findall)\b", body_src), (
+        "读取函数没有用 re.* 解析 __init__.py —— 单源读法被拆散了"
+    )
+    assert "__init__" in body_src, "读取函数没有指向 medkit/__init__.py"
+
+
+_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)*(?:[-+][\w.]+)?")
+
+
+def _reader_func(tree: ast.Module) -> ast.FunctionDef | None:
+    """找「读版本号」的函数：函数体里同时出现 __version__ 与 __init__。"""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        text = ast.dump(node)
+        if "__version__" in text and "__init__" in text:
+            return node
+    return None
+
+
+def test_version_guard_is_not_vacuous():
+    """元守卫：证明上面两条判据抓得住「写死版本」与「拆散单源读法」。"""
+    src = (ROOT / "pack" / "make_release.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    # 真身必须绿
+    assert not [n.value for n in ast.walk(tree)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and _VERSION_RE.fullmatch(n.value.strip())]
+    assert _reader_func(tree) is not None
+
+    # 证伪 1：写死一个**别的**版本号 —— 旧判据（只查当前值）会放过
+    injected = src.replace("def _version()", 'V = "9.9.9"\n\n\ndef _version()', 1)
+    t2 = ast.parse(injected)
+    assert [n.value for n in ast.walk(t2)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and _VERSION_RE.fullmatch(n.value.strip())] == ["9.9.9"], (
+        "写死版本号未被判据 1 命中 —— 这条守卫是假绿")
+
+    # 证伪 2：把单源读法拆散（删掉正则那一步，只留文件读取）
+    lines = injected.splitlines(keepends=True)
+    keeper = [ln for ln in lines if "m = re.search(" not in ln]
+    assert len(keeper) == len(lines) - 1, "证伪 2 注入未生效（正则抠版本那一行没找到）"
+    stripped = "".join(keeper).replace("    if not m:", "    m = None\n    if not m:", 1)
+    t3 = ast.parse(stripped)
+    rd = _reader_func(t3)
+    assert rd is not None
+    seg3 = ast.get_source_segment(stripped, rd) or ""
+    assert not re.search(r"\bre\.(search|match|findall)\b", seg3), (
+        "拆散单源读法后判据 2 仍绿 —— 这条守卫是假绿")
 
 
 # ---------------------------------------------------------------- SHA256 清单

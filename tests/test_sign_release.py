@@ -12,6 +12,7 @@
    不在本文件里假装验证。
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,28 @@ _PWSH = shutil.which("powershell") or shutil.which("pwsh")
 
 def _src() -> str:
     return SCRIPT.read_text(encoding="utf-8-sig")  # 带 BOM（PowerShell 5.1 要求）
+
+
+def _if_conditions(src: str) -> list[str]:
+    """抽出所有 `if (<条件>)` 里的**条件表达式**（原文，含变量与运算符）。
+
+    PowerShell 没有可用的 stdlib 解析器，但条件表达式有稳定的括号配平结构；
+    这里只取「顶层括号内容」，不试图做完整解析——判据要的是**比较表达式本身**，
+    而不是全文里出现过哪个词（后者已验证可被恒假改写绕过）。
+    """
+    out: list[str] = []
+    for m in re.finditer(r"\bif\s*\(", src):
+        i = m.end()                      # 打开括号之后
+        depth, start = 1, i
+        while i < len(src) and depth:
+            if src[i] == "(":
+                depth += 1
+            elif src[i] == ")":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            out.append(src[start:i - 1])
+    return out
 
 
 # ---------------------------------------------------------------- 静态性质
@@ -62,10 +85,54 @@ def test_script_avoids_here_string():
 
 
 def test_verifies_signature_after_signing():
-    """签完必须回验——只看 signtool 退出码不够（时间戳失败时仍可能返回 0）。"""
+    """签完必须回验——只看 signtool 退出码不够（时间戳失败时仍可能返回 0）。
+
+    ## 判据是「回验这一步**真的会产生失败**」而非「文本里出现过那个 cmdlet」（2026-09-29 R14 改）
+
+    旧版两条**文本子串**判据：
+
+        assert "Get-AuthenticodeSignature" in src
+        assert "'Valid'" in src
+
+    实测**假绿**：把判定条件削成恒假
+
+        - if ($sig.Status -ne 'Valid') {
+        + if ($false) {
+
+    （语义 = 退化成「只看 signtool 退出码」，正是本用例文档说要避免的那种）后，
+    两条子串**依然命中**，守卫全绿。文本只能证明「词在」，证明不了「判断在」。
+
+    现判据：**取出比较表达式**，要求右侧是与 `'Valid'` 的**比较**，
+    且该比较处在 `-ne` / `-notmatch` 这类「不等于即失败」的方向上。
+    """
     src = _src()
-    assert "Get-AuthenticodeSignature" in src
-    assert "'Valid'" in src, "未断言签名状态为 Valid"
+    assert re.search(r"Get-AuthenticodeSignature", src), "没有调用 Get-AuthenticodeSignature"
+
+    conds = _if_conditions(src)
+    # 真身：if ($sig.Status -ne 'Valid') { … $failed += $t }
+    bad = [c for c in conds if re.search(r"-ne\s+['\"]Valid['\"]", c)]
+    assert bad, (
+        "未找到「状态 -ne 'Valid'」形式的回验判断——"
+        "只有 cmdlet 调用而没有失败判定 = 回验是死代码（条件外的 $failed 永不加）"
+    )
+    # 且失败分支必须真的记账（否则判断了也不拦）
+    tail = src.split(bad[0], 1)[1][:400]
+    assert "$failed" in tail, "回验判定后没有把失败产物记进 $failed —— 判了也不拦"
+
+
+def test_signature_reverify_guard_is_not_vacuous():
+    """元守卫：证明上面的判据抓得住「把判定条件削成恒假」。"""
+    src = _src()
+    # 真身绿
+    assert [c for c in _if_conditions(src) if re.search(r"-ne\s+['\"]Valid['\"]", c)]
+
+    # 证伪：削成恒假（模拟「只看 signtool 退出码」——本用例文档点名的反模式）
+    weakened = re.sub(r"if\s*\(\s*\$sig\.Status\s+-ne\s+'Valid'\s*\)",
+                      "if ($false)", src, count=1)
+    assert weakened != src, "证伪注入未生效"
+    assert not [c for c in _if_conditions(weakened)
+                if re.search(r"-ne\s+['\"]Valid['\"]", c)], (
+        "削掉回验判定后判据仍绿 —— 这条守卫是假绿")
 
 
 def test_documents_ordering_requirement():

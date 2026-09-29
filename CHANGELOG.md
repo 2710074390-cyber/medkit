@@ -10,6 +10,28 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 发布/签名/打包三处「词在 ≠ 判断在」R14）
+
+R13 扫的是「测试里的**源码扫描**判据」；R14 接着扫**发布链路**（`pack/` + `medkit.spec`）——
+这三处守卫共同点：**断言的是「全文出现过某个词」，而真身要守的是「那一步真的会失败」**。
+
+| 守卫 | 旧判据（绑书写） | 实测假绿 | 现判据 |
+|---|---|---|---|
+| `test_release_artifacts::test_version_not_hardcoded` | `f'"{medkit.__version__}"' not in src` + `"__version__" in src` | ① 写死**别的**版本号 `V = "9.9.9"`（只查当前值）；② 把单源读法拆成 `getattr(m, "__" + "version" + "__")` | AST：**任何**形如 `x.y.z` 的字符串字面量即红 + 读取函数体内必须有 `re.*` + `__init__` |
+| `test_sign_release::test_verifies_signature_after_signing` | `"Get-AuthenticodeSignature" in src` + `"'Valid'" in src` | 把判定削成 `if ($false) {`（等价于「只看 signtool 退出码」——**正是该用例文档点名的反模式**）后两条子串**仍命中** | 抽出 `if (<条件>)` 的**条件表达式**，要求存在 `-ne 'Valid'` 比较，且失败分支真的记 `$failed` |
+| `test_check_package::test_spec_ships_dist_info_for_license_obligation` | `"def _lock_closure_names(" in src` + `"requirements.lock" in src` | ① `_P("requirements.lock")` → `_P("no-such-file.lock")`；② `want = _lock_closure_names()` → `want = set()`（闭包掏空 = 构建期依赖全进产物） | AST：闭包函数体内**字面量** `requirements.lock` 在场 + 调用点形态在场 + 返回值不是恒空集 |
+
+**反向验证**（逐条单跑，改前先取基线）：
+
+- **注入 4 例全部变红**：make_release 写死版本 / sign-release 判定恒假 / spec 锁文件名换掉 / spec `want` 掏空。
+- **等价改写 3 例全部保持绿**（防假红）：`'Valid'` 换双引号 / 给 `_version` 加注释 / 加浮注释。
+- 全部还原后 sha256 与基线**逐字节一致**。
+
+> **本轮我自己犯的错（留档）**：判据 ① 首版写成 `n.value.endswith(".lock")`，
+> 比意图**宽了一档** —— `no-such-file.lock` 照样通过；真身注入实测「仍绿」才发现。
+> 这正好是 R12 那条教训的镜像：**判据比意图宽 = 假绿；比意图窄 = 假红**，
+> 两头都要靠注入来量。现判据钉死 `== "requirements.lock"`。
+
 ### Fixed（门禁假绿 · 「文本子串绑书写格式」批量清扫 R13）
 
 延续 R12 的口径（文本子串断言绑的是**书写格式**，不是**结构**），本轮扫掉 5 个文件
