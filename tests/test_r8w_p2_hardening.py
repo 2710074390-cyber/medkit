@@ -7,6 +7,7 @@
 - **M2-04**：上传要有魔数闸 + 压缩炸弹闸；PDF 要有页数闸。
 """
 
+import ast
 import io
 import re
 import sys
@@ -157,10 +158,82 @@ def test_content_guard_is_wired_into_parse_bytes():
     assert "扩展名不符" not in (ok.get("error") or "")
 
 
+def _page_gate_in_open_scope(tree: ast.AST) -> bool:
+    """`with fitz.open(...) as doc:` 的作用域内是否存在「与 MAX_PDF_PAGES 的比较」。
+
+    结构判据（与书写格式无关）：遍历 `ast.With`，若其 context 是对 `fitz.open`
+    的调用，则在该 `with` 的 **body 子树**里找 `Name('MAX_PDF_PAGES')` 参与的比较。
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.With):
+            continue
+        is_fitz_open = any(
+            isinstance(it.context_expr, ast.Call)
+            and isinstance(it.context_expr.func, ast.Attribute)
+            and it.context_expr.func.attr == "open"
+            and isinstance(it.context_expr.func.value, ast.Name)
+            and it.context_expr.func.value.id == "fitz"
+            for it in node.items)
+        if not is_fitz_open:
+            continue
+        # 在 with body 内找「与 MAX_PDF_PAGES 的比较」
+        for sub in node.body:
+            for n in ast.walk(sub):
+                if not isinstance(n, ast.Compare):
+                    continue
+                names = {x.id for x in ast.walk(n) if isinstance(x, ast.Name)}
+                if "MAX_PDF_PAGES" in names:
+                    return True
+    return False
+
+
 def test_pdf_page_limit_exists():
-    """M2-04：PDF 必须有页数闸（源码级守卫 + 常量存在）。"""
+    """M2-04：PDF 必须有页数闸（源码级守卫 + 常量存在）。
+
+    ## 判据是 AST 而非「精确子串」（2026-09-29 R12-2 改）
+    旧版 `"doc.page_count > MAX_PDF_PAGES" in src` 绑死书写：
+    `doc.page_count>MAX_PDF_PAGES`（去空格）、换比较方向写法、拆行 **全部假红**；
+    而它本该表达的结构是「**在 fitz 打开文档的作用域内，用 MAX_PDF_PAGES 做页数判断**」。
+    现改为 AST：找 `with fitz.open(...) as doc:` 的**函数体内部**是否存在
+    「与 MAX_PDF_PAGES 的比较」——与空格/换行/书写形式无关。
+    """
     src = (ROOT / "medkit" / "core" / "extract.py").read_text(encoding="utf-8")
     assert "MAX_PDF_PAGES" in src
-    assert "doc.page_count > MAX_PDF_PAGES" in src, "页数闸未接到 fitz 打开处"
+
+    tree = ast.parse(src)
+    assert _page_gate_in_open_scope(tree), (
+        "页数闸未接到 fitz 打开处（应在 `with fitz.open(...) as doc:` 作用域内"
+        "出现与 MAX_PDF_PAGES 的比较）"
+    )
+
     from medkit.core import extract as ex
     assert ex.MAX_PDF_PAGES >= 100
+
+
+def test_pdf_page_gate_guard_is_not_vacuous():
+    """元守卫：证明 `_page_gate_in_open_scope` 能抓「删闸 / 移出作用域」（否则恒绿）。"""
+    src = (ROOT / "medkit" / "core" / "extract.py").read_text(encoding="utf-8")
+
+    # 反假红：真身必须绿
+    assert _page_gate_in_open_scope(ast.parse(src))
+
+    # 证伪 1：整个闸被删
+    no_gate = src.replace("if doc.page_count > MAX_PDF_PAGES:", "if False:")
+    assert no_gate != src, "注入锚点未命中（探针失效）"
+    assert not _page_gate_in_open_scope(ast.parse(no_gate)), "删掉页数闸却没红 —— 假绿"
+
+    # 证伪 2：闸仍在，但比较对象换成**别的名字**（等于不再用该常量约束）
+    other = src.replace("doc.page_count > MAX_PDF_PAGES",
+                        "doc.page_count > SOME_OTHER_LIMIT")
+    assert other != src, "注入锚点未命中（探针失效）"
+    assert not _page_gate_in_open_scope(ast.parse(other)), \
+        "页数闸不再引用 MAX_PDF_PAGES 却没红 —— 假绿"
+
+    # 书写等价改写必须仍绿（反假红）
+    for label, mutated in {
+        "去空格": (src.replace("doc.page_count > MAX_PDF_PAGES",
+                              "doc.page_count>MAX_PDF_PAGES")),
+    }.items():
+        assert mutated != src, "注入 %s 未命中（探针失效）" % label
+        assert _page_gate_in_open_scope(ast.parse(mutated)), \
+            "等价改写 %s 被误判为「闸缺失」—— 假红" % label

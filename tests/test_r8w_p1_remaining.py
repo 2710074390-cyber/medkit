@@ -10,6 +10,8 @@
 - **SEC-REDACT**：脱敏防线三处旁路——回显末枝 / run.log 写盘 / 正则覆盖面。
 """
 
+import ast
+import inspect
 import sys
 from pathlib import Path
 
@@ -22,6 +24,23 @@ sys.path.insert(0, str(ROOT))
 from medkit.core import dedupe  # noqa: E402
 from medkit.core import errors as errs  # noqa: E402
 from medkit.gates import options_check, trace_check  # noqa: E402
+
+
+def _depends_names(src: str) -> set[str]:
+    """取源码里所有 `Depends(<Name>)` 传进去的函数名。
+
+    判据走 AST 而非 `"Depends(_tutor_guard)" in src`：后者绑书写格式，
+    `Depends( _tutor_guard )`（多余空格）就会**假绿**。
+    """
+    out: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "Depends"):
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Name):
+                out.add(arg.id)
+    return out
 
 
 def _q(**kw) -> dict:
@@ -127,24 +146,59 @@ def test_tutor_start_endpoint_uses_holding_guard():
 
     只测守卫本体不够——端点若仍挂着窥视版 `_tutor_start_guard`，并发双扣费照旧。
     """
-    import inspect
 
     from medkit.routers import library as lib
 
     src = inspect.getsource(lib.tutor_start)
-    assert "Depends(_tutor_guard)" in src, "非流式 tutor/start 必须用持锁守卫（S2-5）"
-    assert "Depends(_tutor_start_guard)" not in src
+    # 判据走 AST：取「传给 Depends(...) 的名字」，而不是绑 `Depends(_tutor_guard)` 的字面拼写。
+    deps = _depends_names(src)
+    assert "_tutor_guard" in deps, (
+        "非流式 tutor/start 必须用持锁守卫（S2-5）；"
+        "实际 Depends 参数：%r" % sorted(deps)
+    )
+    assert "_tutor_start_guard" not in deps, (
+        "非流式 tutor/start 不得退回窥视守卫（会并发双扣费）"
+    )
 
 
 def test_tutor_stream_still_uses_peek_guard():
     """流式端点仍用窥视守卫（持锁由 gen() 负责）——避免同一请求自锁。"""
-    import inspect
 
     from medkit.routers import library as lib
 
     src = inspect.getsource(lib.tutor_start_stream)
-    assert "_tutor_start_guard" in src, "流式端点应继续用窥视守卫"
-    assert "_tutor_guard(" not in src.replace("_tutor_start_guard(", ""), "流式端点不得改用持锁守卫"
+    deps = _depends_names(src)
+    assert "_tutor_start_guard" in deps, "流式端点应继续用窥视守卫"
+    assert "_tutor_guard" not in deps, "流式端点不得改用持锁守卫（同一请求会自锁）"
+
+
+def test_tutor_guard_wiring_is_not_vacuous():
+    """元守卫：证明 `_depends_names` 能区分两个守卫，且不受书写格式影响。
+
+    ## 为什么用**构造源码**而不是读真身（2026-09-29 R12-2 修正）
+    第一版让本用例 `inspect.getsource(真身)`，再对它做 `.replace` 断言——
+    结果在**注入验证**时被自己的守卫绊倒：磁盘文件被注入成
+    `Depends( _tutor_guard )` 后，`.replace("Depends(_tutor_guard)", …)` 匹配不到，
+    `mutated == real` ⇒ 断言「探针失效」而红。
+    ⇒ **元守卫不得依赖真身当前的字面内容**（真身正是被注入的对象）。
+    改为在内存里构造三种写法，直接验证判据函数本身。
+    """
+    template = (
+        '@router.post("/api/library/tutor/start")\n'
+        "def tutor_start(body: TutorStartBody, _guard: None = Depends(%s)) -> dict:\n"
+        "    return {}\n"
+    )
+    # ① 持锁守卫的各种等价写法都必须被认出
+    for form in ("_tutor_guard", " _tutor_guard ", "\n        _tutor_guard\n    "):
+        deps = _depends_names(template % form)
+        assert "_tutor_guard" in deps, "写法 %r 未被识别 —— 假红" % form
+
+    # ② 换成窥视守卫 ⇒ 不得再判出持锁守卫
+    assert "_tutor_guard" not in _depends_names(template % "_tutor_start_guard"), \
+        "换成窥视守卫却被判成持锁守卫 —— 判据无效"
+
+    # ③ 两个都没挂 ⇒ 必须都不在场（防「无条件通过」）
+    assert _depends_names(template % "None") == set(), "未挂守卫却判出守卫 —— 判据无效"
 
 
 # ---------------------------------------------------------------- S2-6

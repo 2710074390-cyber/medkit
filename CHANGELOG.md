@@ -10,6 +10,40 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿 · 「文本子串绑书写格式」批量清扫 R13）
+
+延续 R12 的口径（文本子串断言绑的是**书写格式**，不是**结构**），本轮扫掉 5 个文件
+共 6 处同类缺陷。**每条都做真身注入反向验证**（注入即红；等价改写即绿）：
+
+| 守卫 | 旧判据（绑书写） | 现判据（AST / 行为） |
+|---|---|---|
+| `test_traversal_defense::*_structurally` | `'pid in {"", ".", ".."}' in src` | 找「字面量集合成员判断」含 `""`+`".."`；`/`、`\` 字面量在场 |
+| `test_traversal_defense::*_regex_*` | `'re.fullmatch(r"[...]"' in src` | 取 `re.fullmatch(<常量>)` 的**模式值**再判内容（`.*` / 含 `\|` ⇒ 红） |
+| `test_r8w_p2_frontend::*_basename_*` | **手抄 Python 复刻**，与真身无关 | **用 node 执行真身 JS** 的 `_baseName` |
+| `test_r8w_p2_hardening::test_pdf_page_limit_exists` | `"doc.page_count > MAX_PDF_PAGES" in src` | 找 `with fitz.open(...)` **作用域内**与 `MAX_PDF_PAGES` 的比较 |
+| `test_stream_wiring::*_wiring_*` | `"cancel_ev = threading.Event()" in src` | 找「对 `threading.Event()` 的赋值」+ 方法名集合 |
+| `test_r8w_p1_remaining::*_guard_*` | `"Depends(_tutor_guard)" in src` | 取 `Depends(<Name>)` 的实参名 |
+
+**其中两个是「真缺陷」而非仅口径问题**：
+
+1. **`test_base_name_strips_path_and_control` 是自证式假绿**：它把 `_baseName` 的清洗规则
+   **用手抄的 Python `re.sub` 复刻了一遍**，然后断言那个复刻版。实测**删掉真身 JS 的
+   `.pop()`（整条「只取 basename」的安全性质）用例仍然绿** —— 只有把 `replace` 这个词
+   整个删掉才红。现改为 `subprocess` 跑 `node` 执行真身函数体（沿用 `test_render_markdown`
+   的既有范式），并补元守卫：删 `.pop()` ⇒ 必红。
+2. **`test_stream_wiring::_finally_body` 口径过宽**：旧实现 `src[src.rfind("finally:"):]`
+   会从 `finally:` **一直截到函数末尾**，把 finally 块**之后**的语句也当成「块内」。
+   实测：构造 `finally: cancel_ev.set()` 之后再写 `dedupe.end(key)`，
+   旧口径判「dedupe.end 在 finally 中」= **假绿**（漏放锁的路径被放行）。
+   现改为 AST 精确取 `Try.finalbody` 的源码（441 字符 → 86 字符）。
+
+**顺带修掉一个我自己踩的元守卫设计坑**：`test_tutor_guard_wiring_is_not_vacuous`
+第一版读**真身源码**再做 `.replace` 断言，结果在**注入验证时被自己绊倒**——
+磁盘被注入成 `Depends( _tutor_guard )` 后 `.replace` 匹配不到 ⇒ 报「探针失效」。
+⇒ **元守卫不得依赖真身当前的字面内容**（真身正是被注入的对象），改为内存构造写法。
+
+用例 1031 → **1036**；总闸 1036 passed / 0 fail / 0 skip；ruff 干净；mypy 80 文件 0 error。
+
 ### Fixed（门禁假绿 · `test_v13_single_source` 的文本子串判据）
 
 V-13 单源守卫原先用**文本子串负向断言**（`assert "[:240]" not in src` 等），

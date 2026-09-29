@@ -38,6 +38,7 @@ def delete_preset(pid: str) -> bool:
 （两层都在时行为正确；两层都打掉 ⇒ 必红）。
 """
 
+import ast
 import sys
 from pathlib import Path
 
@@ -57,6 +58,57 @@ def _src(mod) -> str:
     """读模块源码。用 inspect.getsource 而不是自己拼路径——模块路径变了也能跟上。"""
     import inspect
     return inspect.getsource(mod)
+
+
+# ---------------------------------------------------------------------------
+# AST 判据工具（2026-09-29 R12-2）
+#
+# 为什么不用「精确文本子串」：见 test_safe_pid_has_both_layers_structurally 的 docstring。
+# 一句话：文本绑的是**书写格式**，AST 绑的是**结构**。
+# ---------------------------------------------------------------------------
+def _parse(src: str) -> ast.Module:
+    return ast.parse(src)
+
+
+def _membership_sets(tree: ast.AST) -> list[set[str]]:
+    """所有 `x in {...}` / `x in (...)` / `x in [...]` 里的**字符串字面量集合**。
+
+    `pid in {"", ".", ".."}` 与 `pid in ('', '.', '..')` 在此**完全等价**。
+    """
+    out: list[set[str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        for op, comp in zip(node.ops, node.comparators, strict=True):
+            if isinstance(op, (ast.In, ast.NotIn)) \
+                    and isinstance(comp, (ast.Set, ast.Tuple, ast.List)):
+                vals = {e.value for e in comp.elts
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+                if vals:
+                    out.append(vals)
+    return out
+
+
+def _string_literals(tree: ast.AST) -> set[str]:
+    """AST 里出现的全部字符串字面量（注释、docstring 天然被排除）。"""
+    return {n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+
+
+def _fullmatch_patterns(tree: ast.AST) -> list[str]:
+    """找 `re.fullmatch(<常量模式>, ...)` 里的**模式字符串值**。"""
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "fullmatch"
+                and isinstance(func.value, ast.Name) and func.value.id == "re"):
+            continue
+        if node.args and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, str):
+            out.append(node.args[0].value)
+    return out
 
 
 # ============================================================ 攻击向量（共享数据源）
@@ -97,21 +149,98 @@ def test_safe_pid_has_both_layers_structurally():
     探针 3 / 探针 4 证明：单独放宽正则、或单独删掉黑名单行，**现有用例都不变红**——
     因为两层互相兜底。只测行为永远只能测到「至少有一层在」，测不到「两层都在」。
     本断言直接盯源码结构：任一层被删 ⇒ 立刻红。
+
+    ## 判据是 AST 而非文本子串（2026-09-29 R12-2 改）
+    旧版写成 `'pid in {"", ".", ".."}' in src` 这类**文本子串**，绑的是「当时的书写格式」：
+    实测 `pid in {'', '.', '..'}`（换引号）、`pid in ("", ".", "..")`（元组）、
+    跨行书写 **全部假红**；反过来，只要格式稍变，同型断言也可能假绿。
+    现改为 **AST 形态判据**：找「对字面量集合的成员判断」，与引号/元组写法/空白全无关。
     """
-    src = _src(common._safe_pid)
-    assert 'pid in {"", ".", ".."}' in src, \
-        "_safe_pid 的显式黑名单层被删掉了（.. / 空串 / 单点必须显式拦）"
-    assert '"/" in pid' in src and '"\\\\" in pid' in src, \
+    tree = _parse(_src(common._safe_pid))
+
+    # ① 显式黑名单层：必须有一个集合同时含 "" 与 ".."
+    blacklists = _membership_sets(tree)
+    assert any("" in s and ".." in s for s in blacklists), (
+        "_safe_pid 的显式黑名单层被删掉了（.. / 空串必须显式拦）；"
+        "扫到的成员判断集合：%r" % sorted(sorted(s) for s in blacklists)
+    )
+
+    # ② 分隔符拦截：/ 与 \ 都必须在场（Windows 上两者都可逃逸）
+    lits = _string_literals(tree)
+    assert "/" in lits and "\\" in lits, (
         "_safe_pid 必须显式拦 / 与 \\（Windows 上两者都可逃逸）"
-    assert "re.fullmatch" in src, \
+    )
+
+    # ③ 白名单正则层：必须是 re.fullmatch(<常量模式>)
+    assert _fullmatch_patterns(tree), (
         "_safe_pid 的字符白名单正则层被删掉了（应只放行 [\\w\\u4e00-\\u9fff-]）"
+    )
 
 
 def test_safe_pid_regex_is_anchored_and_restrictive():
-    """正则本身必须仍是否定式白名单；放宽为 `.*` / 去掉 fullmatch ⇒ 红。"""
-    src = _src(common._safe_pid)
-    assert "re.fullmatch(r\"[\\w\\u4e00-\\u9fff-]+\"" in src, \
-        "_safe_pid 的正则被改宽了（必须是 fullmatch 全字符白名单）"
+    """正则本身必须仍是否定式白名单；放宽为 `.*` / 去掉 fullmatch ⇒ 红。
+
+    ## 判据是 AST + 内容，不是「精确字面量子串」（2026-09-29 R12-2 改）
+    旧版 `"re.fullmatch(r\\"[\\\\w\\\\u4e00-\\\\u9fff-]+\\"" in src` 绑死书写格式。
+    现在改为：取出 `re.fullmatch(<pattern>)` 的 **pattern 值**再判内容——
+    既能抓住「放宽为 `.*`」「加宽放行分支」「改成动态模式」，
+    又不会因为换引号/拆行而假红。
+    """
+    pats = _fullmatch_patterns(_parse(_src(common._safe_pid)))
+    assert pats, "_safe_pid 必须用 re.fullmatch(<常量模式>) 做整串白名单校验"
+    pat = pats[0]
+    assert pat not in (".*", ".+", "(.*)", "^.*$", "*"), \
+        "_safe_pid 的正则被放宽为「全放行」：%r" % pat
+    assert "|" not in pat, "_safe_pid 的正则出现分支（可能藏了宽放行）：%r" % pat
+
+
+def test_safe_pid_structural_guards_are_not_vacuous():
+    """元守卫：证明上面两条结构判据能抓住「删层 / 放宽正则」（否则它们是恒绿）。
+
+    同时反向自证：**真身不得被这两条判据判红**（否则是假红，会逼人删守卫）。
+    """
+    real_src = _src(common._safe_pid)
+
+    # 反假红：真身必须全绿
+    real_tree = _parse(real_src)
+    assert any("" in s and ".." in s for s in _membership_sets(real_tree))
+    assert _fullmatch_patterns(real_tree)
+
+    # 证伪 1：删掉黑名单层 ⇒ ① 必须红
+    no_black = '''def _safe_pid(pid: str) -> str:
+    if not re.fullmatch(r"[\\w\\u4e00-\\u9fff-]+", pid):
+        raise HTTPException(400, "x")
+    return pid
+'''
+    t = _parse(no_black)
+    assert not any("" in s and ".." in s for s in _membership_sets(t)), \
+        "黑名单层被删，AST 判据却没红 —— 假绿"
+
+    # 证伪 2：删掉白名单层 ⇒ ③ 必须红
+    no_white = '''def _safe_pid(pid: str) -> str:
+    if pid in {"", ".", ".."} or "/" in pid or "\\\\" in pid:
+        raise HTTPException(400, "x")
+    return pid
+'''
+    assert not _fullmatch_patterns(_parse(no_white)), \
+        "白名单层被删，AST 判据却没红 —— 假绿"
+
+    # 证伪 3：放宽正则 ⇒ 内容判据必须红
+    for label, widened in {"放全行": ".*", "加分支": r"[\w\u4e00-\u9fff-]+|.*"}.items():
+        src = real_src.replace(r'r"[\w\u4e00-\u9fff-]+"', 'r"%s"' % widened)
+        assert src != real_src, "注入 %s 没匹配到源文件（探针失效）" % label
+        pats = _fullmatch_patterns(_parse(src))
+        assert pats and (pats[0] in (".*", ".+", "(.*)", "^.*$", "*") or "|" in pats[0]), \
+            "正则放宽为 %s 未被内容判据抓住 —— 假绿" % label
+
+    # 书写等价改写必须仍绿（反假红）
+    for label, mutated in {
+        "换单引号元组": real_src.replace('pid in {"", ".", ".."}', "pid in ('', '.', '..')"),
+    }.items():
+        assert mutated != real_src, "注入 %s 没匹配到源文件（探针失效）" % label
+        mt = _parse(mutated)
+        assert any("" in s and ".." in s for s in _membership_sets(mt)), \
+            "等价改写 %s 被误判为「黑名单层缺失」—— 假红" % label
 
 
 def test_safe_pid_rules_are_identical_across_layers():

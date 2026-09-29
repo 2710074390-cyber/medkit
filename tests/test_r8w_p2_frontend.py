@@ -11,6 +11,8 @@
 """
 
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,6 +33,39 @@ WEB = ROOT / "medkit" / "web" / "js"
 
 def _js(name: str) -> str:
     return (WEB / name).read_text(encoding="utf-8")
+
+
+def _base_name_body(src: str) -> str:
+    """从 learn-review.js 源码里切出 `_baseName` 函数体。"""
+    body = src[src.index("function _baseName("):]
+    return body[:body.index("\n}") + 2]
+
+
+def _eval_base_name_body(body: str, names: list[str]) -> dict[str, str]:
+    """用 node 执行给定的 `_baseName` 函数体，返回 {输入: 输出}。
+
+    ## 为什么真的跑 node（2026-09-29 R12-2）
+    手抄一份 Python 复刻来「核对语义」是**自证式假绿**：
+    真身被改坏时副本不受影响，用例照样绿（实测删掉 `.pop()` 仍绿）。
+    只有执行真身，断言才落在被测对象上。
+    """
+    if shutil.which("node") is None:
+        pytest.fail("需要 node 执行 learn-review.js 的 _baseName（不允许静默跳过）")
+    code = (
+        "const body=process.argv[1]; const names=JSON.parse(process.argv[2]);"
+        "const fn=new Function(body+'; return _baseName;')();"
+        "console.log(JSON.stringify(names.map(n=>fn(n))));"
+    )
+    r = subprocess.run(["node", "-e", code, body, json.dumps(names)],
+                       capture_output=True, text=True, timeout=30,
+                       encoding="utf-8", errors="replace")
+    assert r.returncode == 0, "node 执行 _baseName 失败：%s" % r.stderr
+    return dict(zip(names, json.loads(r.stdout.strip()), strict=True))
+
+
+def _run_base_name(names: list[str]) -> dict[str, str]:
+    """跑**真身文件**里的 `_baseName`。"""
+    return _eval_base_name_body(_base_name_body(_js("learn-review.js")), names)
 
 
 # ---------------------------------------------------------------- S3-1 / S3-2 / S3-3
@@ -58,22 +93,44 @@ def test_anki_download_name_is_basenamed():
 
 
 def test_base_name_strips_path_and_control():
-    """S3-3：清洗规则本身（用 Node 跑一次真实函数体）。"""
-    import re
-    src = _js("learn-review.js")
-    body = src[src.index("function _baseName("):]
-    body = body[:body.index("\n}") + 2]
-    # 用等效 Python 实现核对语义（避免依赖 Node 环境）
-    def base_name(name: str) -> str:
-        s = re.sub(r"[\\/]+", "/", str(name or "")).split("/")[-1] or ""
-        s = re.sub(r"[\u0000-\u001f\u007f]", "", s).strip()
-        return s or "MedKit记忆卡.apkg"
+    """S3-3：清洗规则本身——**执行真身 JS**，不再用手抄的 Python 复刻。
 
-    assert "replace" in body
-    assert base_name("../../etc/x.apkg") == "x.apkg"
-    assert base_name("a\\b\\c.apkg") == "c.apkg"
-    assert base_name("bad\x00name.apkg") == "badname.apkg"
-    assert base_name("") == "MedKit记忆卡.apkg"
+    ## 为什么重写（2026-09-29 R12-2）
+    旧版把 `_baseName` 的清洗规则**用手抄的 Python `re.sub` 复刻了一遍**，
+    然后断言那个 Python 版的行为。实测：把真身 JS 的 `.pop()`（整条
+    「只取 basename」的安全性质！）删掉，用例**仍然绿** —— 只有「把 `replace`
+    这个词整个删掉」这种无关紧要的改动才会红。
+    ⇒ 这是**自证式假绿**：测的是副本，不是真身。
+
+    现改为用 node 加载真身后的 `_baseName` 直接跑，输入输出都来自真实实现。
+    """
+    cases = {
+        "../../etc/x.apkg": "x.apkg",
+        "a\\b\\c.apkg": "c.apkg",
+        "bad\x00name.apkg": "badname.apkg",
+        "": "MedKit记忆卡.apkg",
+        "/abs/path.pkg": "path.pkg",   # 绝对路径也必须只留 basename
+        "ok.apkg": "ok.apkg",
+    }
+    got = _run_base_name(list(cases))
+    for name, want in cases.items():
+        assert got[name] == want, (
+            "_baseName(%r) = %r，应为 %r —— 真身清洗规则被改坏"
+            % (name, got[name], want))
+
+
+def test_base_name_guard_is_not_vacuous():
+    """元守卫：证明上一条真的在测**真身**（改坏 JS ⇒ 必红）。"""
+    src = _js("learn-review.js")
+    broken = src.replace('.split("/").pop() || ""', '|| ""')
+    assert broken != src, "注入锚点未命中（探针失效）"
+    # 用改坏后的函数体跑同一组输入：basename 清洗已失效 ⇒ 结果必然不同
+    body = broken[broken.index("function _baseName("):]
+    body = body[:body.index("\n}") + 2]
+    got = _eval_base_name_body(body, ["../../etc/x.apkg", "/abs/path.pkg"])
+    assert got["../../etc/x.apkg"] != "x.apkg", (
+        "删掉 .pop() 后 _baseName 仍返回 x.apkg —— 说明用例没在测真身（假绿）"
+    )
 
 
 # ---------------------------------------------------------------- S3-7
