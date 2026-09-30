@@ -54,7 +54,7 @@ git stash pop -q                                 # 未执行到
 
 | 资产 | 状态 | 证据 |
 |---|---|---|
-| 工作树全部源码 | ✅ 完好 | `ls` 抽查 + 后续门禁 1045 passed |
+| 工作树全部源码 | ✅ 完好 | `ls` 抽查 + 后续门禁 1045 passed（R25 提交前基线；R25 提交后为 1046，见下） |
 | **本轮 R25 改动（5 文件）** | ✅ 全部在磁盘上 | `grep -c R25` 命中 |
 | **远端 `origin/master`** | ✅ **= `99e8a5f`** | `git ls-remote <url> refs/heads/master` |
 | `.git/logs/refs/heads/master` | ✅ 完好，末条 = `99e8a5f` | 与远端**一致** |
