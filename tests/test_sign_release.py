@@ -166,10 +166,21 @@ def test_build_bat_wires_signing_optional():
 
 # ---------------------------------------------------------------- 失败路径（本机可实测）
 
-pytestmark_ps = pytest.mark.skipif(_PWSH is None, reason="本机无 powershell/pwsh")
+def _need_ps() -> str:
+    """取可执行的 PowerShell 路径；**本机没有就 `pytest.fail`，不许静默跳过**。
+
+    项目 skip 分级（技能 `gate-falsifiability`）：**环境缺失只在 `CI=true` 时 skip，
+    本地缺即红**。原来的写法是 `@pytest.mark.skipif(_PWSH is None, …)`——本地缺
+    PowerShell 时这两条「签名失败路径」用例会**静默消失**，而 README 仍声称覆盖。
+    本项目是 Windows 应用，系统自带 PowerShell ⇒ 缺失属异常，要红。
+    （同族修正见 `tests/test_render_markdown.py` 的 node 探测。）
+    """
+    if _PWSH is None:
+        pytest.fail("本机找不到 PowerShell 可执行文件 —— 签名失败路径用例会静默消失，"
+                    "这是「检查没跑」而不是「检查通过」")
+    return _PWSH
 
 
-@pytestmark_ps
 @pytest.mark.parametrize(("args", "expect"), [
     ([], "-Thumbprint"),                      # 断言只用 ASCII 子串（解码无关）
     (["-Thumbprint", "DEADBEEF"], "signtool.exe"),
@@ -180,7 +191,7 @@ def test_fails_fast_without_cert_or_tool(args, expect):
     本机（无 signtool、无证书）正好能实测这两条失败路径。
     """
     r = subprocess.run(
-        [_PWSH, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT), *args],
+        [_need_ps(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT), *args],
         capture_output=True, timeout=60, cwd=str(ROOT),
     )
     assert r.returncode != 0, f"应非零退出，实际 {r.returncode}（静默跳过？）"
@@ -191,11 +202,10 @@ def test_fails_fast_without_cert_or_tool(args, expect):
     assert expect in out, f"提示信息缺失：{out[:300]}"
 
 
-@pytestmark_ps
 def test_does_not_hang_waiting_for_input():
     """不带任何参数运行必须立刻返回（不能挂在交互式询问上）。"""
     r = subprocess.run(
-        [_PWSH, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT)],
+        [_need_ps(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT)],
         capture_output=True, timeout=30, cwd=str(ROOT),
     )
     assert r.returncode != 0
