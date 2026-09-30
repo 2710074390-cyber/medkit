@@ -1,4 +1,4 @@
-/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkOcrFile, mkOcrPick, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
+/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
 const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
 const LEARN_ORDER = ["weak", "shaky", "solid", "mastered"];
@@ -659,21 +659,15 @@ async function addMistakeRaw() {
     loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
-function mkOcrPick() { $("mk_image").click(); }
-async function mkOcrFile(input) {
-  const f = input.files && input.files[0];
-  if (!f) return;
-  const fd = new FormData();
-  fd.append("file", f);
-  const btn = $("btn_mk_ocr"); const old = btn.textContent;
-  btn.textContent = "识别中…"; btn.disabled = true;
-  try {
-    const r = await api("/api/library/mistakes/import-image", { method: "POST", body: fd });
-    $("mk_text").value = (r.text || "").trim();
-    toast("识别完成，请检查后点「入库错题」");
-  } catch (e) { toast(e.message, false); }
-  finally { btn.textContent = old; btn.disabled = false; input.value = ""; }
-}
+/* EP-01 图像录入：原来的「拍题(图片 OCR)」入口已删除。
+ *
+ * 它只做 MinerU OCR 并把识别文本回填 `mk_text` 文本框——不做能力判定
+ * （模型支持原生视觉也不会用）、不过闸门、不跑归因。升级后的
+ * 「拍照录入（自动归因）」卡片把三件事都做了，两套实现并存只会各自漂移，
+ * 故入口统一为 `miFocus()`（见 learn-meta-image.js），本文件不再保留图片通道。
+ * 后端 `/api/library/mistakes/import-image` 仍在（有独立守卫 tests/test_r4_batch3.py），
+ * 只是不再有前端入口。
+ */
 async function _siteImportItems(items) {
   if (!items || !items.length) throw new Error("未找到 items 数组");
   const r = await api("/api/library/mistakes/import-export", {
@@ -734,5 +728,5 @@ async function mkBatchFile(input) {
   } catch (e) { toast(`批量导入失败：${e.message}`, false); }
   finally { input.value = ""; btn.disabled = false; btn.textContent = old; }
 }
-window.mkLearn = mkLearn; window.mkDel = mkDel; window.mkOcrPick = mkOcrPick;
+window.mkLearn = mkLearn; window.mkDel = mkDel;
 window.mkBatchPick = mkBatchPick;

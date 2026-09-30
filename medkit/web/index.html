@@ -470,10 +470,14 @@ try {
         </div>
         <div class="btns" style="margin-top:12px">
           <button class="act" id="btn_mk_add" onclick="addMistakeRaw()">入库错题</button>
-          <button class="act gray" id="btn_mk_ocr" onclick="mkOcrPick()">拍题(图片 OCR)</button>
+          <!-- EP-01 图像录入：拍题统一走下方「拍照录入（自动归因）」卡片。
+               原「拍题(图片 OCR)」只做 MinerU OCR 并回填文本框——不做能力判定
+               （模型支持视觉也不会用）、不过闸门、不跑归因，与升级后的入口口径分裂；
+               同一视图放两个「拍题」按钮，用户无从知道该点哪个。故改为**跳转引导**，
+               而不是保留第二套实现（那必然两边各自漂移）。 -->
+          <button class="act gray" id="btn_mk_photo" onclick="miFocus()">拍题录入（自动归因）↓</button>
           <button class="act gray" id="btn_mk_batch" onclick="mkBatchPick()">批量导入(文件)</button>
           <button class="act gray" id="btn_mk_site" onclick="mkSiteImport()">站点数据(JSON)</button>
-          <input type="file" id="mk_image" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp" style="display:none" onchange="mkOcrFile(this)">
           <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
           <input type="file" id="mk_site_file" accept=".json,.csv" style="display:none" onchange="mkSiteFile(this)">
         </div>
@@ -498,11 +502,12 @@ try {
         </div>
         <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
-    </div>
 
-    <!-- 视图 2b/6：拍照录入（EP-01 图像输入）——原生视觉优先 / OCR 兜底，流式识别 + 归因 -->
-    <div class="card" style="margin-top:14px">
-      <div class="cardh"><h2>拍照录入（自动归因）</h2><span class="hint" id="mi_cap"></span></div>
+      <!-- 视图 2b：拍照录入（EP-01 图像输入）——原生视觉优先 / OCR 兜底，流式识别 + 归因。
+           ⚠️ 必须留在 #lv-mistakes **内部**：一旦落到 .learnview 之外，就会在学习中心的
+           每个子视图常驻显示（浏览器用例 test_photo_card_is_scoped_to_mistakes_view 守）。 -->
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>拍照录入（自动归因）</h2><span class="hint" id="mi_cap"></span></div>
       <div class="hint" id="mi_cap_hint" style="margin-bottom:10px">
         <span class="spin"></span>正在检测当前模型是否支持图像输入…
       </div>
@@ -560,6 +565,7 @@ try {
       <div id="mi_progress" class="mi-progress" style="display:none"></div>
       <div id="mi_raw" class="mi-raw" style="display:none"></div>
       <div id="mi_result" class="mi-result"></div>
+      </div>
     </div>
 
     <!-- 视图 3/5：讲解与学习产物（按科目组织 + 联网补充 + 产物管理） -->

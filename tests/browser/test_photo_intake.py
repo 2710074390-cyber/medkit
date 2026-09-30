@@ -180,6 +180,92 @@ def test_recognition_failure_shows_error_frame(page, server_url):
     assert page.locator("#mi_result .mi-card").count() == 0
 
 
+def test_only_one_image_entry_in_mistakes_view(page, server_url):
+    """同一视图**只允许一个图片入口**。
+
+    历史（本次修）：新增错题卡片曾有「拍题(图片 OCR)」——只做 MinerU OCR 并回填文本框，
+    不做能力判定、不过闸门、不跑归因；升级后的拍照录入卡片又带一个 ⇒ 两个入口的
+    能力口径与闸门口径分裂，用户无从知道该点哪个。
+    判据取「用户可见的图片文件输入框数量」，**不绑具体按钮 id**（换名字不该假绿）。
+    """
+    _stub_capability(page, CAP_VISION)
+    page.goto(server_url)
+    _open_mistakes(page)
+    n = page.locator("#lv-mistakes input[type=file][accept*='image']").count()
+    assert n == 1, f"错题本视图应有且仅有 1 个图片入口，实际 {n} 个"
+
+
+def test_legacy_photo_button_guides_to_new_card(page, server_url):
+    """原「拍题」按钮现在是**引导**：滚到新卡片并聚焦"下一个该填/该点的东西"。"""
+    _stub_capability(page, CAP_VISION)
+    page.goto(server_url)
+    _open_mistakes(page)
+
+    def _active():
+        return page.evaluate(
+            "() => (document.activeElement && document.activeElement.id) || ''")
+
+    page.click("#btn_mk_photo")
+    page.wait_for_function(
+        "() => document.activeElement && document.activeElement.id === 'mi_conf'", timeout=5000)
+    # 填了把握程度、没填想法 → 焦点应转到 mi_reason
+    page.select_option("#mi_conf", "3")
+    page.click("#btn_mk_photo")
+    page.wait_for_function(
+        "() => document.activeElement && document.activeElement.id === 'mi_reason'", timeout=5000)
+    # 两项都齐 → 焦点落到投放区
+    page.fill("#mi_reason", "猜的")
+    page.click("#btn_mk_photo")
+    page.wait_for_function(
+        "() => document.activeElement && document.activeElement.id === 'mi_drop'", timeout=5000)
+    assert _active() == "mi_drop"
+
+
+def test_photo_card_is_scoped_to_mistakes_view(page, server_url):
+    """卡片必须**只**在「错题本」子视图出现。
+
+    这条守的是一个真实踩过的缺陷：把卡片插在 `#lv-mistakes` 的 `</div>` **之后**，
+    它就成了 `.learnview` 的兄弟节点 ⇒ 学习中心每个子视图都常驻显示它
+    （`showLearnView` 只切 `.learnview`，管不到它）。当时的用例只按 id 查元素，
+    「查得到」就过，完全没发现。故这里断言**可见性随子视图切换而变**。
+    """
+    _stub_capability(page, CAP_VISION)
+    page.goto(server_url)
+    page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
+    page.click('button[data-tab="learn"]')
+    page.wait_for_selector("#tab-learn.show", timeout=15000)
+
+    page.click('#learnnav button[data-lv="overview"]')
+    page.wait_for_selector("#lv-overview.show", timeout=15000)
+    assert not page.locator("#mi_drop").is_visible(), "概览视图不该显示拍照录入卡片"
+
+    page.click('#learnnav button[data-lv="mistakes"]')
+    page.wait_for_selector("#lv-mistakes.show", timeout=15000)
+    assert page.locator("#mi_drop").is_visible(), "错题本视图应显示拍照录入卡片"
+
+    page.click('#learnnav button[data-lv="meta"]')
+    page.wait_for_selector("#lv-meta.show", timeout=15000)
+    assert not page.locator("#mi_drop").is_visible(), "元认知视图不该显示拍照录入卡片"
+
+
+def test_capability_loads_when_mistakes_view_is_remembered(page, server_url):
+    """刷新后停在错题本时，能力横幅必须自己加载出来（不能卡在"正在检测…"）。
+
+    守的是第二个真实缺陷：`learn.js` 的 `initLearnView()` 在**它自己加载时**就调
+    `showLearnView(记住的视图)`——那时 learn-meta-image.js 还没加载、包装还没装上，
+    于是这条路径不经过钩子，横幅永远停在占位文案。
+    """
+    _stub_capability(page, CAP_OCR)
+    page.goto(server_url)
+    _open_mistakes(page)                       # 记住「错题本」
+    page.reload()
+    page.wait_for_selector("#lv-mistakes.show", timeout=15000)
+    page.wait_for_function(
+        "() => { const el = document.getElementById('mi_cap_hint');"
+        " return el && !el.innerText.includes('正在检测'); }", timeout=15000)
+    assert "OCR" in page.locator("#mi_cap_hint").inner_text()
+
+
 def test_photo_card_narrow_no_overflow(page, server_url):
     """390×844 窄屏：投放区/进度日志不撑破页面。"""
     _stub_capability(page, CAP_OCR)

@@ -18,7 +18,7 @@
  *    不折叠成"识别失败"四个字。
  */
 /* exported miLoadCapability, miCapabilityRender, miPickFile, miStart, miReset, miGateCheck,
-   miRenderFields */
+   miRenderFields, miFocus */
 
 // 当前识别能力（`/api/errors/image/capability` 的缓存；进视图时刷新）
 let miCap = null;
@@ -97,6 +97,28 @@ function miGateCheck() {
 }
 
 /* ---------------------------------------------------------------- 三处图片入口 */
+
+/** 「新增错题」卡片里的「拍题录入」按钮跳到这里。
+ *
+ * 为什么不保留第二套拍题实现：旧入口只做 MinerU OCR 并回填文本框——不做能力判定
+ * （模型支持原生视觉也不会用）、不过闸门、不跑归因，与本卡片口径分裂；
+ * 同一视图放两个「拍题」按钮，用户无从知道该点哪个。故这里只做**引导**：
+ * 滚到卡片，并聚焦"下一个该填/该点的东西"（闸门字段优先，填齐才轮到投放区）。
+ *
+ * 顺带刷新能力横幅：用户可能刚在设置页换过模型，缓存里的 `miCap` 会过期。
+ */
+function miFocus() {
+  const drop = $("mi_drop");
+  if (!drop) return;                       // 老版本 HTML → 静默跳过
+  const conf = $("mi_conf");
+  const reason = $("mi_reason");
+  const target = (!conf || !conf.value) ? conf
+    : ((!reason || !reason.value.trim()) ? reason : drop);
+  if (target && target.scrollIntoView) target.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (target && target.focus) target.focus({ preventScroll: true });
+  miLoadCapability();
+}
+
 function miPickFile(input) {
   const f = input.files && input.files[0];
   input.value = "";               // 允许连续选同一张
@@ -325,3 +347,19 @@ async function miStart() {
     if (name === "mistakes") miLoadCapability();
   };
 })();
+
+/* 加载期补一次：`learn.js` 的 `initLearnView()` 是在**它自己加载时**就调
+ * `showLearnView(记住的视图)` 的——那一刻本片还没加载、包装还没装上。
+ * 所以「上次停在错题本 → 刷新页面」这条路径不会经过包装，
+ * 能力横幅会永远停在"正在检测当前模型是否支持图像输入…"。
+ * 这里按「视图是否已 show」补一次（子视图的 .show 与 tab 无关，故判它即可）。
+ */
+(function miInitIfViewAlreadyShown() {
+  const run = () => {
+    const view = document.getElementById("lv-mistakes");
+    if (view && view.classList.contains("show")) miLoadCapability();
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run);
+  else run();
+})();
+
