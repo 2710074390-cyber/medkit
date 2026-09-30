@@ -93,7 +93,7 @@ class LLMClient:
         self._client = OpenAI(base_url=base_url.rstrip("/"), api_key=api_key or "none",
                               timeout=timeout, max_retries=0)  # 重试由本类控制
 
-    def chat(self, messages: list[dict[str, str]], temperature: float = 0.7,
+    def chat(self, messages: list[dict[str, Any]], temperature: float = 0.7,
              json_mode: bool = False, max_tokens: Optional[int] = None) -> str:
         last_err: Optional[Exception] = None
         # 截断重试用的**可变额度**：必须在循环外持有，否则每轮从 `max_tokens` 参数重建，
@@ -165,7 +165,7 @@ class LLMClient:
                 raise LLMError(f"调用失败({self.model}): {e}") from e
         raise LLMError(f"调用失败({self.model}): {last_err}")
 
-    def chat_stream(self, messages: list[dict[str, str]], temperature: float = 0.7,
+    def chat_stream(self, messages: list[dict[str, Any]], temperature: float = 0.7,
                       max_tokens: Optional[int] = None):
         """WP-8：流式生成器——yield {delta, usage, canceled}，支持取消事件。
 
@@ -223,7 +223,7 @@ class LLMClient:
             if close is not None:
                 close()   # R5-03：结束/取消/异常/断连全路径关闭 provider 连接
 
-    def chat_json(self, messages: list[dict[str, str]], temperature: float = 0.7,
+    def chat_json(self, messages: list[dict[str, Any]], temperature: float = 0.7,
                   max_tokens: Optional[int] = None,
                   schema: Optional[type[BaseModel]] = None) -> Any:
         """chat + 回退解析：先 json_mode，失败后普通文本再剥围栏。

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from medkit.core.schema import CardDrafts, FixPatch, QcVerdict, QuestionItem
+from medkit.core.schema import CardDrafts, ErrorImageExtract, FixPatch, QcVerdict, QuestionItem
 
 CASE_DIR = Path(__file__).resolve().parent / "fixtures" / "llm_cases"
 
@@ -63,6 +63,28 @@ def test_medfix_patch_contract():
         model = FixPatch.model_validate(fix)
         assert model.id and model.question and model.answer and model.analysis
         assert model.options, "修复题应含完整选项"
+
+
+def test_error_image_extract_contract():
+    """EP-01 图像录入：fixture 过 `ErrorImageExtract` 契约（NX-06 要求的同批样本）。
+
+    两条不变式在这里钉住：
+    ① `legible=True` ⇒ 题干非空（否则这份"识别成功"是假的，上层会拿空题干建卡）；
+    ② 有 `answer` 就必须有 `answer_from_image`（无出处的答案在 `vision.sanitize` 会被丢弃，
+       所以 fixture 里不该出现"有答案没出处"的形态——那是模型漏标的错误样本）。
+    """
+    data = _load("error_image_extract.json")
+    model = ErrorImageExtract.model_validate(data)
+    assert model.question, "可读的图必须抽得出题干"
+    assert model.answer and model.answer_from_image, "fixture 的 answer 必须带出处声明"
+    assert model.options, "选择题 fixture 应含选项"
+
+
+def test_error_image_extract_provenance_invariant():
+    """反向：`answer` 有值但 `answer_from_image=False` → 必须被记进 `uncertain`（不静默）。"""
+    model = ErrorImageExtract.model_validate(
+        {"question": "q", "answer": "B", "answer_from_image": False, "legible": True})
+    assert "answer" in model.uncertain
 
 
 def test_medcards_cards_contract():

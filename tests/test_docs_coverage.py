@@ -103,6 +103,7 @@ EP01_PILLARS = (
     "core/kpid.py",
     "core/metacog.py",
     "core/error_events.py",
+    "core/vision.py",
     "agents/error_analysis.py",
     "agents/socratic_review.py",
     "routers/errors.py",
@@ -133,14 +134,17 @@ def test_ep01_pillar_really_exists(rel: str):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ("error_analysis.md", "socratic_review.md"))
+EP01_PROMPTS = ("error_analysis.md", "socratic_review.md", "error_image_extract.md")
+
+
+@pytest.mark.parametrize("name", EP01_PROMPTS)
 def test_ep01_prompts_mentioned(name: str):
-    """EP-01 新增的两个提示词必须在 README 提及（提示词是行为契约的一部分）。"""
+    """EP-01 的提示词必须在 README 提及（提示词是行为契约的一部分）。"""
     section = _current_feature_section()
     assert name in section, f"README「已实现功能」未提及提示词 {name}"
 
 
-@pytest.mark.parametrize("name", ("error_analysis.md", "socratic_review.md"))
+@pytest.mark.parametrize("name", EP01_PROMPTS)
 def test_ep01_prompts_really_exist(name: str):
     assert (ROOT / "medkit" / "prompts" / name).exists(), f"prompts/{name} 不存在"
 

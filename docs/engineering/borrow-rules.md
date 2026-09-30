@@ -94,3 +94,4 @@
 | PR-9（WP-11） | 数据互通/同步产品 | 外部导出格式 + 幂等去重字段 | `library.import_site_items`：sha1(subject|chapter|question) 幂等；重复导入更新而非新增；`import-export` 端点 + 前端“站点数据(JSON)”入口 |
 | PR-10（WP-9） | 静态站点/文档渲染（零依赖） | 本地 Markdown→HTML（转义优先）+ 医学关键词高亮 | `medkit/web/js/md.js`（`mdRender`/`mdHighlight`）；讲解/提问/复习卡统一富文本；表格样式 |
 | PR-11（WP-12） | 发布/打包工程 | 黑名单扫描 + 发布包纯净 | `pack/check-package.py`（samples/种子/tests/`__pycache__`/`.pyc` 断言）；`medkit.spec` 移除示例与种子；`/api/sample` available=False + 前端按钮降级 |
+| EP-01 图像录入 | Cherry Studio / LobeChat / 常规多模态客户端 | ① **能力先声明**（客户端检测到模型不支持图像输入时直接提示换模型或用 OCR，而不是让用户提交后吃报错）；② **粘贴即入**（截图 `Ctrl+V` 直接进输入，不必先存盘再选文件）；③ **等待可感知**（长任务把模型原始输出边到边显，而非只转圈）；④ 多通道识别**逐条回报**（哪条路失败、为什么） | `core/vision.py`：`capability()` 返回 `preferred` 供前端直接展示（**前后端不各判一套**）；`plan()` 决定视觉/OCR 顺序 + 降级；`iter_extract()` 单一编排同时喂非流式 `extract()` 与 SSE 端点（`routers/errors.py` 的 `image/extract/stream`、`intake/image`）；前端 `learn-meta-image.js` 拖拽/粘贴/选文件三入口 + `mi_progress` 逐条阶段日志 + `mi_raw` 增量文本 |

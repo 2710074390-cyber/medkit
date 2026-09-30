@@ -1,0 +1,20 @@
+{
+  "question": "3. 患儿男，6 岁，发热咳嗽 5 天，双肺闻及中细湿啰音。最可能的诊断是",
+  "options": [
+    "A. 急性支气管炎",
+    "B. 支气管肺炎",
+    "C. 支气管哮喘",
+    "D. 肺结核"
+  ],
+  "answer": "B",
+  "user_answer": "A",
+  "analysis": "双肺固定中细湿啰音是肺炎的典型体征；幼儿期以支气管肺炎最常见。",
+  "subject": "儿科学",
+  "chapter": "",
+  "topic": "",
+  "answer_from_image": true,
+  "user_answer_from_image": true,
+  "legible": true,
+  "uncertain": [],
+  "notes": ""
+}

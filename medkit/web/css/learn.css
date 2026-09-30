@@ -245,3 +245,50 @@
   .mt-table{min-width:460px}
   .mt-soc-panel{padding:10px 11px}
 }
+
+/* ---------------------------------------------------------------- EP-01 图像录入
+   拍照录入卡片（错题本视图）。设计意图与既有块保持一致：
+   - 闸门区用左侧强调边框，明确"这两项必须先填"（与 .mt-soc-panel 同一套语言：
+     边框色 = 这是需要你动手的地方，不是看板）；
+   - 投放区在拖拽悬停/已选文件时给**明确**的状态变化（否则用户不知道松手会不会生效）；
+   - 进度日志逐条追加、最新一条在底部，长等待时可读。 */
+.mi-gate{padding:10px 12px;background:var(--card2);border:1px solid var(--line);
+  border-left:3px solid var(--accent);border-radius:8px}
+.mi-gate label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
+.mi-gate input[type=text],.mi-gate select,.mi-gate textarea{
+  width:100%;box-sizing:border-box;padding:7px 10px;border-radius:7px;
+  border:1px solid var(--line);background:var(--card);color:var(--text);
+  font-family:inherit;font-size:13.5px}
+.mi-gate textarea{line-height:1.55;resize:vertical}
+.mi-gate input[type=text]:focus,.mi-gate select:focus,.mi-gate textarea:focus{
+  outline:none;border-color:var(--accent)}
+
+.mi-drop{margin-top:10px;padding:18px 14px;border:1.5px dashed var(--line);border-radius:9px;
+  background:var(--card2);text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+.mi-drop:hover{border-color:var(--accent2)}
+.mi-drop.over{border-color:var(--accent);background:var(--infobg)}
+.mi-drop.has-file{border-style:solid;border-color:var(--good)}
+.mi-drop-t{font-size:13.5px;color:var(--text);line-height:1.6}
+
+.mi-progress{margin-top:10px;max-height:190px;overflow-y:auto;
+  background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.mi-step{font-size:12.5px;color:var(--dim);line-height:1.75;display:flex;gap:6px;align-items:baseline}
+.mi-step.ok{color:var(--good)}
+.mi-step.warn{color:var(--warn)}
+.mi-step.bad{color:var(--warn);font-weight:600}
+.mi-step.run{color:var(--text)}
+
+.mi-raw{margin-top:8px;max-height:150px;overflow:auto;white-space:pre-wrap;
+  word-break:break-word;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;
+  line-height:1.6;color:var(--dim);background:var(--card3);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px}
+
+.mi-result{margin-top:10px}
+.mi-card{padding:11px 13px;background:var(--card);border:1px solid var(--line);border-radius:8px}
+.mi-field{margin-top:9px;font-size:13px;line-height:1.6;color:var(--text)}
+.mi-field:first-child{margin-top:0}
+.mi-field>b{display:block;font-size:11.5px;color:var(--dim);font-weight:600;margin-bottom:3px}
+.mi-q{padding:8px 10px;background:var(--card2);border-radius:6px}
+.mi-opts{display:flex;flex-direction:column;gap:2px}
+.mi-opt{padding:3px 8px;background:var(--card2);border-radius:5px}
+

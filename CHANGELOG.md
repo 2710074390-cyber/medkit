@@ -10,6 +10,48 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Added（EP-01 图像录入：原生视觉优先 + OCR 兜底）
+
+错题归因流水线（EP-01）此前只吃**结构化 dict**（手打题干 / 粘贴文本 / JSONL），
+而考生的错题往往只有一张截图。本次补上「图片 → 结构化字段」这一段。
+
+- **`core/vision.py`（新）**：识别编排的唯一实现。
+  - `looks_like_vision(model)` 是**正面判据**（模型名命中已知视觉标记才算支持），
+    认不出 ⇒ 判"不支持" ⇒ 走 OCR。这个方向刻意选的：反了会让用户拿到一个
+    400 报错却不知道该换模型还是该配 OCR；现在最坏只是多走一次 OCR。
+  - `plan()` 决定尝试顺序并**可被守卫直接断言**（`auto` / `vision` / `ocr` 三种偏好；
+    图超过 8MB 时视觉被跳过、自动改走 OCR 且说明原因）。
+  - **降级不静默**：视觉失败 → OCR；两条都失败 → `ok=False` + 逐条 `attempts`，
+    绝不返回"看起来成功但字段全空"。
+  - **红线**：`sanitize()` 丢弃所有**没有「来自图片」出处声明**的 `answer` / `user_answer`。
+    图片里印的答案是**用户提供的数据**（原样转录），与 `ErrorAnalysis` 里
+    "模型不许写答案"是两件事——故用 `answer_from_image` 把这个区别变成机械可查的性质。
+  - OCR 路径识别后**不再调模型**结构化，直接复用 `library.parse_question_text`（零 LLM、离线可用）。
+- **`routers/errors.py`（+4 端点，22 → 26）**：
+  `GET /api/errors/image/capability`（能力横幅：走视觉还是 OCR，前端不二次判断）·
+  `POST /api/errors/image/extract`（非流式，只识别不落库）·
+  `POST /api/errors/image/extract/stream`（SSE：`stage` → `delta` → `result`）·
+  `POST /api/errors/intake/image`（SSE：识别 → 归一 → 对齐 → 归因 → 落库一条龙）。
+  `errorpipe.run` 的 `progress` 是同步回调，用 `queue.Queue` 桥接成 SSE——
+  **不为了流式把流水线拆散重写**（编排仍只有一份实现）。
+- **前端 `learn-meta-image.js`（新，learn 族第 6 片）**：错题本视图新增「拍照录入（自动归因）」卡片。
+  进视图先拉能力横幅**直说**走哪条路（不猜、不让用户试）；拖拽 / 点击 / **Ctrl+V 粘贴截图**三处入口；
+  识别阶段把模型原始输出**边到边显**（一张医学题图要读十几秒，只转圈最像卡死）；
+  闸门字段（把握程度 / 当时的想法）未填时「开始识别」**禁用**并说明原因。
+- **闸门不放宽**：图片入口仍要求 `confidence` + `my_reasoning` 才跑 AI 归因；
+  这两个字段**不在** `ErrorImageExtract` 契约里（模型没有代填通道），
+  且只能作为请求参数传入（AST 守卫 `test_intake_image_requires_gate_fields_as_form_inputs` 钉住）。
+
+### Prompts
+
+- **新增 `medkit/prompts/error_image_extract.md`**：错题图片 → 结构化字段的**转录**提示词。
+  明文规定「不要解题、不要给出你认为正确的答案」「图中没有答案就留空并置
+  `answer_from_image: false`」「看不清就判 `legible: false`，不许凭常识编题干」。
+- 同步 `tests/fixtures/llm_cases/error_image_extract.json`（NX-06）+
+  `tests/test_prompt_contracts.py::test_error_image_extract_contract`。
+- 该提示词**不进** `/api/prompts` 注册表（由 `core/vision.py` 直接 render，
+  不经「提示词管理」页），已显式登记进 `tests/test_api.py` 的 `hidden` 集合。
+
 ### Fixed（门禁假绿 · 「前置断言与聚合断言实为同一条防线」R27）
 
 R26 修完后留下一个明确线索：**「断言的前提由上文提供 ⇒ 两条断言其实是一条防线」**。

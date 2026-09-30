@@ -48,6 +48,7 @@ __all__ = [
     "ANALYSIS_TAGS",
     "FIX_MAX_CHARS",
     "ErrorAnalysis",
+    "ErrorImageExtract",
     "SOCRATIC_SCORE_MIN",
     "SOCRATIC_SCORE_MAX",
     "SocraticScore",
@@ -491,6 +492,97 @@ class ErrorAnalysis(BaseModel):
             raise ValueError(f"fix 超过 {FIX_MAX_CHARS} 字（提示词要求 ≤25 字，超发=又写成了泛泛解析）")
         if len(self.variants) > 3:
             raise ValueError("variants 最多 2~3 条常见变形考法")
+        return self
+
+
+# EP-01 图像录入：错题图片 → 结构化字段（prompts/error_image_extract.md）。
+#
+# ## 与 ErrorAnalysis 的红线关系（**必须读**，否则会误以为这里"多了一个 answer 字段"）
+#
+# ErrorAnalysis **没有** answer/correct，因为它的职责是「解释用户自己提供的错题」，
+# 给模型答案通道等于允许它改写正确答案。本契约**有** `answer`，但语义完全不同：
+# 它是**用户上传图片里的原样转录**（用户拍的那页讲义/APP 截图本来就把答案印在上面），
+# 属于**用户提供的数据**，不是模型产出的结论。
+#
+# 两条硬约束把这个区别变成机械可查的性质：
+# ① 提示词明文规定「图中没有答案就留空，**禁止推断**」；
+# ② 契约带 `answer_from_image` 布尔——只有模型声明"这答案是我在图上看到的"，
+#    上层才允许把它写进 mistakes.answer。**没有这个标记的 answer 一律丢弃**
+#    （见 `vision.sanitize`，守卫 `test_extract_answer_requires_provenance`）。
+#
+# 另：本契约**不含** confidence / my_reasoning——这两个字段只能由用户在**看答案前**
+# 亲手填（《总纲》§3.4），任何让模型代填的通道都会让校准数据变成故事。
+class ErrorImageExtract(BaseModel):
+    """错题图片的结构化抽取结果（prompts/error_image_extract.md）。
+
+    - `question`：题干正文（**不含选项行**）；
+    - `options`：选项行原文（形如 ``A. 增加``，保持图中顺序）；
+    - `answer`：图中标注的正确答案（**原样转录**；图中没有则空串）；
+    - `user_answer`：图中标注的**作答/错选**（如有；没有则空串）；
+    - `answer_from_image`：`answer` 是否确实来自图片（False ⇒ 上层丢弃 `answer`）；
+    - `legible`：图片是否清晰可读（False 时 `question` 允许为空，上层提示重拍）；
+    - `uncertain`：模型自认不确定的**字段名**列表（供前端高亮待人工核对）。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    question: str = ""
+    options: list[str] = Field(default_factory=list)
+    answer: str = ""
+    user_answer: str = ""
+    analysis: str = ""
+    subject: str = ""
+    chapter: str = ""
+    topic: str = ""
+    answer_from_image: bool = False
+    user_answer_from_image: bool = False
+    legible: bool = True
+    uncertain: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+    @field_validator("question", "answer", "user_answer", "analysis",
+                     "subject", "chapter", "topic", "notes", mode="before")
+    @classmethod
+    def _strip(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+    @field_validator("options", "uncertain", mode="before")
+    @classmethod
+    def _list(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            return [str(x).strip() for x in v if str(x or "").strip()]
+        # 模型偶尔给单个字符串 → 视为一项（容错；不以此判非法）
+        return [str(v).strip()] if str(v or "").strip() else []
+
+    @field_validator("answer_from_image", "user_answer_from_image", "legible", mode="before")
+    @classmethod
+    def _bool(cls, v: Any) -> bool:
+        """字符串 "true"/"false"（模型常见形态）也要认；其余非布尔 → False。
+
+        刻意**不**用 `bool(v)`：`bool("false") is True`，会把「图里没有答案」
+        读成「有答案」——正是本字段要防的那种静默失真。
+        """
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "yes", "1", "是", "有")
+        if isinstance(v, (int, float)):
+            return v == 1
+        return False
+
+    @model_validator(mode="after")
+    def _invariants(self) -> "ErrorImageExtract":
+        # 清晰可读的图必须抽得出题干——否则这份"成功"是假的，上层会拿空题干建卡
+        if self.legible and not self.question:
+            raise ValueError("legible=True 但 question 为空——图可读却抽不出题干，应判 legible=False")
+        # 不是抛错：模型漏标很常见。上层 `vision.sanitize` 会据此丢弃对应字段，
+        # 这里只把它记进 uncertain，让人工复核时看得见。
+        for field, flag in (("answer", self.answer_from_image),
+                            ("user_answer", self.user_answer_from_image)):
+            if getattr(self, field) and not flag and field not in self.uncertain:
+                self.uncertain = [*self.uncertain, field]
         return self
 
 

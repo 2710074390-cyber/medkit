@@ -13,15 +13,20 @@
 详见 ``tests/test_errorpipe.py::test_no_confidence_backfill_endpoint``（源码级守卫）。
 """
 
+import asyncio
+import json
+import queue
+import re
 import threading
 from typing import Any, Optional, TypedDict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..core import errorpipe as ep
 from ..core import errors as errs
-from ..core import kpid, metacog
+from ..core import kpid, metacog, vision
 from ..core import library as lib
 from ..core import tutor as tut
 
@@ -605,6 +610,262 @@ def socratic_get(sid: str) -> dict[str, Any]:
     return {"session": session}
 
 
+# ---------------------------------------------------------------- 图像录入（EP-01 图像输入）
+#
+# ## 与「错题本 → 拍题(图片 OCR)」的区别（`/api/library/mistakes/import-image`）
+#
+# 那条路径只做 MinerU OCR、把识别文本回填输入框，**不识别模型能力、也不进归因管线**。
+# 本组端点是 EP-01 的**图像输入口**：原生视觉优先 → OCR 兜底 → 归一化 → 闸门 →
+# 归因 → 落库，全程可流式观察。
+#
+# ## 四条设计约束
+#
+# 1. **识别通道的选择只有一处**（`vision.plan()`）。本层不自己判断"模型支不支持视觉"，
+#    否则前后端各判一套、口径必然分裂（R14 的教训：同一事实两个来源会各自漂移）。
+# 2. **答案必须带出处**：识别出的 `answer` 只有带 `answer_from_image` 才被采用
+#    （`vision.sanitize` 强制）。这条让"模型编一个答案写进 mistakes.answer"在数据层就断掉。
+# 3. **图片入口不放宽闸门**：`intake/image` 仍然要求 confidence + my_reasoning
+#    才跑 AI 归因；缺了就只入库、跳过 P3，并明确告诉用户（不是静默降级）。
+# 4. **流式只用于"让等待可感知"**：识别阶段推 `delta`（模型原始输出），
+#    流水线阶段推 `stage`（复用 `errorpipe.run` 的 progress 回调）。
+#
+# ## 响应信封
+#
+# `extract` 用 **200 + `{ok:false, error}`** 而不是 4xx：识别失败的原因往往有两条
+# （视觉超限 / OCR 超时），`attempts` 里逐条记录，前端要能原样展示；
+# 塞进 `detail` 一个字符串会丢掉这个信息。
+
+_PREFER_CHOICES = ("auto", "vision", "ocr")
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+# 选项头：`A.` / `A、` / `A．` / `A,` / `A:` / `A)`
+_CHOICE_HEAD_RE = re.compile(r"^\s*([A-Ha-h])\s*[.、．,，:：)]")
+
+
+def _sse(event: str, data: Any) -> str:
+    """SSE 帧（与 `routers/library.py` 同格式：`event:` + `data:` + 空行）。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _check_prefer(prefer: str) -> str:
+    if prefer not in _PREFER_CHOICES:
+        raise HTTPException(status_code=400, detail="prefer 只能是 auto/vision/ocr")
+    return prefer
+
+
+@router.get("/api/errors/image/capability")
+def image_capability() -> dict[str, Any]:
+    """当前配置下的识别能力（前端横幅与端点自检用）。
+
+    `preferred` 就是 `prefer="auto"` **实际会走**的那条路——前端直接展示它，
+    不二次判断（避免前后端各判一套）。
+    """
+    return vision.capability()
+
+
+@router.post("/api/errors/image/extract")
+async def image_extract(file: UploadFile = File(...),
+                        prefer: str = Form("auto")) -> dict[str, Any]:
+    """图片 → 结构化字段（非流式，**不落库、不跑归因**）。
+
+    供"先识别、看清了再决定入不入库"的客户端，以及不方便消费 SSE 的调用方。
+    流式版见 `POST /api/errors/image/extract/stream`（两者共用同一套编排，
+    返回体形状一致——见 `vision.iter_extract`）。
+    """
+    _check_prefer(prefer)
+    data = await file.read()
+    if not data.strip():
+        raise HTTPException(status_code=400, detail="图片为空（0 字节）——请重新拍照或截图")
+    # 识别可能耗时数十秒（OCR 轮询 / 视觉模型读图），必须离开事件循环
+    return await asyncio.to_thread(vision.extract, data, prefer=prefer)
+
+
+@router.post("/api/errors/image/extract/stream")
+async def image_extract_stream(file: UploadFile = File(...),
+                               prefer: str = Form("auto")) -> StreamingResponse:
+    """图片 → 结构化字段（SSE 流式）。
+
+    事件序列：`stage`* → (`delta`* 仅视觉路径) → `result`；
+    生成器内部异常 → `error`（**必须有这一帧**：否则前端只看到连接断掉，无从判断原因）。
+    """
+    _check_prefer(prefer)
+    data = await file.read()
+    cancel_ev = threading.Event()
+
+    def gen():
+        try:
+            for ev in vision.iter_extract(data, prefer=prefer, stream=True, cancel=cancel_ev):
+                kind = str(ev.get("type") or "message")
+                if kind == "result":
+                    yield _sse("result", ev)
+                elif kind == "delta":
+                    yield _sse("delta", {"text": ev.get("text") or ""})
+                else:
+                    yield _sse(kind, {k: v for k, v in ev.items() if k != "type"})
+        except Exception as e:  # noqa: BLE001  流内异常转 SSE error 帧（不是 500 断流）
+            yield _sse("error", {"msg": f"识别过程出错：{e}"})
+        finally:
+            cancel_ev.set()   # 断连/结束全路径置位：让 OCR 轮询与模型流及时收手
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+def _norm_choice(v: str) -> str:
+    """选项类答案归一：`"b"` / `"B."` / `"B、"` / `"A. 支气管炎"` → `"A"`/`"B"`。
+
+    非选项（填空、长文本答案）原样返回——**不能**把答案正文里的字母抠出来当选项，
+    否则"患者男"里的字母会被当成选项字母，`correct` 就变成了随机数。
+    """
+    s = str(v or "").strip()
+    m = _CHOICE_HEAD_RE.match(s)
+    if m:
+        return m.group(1).upper()
+    letters = re.sub(r"[^A-Ha-h]", "", s)
+    if letters and len(s) <= 4:      # "BD" / "B,D" / "(B)"
+        return letters.upper()
+    return s
+
+
+def _payload_from_fields(fields: dict[str, Any], *, confidence: str, my_reasoning: str,
+                         subject: str, chapter: str, topic: str) -> dict[str, Any]:
+    """识别结果 + 表单输入 → `errorpipe.run` 的入参。
+
+    `correct` 只在**图中同时有答案与考生作答**时才能派生（两边都有才比，避免把"没看到"
+    当成"答错了"）。派生不出来就留 `None`——`normalize_card` 会原样保留 None，
+    不会把它当 False（`errorpipe` 里那条「绝不把 None 当 False」的注释就是为此）。
+    """
+    ans = str(fields.get("answer") or "").strip()
+    ua = str(fields.get("user_answer") or "").strip()
+    correct: Optional[bool] = None
+    if ans and ua:
+        correct = _norm_choice(ua) == _norm_choice(ans)
+    return {
+        "source": "image",
+        "question": str(fields.get("question") or ""),
+        "options": fields.get("options") or [],
+        "answer": ans,
+        "user_answer": ua,
+        "analysis": str(fields.get("analysis") or ""),
+        # 表单显式填写优先于模型读到的（用户改过就以用户为准）
+        "subject": subject.strip() or str(fields.get("subject") or ""),
+        "chapter": chapter.strip() or str(fields.get("chapter") or ""),
+        "topic": topic.strip() or str(fields.get("topic") or ""),
+        "confidence": confidence.strip() or None,
+        "my_reasoning": my_reasoning.strip(),
+        "correct": correct,
+    }
+
+
+@router.post("/api/errors/intake/image")
+async def intake_image(file: UploadFile = File(...),
+                       prefer: str = Form("auto"),
+                       confidence: str = Form(""),
+                       my_reasoning: str = Form(""),
+                       subject: str = Form(""),
+                       chapter: str = Form(""),
+                       topic: str = Form(""),
+                       attribute: str = Form("1")) -> StreamingResponse:
+    """拍一张错题图 → 识别 → 归一 → 知识点对齐 →（可选）AI 归因 → 落库。**全程 SSE**。
+
+    ## 为什么 confidence / my_reasoning 由**表单**传入而不是从图里抽
+
+    《总纲》§3.4：这两项必须在**看答案前**填，事后任何写入通道都会让校准数据失效。
+    图片里通常就印着答案，所以"先识别再让用户补自评"等于允许事后补填——
+    故本端点要求前端**先收齐这两项再发起识别**（UI 上「开始识别」按钮在两项填好前禁用）。
+    识别契约里也**没有**这两个字段（见 `schema.ErrorImageExtract`），
+    模型没有任何通道代填。
+
+    ## 事件序列
+
+    `stage`* → (`delta`*) → `fields` → `stage`*（流水线各阶段）→ `done`；
+    任何一步硬失败 → `error`（已落库的部分不回滚，`done` 里带 warnings 说明）。
+    """
+    _check_prefer(prefer)
+    data = await file.read()
+    if not data.strip():
+        raise HTTPException(status_code=400, detail="图片为空（0 字节）——请重新拍照或截图")
+
+    cancel_ev = threading.Event()
+    want_attr = str(attribute).strip().lower() not in ("0", "false", "no", "")
+
+    def gen():
+        try:
+            yield _sse("stage", {"name": "recognize", "label": "识别图片…"})
+            final: dict[str, Any] = {}
+            for ev in vision.iter_extract(data, prefer=prefer, stream=True, cancel=cancel_ev):
+                kind = str(ev.get("type") or "")
+                if kind == "result":
+                    final = ev
+                elif kind == "delta":
+                    yield _sse("delta", {"text": ev.get("text") or ""})
+                else:
+                    yield _sse(kind, {k: v for k, v in ev.items() if k != "type"})
+            if not final.get("ok"):
+                yield _sse("error", {"msg": final.get("error") or "识别失败",
+                                     "attempts": final.get("attempts") or []})
+                return
+
+            fields = final.get("fields") or {}
+            yield _sse("fields", {"via": final.get("via"),
+                                  "fields": fields,
+                                  "warnings": final.get("warnings") or []})
+
+            payload = _payload_from_fields(
+                fields, confidence=confidence, my_reasoning=my_reasoning,
+                subject=subject, chapter=chapter, topic=topic)
+            stages = (("intake", "kp_align", "attribute", "persist") if want_attr
+                      else ("intake", "kp_align", "persist"))
+
+            # `errorpipe.run` 的 progress 是**同步回调**，而本函数是生成器：
+            # 用队列把它桥接出来（在 worker 线程里跑流水线，主线程边收边推 SSE）。
+            # 这样流水线仍然只有 `errorpipe.run` 一个实现——不为了流式把它拆散重写。
+            q: queue.Queue = queue.Queue()
+            box: dict[str, Any] = {}
+
+            def _worker() -> None:
+                try:
+                    box["res"] = ep.run(payload, stages=stages,
+                                        progress=lambda s, m: q.put(("stage", {"name": s, "label": m})))
+                except Exception as e:  # noqa: BLE001  流水线异常 → 作为终态返回，不吞
+                    box["err"] = f"{type(e).__name__}: {e}"
+                finally:
+                    q.put(("__end__", None))
+
+            t = threading.Thread(target=_worker, daemon=True, name="medkit-intake-image")
+            t.start()
+            while True:
+                try:
+                    kind, payload_ev = q.get(timeout=0.5)
+                except queue.Empty:
+                    if not t.is_alive():
+                        break
+                    continue
+                if kind == "__end__":
+                    break
+                yield _sse("stage", payload_ev)
+
+            if box.get("err"):
+                errs.record("errors.intake_image", "流水线执行失败", detail=str(box["err"]))
+                yield _sse("error", {"msg": f"入库失败：{box['err']}"})
+                return
+            res = box.get("res") or {}
+            card = res.get("card") or {}
+            yield _sse("done", {
+                "via": final.get("via"),
+                "fields": fields,
+                "card": card,
+                "stages": res.get("stages") or {},
+                "warnings": (final.get("warnings") or []) + (res.get("warnings") or []),
+                "gate_ok": ep.gate_ok(card) if card else False,
+                "attributed": bool((res.get("stages") or {}).get("attribute", {}).get("ok")),
+            })
+        except Exception as e:  # noqa: BLE001  生成器内任何异常都要变成 error 帧
+            yield _sse("error", {"msg": f"识别或入库过程出错：{e}"})
+        finally:
+            cancel_ev.set()
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
 # ---------------------------------------------------------------- 内部工具
 def _cards(subject: str = "") -> list[dict[str, Any]]:
     cards = lib.list_mistakes()
@@ -636,5 +897,4 @@ def _freq_map() -> dict[str, int]:
     return {}
 
 
-# 说明：`threading` 仅为与同族路由模块保持一致的导入面；本域当前无长任务后台线程。
-_ = threading
+# 说明：`threading` 用于图像录入端点的取消事件与流水线 worker 线程（见 `intake_image`）。

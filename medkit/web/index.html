@@ -500,6 +500,68 @@ try {
       </div>
     </div>
 
+    <!-- 视图 2b/6：拍照录入（EP-01 图像输入）——原生视觉优先 / OCR 兜底，流式识别 + 归因 -->
+    <div class="card" style="margin-top:14px">
+      <div class="cardh"><h2>拍照录入（自动归因）</h2><span class="hint" id="mi_cap"></span></div>
+      <div class="hint" id="mi_cap_hint" style="margin-bottom:10px">
+        <span class="spin"></span>正在检测当前模型是否支持图像输入…
+      </div>
+
+      <!-- 闸门字段：必须在识别之前填好（图片里通常印着答案，事后补填等于把校准数据变成故事） -->
+      <div class="mi-gate" id="mi_gate">
+        <div class="row" style="flex-wrap:wrap;gap:10px">
+          <div style="flex:1;min-width:150px">
+            <label>把握程度（看答案前）</label>
+            <select id="mi_conf" onchange="miGateCheck()">
+              <option value="">— 必填 —</option>
+              <option value="5">5 · 很有把握</option>
+              <option value="4">4 · 比较有把握</option>
+              <option value="3">3 · 一般</option>
+              <option value="2">2 · 不太确定</option>
+              <option value="1">1 · 基本靠猜</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:130px"><label>科目（可留空）</label>
+            <input type="text" id="mi_subject" placeholder="留空则用识别结果"></div>
+          <div style="flex:1;min-width:130px"><label>章节（可留空）</label>
+            <input type="text" id="mi_chapter" placeholder="如：儿科·呼吸系统"></div>
+        </div>
+        <textarea id="mi_reason" rows="2" style="margin-top:8px"
+          oninput="miGateCheck()"
+          placeholder="当时你是怎么想的？一句话（看答案前填，事后不可补）"></textarea>
+        <div class="hint" id="mi_gate_hint" style="margin-top:6px">
+          这两项必须<b>先填</b>：识别会把图里的答案一起读出来，事后补自评就等于给校准数据编故事。
+        </div>
+      </div>
+
+      <!-- 投放区：拖拽 / 点击 / Ctrl+V 粘贴截图 -->
+      <div class="mi-drop" id="mi_drop" tabindex="0" role="button"
+           aria-label="拖入或点击选择错题图片">
+        <div class="mi-drop-t">拖拽图片到此处 · 点击选择 · 或直接 <b>Ctrl+V</b> 粘贴截图</div>
+        <div class="hint" id="mi_drop_sub">支持 PNG / JPEG / WebP / BMP，单张 ≤ 20 MB</div>
+      </div>
+      <input type="file" id="mi_file" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp"
+             style="display:none" onchange="miPickFile(this)">
+
+      <div class="row" style="margin-top:10px;flex-wrap:wrap;align-items:center;gap:8px">
+        <button class="act" id="mi_go" onclick="miStart()" disabled>开始识别并归因</button>
+        <button class="act gray" id="mi_reset" onclick="miReset()">清空</button>
+        <label class="chk"><input type="checkbox" id="mi_attr" checked> 识别后自动跑 AI 归因</label>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
+          <label style="font-size:12px">识别方式</label>
+          <select id="mi_prefer" onchange="miCapabilityRender()">
+            <option value="auto">自动（推荐）</option>
+            <option value="vision">强制原生视觉</option>
+            <option value="ocr">强制 OCR</option>
+          </select>
+        </span>
+      </div>
+
+      <div id="mi_progress" class="mi-progress" style="display:none"></div>
+      <div id="mi_raw" class="mi-raw" style="display:none"></div>
+      <div id="mi_result" class="mi-result"></div>
+    </div>
+
     <!-- 视图 3/5：讲解与学习产物（按科目组织 + 联网补充 + 产物管理） -->
     <div class="learnview" id="lv-explain">
     <div class="card" style="margin-top:14px">
@@ -689,6 +751,7 @@ try {
 <script src="/assets/js/learn-live.js"></script>
 <script src="/assets/js/learn-review.js"></script>
 <script src="/assets/js/learn-meta.js"></script>
+<script src="/assets/js/learn-meta-image.js"></script>
 <script src="/assets/js/review-desk.js"></script>
 <script src="/assets/js/review-desk-materials.js"></script>
 <script src="/assets/js/review-desk-project.js"></script>
