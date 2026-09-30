@@ -311,12 +311,58 @@ def test_spec_ships_dist_info_for_license_obligation():
     `check-package.py --strict` 从「通过（有警告）」变为**完全通过**（38 个 dist-info）。
     本用例锁住该修复，防止回归。
     """
-    src = (ROOT / "medkit.spec").read_text(encoding="utf-8")
-    assert "def _dist_info_datas(" in src, "缺少 dist-info 收集函数"
-    # ⚠️ 必须**整行**匹配：子串匹配会把 `# datas += _dist_info_datas()` 这类注释也算命中
-    # （反向验证实测：注释掉该行时子串断言仍然通过 = 假绿）。
-    lines = [ln.strip() for ln in src.splitlines()]
-    assert "datas += _dist_info_datas()" in lines, "收集函数未接到 datas（或被注释掉）"
+    # ## 为什么这两条也改 AST（2026-09-29 R25）
+    # 旧版 `"def _dist_info_datas(" in src` + 整行匹配 `"datas += _dist_info_datas()"`
+    # 仍绑**书写格式**：函数签名加空格（`def  _dist_info_datas (`）、
+    # 调用写成 `datas = datas + _dist_info_datas()` 等**等价写法全部假红**（已注入实测）。
+    # 本用例下面本就用 AST 查 `_lock_closure_names`（R14 修的）—— 这两条是**同用例内的半改**。
+    # ⇒ 统一 AST：判「函数定义在场」+「存在对它的**调用**且结果并入 datas」。
+    tree = _spec_tree()
+    fn_names = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    assert "_dist_info_datas" in fn_names, \
+        "缺少 dist-info 收集函数 `_dist_info_datas`（spec 顶层 FunctionDef）"
+
+    def _feeds_datas() -> bool:
+        """`datas` 的增量赋值/重赋值里出现 `_dist_info_datas()` 调用。
+
+        判据落到**语义**而非**形态**：
+          * `datas += _dist_info_datas()`        —— AugAssign
+          * `datas = datas + _dist_info_datas()` —— 普通 Assign，两侧等价
+          * `datas = [*datas, *_dist_info_datas()]` / `datas.extend(...)` 暂不覆盖：
+            真身与历史写法都是前两种，过度泛化会让「调用结果被丢弃」也蒙混过关。
+
+        2026-09-29 注入实测：仅认 AugAssign 时，`datas = datas + _dist_info_datas()`
+        （与 `+=` 完全等价的列表拼接）会被判**假红** ⇒ 改为两种形态都认。
+        """
+        def _has_call(node: ast.AST) -> bool:
+            return any(
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                and c.func.id == "_dist_info_datas"
+                for c in ast.walk(node)
+            )
+
+        for n in ast.walk(tree):
+            if isinstance(n, ast.AugAssign):
+                tgt = n.target
+                if isinstance(tgt, ast.Name) and tgt.id == "datas" and _has_call(n.value):
+                    return True
+            elif isinstance(n, ast.Assign):
+                if not any(isinstance(t, ast.Name) and t.id == "datas" for t in n.targets):
+                    continue
+                # 重赋值必须是 `datas` 自身的延续（右侧引用了旧 datas），
+                # 否则 `datas = _dist_info_datas()`（丢掉既有 datas）也算通过。
+                uses_old = any(
+                    isinstance(r, ast.Name) and r.id == "datas"
+                    for r in ast.walk(n.value)
+                )
+                if uses_old and _has_call(n.value):
+                    return True
+        return False
+
+    assert _feeds_datas(), (
+        "收集函数未接到 datas（`datas += _dist_info_datas()` 形态消失）"
+        "——dist-info 又会被 PyInstaller 剥掉，LICENSE 分发义务落空"
+    )
 
     # ---- 闭包限定必须是「真的按 lock 算出来的」，不是「全文出现过 lock 一词」----
     # 2026-09-29 R14：旧判据只有 `"def _lock_closure_names(" in src` + `"requirements.lock" in src`

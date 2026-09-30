@@ -17,6 +17,7 @@ DB 文件一走，域模块立刻按 `_store_is_sql()` 回落 JSON 轨。
 4. **`_live_name()` 解析**正确（只认自己认识的备份形态，防误把无关文件当恢复源）；
 5. **同一活文件有多个备份时取最早那个**（确定性，不随 glob 顺序漂移）。
 """
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -114,20 +115,54 @@ def test_overwrite_protection_exists_at_both_phases():
     上一条用例只证明"行为正确"，无法区分是**两层都在**还是**恰好剩一层**。
     本用例把两层分别钉住——任何一层被删都会红，
     这样"删掉一层但另一层兜住"不会伪装成"保护完好"。
+
+    ## 为什么改用 AST（2026-09-29 R25）
+
+    旧版 `assert "if target.exists():" in src` 绑死**这一种字面拼法**：
+    `if target.exists( ):`（括号内空格）/ 拆成两行条件 / 反向写法
+    `if not ... else ...` 都会**假红**。实测注入 `exists( )` ⇒ `rc=1`（假红）。
+    ⇒ 改 AST：只问「存在一个 `if`，其条件里有对 `target`/`dst` 的 `.exists()`
+      **调用**」，与空格/换行/括号位置无关。
     """
-    src = SCRIPT.read_text(encoding="utf-8")
-    assert "if target.exists():" in src, (
-        "计划期的覆盖保护消失（`if target.exists()`）——"
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+
+    def has_exists_guard(var: str) -> bool:
+        """源码里存在 `if <...>: ` 且条件中出现 `<var>.exists()` 调用。"""
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.If):
+                continue
+            cond = n.test
+            for c in ast.walk(cond):
+                if (isinstance(c, ast.Call)
+                        and isinstance(c.func, ast.Attribute)
+                        and c.func.attr == "exists"
+                        and isinstance(c.func.value, ast.Name)
+                        and c.func.value.id == var):
+                    return True
+        return False
+
+    assert has_exists_guard("target"), (
+        "计划期的覆盖保护消失（`target.exists()` 判断）——"
         "恢复计划会把已存在的活文件列进去"
     )
-    assert "if dst.exists():" in src, (
-        "执行期的覆盖复查消失（`if dst.exists()`）——"
+    assert has_exists_guard("dst"), (
+        "执行期的覆盖复查消失（`dst.exists()` 判断）——"
         "计划期与执行期之间若有并发写入，活文件会被覆盖"
     )
-    # 执行期必须有"复查"语义的注释/行为，防止被改成无条件 copy
-    tail = src.split("for src, dst in restores:", 1)
-    assert len(tail) == 2, "恢复循环不见了"
-    assert "continue" in tail[1][:400], "执行期复查没有 continue（会无条件覆盖）"
+
+    # 执行期复查分支里必须有 `continue`（防被改成无条件 copy）——同样用 AST 定位
+    cont_ok = False
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.For) and isinstance(n.target, ast.Tuple)
+                and len(n.target.elts) == 2
+                and all(isinstance(e, ast.Name) for e in n.target.elts)):
+            names = [e.id for e in n.target.elts]
+            if "dst" not in names:
+                continue
+            # 该 for 体内（含嵌套 if）应出现 continue
+            if any(isinstance(c, ast.Continue) for c in ast.walk(n)):
+                cont_ok = True
+    assert cont_ok, "执行期复查没有 continue（会无条件覆盖已存在的活文件）"
 
 
 # ------------------------------------------------------------------ 纯函数

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -197,16 +199,79 @@ def test_every_artifact_link_site_offers_download():
     assert sites, "未扫描到任何 /files/ 链接构造点——扫描口径可能失效，需人工确认"
 
 
+def _run_artifact_links(pid: str, names: list[str]) -> str:
+    """在 node 里跑**真身** `artifactLinks(pid, names)`，返回渲染出的 HTML。
+
+    R25（2026-09-29）：把源码子串断言升级为**行为断言**。
+    `artifactLinks` / `ART_LABEL` / `esc` 全在同一 JS 文件内，可独立加载。
+    """
+    js = JS_DIR / "review-desk-project.js"
+    if shutil.which("node") is None:
+        pytest.fail("需要 node 执行真身 artifactLinks（不允许静默跳过）")
+    code = (
+        "const fs=require('fs');"
+        "const src=fs.readFileSync(process.argv[1],'utf8');"
+        "const i=src.indexOf('const ART_LABEL = [');"
+        "const j=src.indexOf('];', i);"
+        "if(i<0||j<0) throw new Error('ART_LABEL not found');"
+        "const artLabel=src.slice(i,j)+'];';"
+        "const a=src.search(/function\\s+artifactLinks\\s*\\([^)]*\\)\\s*\\{/);"
+        "if(a<0) throw new Error('artifactLinks not found');"
+        "const b=src.indexOf('\\n}', a);"
+        "const fnBody=src.slice(a,b)+'\\n}';"
+        "const esc=s=>String(s??'').replace(/[&<>\"']/g,"
+        "c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));"
+        "const f=new Function('esc', artLabel+fnBody+'; return artifactLinks;')(esc);"
+        "process.stdout.write(f(process.argv[2], JSON.parse(process.argv[3])));"
+    )
+    r = subprocess.run(["node", "-e", code, str(js), pid, json.dumps(names)],
+                       capture_output=True, text=True, timeout=30,
+                       encoding="utf-8", errors="replace")
+    assert r.returncode == 0, "node 执行 artifactLinks 失败：%s" % r.stderr
+    return r.stdout
+
+
+_ARTMAIN_RE = re.compile(r'<a class="artmain"([^>]*)>')
+
+
 def test_artifact_chips_do_not_preview_only_documents():
-    """文档产物（md/txt/json）不得再是「只有 target=_blank、没有 download」的预览链接。"""
-    src = _js_code_only(JS_DIR / "review-desk-project.js")
-    assert "artchip" in src, "未找到产物卡片构造点"
-    # 旧缺陷形态：同一个 <a> 按扩展名动态切 target（非 .apkg 一律 _blank 预览）
-    assert 'target="${n.endsWith' not in src, \
-        "产物卡片仍在按扩展名动态切换 target——文档产物会退回「只能预览、无法下载」"
-    # 主操作必须对文档产物直接下载（dl=1 + download）
-    assert re.search(r'class="artmain" href="\$\{dlUrl\}" download', src), \
-        "文档产物主链接未带 download 属性"
-    # HTML 产物的「在线打开」入口必须保留（同源渲染才能答题/判分/打印）
-    assert re.search(r'class="artmain" href="\$\{file\}" target="_blank"', src), \
-        "HTML 产物的「在线打开」入口被误删"
+    """文档产物（md/txt/json）主链接必须**直接下载**；HTML 产物主链接才「在线打开」。
+
+    ## 为什么改成「跑真身」（2026-09-29 R25）
+
+    旧版是三条源码子串/正则断言，双向注入实测**两个方向都坏**：
+
+    ① **假绿**：`assert 'target="${n.endsWith' not in src` 是**恒真**（该字面拼法
+       在真身里已不存在）。它的**意图**是「不许给文档产物加 `target="_blank"`」，
+       但只堵了「旧写法的一种字面拼法」。实测注入
+       `<a class="artmain" href="${dlUrl}" download target="_blank" …>`（注释明令
+       禁止的形态，文档链接同时 download + _blank）⇒ 守卫**全绿**。
+    ② **假红**：`assert re.search(r'class="artmain" href="${dlUrl}" download')` 绑死
+       「三个属性的书写顺序与相对位置」；`"artchip" in src` 绑类名字面量。
+
+    现在跑真身 `artifactLinks`，按**渲染结果**断言（与书写无关）：
+    文档产物的主链接（`class="artmain"`）必须带 `?dl=1` 且 `download`、**不含** `target`；
+    HTML 产物的主链接必须含 `target="_blank"`（在线打开，同源渲染才能答题/判分/打印）。
+    """
+    doc_html = _run_artifact_links("p1", ["qbank.md"])
+    main = _ARTMAIN_RE.search(doc_html)
+    assert main, f"文档产物未渲染出主链接：{doc_html!r}"
+    attrs = main.group(1)
+    assert "?dl=1" in attrs, f"文档产物主链接未带 dl=1（拿不到文件）：{attrs!r}"
+    assert "download" in attrs, f"文档产物主链接无 download 属性：{attrs!r}"
+    assert "target=" not in attrs, \
+        f"文档产物主链接带 target（会把下载变成预览，正是原缺陷）：{attrs!r}"
+
+    # HTML 产物：主链接必须保留「在线打开」（同源渲染依赖它）
+    html_out = _run_artifact_links("p1", ["押题卷.html"])
+    hmain = _ARTMAIN_RE.search(html_out)
+    assert hmain, f"HTML 产物未渲染出主链接：{html_out!r}"
+    assert 'target="_blank"' in hmain.group(1), \
+        f"HTML 产物的「在线打开」入口被误删：{hmain.group(1)!r}"
+    # 且 HTML 产物仍要给出下载形态（⇩ 次链接带 download）
+    assert 'download' in html_out, "HTML 产物缺少下载入口"
+
+    # .apkg 走 /export/apkg 直下（服务端已带 attachment）
+    apkg_out = _run_artifact_links("p1", ["deck.apkg"])
+    assert "/export/apkg" in apkg_out, f"apkg 未走导出端点：{apkg_out!r}"
+    assert "download" in apkg_out, "apkg 主链接缺少 download"

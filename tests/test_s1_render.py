@@ -4,6 +4,7 @@ LETTERS 扩容 / 选项超限 R14 / Anki 换行制表符转义 / 复习手册 hr
 押题卷过滤按钮 data-type / 计时器恢复 / MedFix 合并策略与 q_id 校验 / medqc 容错 / 渲染前终检。
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +21,16 @@ from medkit.render.qbank_html import (  # noqa: E402
     export_paper_html,
 )
 from medkit.render.review_html import sanitize_html  # noqa: E402
+
+
+def _strip_js_like_comments(src: str) -> str:
+    """剥掉 JS/CSS/HTML 注释，避免「注释里写了目标串」造成的假绿（R25）。
+
+    与 `test_download_artifacts.py::_js_code_only` 同一口径：
+    先剥块注释 `/* */`，再剥行注释 `//`（`(?<!:)` 免误伤 `http://`）。
+    """
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return re.sub(r"(?<!:)//[^\n]*", "", src)
 
 
 def test_letters_cover_render_max():
@@ -174,6 +185,15 @@ def test_index_html_global_error_guards():
 
     IMP-07 前端拆分后这些守卫/逻辑分布在 web/js/*.js（index.html 只留骨架），
     断言改为「读全 web 目录所有 js/css 后包含」——语义不变（纯搬运）。
+
+    ## 为什么改用「剥注释 + 容忍空白」的判据（2026-09-29 R25）
+
+    旧版是裸 `"字面串" in blob`。其中 `"stageEl.innerHTML = esc(s.stage_label)"`
+    这类**表达式级子串**绑死书写：赋值号加空格（`=  esc(`）、
+    插值内加空格（`esc( s.stage_label )`）都会**假红**（已注入实测）。
+    ⇒ 表达式类判据改用**容忍空白的正则**，且先剥注释（防「注释里写了目标串」的假绿）。
+    `window.onerror` / `unhandledrejection` 这类**标识符**保留子串（它们是 API 名，
+    本来就不含空白，不会被排版改写误伤）。
     """
     web = ROOT / "medkit" / "web"
     blob = "".join(p.read_text(encoding="utf-8")
@@ -181,12 +201,19 @@ def test_index_html_global_error_guards():
            "".join(p.read_text(encoding="utf-8")
                    for p in web.rglob("*.css")) + \
            (web / "index.html").read_text(encoding="utf-8")
+
     assert "window.onerror" in blob, "应有全局脚本异常兜底"
     assert "unhandledrejection" in blob, "应有异步错误兜底"
-    assert "if (name !== \"bank\")" in blob and "stopPoll()" in blob, "切走题库（项目详情）应停止轮询"
-    assert "ocrRunToken++" in blob, "离开页面应终止 OCR 轮询"
-    assert "stageEl.innerHTML = esc(s.stage_label)" in blob, "spinner 应写入 innerHTML（旧 textContent 显示字面文本）"
-    assert "try { localStorage.setItem(\"medkit-theme\"" in blob, "主题写入应容错"
+
+    code = _strip_js_like_comments(blob)
+    # 表达式级判据：容忍任意空白
+    assert re.search(r'name\s*!==\s*"bank"', code) and "stopPoll()" in code, \
+        "切走题库（项目详情）应停止轮询"
+    assert "ocrRunToken++" in code, "离开页面应终止 OCR 轮询"
+    assert re.search(r"stageEl\.innerHTML\s*=\s*esc\(\s*s\.stage_label\s*\)", code), \
+        "spinner 应写入 innerHTML（旧 textContent 显示字面文本）"
+    assert re.search(r'localStorage\.setItem\(\s*"medkit-theme"', code), \
+        "主题写入应容错"
 
 
 def test_paper_html_a11y_and_retry_markers():

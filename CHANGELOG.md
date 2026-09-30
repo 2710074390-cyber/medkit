@@ -10,6 +10,58 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假绿/假红 · 全仓源码子串断言扫荡 R25）
+
+新角度：**同一用例内的判据一致性**（R3-16 同型：「一片改了、旁边没跟着改」）。
+`diag_r25.py` 扫出 39 处「源码/JS 文本子串断言」，逐条分流后确认 **4 处真缺陷**：
+**1 处假绿 + 3 处假红**，其中 2 处是**同用例内半改**（同一函数里前几个断言已改
+AST/行为，后几个仍裸子串）。
+
+**① `test_download_artifacts.py::test_artifact_chips_do_not_preview_only_documents`
+—— 恒真假绿 + 类名假红**
+
+旧判据 `assert 'target="${n.endsWith' not in src`：该字面拼法**在真身已不存在**
+（真身是 `if (n.endsWith(".apkg")) {`，见 `review-desk-project.js:195`）⇒ **永远绿**。
+实测反证：注入注释明令禁止的形态 `<a class="artmain" href="${dlUrl}" download target="_blank">`
+⇒ 守卫**全绿**（假绿坐实）。同用例另有 `"artchip" in src` 绑类名 + 三条正则绑书写。
+
+修法：**行为化**——新增 `_run_artifact_links(pid, names)`，在 node 里加载真身
+`artifactLinks`（加载 `ART_LABEL` + 函数体 + 注入 `esc`），喂产物名断输出：
+文档主链接必带 `?dl=1` + `download` 且**不含** `target=`；HTML 产物含
+`target="_blank"`；`.apkg` 走 `/export/apkg`。**4/4 注入全绿**，含**假绿回放被拦**
+（`download target="_blank"` ⇒ 现在 `rc=1`）。
+
+**② `test_rollback_json_track.py::test_overwrite_protection_exists_at_both_phases`
+—— 假红**
+
+旧判据 `assert "if target.exists():" in src` 绑死一种字面拼法；`exists( )`（括号内空格）
+/ 条件折行 ⇒ **假红**（已注入实测）。⇒ 改 **AST**：`has_exists_guard(var)` 判
+「存在 `ast.If` 其条件含 `<var>.exists()` 调用」+ `ast.For`+`ast.Continue` 判执行期复查。
+注入 **5/5**：等价（`exists( )` / 折行）⇒ 绿；假绿回放（`if False:` + 旁边注释写
+`exists()`）⇒ 红；削行为（判错对象 / `continue→pass`）⇒ 红。
+
+**③ `test_check_package.py::test_spec_ships_dist_info_for_license_obligation` —— 假红**
+
+旧判据 `"def _dist_info_datas(" in src` + 整行匹配 `"datas += _dist_info_datas()"`，
+绑签名/调用**书写格式**。⇒ 改 AST：顶层 `FunctionDef` 在场 + `_feeds_datas()` 判
+「`datas` 的增量/重赋值里出现 `_dist_info_datas()` 调用」。**判据落到语义**：
+`datas += f()` 与 `datas = datas + f()` 都认（两者在 PyInstaller spec 里完全等价 ——
+首轮只认 AugAssign 时后者被**假红**，已修正）；重赋值必须**引用了旧 `datas`**
+（防 `datas = f()` 丢掉既有 datas 也通过）。注入 **6/6**。
+
+**④ `test_s1_render.py::test_index_html_global_error_guards` —— 假红**
+
+旧判据 `"stageEl.innerHTML = esc(s.stage_label)" in blob` 绑赋值号/插值内空白。
+⇒ 新增 `_strip_js_like_comments(src)`（剥 `/* */` 与 `(?<!:)//`）+ 表达式级
+**容忍空白正则**；`window.onerror` / `unhandledrejection` 这类**标识符**保留子串
+（本就是 API 名，不含空白）。注入 **4/4**：等价（`=  esc( s.stage_label )`）⇒ 绿；
+削行为（去 `esc` / 整行注释）⇒ 红；假绿回放（表达式藏进注释）⇒ 红。
+
+> **可迁移判据**：JS 文本子串断言的可接受形态只有两种 ——
+> **标识符**（`window.onerror`，无空白可绑）与**值**；凡涉及**表达式/调用形态**
+> 一律改行为断言或「剥注释 + 容忍空白正则」。反面守卫（`X not in src`）同样要查
+> **目标串是否还在真身里存在** —— 字面拼法随重构消失后，`not in` 会静默变恒真。
+
 ### Fixed（门禁假红 · 前端源码子串断言绑书写格式 R24）
 
 新角度：**同一文件内的判据一致性**。`test_r8w_p2_frontend.py` 的
