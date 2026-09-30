@@ -110,6 +110,27 @@ EP01_PILLARS = (
 )
 
 
+def test_ep01_lists_are_not_empty():
+    """**元守卫（必须非参数化）**：两个手写清单都不能为空。
+
+    `test_ep01_pillar_*` / `test_ep01_prompts_*` 是 `@pytest.mark.parametrize` 用例，
+    pytest 对**空** parametrize 的处理是「收集一个 `[NOTSET]` 用例并 **SKIP**」——
+    输出 `N passed, 1 skipped` 看着完全正常，实则是**用例消失**。
+    而 parametrize 里**没法断言非空**（空集合根本不进函数体）。
+    本文件已有的 `test_active_docs_scan_face_is_not_empty` 只管 `_active_docs()`，
+    管不到这两个手写清单 ⇒ 补上。
+
+    判据两条腿（互不依赖，删任一条另一条仍能在塌缩时拦住）：
+    ① 数量下限；② 关键成员在场。
+    """
+    assert len(EP01_PILLARS) >= 5, f"EP01_PILLARS 只剩 {len(EP01_PILLARS)} 项"
+    assert len(EP01_PROMPTS) >= 3, f"EP01_PROMPTS 只剩 {len(EP01_PROMPTS)} 项"
+    for must in ("core/errorpipe.py", "core/vision.py", "routers/errors.py"):
+        assert must in EP01_PILLARS, f"EP01_PILLARS 缺关键支柱 {must}"
+    for must in ("error_analysis.md", "error_image_extract.md"):
+        assert must in EP01_PROMPTS, f"EP01_PROMPTS 缺关键提示词 {must}"
+
+
 @pytest.mark.parametrize("rel", EP01_PILLARS)
 def test_ep01_pillar_mentioned_in_readme(rel: str):
     """每个 EP-01 支柱模块都必须在 README 的当前功能章节里被提及。"""

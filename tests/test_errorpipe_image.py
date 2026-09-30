@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -264,10 +265,16 @@ def test_extract_rejects_non_image_without_calling_any_channel(monkeypatch, cfg)
 
 
 def test_extract_matches_stream_result(monkeypatch, cfg):
-    """**同源性质**：非流式 `extract()` 的返回必须等于流式最后一个 `result` 事件。
+    """`stream=True` 与 `stream=False` **两条分支不得漂移**。
 
-    这条守的是"两条编排实现会各自漂移"——本模块刻意只保留一份编排
-    （`extract()` 就是 `iter_extract()` 的消费者），此用例把该不变量钉住。
+    ⚠️ 这条判据的**能力边界要写清**（否则会被高估）：`extract()` 本身是
+    `iter_extract()` 的消费者，所以它守的**不是**「两份独立实现互相印证」——
+    那种说法是错的（本项目已有一处「同一真源两侧各取一次值相比 = 恒真」的教训）。
+    它真正守的是：`iter_extract` 内部那两个分支
+    （`stream=True` 走 `stream_vision` 逐块解析 / `stream=False` 走 `extract_vision`
+    带 json_mode）**产出同一份结果**。两者用不同的调用与解析路径，
+    任一边漏加 warning、丢 `raw_text`、少记 `attempts`，这里就会红
+    （注入实证见 `.workbuddy-ai/tmp/diag_vision_guards.py` 的 parity 用例）。
     """
     cfg["model_gen"] = "qwen-vl-max"
     keys = ("ok", "via", "fields", "raw_text", "warnings", "attempts", "error")
@@ -501,7 +508,12 @@ def test_intake_image_emits_error_frame_when_recognition_fails(client, monkeypat
 
 
 # ==================================================================== 6. 结构守卫
-IMAGE_ENDPOINTS = ("image_extract", "image_extract_stream", "intake_image")
+# 全部图像端点（与真身装饰器**双向核对**，见 test_image_endpoint_list_matches_router）
+IMAGE_ENDPOINTS = ("image_capability", "image_extract",
+                   "image_extract_stream", "intake_image")
+# 其中**接受 `prefer` 入参**的那些（`image_capability` 是只读能力探测，没有该参数）。
+# 这份清单本身也要与真身核对（见 test_prefer_endpoints_match_signatures）。
+PREFER_ENDPOINTS = ("image_extract", "image_extract_stream", "intake_image")
 
 
 def _router_functions() -> dict[str, Any]:
@@ -511,7 +523,89 @@ def _router_functions() -> dict[str, Any]:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
-@pytest.mark.parametrize("fn_name", IMAGE_ENDPOINTS)
+def _image_endpoints_from_router() -> set[str]:
+    """从装饰器里**扫出**所有图像端点函数名（路径含 `image`）。
+
+    为什么不只手写一个 tuple：手写清单与真身脱钩——新加一个图像端点却忘了登记，
+    守卫照样绿（方向 A「扫描面有洞」）。这里按**路径**扫，再与手写清单双向核对：
+    真身有而清单没有 ⇒ 那个端点的 `prefer` 校验与闸门入参无人守。
+    """
+    tree = ast.parse(ERRORS_ROUTER.read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in node.decorator_list:
+            if not isinstance(dec, ast.Call):
+                continue
+            fn = dec.func
+            if not (isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)
+                    and fn.value.id == "router"):
+                continue
+            if not (dec.args and isinstance(dec.args[0], ast.Constant)
+                    and isinstance(dec.args[0].value, str)):
+                continue
+            if "image" in dec.args[0].value:
+                found.add(node.name)
+    return found
+
+
+def test_parametrize_sources_are_not_empty():
+    """**元守卫（必须非参数化）**：本文件三条 parametrize 的来源清单都不能为空。
+
+    pytest 对空 parametrize 的处理是「收集一个 `[NOTSET]` 用例并 **SKIP**」——
+    输出 `N passed, 1 skipped` 看着完全正常，实则是**用例消失**（比假绿更隐蔽）。
+    而 parametrize 里**没法断言非空**（空集合根本不进函数体），故必须另起一条。
+    """
+    for name, seq in (("VISION_NAMES", VISION_NAMES),
+                      ("NON_VISION_NAMES", NON_VISION_NAMES),
+                      ("IMAGE_ENDPOINTS", IMAGE_ENDPOINTS),
+                      ("PREFER_ENDPOINTS", PREFER_ENDPOINTS)):
+        assert len(seq) >= 3, f"{name} 只剩 {len(seq)} 项——下面的 parametrize 会静默消失"
+    # ⚠️ 刻意**不**断言「不含空项」：`NON_VISION_NAMES` 里的 `""` 是**有意保留**的样本
+    #（"模型未配置" → 必须判不支持视觉）。把空串当违规 = 对合法样本假红，
+    # 而假红会逼人删掉这条元守卫（方向 C）。
+    for name, seq in (("VISION_NAMES", VISION_NAMES),
+                      ("NON_VISION_NAMES", NON_VISION_NAMES)):
+        assert sum(1 for x in seq if str(x).strip()) >= 3, f"{name} 的非空样本不足 3 个"
+    # 成员检查（独立于上面的下限：下限可能被一起改小，成员不会）
+    for must in ("deepseek-v4-flash-vision-exp", "qwen-vl-max", "claude-sonnet-4"):
+        assert must in VISION_NAMES, f"VISION_NAMES 缺关键样本 {must}"
+    for must in ("deepseek-v4-flash", "qwen-plus", "eval-model", ""):
+        assert must in NON_VISION_NAMES, f"NON_VISION_NAMES 缺关键样本 {must!r}"
+
+
+def test_image_endpoint_list_matches_router():
+    """手写清单必须与真身装饰器**双向相等**（新增图像端点忘登记 ⇒ 红）。
+
+    这条守卫第一次跑就抓到 `IMAGE_ENDPOINTS` 漏了 `image_capability`
+    ——手写清单与真身脱钩正是方向 A 的「扫描面有洞」。
+    """
+    actual = _image_endpoints_from_router()
+    declared = set(IMAGE_ENDPOINTS)
+    assert actual == declared, (
+        f"图像端点清单与 `routers/errors.py` 的装饰器不一致：\n"
+        f"  真身有而清单没有 = {sorted(actual - declared)}\n"
+        f"  清单有而真身没有 = {sorted(declared - actual)}\n"
+        "（新增图像端点必须同步 `IMAGE_ENDPOINTS`——否则它的 prefer 校验与闸门入参无人守）")
+
+
+def test_prefer_endpoints_match_signatures():
+    """`PREFER_ENDPOINTS` 必须等于「图像端点里**真的收了 `prefer` 形参**的那些」。
+
+    双向：漏登记 ⇒ 该端点的 `_check_prefer` 无人守；多登记 ⇒ 会对着没有该参数的
+    端点跑参数校验用例（红得没道理）。两边都由真身签名判定，不靠人记。
+    """
+    fns = _router_functions()
+    with_prefer = {name for name in IMAGE_ENDPOINTS
+                   if "prefer" in {a.arg for a in fns[name].args.args + fns[name].args.kwonlyargs}}
+    assert with_prefer == set(PREFER_ENDPOINTS), (
+        f"接受 `prefer` 的图像端点 = {sorted(with_prefer)}，"
+        f"而 PREFER_ENDPOINTS = {sorted(PREFER_ENDPOINTS)}")
+    assert set(PREFER_ENDPOINTS) <= set(IMAGE_ENDPOINTS)
+
+
+@pytest.mark.parametrize("fn_name", PREFER_ENDPOINTS)
 def test_image_endpoints_validate_prefer(fn_name):
     """每个图像端点都必须调用 `_check_prefer`（**调用点真的调了**，不是"函数存在"）。
 
@@ -577,7 +671,19 @@ def test_image_endpoint_payload_takes_gate_fields_from_args_not_fields():
 
 
 def test_prompt_forbids_inferring_answer():
-    """提示词必须明文禁止推断答案（红线在 prompt 侧的落点，与契约/清洗三层齐备）。"""
+    """提示词必须明文禁止推断答案（红线在 prompt 侧的落点，与契约/清洗三层齐备）。
+
+    判据刻意**不绑具体措辞**（方向 H：绑书写格式 ⇒ 等价改写即假红 ⇒ 逼人删守卫）：
+    - 禁令用「否定词 + 推断动词 + 答案」的**形态**匹配（换句话把同一条禁令说清楚保持绿）；
+    - 出处标记查的是**契约字段名**（`answer_from_image` 等，稳定标识符而非散文）。
+    删掉整条禁令 / 删掉某个出处字段 ⇒ 红。
+
+    ⚠️ 能力边界：它只证明「提示词里写了这条规矩」，**不证明模型会遵守**。
+    后者由契约（`answer_from_image` 默认 False）+ `vision.sanitize` 的行为用例把关。
+    """
     text = (ROOT / "medkit" / "prompts" / "error_image_extract.md").read_text(encoding="utf-8")
-    assert "不要给出你认为正确的答案" in text
-    assert "answer_from_image" in text
+    flat = "".join(text.split())        # 去空白：换行/缩进/空格不影响判定
+    assert re.search(r"(不要|禁止|不得|切勿)[^。]{0,16}(给出|推断|猜|编|臆造)[^。]{0,16}答案", flat), \
+        "提示词缺少「禁止推断/给出答案」的明文禁令"
+    for field in ("answer_from_image", "user_answer_from_image", "legible", "uncertain"):
+        assert field in text, f"提示词未要求模型填写 `{field}`（契约字段名必须出现）"

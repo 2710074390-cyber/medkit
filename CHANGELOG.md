@@ -74,6 +74,32 @@
   ② 刷新后停在错题本时能力横幅卡在"正在检测…"——`learn.js` 的 `initLearnView()`
   在**它自己加载时**就调 `showLearnView(记住的视图)`，那一刻本片还没加载、包装钩子还没装上。
 
+### Fixed（门禁假绿 · 自审本轮新增的守卫 R28）
+
+把项目自己的假绿分类（R12–R27，技能 `gate-falsifiability`）**套回本次新写的守卫**上扫一遍。
+静态分诊出 4 处，其中 2 处是真缺陷——**都由新补的守卫当场抓出来**：
+
+| # | 问题 | 类别 | 修法 |
+|---|---|---|---|
+| ① | `EP01_PILLARS` / `EP01_PROMPTS` 是 parametrize 来源，**没有元守卫** ⇒ 清单被掏空则 4 条用例静默变成 `[NOTSET]` **SKIP**（输出 `N passed, 1 skipped`，看着完全正常） | 方向 C8 | 新增**非参数化** `test_ep01_lists_are_not_empty`（数量下限 + 关键成员，两条腿互不依赖） |
+| ② | 我自己新增的 3 条 parametrize（`VISION_NAMES` / `NON_VISION_NAMES` / `IMAGE_ENDPOINTS`）同样无元守卫 | 方向 C8 | 新增 `test_parametrize_sources_are_not_empty` |
+| ③ | `IMAGE_ENDPOINTS` 是**手写清单**、与真身脱钩 ⇒ 新加图像端点忘登记无人知 | 方向 A | 改为**从 `routers/errors.py` 的装饰器扫出**（路径含 `image`）再双向核对；顺带发现清单漏了 `image_capability`，并拆出 `PREFER_ENDPOINTS`（用 AST 判「哪些端点真收了 `prefer` 形参」双向核对） |
+| ④ | `test_extract_matches_stream_result` 的**可证伪性我没验过**，且 docstring 把它说成「两条独立实现互相印证」（实际是同一函数两个分支 ⇒ 说法被高估） | 方向 C4 / F | 改 docstring 写明**能力边界**；补注入实证（见下） |
+
+**注入验证 6/6 达期望（`.workbuddy-ai/tmp/diag_guard_audit.py`）**——注意最后一条是**期望绿**：
+
+| 注入 | 期望 |
+|---|---|
+| 掏空 `VISION_NAMES` / 掏空 `EP01_PILLARS` | 元守卫红（`rc==1` 且命中元守卫本身，不是 `rc!=0`） |
+| 清单漏登记一个图像端点 | 双向核对红 |
+| 让流式分支与整段分支漂移（`raw_text` 不一致） | parity 用例红（**这才证明④不是恒真**） |
+| 删掉提示词里的禁令 | prompt 判据红 |
+| **把禁令等价改写**（「不要给出你认为正确的答案」→「切勿臆造答案」） | **绿**（防假红；判据绑书写格式会逼人删守卫） |
+
+顺带修掉一处**我自己造的假红**：`NON_VISION_NAMES` 里**故意**含空串样本（"模型未配置"→
+必须判不支持视觉），而元守卫初版写了「不许含空项」⇒ 对合法样本假红。
+已改为「非空样本 ≥ 3」并注明**为什么空串要保留**。
+
 ### Fixed（门禁假绿 · 「前置断言与聚合断言实为同一条防线」R27）
 
 R26 修完后留下一个明确线索：**「断言的前提由上文提供 ⇒ 两条断言其实是一条防线」**。
