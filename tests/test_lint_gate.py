@@ -327,6 +327,57 @@ def test_verify_cmd_covers_ci_blocking_steps():
     )
 
 
+def _verify_skip_switches() -> set[str]:
+    """`verify.cmd` 里出现的 `%SKIP_XXX%` 开关集合（**单一来源**）。
+
+    `test_verify_cmd_skips_are_explicit_and_audited` 与其元守卫
+    `test_verify_skip_switches_scan_face_is_not_empty` 都必须经由本函数取扫描面
+    —— 各自重算一遍等于没测（R26 教训）。
+    """
+    import re
+    return set(re.findall(r"%([A-Z_]+)%", _verify_cmd_text()))
+
+
+def test_verify_skip_switches_scan_face_is_not_empty():
+    """元守卫：跳过开关的扫描面不许塌缩（R27 修的真缺陷）。
+
+    ## 为什么（2026-09-30 R27 注入实测）
+
+    `test_verify_cmd_skips_are_explicit_and_audited` 里 **三个检查**
+    （`unexplained` 聚合、以及「跳过分支不得 `exit /b 0`」的循环）
+    全都只遍历 `switches` 这一个集合。旧版只有
+    `assert switches, "..."` 兜着 —— 实测把遍历面掏空后**整条用例恒绿**（`rc=0`）：
+    三个检查一个都不跑，而 pytest 报「通过」。
+
+    这正是 R26 的「聚合式空集恒真」形态：`assert switches` 与后面的检查
+    **看似两条防线，实为一条**——后者完全依赖前者提供的非空前提。
+
+    ⇒ 补一条**不依赖** `assert switches` 的独立检查：直接对
+    `verify.cmd` 的原始文本断言「至少存在一个 `%SKIP_XXX%`」（正则命中数），
+    并锁住已知的关键开关名（写窄/改名即红）。
+    """
+    text = _verify_cmd_text()
+    import re
+    matches = re.findall(r"%([A-Z_]+)%", text)
+
+    assert matches, (
+        "verify.cmd 里一个 `%SKIP_XXX%` 开关都找不到——"
+        "`test_verify_cmd_skips_are_explicit_and_audited` 会退化成空循环 + 恒真断言（假绿）。"
+        "检查开关写法是否被改（如 `%SKIP%` 少了名字）。"
+    )
+    switches = _verify_skip_switches()
+    # 与正则**独立**再数一遍（防 `_verify_skip_switches` 自己被改窄）
+    assert len(switches) >= 2, (
+        f"跳过开关只剩 {len(switches)} 个（下限 2）：{sorted(switches)}——扫描面疑似塌缩。"
+    )
+    # 契约：这两个开关是 verify.cmd 的既定旁路，缺一即覆盖面缩水
+    must_have = {"SKIP_BROWSER", "SKIP_MYPY"}
+    assert must_have <= switches, (
+        f"verify.cmd 少了既定跳过开关 {sorted(must_have - switches)}——"
+        "总闸覆盖面缩水（浏览器层/mypy 步骤没了显式旁路，或写法被改）。"
+    )
+
+
 def test_verify_cmd_skips_are_explicit_and_audited():
     """每个 SKIP_* 开关都必须在文件头被解释，且**不得**用于跳过整体。
 
@@ -335,10 +386,13 @@ def test_verify_cmd_skips_are_explicit_and_audited():
     这里守住两点：
       1. 每个 `%SKIP_XXX%` 都在头部注释里出现（有解释）；
       2. 不含 `exit /b 0` 出现在跳过分支里（跳过 ≠ 提前成功退出）。
+
+    「扫描面非空 + 未写窄」由
+    `test_verify_skip_switches_scan_face_is_not_empty` 单独把守
+    （本用例的三个检查全都依赖 `switches` 非空，故不能自证前提）。
     """
     text = _verify_cmd_text()
-    import re
-    switches = set(re.findall(r"%([A-Z_]+)%", text))
+    switches = _verify_skip_switches()   # 与元守卫同源：改窄这里，元守卫必红
     assert switches, "verify.cmd 里没有找到任何 SKIP_* 开关——判据可能失效"
     header = text.split("cd /d", 1)[0]
     unexplained = [s for s in switches if s not in header]

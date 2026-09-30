@@ -123,6 +123,65 @@ def _run_log_probe(env) -> dict:
         f"子进程探针未产出结果（stdout={proc.stdout[-500:]!r} stderr={proc.stderr[-800:]!r})")
 
 
+def _real_user_medkit_prefix() -> str:
+    """本机**真实** `~/.medkit` 前缀（归一为 `/` 小写）—— 泄漏判据的唯一来源。
+
+    独立成函数是为了让「这个前缀真的能从 handler 路径里认出来」可被单独证伪
+    （见 `test_real_user_prefix_actually_matches_a_known_path`）。
+    若某次改动把这个前缀拼错（例如漏了 `.medkit`、大小写/斜杠没归一），
+    `truly_leaked` 会恒为空 ⇒ 守卫静默失效。这是 2026-09-30 R27 实测的缺口。
+    """
+    return str(Path(os.path.expanduser("~")) / ".medkit").replace("\\", "/").lower()
+
+
+def test_real_user_prefix_actually_matches_a_known_path():
+    """元守卫：真实家目录前缀必须**真的能**匹配一条已知落在该目录下的路径。
+
+    ## 为什么（2026-09-30 R27 实测）
+
+    `test_lifespan_does_not_bind_real_home_log` 的判据是
+    `real_user in f.lower()`，其中 `real_user` 由 `_real_user_medkit_prefix()` 算出。
+    实测：把该前缀换成 `"不可能出现的前缀____"` 后，**整个文件 9 条用例仍全绿**
+    ——因为正常环境下本来就没有泄漏，判据恒真（空集恒真）。
+    原来兜底的 `assert info["handlers"]` 只保证探针**产出了** handler，
+    保证不了**判据本身还有效**。
+
+    ## 判据必须**独立于被测函数**（第一版我写错了）
+
+    第一版写成 `assert prefix in (prefix + "/logs/x.log")` —— 这是**自证式假绿**：
+    任何非空前缀都能匹配它自己拼出来的路径。实测对"前缀写坏成
+    `"不可能出现的前缀____"`"**照样绿**（`rc=0`）。
+    ⇒ 必须用**独立推导**的路径：直接用 `expanduser("~")` 与 `.medkit` 重新拼一遍，
+       且断言 `_real_user_medkit_prefix()` 与之相等（**等值**，不是包含）。
+    """
+    prefix = _real_user_medkit_prefix()
+    assert prefix, "真实家目录前缀为空——泄漏判据会恒真"
+
+    # 独立推导（不经过被测函数）：真实家目录 + .medkit，归一为 / 小写
+    independent = (
+        str(Path(os.path.expanduser("~")) / ".medkit").replace("\\", "/").lower()
+    )
+    assert prefix == independent, (
+        "泄漏判据的前缀与本机真实 `~/.medkit` 不一致：\n"
+        f"  判据用   = {prefix!r}\n"
+        f"  独立推导 = {independent!r}\n"
+        "⇒ 守卫可能永远是绿的（前缀写坏后 `truly_leaked` 恒空）。"
+    )
+
+    # 再证「判据能认出真泄漏」：把一个确实位于该目录下的路径喂进去，必须命中
+    leaked_like = (Path(os.path.expanduser("~")) / ".medkit" / "logs" / "medkit.log")
+    norm = str(leaked_like).replace("\\", "/").lower()
+    assert prefix in norm, (
+        "泄漏判据失效：真实家目录前缀匹配不上位于该目录下的路径"
+        f"（prefix={prefix!r}, path={norm!r}）"
+    )
+
+    # 反向：无关路径不得被判为泄漏（防判据过宽 → 假红 → 逼人删守卫）
+    assert prefix not in "c:/somewhere/else/logs/medkit.log", (
+        "泄漏判据过宽：无关路径也被判为泄漏（会变成假红）"
+    )
+
+
 def test_lifespan_does_not_bind_real_home_log(tmp_path):
     """app 进 lifespan 后，根 logger 的 handler **不得**指向用户真实家目录。
 
@@ -133,13 +192,16 @@ def test_lifespan_does_not_bind_real_home_log(tmp_path):
     子进程隔离：家目录整体指到 `tmp_path`（`USERPROFILE`/`HOME`），使 lifespan 里的
     `dbs.migrate()` 也只作用于 tmp —— 否则会真的迁移用户真实 `medkit.db`（见顶部设计说明 ②）。
     断言用**真实用户目录**前缀比对，与子进程内看到的"家"无关，故隔离不削弱检定力。
+
+    判据本身的有效性由 `test_real_user_prefix_actually_matches_a_known_path` 把守
+    （正常环境下无泄漏 ⇒ 本用例恒绿，不能自证判据还有效）。
     """
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     env = _probe_env(fake_home, unset=("MEDKIT_LOG_DIR",))
     info = _run_log_probe(env)
     assert info["handlers"], "探针没看到任何文件 handler——setup_logging 根本没生效"
-    real_user = str(Path(os.path.expanduser("~")) / ".medkit").replace("\\", "/").lower()
+    real_user = _real_user_medkit_prefix()
     truly_leaked = [f for f in info["handlers"] if real_user in f.replace("\\", "/").lower()]
     assert not truly_leaked, (
         "app 进 lifespan 后根 logger 绑定了**用户真实**家目录日志：\n  "

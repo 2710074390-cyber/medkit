@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,12 +29,20 @@ LOAD_PATTERNS = [
     (r"<iframe[^>]*\ssrc\s*=\s*[\"']https?://", "外部 <iframe src>"),
 ]
 
-TARGETS = [
-    *sorted((ROOT / "medkit/web").rglob("*.html")),
-    *sorted((ROOT / "medkit/web").rglob("*.js")),
-    *sorted((ROOT / "medkit/web").rglob("*.css")),
-    *sorted((ROOT / "medkit/render").glob("*.py")),
-]
+
+def _targets() -> list[Path]:
+    """零 CDN 闸门的**唯一**扫描面（单一来源）。
+
+    元守卫 `test_scan_face_is_not_empty` 与主守卫
+    `test_no_external_resource_loads` 都必须经由本函数取扫描面。
+    —— 各自重算一遍等于没测（R26 教训）。
+    """
+    return [
+        *sorted((ROOT / "medkit/web").rglob("*.html")),
+        *sorted((ROOT / "medkit/web").rglob("*.js")),
+        *sorted((ROOT / "medkit/web").rglob("*.css")),
+        *sorted((ROOT / "medkit/render").glob("*.py")),
+    ]
 
 
 def _scan(path: Path) -> list[str]:
@@ -46,10 +55,91 @@ def _scan(path: Path) -> list[str]:
     return hits
 
 
+def test_scan_face_is_not_empty():
+    """元守卫：零 CDN 闸门的扫描面不许塌缩（R27 修的真缺陷）。
+
+    ## 为什么（2026-09-30 R27 注入实测）
+
+    `test_no_external_resource_loads` 的结构是
+    「遍历 `TARGETS` + 聚合 `hits` + `assert not hits`」。
+    旧版只有 `assert TARGETS`（**仅非空**）兜着 —— 实测三种**写窄**注入
+    **全部恒绿**（`rc=0`）：
+
+    | 注入 | 后果 |
+    |---|---|
+    | `"*.js"` → `"*.jsx"` | 前端 JS 完全不受零 CDN 检查（最大的面没了） |
+    | 删掉 `medkit/render/*.py` 那一行 | 产物页渲染层不受检 |
+    | `"*.css"` → `"*.scss"` | 样式层不受检 |
+
+    这正是 R26 的「扫描面塌缩 ⇒ 聚合断言恒真」形态：
+    `assert TARGETS` 只保证**非空**，保证不了**没被写窄**。
+
+    三条腿（照 `test_no_sleep_gambling.py` 范式）：
+      1. 非空 + **数量下限**（防整体塌缩成个位数还"自洽"）；
+      2. **每类扩展名各自非空**（防「某一类被写窄/删掉」——这是本仓最常见的改法）；
+      3. 与 **git 索引**核对（独立事实来源，照出「文件改名/移出」时
+         glob 与扩展名一起变小的恒真盲区）。
+    """
+    targets = _targets()
+    rel = {p.relative_to(ROOT).as_posix() for p in targets}
+
+    assert targets, (
+        "零 CDN 闸门扫描面为空——`test_no_external_resource_loads` 会退化成"
+        "空循环 + 恒真断言（假绿）。检查 `_targets()` 的 glob 是否被写宽/写错。"
+    )
+    assert len(targets) >= 10, (
+        f"扫描面只有 {len(targets)} 个文件（下限 10）——疑似整体塌缩：{sorted(rel)}"
+    )
+
+    # ② 每一类**各自**非空（写窄通常只影响一类：改扩展名 / 删一行 glob）
+    families = {
+        "web/*.html": [r for r in rel if r.endswith(".html") and "/web/" in r],
+        "web/*.js": [r for r in rel if r.endswith(".js") and "/web/" in r],
+        "web/*.css": [r for r in rel if r.endswith(".css") and "/web/" in r],
+        "render/*.py": [r for r in rel if r.endswith(".py") and "/render/" in r],
+    }
+    empty_families = [k for k, v in families.items() if not v]
+    assert not empty_families, (
+        f"以下扫描面类别为空（该层完全不受零 CDN 检查）：{empty_families}\n"
+        f"各类实得：{ {k: len(v) for k, v in families.items()} }"
+    )
+
+    # ③ 与 git 索引核对：磁盘 glob 扫不到、但 git 里有的同类文件 = 疑似写窄/改名
+    tracked = _tracked_web_assets()
+    if tracked is not None:
+        tracked_rel = {t for t in tracked if t.endswith((".html", ".js", ".css"))}
+        gone = tracked_rel - rel
+        assert not gone, (
+            "以下前端文件在 git 索引里存在，但零 CDN 扫描面扫不到（glob 被写窄/改名？）：\n  "
+            + "\n  ".join(sorted(gone))
+        )
+
+
+def _tracked_web_assets() -> set[str] | None:
+    """从 **git 索引**取 `medkit/web/**` 与 `medkit/render/**` 的文件。
+
+    返回 None 表示拿不到 git（源码包脱离仓库）——调用方跳过该条，
+    但仍保留非空、数量下限与「各类非空」（那几条不依赖 git）。
+    """
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "medkit/web/", "medkit/render/"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return {x for x in r.stdout.split()}
+
+
 def test_no_external_resource_loads():
-    """前端与产物页不得加载任何外部资源（`<a href>` 导航链接不算）。"""
-    assert TARGETS, "扫描目标为空，闸门形同虚设"
-    hits = [h for p in TARGETS for h in _scan(p)]
+    """前端与产物页不得加载任何外部资源（`<a href>` 导航链接不算）。
+
+    「扫描面非空/未写窄」由 `test_scan_face_is_not_empty` 单独把守。
+    """
+    targets = _targets()   # 与元守卫同源：改窄这里，元守卫必红
+    hits = [h for p in targets for h in _scan(p)]
     assert not hits, "出现外部资源加载（违反「零 CDN」）：\n  " + "\n  ".join(hits)
 
 
