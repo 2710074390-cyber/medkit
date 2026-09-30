@@ -11,6 +11,7 @@
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,24 @@ from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+
+def _forbids_answer(text: str) -> bool:
+    """提示词是否**明文禁止给/改答案**——按**形态**匹配，不绑具体措辞。
+
+    为什么不用 `"不得给出正确答案" in text`（旧写法）：那是**绑书写格式**——
+    提示词迭代时换个说法（「禁止泄露答案」）就会**假红**，而假红会逼人删掉守卫（方向 H）。
+    红线没变、措辞变了，守卫不该红。
+
+    形态：否定词 + 「给/透露/泄露/写出/改写/修正」+ 答案，中间容忍任意字与空白。
+    与 `tests/test_errorpipe_image.py::test_prompt_forbids_inferring_answer` 同一取向
+    （两处各自守不同的提示词，但判据形态一致）。
+    """
+    flat = "".join(text.split())
+    return bool(re.search(
+        r"(不得|不要|禁止|切勿|严禁)[^。]{0,12}(给出|透露|泄露|写出|改写|修正|给)[^。]{0,12}答案",
+        flat))
+
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -502,21 +521,34 @@ def test_answer_redaction_guard_actually_catches_the_defect(client, isolated, mo
 
 def test_socratic_answer_redaction_is_enforced(client, isolated, monkeypatch):
     """汇总：红线三道防线各自的可证伪点都在这一个文件里。"""
-    # ① 提示词层（文本级）
+    # ① 提示词层（文本级）——判据与下面那条**同源**（`_forbids_answer`），不各写一套
     src = (ROOT / "medkit" / "prompts" / "socratic_review.md").read_text(encoding="utf-8")
-    assert "不得给出正确答案" in src
+    assert _forbids_answer(src)
     # ② 契约层（结构级）
     assert not hasattr(schema.SocraticScore(score=3, gap="g"), "answer")
     # ③ 出口层（行为级，见上两条用例）
 
 
 def test_socratic_prompt_forbids_revealing_answer(isolated):
-    """提示词层第 1 道防线：socratic_review.md 必须明文禁止给答案。"""
+    """提示词层第 1 道防线：socratic_review.md 必须明文禁止给答案 / 改写答案。
+
+    ## 判据刻意**不绑具体措辞**（2026-09-30 R30 改）
+
+    旧版是 `assert "不得给出正确答案" in src`（+ `"不得改写正确答案"`）——
+    绑的是**当时的书写**：提示词迭代时把「不得给出正确答案」改成「禁止泄露答案」
+    就会**假红**，而假红会逼人把守卫删掉（方向 H）。红线没变、措辞变了，守卫不该红。
+    现改为**形态匹配**：否定词 + 「给/透露/泄露/写出/改写/修正」+ 答案，
+    容忍任意措辞与空白。删掉整条禁令 ⇒ 仍红（注入实证见
+    `.workbuddy-ai/tmp/diag_prompt_guard.py`）。
+
+    ⚠️ 能力边界：它只证明「提示词里写了这条规矩」，**不证明模型会遵守**。
+    后者由契约（`SocraticScore` 无 answer 字段）+ 出口剥离（`_strip_answer_echo`）把关。
+    """
     p = ROOT / "medkit" / "prompts" / "socratic_review.md"
     src = p.read_text(encoding="utf-8")
-    assert "不得给出正确答案" in src
-    assert "不得改写正确答案" in src
-    # 且必须区分任务类型（first / score），否则第一问会带 JSON
+    assert _forbids_answer(src), "提示词缺少「禁止给出/改写答案」的明文禁令"
+    # 且必须区分任务类型（first / score），否则第一问会带 JSON。
+    # `{task}` 是**契约占位符**（render_prompt 必须提供），精确匹配是正当的。
     assert "{task}" in src and "first" in src and "score" in src
 
 

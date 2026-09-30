@@ -423,7 +423,11 @@ def test_pdf_page_limit_exists():
     「与 MAX_PDF_PAGES 的比较」——与空格/换行/书写形式无关。
     """
     src = (ROOT / "medkit" / "core" / "extract.py").read_text(encoding="utf-8")
-    assert "MAX_PDF_PAGES" in src
+    # ⚠️ 这里**不**再写 `assert "MAX_PDF_PAGES" in src`：那是源码子串断言，
+    # 与上面 docstring 声称的「改成 AST、与书写形式无关」自相矛盾（R30 清理的遗留）。
+    # 它的性质已被下面的 AST 判据**严格覆盖**——AST 找的是「fitz 打开作用域内与
+    # MAX_PDF_PAGES 的比较」，常量只出现在别处（定义处/注释里）时 AST 会红、子串不会，
+    # 故子串是**更弱的前置断言**，留着只会让读者以为判据仍是子串。
 
     tree = ast.parse(src)
     assert _page_gate_in_open_scope(tree), (
