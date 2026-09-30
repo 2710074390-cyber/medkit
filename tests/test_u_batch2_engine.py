@@ -91,11 +91,25 @@ def test_scan_faces_are_not_empty():
     # 第一版只写 `empty_layers = [sub for sub in _layer_dirs() if 该层为空]` +
     # `assert not empty_layers` —— 把 `_layer_dirs()` 注入成 `()` 后
     # **empty_layers 也是空的**，断言照样通过（rc=0）。必须先把清单本身钉住。
+    # ⚠️ 两个断言**必须都在**（2026-09-29 实测：只留其中一个就是假绿）。
+    # 它们防的是**两种不同的改写**，注入各自只能被其中一个逮住：
+    #   A. 塌缩 `_layer_dirs()` → `()`  ⇒ 两条都逮得住；
+    #   B. 把 `assert layers == ("core","agents","render")` 删掉/放宽成 `assert True`
+    #      ⇒ `empty_layers` 恒为 `[]` ⇒ **`assert not empty_layers` 恒真**
+    #      （这就是「聚合式空集恒真」的递归同型坑）。
+    # ⇒ 契约必须**独立**再钉一遍，不能只靠与清单的等值比较。
     layers = _layer_dirs()
     assert layers == ("core", "agents", "render"), (
         f"分层清单被改动或塌缩：{layers!r}"
         "（U-09 分层检查的覆盖范围由它决定；要扩大/缩小请同步更新本断言与 docstring）"
     )
+    # 独立第二条：不依赖上面那条等值断言，直接对每一层做**成员**检查。
+    # （等值断言被改写/删除时，这一条仍能拦住「漏扫某层」。）
+    for must in ("core", "agents", "render"):
+        assert must in layers, (
+            f"分层清单缺 `{must}`：{layers!r}"
+            "（U-09 反向导入检查会漏掉该层；要调整请同步更新 docstring）"
+        )
     empty_layers = [
         sub for sub in layers
         if not list((ROOT / "medkit" / sub).rglob("*.py"))
