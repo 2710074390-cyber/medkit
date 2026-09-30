@@ -284,6 +284,48 @@ def test_meta_view_has_no_confidence_edit_control(page, server_url):
     assert "补填" not in txt or "无法补填" in txt
 
 
+# ------------------------------------------------------------------ 导出复盘笔记
+def test_meta_export_notebook_downloads_markdown(page, server_url):
+    """「导出复盘笔记(.md)」必须真的产生一个 .md 下载（不是只弹个 toast）。
+
+    守的是"建了但没接线"那类缺口：后端渲染器写好了、按钮也在，但点了不下载
+    （或下载空文件）——用户什么也拿不到。故断言**下载文件名 + 文件内容**。
+    """
+    _stub_overview(page, FAKE_OVERVIEW)
+    page.route("**/api/errors/export/notebook*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"ok": True, "filename": "复盘笔记_全部科目_20260930.md",
+                         "markdown": "# 错题复盘笔记\n\n## 一、校准\n正文", "count": 14},
+                        ensure_ascii=False)))
+    page.goto(server_url)
+    _open_meta(page)
+    _wait_render(page, "#mt_overview")
+
+    with page.expect_download() as dl:
+        page.click("#btn_mt_export")
+    d = dl.value
+    assert d.suggested_filename.endswith(".md"), d.suggested_filename
+    content = open(d.path(), encoding="utf-8").read()
+    assert content.startswith("# 错题复盘笔记")
+    assert "## 一、校准" in content
+    assert page.locator("#toasts .toast.bad").count() == 0
+
+
+def test_meta_export_failure_surfaces_error(page, server_url):
+    """导出失败要给出可读错误（不静默、不产生空下载）。"""
+    _stub_overview(page, FAKE_OVERVIEW)
+    page.route("**/api/errors/export/notebook*", lambda route: route.fulfill(
+        status=500, content_type="application/json", body='{"detail":"boom"}'))
+    page.goto(server_url)
+    _open_meta(page)
+    _wait_render(page, "#mt_overview")
+    page.click("#btn_mt_export")
+    page.wait_for_function(
+        "() => { const t = document.getElementById('toasts');"
+        " return t && t.innerText.includes('导出失败'); }", timeout=10000)
+    assert page.locator("#btn_mt_export").is_enabled(), "失败后按钮要恢复可用"
+
+
 # ------------------------------------------------------------------ 布局
 def test_meta_view_narrow_no_overflow(page, server_url):
     """390×844 窄屏：元认知视图无横向溢出（热力图靠容器滚动，不撑破页面）。"""

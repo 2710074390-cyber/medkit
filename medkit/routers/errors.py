@@ -330,6 +330,34 @@ def export_jsonl(subject: str = "") -> dict[str, Any]:
     return {"count": len(rows), "items": rows}
 
 
+@router.get("/api/errors/export/notebook")
+def export_notebook(subject: str = "") -> dict[str, Any]:
+    """**Markdown 复盘笔记**（EP-01 输出层出口之一，原方案 N12）。
+
+    把 `metacog` 的五组统计渲染成一篇可读、可打印、可留档的复盘——
+    回答「我的确信准不准 / 我总在哪类错因上栽 / 换个轮次改了没有 / 本周可以不排什么」。
+
+    **刻意不列题目、不给答案**：题目本体属于错题本，复盘要回答的是"我的方法哪儿不对"。
+    这样也天然回避了「产物里夹带答案」（与苏格拉底视图同一取向）。
+    内容**零 LLM**——所有句子要么是常量映射（只在占比 ≥60% 且样本足够时才出），
+    要么是统计量的直述，故不会退化成「要扎实基础」类废话。
+    """
+    from datetime import datetime
+
+    from ..render import notebook_md
+
+    now = datetime.now()
+    stats = ep.analyze(cards=_cards(subject), freq=_freq_map())
+    md = notebook_md.render_notebook(stats, subject=subject,
+                                     generated_at=now.strftime("%Y-%m-%d %H:%M"))
+    return {
+        "ok": True,
+        "filename": f"复盘笔记_{subject or '全部科目'}_{now.strftime('%Y%m%d')}.md",
+        "markdown": md,
+        "count": (stats.get("counts") or {}).get("cards", 0),
+    }
+
+
 @router.get("/api/errors/health")
 def health() -> dict[str, Any]:
     """管线自检：schema 版本、表就绪、闸门覆盖率。用于诊断"统计为什么是空的"。"""

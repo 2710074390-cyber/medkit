@@ -13,7 +13,7 @@
  */
 /* exported mtLoad, mtRenderCalibration, mtRenderHeatmap, mtRenderMigration, mtRenderSubtract,
    mtLoadSocratic, mtRenderSocratic, mtStartSocratic, mtRenderSocraticTurn, mtQtypeLabel,
-   mtSubmitSocratic, mtCloseSocratic */
+   mtSubmitSocratic, mtCloseSocratic, mtExportNotebook */
 
 // 与后端 metacog.CONF_LEVELS 对齐（5 = 很有把握 … 1 = 纯猜）
 const MT_CONF_LABELS = { 5: "很有把握", 4: "比较有把握", 3: "一般", 2: "不太确定", 1: "基本靠猜" };
@@ -381,4 +381,28 @@ function mtCloseSocratic() {
 function mtSetMeta(id, text) {
   const el = $(id);
   if (el) el.textContent = text || "";
+}
+
+/** 导出 Markdown 复盘笔记（EP-01 输出层出口，原方案 N12）。
+ *
+ * 复用 `downloadText`（learn-live.js 已定义，本片在其后加载）——不自己再造一份
+ * Blob+createObjectURL，那是同一件事的第二份实现。
+ *
+ * 用途：五组统计此前只能在网页上看；导成 md 后可打印、可放进笔记软件、可跨设备留档。
+ * 产物**不含题目与答案**（那是错题本的事），只含元认知结论。
+ */
+async function mtExportNotebook() {
+  const btn = $("btn_mt_export");
+  const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "导出中…"; }
+  try {
+    const subj = ($("dash_subject") && $("dash_subject").value) || "";
+    const r = await api("/api/errors/export/notebook?subject=" + encodeURIComponent(subj));
+    downloadText(r.filename || "复盘笔记.md", r.markdown || "");
+    toast(`已导出复盘笔记（${r.count || 0} 道错题的统计）`);
+  } catch (e) {
+    toast("导出失败：" + (e.message || e), false);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+  }
 }

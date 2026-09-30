@@ -106,6 +106,7 @@ EP01_PILLARS = (
     "core/vision.py",
     "agents/error_analysis.py",
     "agents/socratic_review.py",
+    "render/notebook_md.py",
     "routers/errors.py",
 )
 
