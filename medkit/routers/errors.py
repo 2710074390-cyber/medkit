@@ -18,7 +18,7 @@ import json
 import queue
 import re
 import threading
-from typing import Any, Optional, TypedDict
+from typing import Any, Iterator, Optional, TypedDict
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -755,6 +755,72 @@ def _payload_from_fields(fields: dict[str, Any], *, confidence: str, my_reasonin
     }
 
 
+def _run_pipeline_stream(payload: dict[str, Any],
+                         stages: tuple[str, ...]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """跑 `errorpipe.run` 并把它**同步**的 `progress` 回调桥成事件流。
+
+    yield `("stage", {name, label})`；终态 yield `("result", res)` 或 `("error", {msg})`。
+
+    为什么要这一层：`errorpipe.run` 是同步函数、`progress` 是同步回调，
+    而端点是生成器 ⇒ 在 worker 线程里跑流水线、用 `queue.Queue` 把事件桥出来。
+    **两条录入路径（一步到位 / 两步确认）共用这一个实现**——
+    否则"给其中一条加个阶段提示、另一条忘了"这类漂移必然发生
+    （本项目已有一处「两份编排各自漂移」的教训）。
+    """
+    q: queue.Queue = queue.Queue()
+    box: dict[str, Any] = {}
+
+    def _worker() -> None:
+        try:
+            box["res"] = ep.run(
+                payload, stages=stages,
+                progress=lambda s, m: q.put(("stage", {"name": s, "label": m})))
+        except Exception as e:  # noqa: BLE001  流水线异常 → 作为终态返回，不吞
+            box["err"] = f"{type(e).__name__}: {e}"
+        finally:
+            q.put(("__end__", None))
+
+    t = threading.Thread(target=_worker, daemon=True, name="medkit-intake")
+    t.start()
+    while True:
+        try:
+            kind, ev = q.get(timeout=0.5)
+        except queue.Empty:
+            if not t.is_alive():
+                break
+            continue
+        if kind == "__end__":
+            break
+        yield kind, ev
+
+    if box.get("err"):
+        errs.record("errors.intake_stream", "流水线执行失败", detail=str(box["err"]))
+        yield "error", {"msg": f"入库失败：{box['err']}"}
+        return
+    yield "result", box.get("res") or {}
+
+
+def _stages_for(want_attr: bool) -> tuple[str, ...]:
+    """要跑哪几段。`attribute` 是唯一有外部依赖的阶段，用户可关掉。"""
+    return (("intake", "kp_align", "attribute", "persist") if want_attr
+            else ("intake", "kp_align", "persist"))
+
+
+def _done_frame(res: dict[str, Any], *, via: str, fields: dict[str, Any],
+                extra_warnings: list[str]) -> dict[str, Any]:
+    """`done` 帧的构造（两条路径共用，字段形状一致）。"""
+    card = res.get("card") or {}
+    return {
+        "via": via,
+        "fields": fields,
+        "card": card,
+        "stages": res.get("stages") or {},
+        "warnings": list(extra_warnings) + (res.get("warnings") or []),
+        "gate_ok": ep.gate_ok(card) if card else False,
+        "attributed": bool((res.get("stages") or {}).get("attribute", {}).get("ok")),
+    }
+
+
 @router.post("/api/errors/intake/image")
 async def intake_image(file: UploadFile = File(...),
                        prefer: str = Form("auto"),
@@ -765,6 +831,11 @@ async def intake_image(file: UploadFile = File(...),
                        topic: str = Form(""),
                        attribute: str = Form("1")) -> StreamingResponse:
     """拍一张错题图 → 识别 → 归一 → 知识点对齐 →（可选）AI 归因 → 落库。**全程 SSE**。
+
+    这是**一步到位**路径（识别完直接入库）。想先核对识别结果再入库的，用
+    `POST /api/errors/image/extract/stream` + `POST /api/errors/intake/stream` 两步走
+    ——OCR 认错字是常态，核对一下比事后改错题划算（前端默认走两步，
+    「识别后直接入库」勾选才走本端点）。
 
     ## 为什么 confidence / my_reasoning 由**表单**传入而不是从图里抽
 
@@ -785,7 +856,7 @@ async def intake_image(file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail="图片为空（0 字节）——请重新拍照或截图")
 
     cancel_ev = threading.Event()
-    want_attr = str(attribute).strip().lower() not in ("0", "false", "no", "")
+    stages = _stages_for(str(attribute).strip().lower() not in ("0", "false", "no", ""))
 
     def gen():
         try:
@@ -805,65 +876,85 @@ async def intake_image(file: UploadFile = File(...),
                 return
 
             fields = final.get("fields") or {}
-            yield _sse("fields", {"via": final.get("via"),
-                                  "fields": fields,
+            yield _sse("fields", {"via": final.get("via"), "fields": fields,
                                   "warnings": final.get("warnings") or []})
 
             payload = _payload_from_fields(
                 fields, confidence=confidence, my_reasoning=my_reasoning,
                 subject=subject, chapter=chapter, topic=topic)
-            stages = (("intake", "kp_align", "attribute", "persist") if want_attr
-                      else ("intake", "kp_align", "persist"))
-
-            # `errorpipe.run` 的 progress 是**同步回调**，而本函数是生成器：
-            # 用队列把它桥接出来（在 worker 线程里跑流水线，主线程边收边推 SSE）。
-            # 这样流水线仍然只有 `errorpipe.run` 一个实现——不为了流式把它拆散重写。
-            q: queue.Queue = queue.Queue()
-            box: dict[str, Any] = {}
-
-            def _worker() -> None:
-                try:
-                    box["res"] = ep.run(payload, stages=stages,
-                                        progress=lambda s, m: q.put(("stage", {"name": s, "label": m})))
-                except Exception as e:  # noqa: BLE001  流水线异常 → 作为终态返回，不吞
-                    box["err"] = f"{type(e).__name__}: {e}"
-                finally:
-                    q.put(("__end__", None))
-
-            t = threading.Thread(target=_worker, daemon=True, name="medkit-intake-image")
-            t.start()
-            while True:
-                try:
-                    kind, payload_ev = q.get(timeout=0.5)
-                except queue.Empty:
-                    if not t.is_alive():
-                        break
-                    continue
-                if kind == "__end__":
-                    break
-                yield _sse("stage", payload_ev)
-
-            if box.get("err"):
-                errs.record("errors.intake_image", "流水线执行失败", detail=str(box["err"]))
-                yield _sse("error", {"msg": f"入库失败：{box['err']}"})
-                return
-            res = box.get("res") or {}
-            card = res.get("card") or {}
-            yield _sse("done", {
-                "via": final.get("via"),
-                "fields": fields,
-                "card": card,
-                "stages": res.get("stages") or {},
-                "warnings": (final.get("warnings") or []) + (res.get("warnings") or []),
-                "gate_ok": ep.gate_ok(card) if card else False,
-                "attributed": bool((res.get("stages") or {}).get("attribute", {}).get("ok")),
-            })
+            for name, data_ev in _run_pipeline_stream(payload, stages):
+                if name == "result":
+                    yield _sse("done", _done_frame(data_ev, via=final.get("via") or "",
+                                                   fields=fields,
+                                                   extra_warnings=final.get("warnings") or []))
+                    return
+                yield _sse(name, data_ev)
         except Exception as e:  # noqa: BLE001  生成器内任何异常都要变成 error 帧
             yield _sse("error", {"msg": f"识别或入库过程出错：{e}"})
         finally:
             cancel_ev.set()
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+class FieldIntakeBody(BaseModel):
+    """已核对字段 → 入库（两步流程的第二步）。
+
+    `fields` 的形状 = `ErrorImageExtract.model_dump()`（前端拿到识别结果、用户改完之后原样回传）。
+    这里**不**接受图片：图片那一半在 `/api/errors/image/extract/stream`。
+    """
+
+    fields: dict[str, Any] = Field(default_factory=dict)
+    confidence: str = ""
+    my_reasoning: str = ""
+    subject: str = ""
+    chapter: str = ""
+    topic: str = ""
+    attribute: bool = True
+
+
+@router.post("/api/errors/intake/stream")
+def intake_stream(body: FieldIntakeBody) -> StreamingResponse:
+    """**已确认的字段** → 归一 → 知识点对齐 →（可选）AI 归因 → 落库。**全程 SSE**。
+
+    与 `intake/image` 的分工：那条是"图 → 一次做完"，本端点是"**用户核对过的字段** → 入库"。
+    两条路共用 `_payload_from_fields` 与 `_run_pipeline_stream`，
+    所以闸门语义、`correct` 派生、阶段事件**完全一致**（不存在"两步走的那条松一点"）。
+
+    ## 为什么需要它（不是多余的）
+
+    OCR 认错字是常态（纸质讲义照片尤甚）。一步到位意味着**错字连同闸门数据一起落库**，
+    事后要改只能删了重录——而 `confidence` / `my_reasoning` 是**不可补填**的，
+    重录就等于让用户重新回忆当时的确信程度（那份回忆已经不可靠了）。
+    成熟客户端（Cherry Studio / LobeChat 一类）的做法都是「识别 → 校对 → 提交」，
+    这里补上第二步。
+
+    ## 闸门不放宽
+
+    `confidence` / `my_reasoning` 仍由**请求体**传入（前端在识别**之前**就收齐），
+    与 `intake/image` 同口径。未填则只入库、跳过 P3 并在 `done` 里明说。
+    """
+    payload = _payload_from_fields(
+        body.fields, confidence=body.confidence, my_reasoning=body.my_reasoning,
+        subject=body.subject, chapter=body.chapter, topic=body.topic)
+    if not str(payload.get("question") or "").strip():
+        raise HTTPException(status_code=400, detail="题干不能为空——请先识别或手工填写题干")
+    stages = _stages_for(bool(body.attribute))
+
+    def gen():
+        try:
+            yield _sse("stage", {"name": "intake", "label": "开始入库…"})
+            for name, data_ev in _run_pipeline_stream(payload, stages):
+                if name == "result":
+                    yield _sse("done", _done_frame(data_ev, via="manual",
+                                                   fields=body.fields, extra_warnings=[]))
+                    return
+                yield _sse(name, data_ev)
+        except Exception as e:  # noqa: BLE001
+            yield _sse("error", {"msg": f"入库过程出错：{e}"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
 
 
 # ---------------------------------------------------------------- 内部工具

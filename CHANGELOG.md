@@ -74,6 +74,37 @@
   ② 刷新后停在错题本时能力横幅卡在"正在检测…"——`learn.js` 的 `initLearnView()`
   在**它自己加载时**就调 `showLearnView(记住的视图)`，那一刻本片还没加载、包装钩子还没装上。
 
+### Added（EP-01 图像录入 · 第二步：识别 → 校对 → 入库）
+
+第一版把「识别」和「入库」压在一次请求里（`intake/image`），于是
+`image/extract` + `image/extract/stream` **从 UI 看是死端点**——只有测试在调。
+而 OCR 认错字是常态（纸质讲义照片尤甚），一步到位意味着**错字连同闸门数据一起落库**：
+`confidence` / `my_reasoning` 是**不可补填**的，事后要改只能删了重录，
+等于让用户重新回忆当时的确信程度（那份回忆已经不可靠了）。
+
+⇒ 补上成熟客户端（Cherry Studio / LobeChat 一类）的标准形态「识别 → 校对 → 提交」：
+
+- **新增 `POST /api/errors/intake/stream`**（端点 26 → **27**）：请求体 = 用户核对过的
+  `fields` + 闸门字段 + `attribute`，SSE 推流水线进度。字段由**用户确认/编辑过**，
+  故 `answer` 一律视为用户提供——按《总纲》§3.2「正确答案必须由考生提供」，
+  这比"图里读到的"**更强**（不是绕过红线，是更强的出处）。
+- **识别结果可编辑**：题干 / 选项 / 答案 / 作答 / 解析 / 科目·章节·主题 都能当场改，
+  改完再入库。用户在答案框里**手填**答案时把 `answer_from_image` 置真（用户提供）；
+  清空则一起清掉；核对过就丢掉 `uncertain` 标记（否则入库后仍被标为存疑）。
+- **默认走两步**，勾选「识别后直接入库（不核对）」才走 `intake/image` 一步到位
+  （整页清晰的截图场景）。直通模式的结果**只读展示**——已落库还留一个「确认入库」
+  按钮只会诱导重复建卡。
+- **编排单一实现**：抽出 `_run_pipeline_stream` / `_stages_for` / `_done_frame`
+  （+ `_payload_from_fields`）供两条路径共用，守卫
+  `test_both_intake_paths_produce_the_same_card` 把「两条路语义一致」变成可断言的性质。
+
+同时修掉两个本轮踩出的真实缺陷（都由浏览器用例抓到）：
+
+| # | 缺陷 | 根因 |
+|---|---|---|
+| ① | **核对表单整块不可见** | `miStart` 把 `#mi_result` 设成 `display:none`，`miRenderFields` 从没恢复。旧断言用 `inner_text()`（对隐藏元素仍返回文本）照不出来，改用 `wait_for_selector`（要可见）立刻暴露 |
+| ② | 每次跑完**残留一个「■ 停止生成」按钮** | 清理时用了 `sseStopUI`（它会**插入**停止按钮）而不是 `sseAbort`（它会**移除**）。新守卫 `test_no_stale_stop_button_after_run` 断言跑完 `.sse_stop_btn` 计数为 0 |
+
 ### Fixed（门禁假绿 · 自审本轮新增的守卫 R28）
 
 把项目自己的假绿分类（R12–R27，技能 `gate-falsifiability`）**套回本次新写的守卫**上扫一遍。

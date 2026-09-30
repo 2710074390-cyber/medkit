@@ -549,9 +549,11 @@ try {
              style="display:none" onchange="miPickFile(this)">
 
       <div class="row" style="margin-top:10px;flex-wrap:wrap;align-items:center;gap:8px">
-        <button class="act" id="mi_go" onclick="miStart()" disabled>开始识别并归因</button>
+        <button class="act" id="mi_go" onclick="miStart()" disabled>① 识别图片</button>
         <button class="act gray" id="mi_reset" onclick="miReset()">清空</button>
-        <label class="chk"><input type="checkbox" id="mi_attr" checked> 识别后自动跑 AI 归因</label>
+        <label class="chk" title="默认走「识别 → 核对 → 入库」两步；勾上则识别完直接入库">
+          <input type="checkbox" id="mi_direct" onchange="miDirectToggle()"> 识别后直接入库（不核对）</label>
+        <label class="chk"><input type="checkbox" id="mi_attr" checked> 自动跑 AI 归因</label>
         <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
           <label style="font-size:12px">识别方式</label>
           <select id="mi_prefer" onchange="miCapabilityRender()">

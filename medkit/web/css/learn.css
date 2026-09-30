@@ -291,4 +291,12 @@
 .mi-q{padding:8px 10px;background:var(--card2);border-radius:6px}
 .mi-opts{display:flex;flex-direction:column;gap:2px}
 .mi-opt{padding:3px 8px;background:var(--card2);border-radius:5px}
+/* 核对表单：识别结果**可编辑**，所以输入控件的样式要与闸门区一致（同一套观感） */
+.mi-card input[type=text],.mi-card textarea{
+  width:100%;box-sizing:border-box;padding:7px 10px;border-radius:7px;
+  border:1px solid var(--line);background:var(--card2);color:var(--text);
+  font-family:inherit;font-size:13.5px;line-height:1.55}
+.mi-card textarea{resize:vertical}
+.mi-card input[type=text]:focus,.mi-card textarea:focus{outline:none;border-color:var(--accent)}
+.mi-card .row label{display:block;font-size:11.5px;color:var(--dim);margin-bottom:3px}
 

@@ -507,7 +507,111 @@ def test_intake_image_emits_error_frame_when_recognition_fails(client, monkeypat
     assert lib.list_mistakes() == [], "识别失败不应留下半条记录"
 
 
-# ==================================================================== 6. 结构守卫
+# ==================================================================== 7. 两步确认入库
+def _stub_iter_extract(monkeypatch, fields: dict[str, Any]):
+    monkeypatch.setattr(vision, "iter_extract", lambda data, **kw: iter([
+        {"type": "result", "ok": True, "via": "vision", "fields": fields,
+         "raw_text": "", "warnings": [], "attempts": [], "error": ""},
+    ]))
+
+
+def test_intake_stream_runs_pipeline_from_confirmed_fields(client, cfg):
+    """已确认字段 → 落库（两步流程的第二步）。字段值必须**原样**生效。"""
+    fields = {"question": "题干A", "options": ["A. 甲", "B. 乙"], "answer": "B",
+              "user_answer": "A", "analysis": "解析", "subject": "儿科学",
+              "chapter": "", "topic": "", "answer_from_image": True,
+              "user_answer_from_image": True, "legible": True, "uncertain": [],
+              "notes": ""}
+    r = client.post("/api/errors/intake/stream", json={
+        "fields": fields, "confidence": "3", "my_reasoning": "觉得是支气管炎",
+        "attribute": False})
+    assert r.status_code == 200
+    evs = _sse_events(r.text)
+    assert evs[-1][0] == "done"
+    card = evs[-1][1]["card"]
+    assert card["question"] == "题干A"
+    assert card["options"] == ["A. 甲", "B. 乙"]
+    assert card["confidence"] == 3 and card["my_reasoning"] == "觉得是支气管炎"
+    # correct 由「答案 vs 作答」派生（B vs A → False），两条路径同口径
+    assert card["correct"] is False
+    assert any(c["id"] == card["id"] for c in lib.list_mistakes())
+
+
+def test_intake_stream_requires_question(client, cfg):
+    r = client.post("/api/errors/intake/stream",
+                    json={"fields": {"question": "   "}, "confidence": "3",
+                          "my_reasoning": "x"})
+    assert r.status_code == 400 and "题干" in r.json()["detail"]
+
+
+def test_intake_stream_does_not_bypass_gate(client, monkeypatch, cfg):
+    """**闸门不放宽**：未填 confidence/my_reasoning 时只入库、不调 LLM。"""
+    called: list[str] = []
+    monkeypatch.setattr(ep, "attribute_one",
+                        lambda rec, client=None: called.append("attr") or {
+                            "ok": True, "analysis": {}, "error": ""})
+    r = client.post("/api/errors/intake/stream", json={
+        "fields": {"question": "题干", "answer": "B", "legible": True},
+        "attribute": True})
+    done = _sse_events(r.text)[-1][1]
+    assert done["gate_ok"] is False and done["attributed"] is False
+    assert called == [], "未过闸门却调了 LLM 归因 = 红线被绕过"
+
+
+def test_intake_stream_emits_stage_events(client, monkeypatch, cfg):
+    """流水线阶段必须真的推出来（两条路径共用 `_run_pipeline_stream`）。"""
+    r = client.post("/api/errors/intake/stream", json={
+        "fields": {"question": "题干", "legible": True},
+        "confidence": "3", "my_reasoning": "x", "attribute": False})
+    names = [d.get("name") for ev, d in _sse_events(r.text) if ev == "stage"]
+    assert "intake" in names and "kp_align" in names and "persist" in names, names
+    assert "attribute" not in names, "attribute 关掉时不该出现该阶段"
+
+
+def test_both_intake_paths_produce_the_same_card(client, monkeypatch, cfg):
+    """**单一实现不变量**：`intake/image` 与 `intake/stream` 用同一份字段必须产出同样的卡。
+
+    两条路径若各写一份编排，一定会漂移（一边改了 `correct` 派生、另一边忘了）。
+    这条用例把「两条路语义一致」变成可断言的性质——只比**内容**，不比 id/来源。
+    """
+    fields = {"question": "同一道题", "options": ["A. 甲", "B. 乙"], "answer": "B",
+              "user_answer": "A", "analysis": "同一解析", "subject": "生理学",
+              "chapter": "循环", "topic": "", "answer_from_image": True,
+              "user_answer_from_image": True, "legible": True, "uncertain": [],
+              "notes": ""}
+    keys = ("question", "options", "answer", "user_answer", "analysis",
+            "subject", "chapter", "confidence", "my_reasoning", "correct")
+
+    _stub_iter_extract(monkeypatch, fields)
+    cfg["model_gen"] = "qwen-vl-max"
+    r1 = client.post("/api/errors/intake/image",
+                     files={"file": ("q.png", PNG, "image/png")},
+                     data={"confidence": "4", "my_reasoning": "同一理由",
+                           "attribute": "0"})
+    card1 = _sse_events(r1.text)[-1][1]["card"]
+
+    r2 = client.post("/api/errors/intake/stream", json={
+        "fields": fields, "confidence": "4", "my_reasoning": "同一理由",
+        "attribute": False})
+    card2 = _sse_events(r2.text)[-1][1]["card"]
+
+    assert {k: card1.get(k) for k in keys} == {k: card2.get(k) for k in keys}, (
+        "两条录入路径产出的卡片不一致 —— 说明编排漂移了（应共用 `_run_pipeline_stream`）")
+
+
+def test_field_intake_body_declares_gate_fields():
+    """**结构守卫**：两步流程的请求契约里必须**声明**闸门字段。
+
+    若有人把 `confidence` / `my_reasoning` 从 `FieldIntakeBody` 里删掉，
+    两步流程就变成"没有闸门"的通道——而那正是最容易被忽略的绕过口。
+    """
+    from medkit.routers.errors import FieldIntakeBody
+    declared = set(FieldIntakeBody.model_fields)
+    assert {"confidence", "my_reasoning", "attribute"} <= declared, sorted(declared)
+    assert "fields" in declared
+
+
+# ==================================================================== 8. 结构守卫
 # 全部图像端点（与真身装饰器**双向核对**，见 test_image_endpoint_list_matches_router）
 IMAGE_ENDPOINTS = ("image_capability", "image_extract",
                    "image_extract_stream", "intake_image")

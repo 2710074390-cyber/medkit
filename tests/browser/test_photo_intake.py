@@ -54,11 +54,6 @@ def _stub_capability(page, payload):
         body=json.dumps(payload, ensure_ascii=False)))
 
 
-def _stub_intake_stream(page, body: str):
-    page.route("**/api/errors/intake/image*", lambda route: route.fulfill(
-        status=200, content_type="text/event-stream", body=body))
-
-
 def _open_mistakes(page):
     page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
     page.click('button[data-tab="learn"]')
@@ -110,64 +105,186 @@ def test_gate_blocks_until_both_fields_filled(page, server_url):
     assert "可以开始识别" in page.locator("#mi_gate_hint").inner_text()
 
 
-def test_stream_renders_stages_fields_and_done(page, server_url):
-    """SSE 全链路：stage 进日志、delta 进增量区、fields 渲染结果、done 收尾。"""
-    _stub_capability(page, CAP_VISION)
-    _stub_intake_stream(page, _sse(
-        ("stage", {"name": "recognize", "label": "识别图片…"}),
-        ("stage", {"via": "vision", "label": "原生视觉模型读图…"}),
-        ("delta", {"text": '{"question": "3. 患儿男'}),
-        ("fields", {"via": "vision", "fields": FIELDS, "warnings": []}),
-        ("stage", {"name": "kp_align", "label": "知识点 ID 对齐"}),
-        ("done", {"via": "vision", "fields": FIELDS, "card": {"id": "m1"},
-                  "stages": {}, "warnings": [], "gate_ok": True, "attributed": True}),
-    ))
-    page.goto(server_url)
-    _open_mistakes(page)
-    page.select_option("#mi_conf", "4")
-    page.fill("#mi_reason", "只记得湿啰音")
+def _stub_extract_stream(page, body: str):
+    page.route("**/api/errors/image/extract/stream*", lambda route: route.fulfill(
+        status=200, content_type="text/event-stream", body=body))
 
-    # 直接把文件喂给隐藏 input（等价于拖拽/粘贴后的状态）
+
+def _stub_intake_stream(page, body: str, sink: list | None = None):
+    def handler(route):
+        if sink is not None:
+            sink.append(json.loads(route.request.post_data or "{}"))
+        route.fulfill(status=200, content_type="text/event-stream", body=body)
+    page.route("**/api/errors/intake/stream*", handler)
+
+
+DONE_FRAME = {"via": "vision", "fields": FIELDS, "card": {"id": "m1"}, "stages": {},
+              "warnings": [], "gate_ok": True, "attributed": True}
+
+
+def _pick_image(page):
     page.set_input_files("#mi_file", files=[{
         "name": "q.png", "mimeType": "image/png",
         "buffer": b"\x89PNG\r\n\x1a\n" + b"\x00" * 32}])
-    page.wait_for_function(
-        "() => !document.getElementById('mi_go').disabled", timeout=5000)
+
+
+def _fill_gate(page, conf="4", reason="只记得湿啰音"):
+    page.select_option("#mi_conf", conf)
+    page.fill("#mi_reason", reason)
+
+
+def test_two_phase_recognize_then_commit(page, server_url):
+    """**两步流程**（默认）：识别 → 可编辑结果 → 确认入库。
+
+    这是"成熟客户端交互"的核心：OCR 认错字是常态，不给核对就直接入库，
+    等于把错字连同**不可补填**的闸门数据一起写进档案。
+    """
+    _stub_capability(page, CAP_VISION)
+    _stub_extract_stream(page, _sse(
+        ("stage", {"via": "vision", "label": "原生视觉模型读图…"}),
+        ("delta", {"text": '{"question": "3. 患儿男'}),
+        ("fields", {"via": "vision", "fields": FIELDS, "warnings": []}),
+        ("result", {"ok": True, "via": "vision", "fields": FIELDS, "raw_text": "",
+                    "warnings": [], "attempts": [], "error": ""}),
+    ))
+    committed: list = []
+    _stub_intake_stream(page, _sse(
+        ("stage", {"name": "kp_align", "label": "知识点 ID 对齐"}),
+        ("done", DONE_FRAME)), sink=committed)
+
+    page.goto(server_url)
+    _open_mistakes(page)
+    _fill_gate(page)
+    _pick_image(page)
     page.click("#mi_go")
+
+    # 识别完成后出现**可编辑**表单，且**尚未**入库
+    page.wait_for_selector("#mi_f_question", timeout=15000)
+    assert committed == [], "两步流程下「识别」不得直接入库"
+    assert "识别完成" in page.locator("#mi_progress").inner_text()
+    assert "患儿男" in page.locator("#mi_raw").inner_text()
+    assert "待核对" in page.locator("#mi_result").inner_text(), "uncertain 项应被标出"
+
+    page.click("#mi_commit")
+    page.wait_for_function(
+        "() => { const el = document.getElementById('mi_progress');"
+        " return el && el.innerText.includes('已入库'); }", timeout=15000)
+    assert len(committed) == 1, "确认入库应恰好提交一次"
+    assert committed[0]["fields"]["question"] == FIELDS["question"]
+    assert committed[0]["confidence"] == "4"
+    assert page.locator("#toasts .toast.bad").count() == 0
+
+
+def test_edited_fields_are_what_gets_submitted(page, server_url):
+    """**「可编辑」必须真的生效**：改过的题干/答案要出现在提交体里。
+
+    否则就是一个"看起来能改、其实提交的是识别原值"的假表单
+    ——这正是本项目最忌讳的那类"绿但错"。
+    """
+    _stub_capability(page, CAP_VISION)
+    _stub_extract_stream(page, _sse(
+        ("fields", {"via": "ocr", "fields": FIELDS, "warnings": []}),
+        ("result", {"ok": True, "via": "ocr", "fields": FIELDS, "raw_text": "",
+                    "warnings": [], "attempts": [], "error": ""}),
+    ))
+    committed: list = []
+    _stub_intake_stream(page, _sse(("done", DONE_FRAME)), sink=committed)
+
+    page.goto(server_url)
+    _open_mistakes(page)
+    _fill_gate(page)
+    _pick_image(page)
+    page.click("#mi_go")
+    page.wait_for_selector("#mi_f_question", timeout=15000)
+
+    page.fill("#mi_f_question", "3. 改过的题干：双肺闻及湿啰音")
+    page.fill("#mi_f_answer", "C")
+    page.fill("#mi_f_options", "A. 甲\nB. 乙\nC. 丙")
+    page.fill("#mi_f_subject", "内科学")
+    page.click("#mi_commit")
     page.wait_for_function(
         "() => { const el = document.getElementById('mi_progress');"
         " return el && el.innerText.includes('已入库'); }", timeout=15000)
 
-    prog = page.locator("#mi_progress").inner_text()
-    assert "识别图片" in prog
-    assert "原生视觉模型读图" in prog
-    assert "知识点 ID 对齐" in prog
-    # delta 增量文本确实被显示（等待可感知）
-    assert "患儿男" in page.locator("#mi_raw").inner_text()
-    # 识别结果渲染
-    res = page.locator("#mi_result").inner_text()
-    assert "支气管肺炎" in res and "儿科学" in res
-    assert "待核对" in res, "uncertain 里的字段应被标注出来"
-    assert page.locator("#toasts .toast.bad").count() == 0
+    assert len(committed) == 1
+    f = committed[0]["fields"]
+    assert f["question"] == "3. 改过的题干：双肺闻及湿啰音", "改过的题干没被提交（假表单）"
+    assert f["answer"] == "C"
+    assert f["options"] == ["A. 甲", "B. 乙", "C. 丙"]
+    assert f["subject"] == "内科学"
+    # 用户手填的答案 ⇒ 出处标记为真（《总纲》§3.2：正确答案由考生提供，比"图里读到的"更强）
+    assert f["answer_from_image"] is True
+    # 已核对过 ⇒ 不再带"待核对"标记下去
+    assert f["uncertain"] == []
+    # subject/chapter/topic 传空串，让**编辑框里的最终值**生效（不被闸门卡旧值覆盖）
+    assert committed[0]["subject"] == "" and committed[0]["chapter"] == ""
 
 
-def test_recognition_failure_shows_error_frame(page, server_url):
-    """识别失败：展示后端给出的原因 + 各通道结果，且不产生"成功"提示。"""
+def test_direct_mode_uses_one_shot_endpoint(page, server_url):
+    """勾选「识别后直接入库」→ 走 `intake/image` 一步到位（识别完即落库，不出可编辑表单）。"""
     _stub_capability(page, CAP_VISION)
-    _stub_intake_stream(page, _sse(
-        ("stage", {"via": "vision", "label": "原生视觉模型读图…"}),
-        ("error", {"msg": "识别失败（没有可用的识别通道）",
-                   "attempts": [{"via": "vision", "ok": False, "error": "超时"},
-                                {"via": "ocr", "ok": False, "error": "网络不可达"}]}),
+    _stub_intake_stream(page, _sse(("done", DONE_FRAME)))          # 若误走两步会命中它
+    one_shot: list = []
+
+    def handler(route):
+        one_shot.append(1)
+        route.fulfill(status=200, content_type="text/event-stream", body=_sse(
+            ("fields", {"via": "vision", "fields": FIELDS, "warnings": []}),
+            ("done", DONE_FRAME)))
+    page.route("**/api/errors/intake/image*", handler)
+
+    page.goto(server_url)
+    _open_mistakes(page)
+    _fill_gate(page)
+    _pick_image(page)
+    page.check("#mi_direct")
+    assert page.locator("#mi_go").inner_text().strip() == "识别并入库"
+    page.click("#mi_go")
+    page.wait_for_function(
+        "() => { const el = document.getElementById('mi_progress');"
+        " return el && el.innerText.includes('已入库'); }", timeout=15000)
+    assert one_shot == [1], "勾选直通时应走 intake/image"
+    assert page.locator("#mi_commit").count() == 0, "直通模式不该出现「确认入库」按钮"
+
+
+def test_no_stale_stop_button_after_run(page, server_url):
+    """跑完后**不得残留**「■ 停止生成」按钮。
+
+    守的是一个真实缺陷：清理时若用 `sseStopUI`（它会**插入**停止按钮）而不是 `sseAbort`
+    （它会**移除**），每跑一次就留下一个可点的停止按钮——点了没有对应 controller，
+    却让用户以为生成还在进行。
+    """
+    _stub_capability(page, CAP_VISION)
+    _stub_extract_stream(page, _sse(
+        ("fields", {"via": "vision", "fields": FIELDS, "warnings": []}),
+        ("result", {"ok": True, "via": "vision", "fields": FIELDS, "raw_text": "",
+                    "warnings": [], "attempts": [], "error": ""}),
     ))
     page.goto(server_url)
     _open_mistakes(page)
-    page.select_option("#mi_conf", "2")
-    page.fill("#mi_reason", "猜的")
-    page.set_input_files("#mi_file", files=[{
-        "name": "q.png", "mimeType": "image/png",
-        "buffer": b"\x89PNG\r\n\x1a\n" + b"\x00" * 32}])
-    page.wait_for_function("() => !document.getElementById('mi_go').disabled", timeout=5000)
+    _fill_gate(page)
+    _pick_image(page)
+    page.click("#mi_go")
+    page.wait_for_selector("#mi_f_question", timeout=15000)
+    page.wait_for_timeout(400)      # 等 finally 里的清理跑完
+    assert page.locator(".sse_stop_btn").count() == 0, "识别结束后残留了停止按钮"
+
+
+def test_recognition_failure_shows_error_frame(page, server_url):
+    """识别失败：展示后端给出的原因 + 各通道结果，且**不出现**可编辑表单。"""
+    _stub_capability(page, CAP_VISION)
+    _stub_extract_stream(page, _sse(
+        ("stage", {"via": "vision", "label": "原生视觉模型读图…"}),
+        ("result", {"ok": False, "via": "", "fields": {}, "raw_text": "",
+                    "warnings": [],
+                    "attempts": [{"via": "vision", "ok": False, "error": "超时"},
+                                 {"via": "ocr", "ok": False, "error": "网络不可达"}],
+                    "error": "识别失败（没有可用的识别通道）"}),
+    ))
+    page.goto(server_url)
+    _open_mistakes(page)
+    _fill_gate(page, "2", "猜的")
+    _pick_image(page)
     page.click("#mi_go")
     page.wait_for_function(
         "() => { const el = document.getElementById('mi_progress');"
@@ -176,8 +293,8 @@ def test_recognition_failure_shows_error_frame(page, server_url):
     prog = page.locator("#mi_progress").inner_text()
     assert "没有可用的识别通道" in prog
     assert "超时" in prog and "网络不可达" in prog, "各通道原因应逐条展示"
-    # 失败时不应渲染"识别结果"卡片
-    assert page.locator("#mi_result .mi-card").count() == 0
+    assert page.locator("#mi_f_question").count() == 0, "识别失败不该出现可编辑表单"
+    assert page.locator("#mi_commit").count() == 0
 
 
 def test_only_one_image_entry_in_mistakes_view(page, server_url):
