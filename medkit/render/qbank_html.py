@@ -8,6 +8,7 @@
 import base64
 import html as html_mod
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -15,7 +16,10 @@ from ..core import errors as _errs
 
 TYPE_LABELS = {"A1": "A1 型 · 单选", "A2": "A2 型 · 病例单选", "X": "X 型 · 多选",
                "B1": "B1 型 · 共用选项", "A3": "A3 型 · 案例单选", "A4": "A4 型 · 案例单选"}
-LETTERS = "ABCDEFGHIJ"  # 渲染上限 10 个选项，超出部分由渲染前终检剔除（D2）
+LETTERS = "ABCDEFGHIJ"
+# 选项文本里**已有的**字母标记（`A. 甲` / `（A）甲` / `A、甲`）。
+# 要求有分隔符 ⇒ 不会把「A 型题」这种正文开头的字母误剥（与 library._OPT_RE 同形）。
+_OPT_LETTER_RE = re.compile(r"^\s*[（(]?\s*[A-Ha-h]\s*[）)]?\s*[.、．,，:：)）]\s*")  # 渲染上限 10 个选项，超出部分由渲染前终检剔除（D2）
 
 
 # ---------------------------------------------------------------- WP-04 图/表渲染
@@ -115,14 +119,34 @@ def render_media(q: dict[str, Any], image_index: Optional[dict[str, Any]] = None
     return "".join(out)
 
 
+def _strip_letter(s: Any) -> str:
+    """剥掉选项文本里**已有的**字母标记：`"A. 甲"` → `"甲"`（幂等）。
+
+    为什么需要：库里的选项**可能带前缀**——文本/图像导入走 `library.parse_question_text`，
+    它保留原行（`"A. 支气管炎"`）；而从零生成的题库则是纯文本（`"支气管炎"`）。
+    两种形态都会进到渲染层，而渲染层**统一补字母**（`LETTERS[i]`）⇒
+    不剥就渲染成 `A. A. 支气管炎`（真实缺陷，守卫见
+    `tests/test_render_markdown.py::test_options_are_not_double_lettered`）。
+
+    正则与 `library._OPT_RE` 同形（**要求有分隔符**）——免得把「A 型题」这种
+    正文开头的字母误剥。注意 `gates/options_check.py` 与 `gates/numeric_check.py`
+    各自也剥过一次；那些是**纵深防御**（幂等，不冲突），本函数是渲染侧的那一道。
+    """
+    return _OPT_LETTER_RE.sub("", str(s or ""), count=1).strip()
+
+
 def _effective_options(q: dict[str, Any]) -> list[str]:
-    """实际渲染选项：B1 组题共享选项在 group 字段（S3：自身 options 可为空）。"""
+    """实际渲染选项：B1 组题共享选项在 `group` 字段（S3：自身 options 可为空）。
+
+    ⚠️ 返回值**已剥掉字母前缀**——字母是**渲染层**的呈现职责（`LETTERS[i]`），
+    不是数据的一部分。所有调用方（MD / HTML / Anki / 页面 JSON）都只负责补一次字母。
+    """
     opts = q.get("options") or []
     if not opts and q.get("group_kind") == "option_group":
         grp = q.get("group") or {}
         if isinstance(grp, dict):
             opts = grp.get("options") or []
-    return [o for o in opts if isinstance(o, str)]
+    return [_strip_letter(o) for o in opts if isinstance(o, str)]
 
 
 def _case_blocks(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:

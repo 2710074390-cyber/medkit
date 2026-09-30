@@ -1,4 +1,4 @@
-/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
+/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkApkgFile, mkApkgPick, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
 const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
 const LEARN_ORDER = ["weak", "shaky", "solid", "mastered"];
@@ -668,6 +668,61 @@ async function addMistakeRaw() {
  * 后端 `/api/library/mistakes/import-image` 仍在（有独立守卫 tests/test_r4_batch3.py），
  * 只是不再有前端入口。
  */
+/* EP-01 录入层：Anki `.apkg` 导入。
+ *
+ * 与「批量导入(文件)」的分工：那条吃 json/csv/md/txt（本地解析），本入口吃 Anki 牌组包
+ * （ZIP 包着 SQLite，见 `core/apkg_import.py`）。落库走 `/api/errors/import/apkg`，
+ * 与 JSONL 导入**共用同一套归一/闸门通道**。
+ *
+ * 两条 UX 约束：
+ * ① **先 dry_run 体检**——Anki 牌组动辄上千条，先看清包里是什么（牌组名、模型、字段映射、
+ *    多少条不是题目）再决定要不要真导；确认弹窗里把统计与警告原文摆出来。
+ * ② **闸门如实告知**：Anki 里没有「把握程度 / 当时的想法」这两个字段，导入的条目一律
+ *    未过闸门、只入库不归因——这句话必须让用户看到，否则他会以为归因没跑是 bug。
+ */
+function mkApkgPick() { $("mk_apkg").click(); }
+async function mkApkgFile(input) {
+  const f = input.files && input.files[0];
+  input.value = "";                       // 允许连续选同一个文件
+  if (!f) return;
+  const btn = $("btn_mk_apkg"); const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "体检中…"; }
+  try {
+    const fd = new FormData();
+    fd.append("file", f);
+    fd.append("dry_run", "true");
+    const pre = await api("/api/errors/import/apkg", { method: "POST", body: fd });
+    const lines = [
+      `包内共 <b>${pre.total}</b> 条笔记：可导入 <b>${pre.total - pre.skipped}</b> 条`,
+      `字段映射：${(pre.meta && pre.meta.models)
+        ? Object.entries(pre.meta.models).map(([k, v]) => `${esc(k)} → ${esc(v.join(" / "))}`).join("；")
+        : "—"}`,
+    ];
+    if (pre.warnings && pre.warnings.length) {
+      lines.push("<br>" + pre.warnings.slice(0, 5).map(w => "· " + esc(w)).join("<br>"));
+    }
+    if (pre.total - pre.skipped <= 0) {
+      toast("包里没有可导入的题目——详见体检结果", false);
+      alert("Anki 导入体检\n\n" + lines.join("\n").replace(/<[^>]+>/g, ""));
+      return;
+    }
+    lines.push("<br><b>确认导入？</b>导入的条目<b>不会</b>参与 AI 归因"
+      + "（Anki 里没有「把握程度 / 当时的想法」，闸门不可事后补填）。");
+    confirmModal("导入 Anki 牌组", lines.join("<br>"), "确认导入", async () => {
+      const fd2 = new FormData();
+      fd2.append("file", f);
+      const r = await api("/api/errors/import/apkg", { method: "POST", body: fd2 });
+      toast(`已导入 ${r.created} 条（未过闸门 ${r.ungated} 条，不参与归因）`);
+      loadLibrary();
+      invalidateLearnCache();
+    }, false);
+  } catch (e) {
+    toast("Anki 导入失败：" + (e.message || e), false);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+  }
+}
+
 async function _siteImportItems(items) {
   if (!items || !items.length) throw new Error("未找到 items 数组");
   const r = await api("/api/library/mistakes/import-export", {
@@ -729,4 +784,4 @@ async function mkBatchFile(input) {
   finally { input.value = ""; btn.disabled = false; btn.textContent = old; }
 }
 window.mkLearn = mkLearn; window.mkDel = mkDel;
-window.mkBatchPick = mkBatchPick;
+window.mkBatchPick = mkBatchPick; window.mkApkgPick = mkApkgPick;

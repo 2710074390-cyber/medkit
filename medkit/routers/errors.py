@@ -24,9 +24,9 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..core import apkg_import, kpid, metacog, vision
 from ..core import errorpipe as ep
 from ..core import errors as errs
-from ..core import kpid, metacog, vision
 from ..core import library as lib
 from ..core import tutor as tut
 
@@ -49,6 +49,17 @@ class _ImportStats(TypedDict):
     created: int
     skipped: int
     errors: list[str]
+
+
+class _ApkgImportStats(_ImportStats):
+    """`import_apkg` 的返回体：JSONL 那套统计 + 包级元信息与警告。
+
+    用 TypedDict **继承**而不是再写一遍键：两边共同的六个计数必须始终同形，
+    否则前端得写两套读取逻辑（同键异类型/异形状是本项目栽过的坑，见 `_ImportStats` 的说明）。
+    """
+
+    meta: dict[str, Any]
+    warnings: list[str]
 
 
 class IntakeBody(BaseModel):
@@ -260,17 +271,13 @@ def kp_merge(body: MergeBody) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 导入导出 / 自检
-@router.post("/api/errors/import/jsonl")
-def import_jsonl(body: dict[str, Any]) -> _ImportStats:
-    """批量导入 JSONL 错题（《总纲》§3.1 schema）。
+def _ingest_items(items: list[Any], dry: bool) -> _ImportStats:
+    """**唯一**的批量入库实现：逐条归一 → 闸门体检 → 落库 + 对齐知识点。
 
-    `dry_run=True` 只做归一与闸门体检，不落库——**先看清缺什么再决定要不要录**。
+    JSONL 与 Anki `.apkg` 两条导入通道共用它——否则"给其中一条加了闸门检查、
+    另一条忘了"这类漂移必然发生（本项目已有多处「两份实现各自漂移」的教训）。
+    `dry=True` 只做归一与闸门体检，不落库。
     """
-    items = body.get("items") or []
-    dry = bool(body.get("dry_run"))
-    if not isinstance(items, list):
-        raise HTTPException(status_code=400, detail="items 必须是数组")
-
     stats = _ImportStats(total=len(items), gated=0, ungated=0,
                          created=0, skipped=0, errors=[])
     for i, it in enumerate(items, 1):
@@ -287,11 +294,7 @@ def import_jsonl(body: dict[str, Any]) -> _ImportStats:
             continue
         try:
             card = norm["card"]
-            if card.get("id"):
-                # 带 id 的走整链路（含归因省成本 → 只 persist）；不带 id 则先建卡
-                rec = lib.add_mistake(card)
-            else:
-                rec = lib.add_mistake(card)
+            rec = lib.add_mistake(card)
             if norm["gate_ok"]:
                 ep.run({"id": rec["id"], **card}, stages=("kp_align", "persist"))
             stats["created"] += 1
@@ -299,6 +302,57 @@ def import_jsonl(body: dict[str, Any]) -> _ImportStats:
             stats["errors"].append(f"第 {i} 条导入失败：{e}")
             stats["skipped"] += 1
     return stats
+
+
+@router.post("/api/errors/import/jsonl")
+def import_jsonl(body: dict[str, Any]) -> _ImportStats:
+    """批量导入 JSONL 错题（《总纲》§3.1 schema）。
+
+    `dry_run=True` 只做归一与闸门体检，不落库——**先看清缺什么再决定要不要录**。
+    """
+    items = body.get("items") or []
+    dry = bool(body.get("dry_run"))
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="items 必须是数组")
+    return _ingest_items(items, dry)
+
+
+@router.post("/api/errors/import/apkg")
+async def import_apkg(file: UploadFile = File(...),
+                      dry_run: bool = Form(False)) -> _ApkgImportStats:
+    """**Anki `.apkg` 导入**（EP-01 录入层，原方案 N2 / §9.3）。
+
+    `.apkg` 是 ZIP 包着 SQLite（`collection.anki2`）。解析在 `core/apkg_import.py`：
+    先读 `col.models` 拿到**字段名**映射（不同牌组顺序不同，按位置取会错位），
+    再逐条映射成错题 dict。
+
+    ## 两条设计约束
+
+    1. **落库走与 JSONL 完全相同的通道**（`_ingest_items`）⇒ **导入不会绕过闸门**：
+       包里没有 `confidence` / `my_reasoning`（Anki 里本就没有这两个字段），
+       故导入的条目一律 `ungated`、只入库不归因，并在返回里如实报出。
+    2. **`dry_run=true` 只解析体检、不落库**——Anki 牌组动辄上千条，
+       先看清包里是什么（牌组名、模型、字段映射、多少条不是题目）再决定要不要导。
+
+    解析失败（不是 ZIP / 缺 collection / 表结构不认识 / 疑似压缩炸弹）一律 **400 + 可读原因**。
+    """
+    data = await file.read()
+    if not data.strip():
+        raise HTTPException(status_code=400, detail="文件为空（0 字节）——请选择 Anki 导出的 .apkg")
+    res = await asyncio.to_thread(apkg_import.parse_apkg, data)
+    if not res["ok"]:
+        raise HTTPException(status_code=400, detail=res["error"])
+    stats = await asyncio.to_thread(_ingest_items, res["items"], bool(dry_run))
+    warnings: list[str] = list(res["skipped"])
+    models = (res["meta"] or {}).get("models") or {}
+    if models:
+        warnings.insert(0, "字段映射：" + "；".join(
+            f"{k} → {' / '.join(v)}" for k, v in models.items()))
+    if stats["ungated"]:
+        warnings.append(
+            f"{stats['ungated']} 条未过闸门（Anki 里没有「把握程度 / 当时的想法」这两个字段）"
+            "——已入库但**不会**参与归因；要补只能在错题本里删了重录（闸门不可事后补填）")
+    return {**stats, "meta": res["meta"], "warnings": warnings}
 
 
 @router.get("/api/errors/export/jsonl")

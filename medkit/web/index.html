@@ -477,8 +477,10 @@ try {
                而不是保留第二套实现（那必然两边各自漂移）。 -->
           <button class="act gray" id="btn_mk_photo" onclick="miFocus()">拍题录入（自动归因）↓</button>
           <button class="act gray" id="btn_mk_batch" onclick="mkBatchPick()">批量导入(文件)</button>
+          <button class="act gray" id="btn_mk_apkg" onclick="mkApkgPick()">导入 Anki(.apkg)</button>
           <button class="act gray" id="btn_mk_site" onclick="mkSiteImport()">站点数据(JSON)</button>
           <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
+          <input type="file" id="mk_apkg" accept=".apkg" style="display:none" onchange="mkApkgFile(this)">
           <input type="file" id="mk_site_file" accept=".json,.csv" style="display:none" onchange="mkSiteFile(this)">
         </div>
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:20px">

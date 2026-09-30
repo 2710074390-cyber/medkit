@@ -104,6 +104,7 @@ EP01_PILLARS = (
     "core/metacog.py",
     "core/error_events.py",
     "core/vision.py",
+    "core/apkg_import.py",
     "agents/error_analysis.py",
     "agents/socratic_review.py",
     "render/notebook_md.py",

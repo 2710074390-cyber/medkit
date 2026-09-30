@@ -49,8 +49,13 @@ def _source_note(q: dict[str, Any]) -> str:
 def _fields(q: dict[str, Any]) -> dict[str, str]:
     stem = str(q.get("case_stem") or "")
     question = str(q.get("question") or "")
-    front_question = f"【案例】{stem}<br>" + question if stem else question
-    # B1 组题共享选项在 group.options（自身 options 恒空）——与 anki_export.txt 同口径
+    # ⚠️ 顺序很关键：**先各自转义、再拼 `<br>`**。反过来（先拼再转义）会把刚插进去的
+    # `<br>` 一起转成 `&lt;br&gt;` ⇒ Anki 里显示成字面量文本 `<br>`（真实缺陷，
+    # 守卫 `tests/test_apkg_import.py::test_roundtrip_case_stem` 往返能照出来）。
+    front_question = (f"【案例】{_esc_anki(stem)}<br>{_esc_anki(question)}"
+                      if stem else _esc_anki(question))
+    # B1 组题共享选项在 group.options（自身 options 恒空）——与 anki_export.txt 同口径。
+    # 每个选项各自转义后再拼 `<br>`（同上）。
     opts = "<br>".join(
         f"{LETTERS[i]}. {_esc_anki(o)}"
         for i, o in enumerate(_effective_options(q)))
@@ -59,7 +64,7 @@ def _fields(q: dict[str, Any]) -> dict[str, str]:
         note = "⚠️ 本题含图（如图所示）——图片不在 Anki 卡内，请回 题库.html 查看原图。"
     elif q.get("data_table"):
         note = "⚠️ 本题含表格数据——表格不在 Anki 卡内，请回 题库.html 查看。"
-    return {"题干": _esc_anki(front_question), "选项": opts,
+    return {"题干": front_question, "选项": opts,
             "答案": _esc_anki(q.get("answer") or ""),
             "解析": _esc_anki(q.get("analysis") or "") + (_esc_anki(note) if note else ""),
             "溯源": _esc_anki(_source_note(q))}
