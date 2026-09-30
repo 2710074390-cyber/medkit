@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -278,12 +279,86 @@ def _active_docs():
         yield f
 
 
+def test_active_docs_scan_face_is_not_empty():
+    """元守卫：`_active_docs()` 的扫描面不许塌缩（R26 修的假绿）。
+
+    ## 为什么（2026-09-29 R26 实测的真缺陷）
+
+    `test_active_doc_path_refs_exist` 是 `@pytest.mark.parametrize` 用例，
+    参数在**模块加载期**由 `list(_active_docs())` 求值。若扫描面为空：
+
+        >>> list(_active_docs())
+        []
+
+    pytest 对空 parametrize 的处理是**收集一个 `[NOTSET]` 用例并 SKIP**——
+    实测注入 `for f in []:` 后该文件输出 `22 passed, 1 skipped`，
+    **整组守卫静默消失**，而本文件已有的 `test_no_silent_skip_in_doc_guards`
+    （禁 `pytest.skip` 调用）**拦不住它**（那不是代码里的 skip，是 pytest 的兜底行为）。
+
+    ⇒ 必须**另起一个非参数化用例**把「扫描面非空」钉死。
+    三条腿缺一不可（照 `test_no_sleep_gambling.py::test_scan_covers_every_test_file`）：
+      1. 非空 —— 防「排除规则写宽了把全部文档排掉」；
+      2. 数量下限 —— 防整体塌缩成 1~2 个还"自洽"；
+      3. 与 **git 索引**核对 —— 独立事实来源，照出「文件被改名/移出」时
+         磁盘 glob 与排除规则**一起变小**的恒真盲区。
+    """
+    found = {p.relative_to(ROOT).as_posix() for p in _active_docs()}
+
+    assert found, (
+        "活跃文档扫描面为空——`test_active_doc_path_refs_exist` 会退化成"
+        "「收集 1 个 [NOTSET] 并 SKIP」，守卫静默消失。"
+        "检查 `_active_docs()` 的排除规则是否写宽了（如误排整个 docs/）。"
+    )
+    assert len(found) >= 10, (
+        f"活跃文档只有 {len(found)} 个（下限 10）——扫描面疑似整体塌缩，"
+        f"当前集合：{sorted(found)}"
+    )
+
+    tracked = _tracked_docs()
+    if tracked is not None:
+        # 与 git 索引核对时，先扣掉**设计上就该排除**的两类，只留「意料之外的漏扫」。
+        # （不加这一步会把 archive/ 与 0.10.0-* 的每一份文档都报成缺失——我第一版
+        #   正是这么写的，实测立刻 44 处「缺失」，是探针误报而非真缺陷。）
+        expected_excluded = (
+            {d for d in tracked if "/archive/" in d or "/reviews/" in d}
+            | {d for d in tracked
+               if pathlib.Path(d).name.startswith("0.10.0-")}
+        )
+        gone = tracked - found - expected_excluded
+        assert not gone, (
+            "以下文档在 git 索引里存在，但既不在活跃扫描面里、也不属于"
+            "「设计上排除」的两类（archive/ · reviews/ · 0.10.0-*）：\n  "
+            + "\n  ".join(sorted(gone))
+        )
+
+
+def _tracked_docs() -> set[str] | None:
+    """从 **git 索引**取 `docs/**/*.md` —— 独立于磁盘 glob 与排除规则。
+
+    返回 None 表示拿不到 git（源码包脱离仓库）——调用方应跳过该条断言，
+    但仍保留上面的非空与数量下限（那两条不依赖 git）。
+    """
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "docs/"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return {x for x in r.stdout.split() if x.endswith(".md")}
+
+
 @pytest.mark.parametrize("doc", list(_active_docs()), ids=lambda p: p.name)
 def test_active_doc_path_refs_exist(doc):
     """活跃文档里反引号标注的仓库内路径，必须真实存在（或已显式豁免）。
 
     判据刻意保守：只认 5 个确定前缀 + 反引号包裹，避免把散文、示例、
     命令片段误判成文件引用。宁可漏检，不可误伤（误伤会逼人删守卫）。
+
+    「扫描面非空」由 `test_active_docs_scan_face_is_not_empty` 单独把守
+    （parametrize 里没法断言非空——空集合根本不会进入本函数体）。
     """
     text = doc.read_text(encoding="utf-8")
     missing = []

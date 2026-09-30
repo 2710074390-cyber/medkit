@@ -8,6 +8,7 @@
 """
 
 import ast
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,106 @@ _BLOCKING_CALLS = {
     "_seed_parse", "parse_import_text", "batch_add", "analyze", "write_bytes",
     "extract_outline",
 }
+
+
+# ---------------------------------------------------------------- 扫描面（单一来源）
+
+def _router_files() -> list[Path]:
+    """本文件所有「扫路由层」守卫的**唯一**扫描面。"""
+    return sorted(ROUTERS.glob("*.py"))
+
+
+def _medkit_py_files() -> list[Path]:
+    """本文件所有「扫全 medkit」守卫的**唯一**扫描面。"""
+    return sorted((ROOT / "medkit").rglob("*.py"))
+
+
+def _layer_dirs() -> tuple[str, ...]:
+    """U-09 分层检查覆盖的子包。"""
+    return ("core", "agents", "render")
+
+
+def test_scan_faces_are_not_empty():
+    """元守卫：本文件 4 处「遍历 + 聚合 + `assert not problems`」的扫描面不许塌缩。
+
+    ## 为什么（2026-09-29 R26 实测的真缺陷）
+
+    本文件多处是同一个危险结构：
+
+        problems = []
+        for p in <扫描面>:
+            ...可能 problems.append(...)...
+        assert not problems          # ← 扫描面为空时恒真
+
+    实测注入 `for p in []:` 后本文件 **9 passed**（假绿）。
+    这是「循环非空前提缺失」（R22）的**姊妹形态**：R22 是循环**体**里的断言被空转，
+    本条是循环**外**的聚合断言在空集上恒真。
+
+    三条腿（照 `test_no_sleep_gambling.py::test_scan_covers_every_test_file`）：
+      1. `_router_files()` 非空 + 数量下限 —— 左界；
+      2. `_medkit_py_files()` 非空 + 数量下限 —— 右界（U-11 的 400 行扫描）；
+      3. 与 **git 索引**核对 routers/ —— 独立来源，照出「文件改名/移出」时
+         glob 一起变小的恒真盲区。
+    """
+    routers = _router_files()
+    assert routers, (
+        "`medkit/routers/*.py` 扫描面为空——U-05 / U-09 三处守卫会退化成"
+        "空循环 + 恒真断言（假绿）。"
+    )
+    assert len(routers) >= 5, (
+        f"routers 只有 {len(routers)} 个（下限 5）——扫描面疑似整体塌缩："
+        f"{[p.name for p in routers]}"
+    )
+
+    pys = _medkit_py_files()
+    assert pys, "`medkit/**/*.py` 扫描面为空——U-11 的 400 行函数守卫会恒真（假绿）。"
+    assert len(pys) >= 30, (
+        f"medkit 只有 {len(pys)} 个 .py（下限 30）——扫描面疑似整体塌缩。"
+    )
+
+    tracked = _tracked_router_names()
+    if tracked is not None:
+        gone = tracked - {p.name for p in routers}
+        assert not gone, (
+            "以下路由模块在 git 索引里存在，但磁盘 glob 扫不到（改名/移出？）：\n  "
+            + "\n  ".join(sorted(gone))
+        )
+
+    # U-09 分层检查的**三个子包各自**也要非空——某一个空掉就漏扫该层
+    #
+    # ⚠️ 这里自己踩过一次「聚合式空集恒真」（R26 注入实测）：
+    # 第一版只写 `empty_layers = [sub for sub in _layer_dirs() if 该层为空]` +
+    # `assert not empty_layers` —— 把 `_layer_dirs()` 注入成 `()` 后
+    # **empty_layers 也是空的**，断言照样通过（rc=0）。必须先把清单本身钉住。
+    layers = _layer_dirs()
+    assert layers == ("core", "agents", "render"), (
+        f"分层清单被改动或塌缩：{layers!r}"
+        "（U-09 分层检查的覆盖范围由它决定；要扩大/缩小请同步更新本断言与 docstring）"
+    )
+    empty_layers = [
+        sub for sub in layers
+        if not list((ROOT / "medkit" / sub).rglob("*.py"))
+    ]
+    assert not empty_layers, (
+        f"以下分层子包扫不到任何 .py（漏扫该层）：{empty_layers}"
+    )
+
+
+def _tracked_router_names() -> set[str] | None:
+    """从 **git 索引**取 `medkit/routers/*.py` 的文件名集合。
+
+    返回 None 表示拿不到 git（源码包脱离仓库）——此时跳过该条，保留非空与数量下限。
+    """
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "medkit/routers/"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return {Path(x).name for x in r.stdout.split() if x.endswith(".py")}
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -37,7 +138,7 @@ def test_u05_async_endpoints_have_no_direct_blocking_calls():
     因此本检查只看 async 函数体内的 Call 节点即可区分「裸调用」与「已包裹」。
     """
     problems: list[str] = []
-    for p in sorted(ROUTERS.glob("*.py")):
+    for p in _router_files():   # 单一来源，元守卫 test_scan_faces_are_not_empty 把守
         tree = ast.parse(p.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.AsyncFunctionDef):
@@ -53,7 +154,7 @@ def test_u05_async_endpoints_have_no_direct_blocking_calls():
 def test_u09_core_does_not_import_routers():
     """U-09：core/agents/render 不得反向导入 routers（分层单向 routers → core）。"""
     problems: list[str] = []
-    for sub in ("core", "agents", "render"):
+    for sub in _layer_dirs():   # 单一来源
         for p in sorted((ROOT / "medkit" / sub).rglob("*.py")):
             tree = ast.parse(p.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
@@ -152,7 +253,7 @@ def test_u10_no_god_function_over_400_lines():
     """
     import ast as _ast
     bad: list[tuple[int, str, str]] = []
-    for p in sorted((ROOT / "medkit").rglob("*.py")):
+    for p in _medkit_py_files():   # 单一来源
         tree = _ast.parse(p.read_text(encoding="utf-8"))
         for n in _ast.walk(tree):
             if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
@@ -182,7 +283,7 @@ def test_u10_pipeline_stages_are_extracted():
 def test_u09_routers_have_no_raw_sql_or_migrate():
     """U-09：路由层不得直写 SQL / 调用迁移（SQL 与事务边界归 core）。"""
     problems: list[str] = []
-    for p in sorted(ROUTERS.glob("*.py")):
+    for p in _router_files():   # 单一来源
         for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
             s = line.strip()
             if s.startswith("#"):

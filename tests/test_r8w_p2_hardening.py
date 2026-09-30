@@ -10,6 +10,7 @@
 import ast
 import io
 import re
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -33,14 +34,32 @@ def test_syllabus_extract_placeholder_is_rendered():
     assert "生理学" in out and "第一章 绪论" in out
 
 
+def _prompt_files() -> list[Path]:
+    """S3-9 守卫的**唯一**提示词扫描面（单一来源）。
+
+    元守卫 `test_prompt_scan_face_is_not_empty` 与主守卫
+    `test_all_prompts_with_placeholders_use_render_prompt` **都**必须经由本函数取
+    扫描面。为什么单一来源（R26 踩过的坑）：我第一版把元守卫写成自己重算一遍
+    `sorted(PROMPTS.glob("*.md"))`，于是**把主守卫的循环改窄、元守卫照样绿**——
+    因为两者遍历的**不是同一个**集合。共用本函数后，任何一处改窄都会同时命中元守卫。
+    """
+    return sorted(PROMPTS.glob("*.md"))
+
+
+def _medkit_py_files() -> list[Path]:
+    """`_prompt_callsites()` 的**唯一**源码扫描面（单一来源，理由同上）。"""
+    return list((ROOT / "medkit").rglob("*.py"))
+
+
 def _prompt_callsites():
     """扫全 `medkit/`，返回 (裸 load_prompt 的文件名集合, render_prompt 的文件名集合)。
 
     判据走 AST：只看**调用的第一个实参是不是常量文件名**，与书写格式无关。
+    扫描面经 `_medkit_py_files()` 取（与元守卫同源）。
     """
     bare: set[str] = set()
     rendered: set[str] = set()
-    for p in (ROOT / "medkit").rglob("*.py"):
+    for p in _medkit_py_files():
         tree = ast.parse(p.read_text(encoding="utf-8"))
         for n in ast.walk(tree):
             if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)):
@@ -53,6 +72,68 @@ def _prompt_callsites():
             name = n.args[0].value
             (bare if n.func.id == "load_prompt" else rendered).add(name)
     return bare, rendered
+
+
+def test_prompt_scan_face_is_not_empty():
+    """元守卫：S3-9 的两侧扫描面都不许塌缩（R26 修的假绿）。
+
+    ## 为什么（2026-09-29 R26 实测的真缺陷）
+
+    `test_all_prompts_with_placeholders_use_render_prompt` 的结构是
+    「遍历 + 聚合 (`problems`) + `assert not problems`」。**上界塌缩时聚合恒空**
+    ⇒ 断言恒真。实测注入 `for md in []:` 后该文件 **17 passed**（假绿）。
+
+    这是「循环非空前提缺失」（R22）的**姊妹形态**：R22 是循环**体**里的断言被空转，
+    本条是循环**外**的聚合断言在空集上恒真。同属「守卫依赖一个没被断言的前提」。
+
+    两侧都要钉（缺一不可）：
+      1. `PROMPTS/*.md` 非空 + 数量下限 —— 左界；
+      2. `_prompt_callsites()` 的**源码扫描面**非空 —— 右界。
+         右界塌缩（如 `(ROOT / "medkit").rglob("*.py")` 写窄）会让 `rendered` 全空，
+         此时**每个**有占位符的提示词都被报「没有 render 调用点」——那是**假红**，
+         同样会逼人删守卫，也必须钉住。
+      3. 与 **git 索引**核对 prompts 目录 —— 独立来源，照出「文件被改名/移出」时
+         glob 一起变小的恒真盲区。
+    """
+    mds = _prompt_files()
+    assert mds, (
+        "`medkit/prompts/*.md` 扫描面为空——S3-9 守卫会退化成空循环 + 恒真断言。"
+    )
+    assert len(mds) >= 5, (
+        f"prompts 只有 {len(mds)} 个（下限 5）——扫描面疑似整体塌缩：{[p.name for p in mds]}"
+    )
+
+    py_files = _medkit_py_files()
+    assert py_files, (
+        "`medkit/**/*.py` 扫描面为空——`_prompt_callsites()` 会返回两个空集合，"
+        "于是每个提示词都被误报「没有 render 调用点」（假红）。"
+    )
+
+    tracked = _tracked_prompts()
+    if tracked is not None:
+        gone = tracked - {p.name for p in mds}
+        assert not gone, (
+            "以下提示词在 git 索引里存在，但磁盘 glob 扫不到（改名/移出？）：\n  "
+            + "\n  ".join(sorted(gone))
+        )
+
+
+def _tracked_prompts() -> set[str] | None:
+    """从 **git 索引**取 `medkit/prompts/*.md` 的文件名集合。
+
+    返回 None 表示拿不到 git（源码包脱离仓库）——此时跳过该条，但保留上面的
+    非空与数量下限（那两条不依赖 git）。
+    """
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "medkit/prompts/"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return {Path(x).name for x in r.stdout.split() if x.endswith(".md")}
 
 
 def test_all_prompts_with_placeholders_use_render_prompt():
@@ -76,7 +157,7 @@ def test_all_prompts_with_placeholders_use_render_prompt():
     """
     bare, rendered = _prompt_callsites()
     problems: list[str] = []
-    for md in sorted(PROMPTS.glob("*.md")):
+    for md in _prompt_files():   # 与元守卫同源：改窄这里，元守卫必红
         text = md.read_text(encoding="utf-8")
         # 只看「像变量」的占位符（排除 JSON 示例里的普通花括号）
         vars_ = {m for m in re.findall(r"\{([a-z][a-z0-9_]{2,})\}", text)}
