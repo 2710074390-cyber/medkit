@@ -401,3 +401,76 @@ def test_photo_card_narrow_no_overflow(page, server_url):
         if overflow <= 2:
             break
     assert overflow <= 2, f"拍照录入卡片横向溢出 {overflow}px（390px 视口）"
+
+
+def test_preview_escapes_recognized_fields(page, server_url):
+    """**XSS 守卫**：识别结果里的 HTML 必须转义后再进 `#mi_result`。
+
+    ## 为什么有这条（2026-10-01）
+
+    `miRenderFields()` 往 `innerHTML` 里插的是**外部来源文本**——视觉模型 / OCR
+    **从图里读出来的**题干、选项、解析，是本应用里**最不可信**的输入之一
+    （图片内容完全不受本应用控制）。
+
+    而此前 XSS 守卫只覆盖了两条路：检索片段
+    （`test_mistakes_batch.py::test_search_snippet_is_escaped`）与 `mdRender`
+    （`test_richtext.py`）。**图像录入预览这条最高风险路径没有守卫** ——
+    代码里现在是转义的，但没有任何东西钉住它：谁重构 `miRenderFields` 时漏掉一个
+    `esc()`，不会有任何用例变红。
+
+    ## 判据取行为，不取源码
+
+    断言「渲染后的 DOM 里**没有真的插进元素**」+「注入的脚本**没有执行**」，
+    而不是「源码里有没有 `esc(`」——后者是结构断言，`esc` 调在别处/调错变量时照样绿。
+
+    ## ⚠️ 载荷必须按**上下文**选（我第一版就踩了）
+
+    - **`<textarea>` 的内容是 RCDATA**：浏览器**不解析**里面的标签，喂
+      `<img onerror>` 会被当成纯文本，**测不到**「有没有转义」。
+      真正的风险是 **`</textarea>` 提前闭合**，之后的内容才成为真元素。
+    - **`<input value="...">` 是属性上下文**：真正的风险是 **`"` 逃逸出属性**
+      （`value="" onfocus="…" autofocus`）。
+    """
+    evil_q = '</textarea><img src=x onerror="window.__xss=1">'
+    evil_opts = ['</textarea><script>window.__xss=2</script>']
+    evil_analysis = '</textarea><svg onload="window.__xss=3"></svg>'
+    evil_answer = '" onfocus="window.__xss=4" autofocus="x'
+    fields = dict(FIELDS, question=evil_q, options=evil_opts,
+                  analysis=evil_analysis, answer=evil_answer)
+
+    _stub_capability(page, CAP_VISION)
+    _stub_extract_stream(page, _sse(
+        ("fields", {"via": "vision", "fields": fields, "warnings": ['<b>w</b>']}),
+        ("result", {"ok": True, "via": "vision", "fields": fields, "raw_text": "",
+                    "warnings": ['<b>w</b>'], "attempts": [], "error": ""}),
+    ))
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    page.goto(server_url)
+    _open_mistakes(page)
+    _fill_gate(page)
+    _pick_image(page)
+    page.click("#mi_go")
+    page.wait_for_selector("#mi_f_question", timeout=15000)
+
+    html = page.locator("#mi_result").inner_html()
+    for tag in ("<img", "<script", "<svg"):
+        assert tag not in html, (
+            f"识别结果未转义（DOM 里出现 {tag}）—— 外部来源文本直接进了 innerHTML，这是注入口子"
+        )
+    assert "&lt;img" in html, "应看到转义后的实体（转义不等于丢内容）"
+    # 真的没插进元素
+    for sel in ("img", "script", "svg"):
+        assert page.locator(f"#mi_result {sel}").count() == 0, f"#mi_result 里混进了 <{sel}> 元素"
+    # 注入的脚本不得执行
+    assert not page.evaluate("() => window.__xss"), "注入的脚本被执行了"
+    assert not errors, f"不应有未捕获异常：{errors}"
+    # warnings 也走转义：未转义时 `<b>w</b>` 会渲染成粗体、innerText 只剩 "w"
+    assert "<b>w</b>" in page.locator("#mi_result").inner_text(), \
+        "warnings 未转义（渲染成了真的 <b> 元素）"
+    # 内容仍在（转义不能把内容也吃掉）——字段值在表单控件里，要读 value 而不是 innerText
+    assert evil_q in page.locator("#mi_f_question").input_value()
+    assert evil_opts[0] in page.locator("#mi_f_options").input_value()
+    assert evil_analysis in page.locator("#mi_f_analysis").input_value()
+    assert evil_answer in page.locator("#mi_f_answer").input_value()
