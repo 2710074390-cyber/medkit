@@ -35,6 +35,7 @@ import ast
 import pathlib
 import re
 import subprocess
+import sys
 
 import pytest
 
@@ -198,6 +199,22 @@ def test_readme_test_count_is_not_stale():
     只扫「已实现功能」章节——里程碑章节的历史数字（`pytest 203 全绿`）
     是当时事实，应当豁免。
 
+    ## 总体口径：必须和 README 的「质量」行同源（2026-10-02 修）
+
+    此前本用例跑的是 `--ignore=tests/browser`——**只数单元层**，
+    而 README「质量」行写的是**全量**（单元 + 浏览器层，共 82 项 browser）。
+    两个总体差 6.6%，**恰好越过 5% 容差** ⇒ 一旦 README 忠实同步到全量，
+    本守卫立刻假红（实测：README 1314 全量 vs 守卫报 `实际收集 1232`）。
+
+    这类「**守卫拿 A 总体、文档写 B 总体**」是假红的标准成因：
+    数字两边都对，只是量的不是一件事。⇒ 改为数**全量**（与 README 同一总体），
+    并把容差从 5% 收到 **2%**（同源之后，两数只应有「本文件自身项数」级差异）。
+
+    > **量取应当放宽**：这条命令在**全量套件运行期间**会变慢——
+    > 全量跑时 `pytest --collect-only` 要 import 1300+ 条用例的模块，
+    > 实测在 120s 边缘（单跑 3s）。故 `timeout` 给到 600s：
+    > 超时假红比慢一点更糟。
+
     ## 为什么两处缺口都是 fail 而不是 skip（2026-09-29 修）
 
     此前「README 没写 N 项 pytest」与「解析不出收集数」两个分支都走 `pytest.skip`。
@@ -225,28 +242,32 @@ def test_readme_test_count_is_not_stale():
     import sys
 
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--ignore=tests/browser"],
+        # 全量（= README「质量」行的同一总体）：单元 + 浏览器层。
+        # 不许再写成 --ignore=tests/browser——那会少掉 82 项 browser 用例（差 6.6%，
+        # 越过容差 ⇒ 假红；2026-10-02 实测踩过）。
+        [sys.executable, "-m", "pytest", "--collect-only", "-q"],
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     tail = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
     mm = re.search(r"(\d+)\s+tests? collected", tail)
     assert mm, (
         f"未能从 `pytest --collect-only` 的输出解析收集数（尾行：{tail!r}）。"
-        f"rc={proc.returncode}。多半是 pytest 版本变了输出格式——"
-        f"**不许 skip**，否则本守卫会静默失效；请修解析正则。"
+        f"rc={proc.returncode} 输出 {len(proc.stdout)} 字节。"
+        f"**不许 skip**，否则本守卫会静默失效；请修解析正则或调大 timeout。"
     )
 
     actual = int(mm.group(1))
-    tolerance = 0.05
+    tolerance = 0.02
     low, high = actual * (1 - tolerance), actual * (1 + tolerance)
 
     assert low <= claimed <= high, (
         f"README 声称 {claimed} 项 pytest，实际收集 {actual} 项"
-        f"（允许 ±5%：{low:.0f}~{high:.0f}）。"
+        f"（允许 ±2%：{low:.0f}~{high:.0f}）。"
         f"README 的「质量」行已陈旧到失去参考价值，请同步更新。"
+        f"注意本判据数的是**全量**（含 tests/browser），与 README 同一总体。"
     )
 
 
@@ -473,3 +494,136 @@ def test_no_silent_skip_in_doc_guards():
         "若确有正当理由，请改为断言并在 docstring 里写明为什么它不会沦为假绿。"
         % sorted(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# README「仓库结构」代码块里的数字声明
+#
+# 2026-10-02 发现的**扫描面盲区**：README 有两处写「同一组数字」——
+#   ①「已实现功能」章节：`**N 项 pytest**` / `N 个端点`  ← 一直被守卫扫
+#   ② 目录树代码块注释：`└── tests/  # N 项（单元 N / 浏览器层 M）`
+#                       `│   ├── routers/  # …（/api/errors/* · N 端点）`
+#                       ← **完全在扫描面外**
+# 出 0.10.6 时实测：② 的两个数字分别陈旧到 1052（实际 1228）与 22（实际 30），
+# 而**任何守卫都不报警**。这与 2026-10-05 事故（README 数字陈旧 4 倍无人发现）
+# 同源，只是换了个位置——**守卫的扫描面写窄了**。
+#
+# 判据与①完全一致（都取自真身），只是把扫描面扩到目录树。
+# ---------------------------------------------------------------------------
+
+# 目录树代码块的起点标记（README 里唯一的 `medkit/` 顶格行）
+_TREE_START = "medkit/"
+
+
+def _readme_tree_block() -> str:
+    """截取 README 里「仓库结构」那个代码块（从顶格 `medkit/` 行起）。
+
+    为什么不用「第一个 ``` 代码块」定位：README 开头就有 powershell 代码块，
+    按序取会取错。这里用**内容锚点**（顶格 `medkit/` 行）——它在本仓库里唯一。
+    """
+    text = _readme_text()
+    m = re.search(rf"^{re.escape(_TREE_START)}\s*$", text, re.MULTILINE)
+    if not m:
+        return ""
+    rest = text[m.start():]
+    fence = re.search(r"^```\s*$", rest, re.MULTILINE)
+    return rest[: fence.start()] if fence else rest
+
+
+def test_readme_tree_test_counts_match_reality():
+    """目录树注释里的「N 项（单元 N / 浏览器层 M）」三个数字都必须对得上真身。
+
+    **为什么这条必须存在**：目录树那行与「已实现功能」段那行是**同一件事的两处
+    写法**，而守卫只覆盖了后者（见本文件上方 `test_readme_test_count_is_not_stale`）。
+    少覆盖的那一处会在每次新增测试时静默漂移。
+
+    ## 三口径语义（2026-10-02 定，此前 README 表述是错的）
+
+    那行历史写法是「`1228 项（单元 1228 / 浏览器层 82）`」——**自相矛盾**：
+    单元数 = 总数，却又另说浏览器层 82。实测三口径为
+
+        单元（--ignore=tests/browser）  ≠  全量（含 browser）  =  单元 + 浏览器层
+
+    ⇒ 正确表述是「**全量（单元 + 浏览器层）**」。本守卫三条判据分别对真身：
+    ① 括号内单元 == `--ignore=tests/browser` 收集数；
+    ② 括号内浏览器层 == `tests/browser` 收集数；
+    ③ 括号外总数 == 全量收集数（= ①+②，**不是**等于①）。
+    """
+    tree = _readme_tree_block()
+    m = re.search(r"(\d+)\s*项（单元\s*(\d+)\s*/\s*浏览器层\s*(\d+)", tree)
+    assert m, (
+        "README 目录树里找不到「N 项（单元 N / 浏览器层 M）」形式的计数声明。"
+        "该数字与「已实现功能」段的 `**N 项 pytest**` 是同一件事的两处写法，"
+        "不许悄悄删掉或换措辞——若确实要改格式，请同步更新本守卫。"
+    )
+    total, unit, browser = int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+    def _collected(args: list[str]) -> int:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q", *args],
+            cwd=ROOT, capture_output=True, text=True, timeout=180,
+        )
+        tail = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+        mm = re.search(r"(\d+)\s+tests? collected", tail)
+        assert mm, (
+            f"未能从 `pytest --collect-only {' '.join(args)}` 输出解析收集数"
+            f"（尾行：{tail!r}）。rc={proc.returncode}。"
+            f"多半是 pytest 版本换了输出格式——**不许 skip**，请修解析正则。"
+        )
+        return int(mm.group(1))
+
+    actual_unit = _collected(["--ignore=tests/browser"])
+    actual_browser = _collected(["tests/browser"])
+    actual_total = _collected([])
+
+    bad = []
+    if unit != actual_unit:
+        bad.append(f"单元声称 {unit}，实际 {actual_unit}")
+    if browser != actual_browser:
+        bad.append(f"浏览器层声称 {browser}，实际 {actual_browser}")
+    if total != actual_total:
+        bad.append(f"总数声称 {total}，实际 {actual_total}")
+    if total != unit + browser:
+        bad.append(f"总数 {total} ≠ 单元 {unit} + 浏览器层 {browser}（自相矛盾）")
+    assert not bad, (
+        "README 目录树的计数与真身不符：\n  " + "\n  ".join(bad)
+        + "\n新增/删除测试后请同步 README 目录树那行（真身：pytest --collect-only）。"
+    )
+
+
+def test_readme_tree_endpoint_count_matches_router():
+    """目录树注释里的「/api/errors/* · N 端点」必须等于真身（与功能段同源判据）。"""
+    tree = _readme_tree_block()
+    m = re.search(r"/api/errors/\*\s*·\s*(\d+)\s*端点", tree)
+    assert m, (
+        "README 目录树里找不到「/api/errors/* · N 端点」声明。"
+        "它与「已实现功能」段那处是同一件事的两处写法，不许只改一处或删掉。"
+    )
+    claimed = int(m.group(1))
+    actual = _router_endpoint_count()
+    assert claimed == actual, (
+        f"README 目录树声称 {claimed} 个端点，实际 {actual} 个。"
+        f"真身：medkit/routers/errors.py 的装饰器数。"
+    )
+
+
+def test_readme_tree_block_scan_face_is_not_empty():
+    """元守卫：证明上面的扫描面真的抓到了目录树。
+
+    没有这条，`_readme_tree_block()` 一旦返回空串（锚点被改、代码块被挪），
+    上面两条守卫的 `re.search` 会**先在 `assert m` 处失败**——这还好；
+    但若有人把两条守卫的 `assert m` 一起放宽，扫描面塌缩就会静默变成假绿。
+    这条独立钉住「扫描面确实含那两行」，且**不依赖**上面两条的来源。
+    """
+    tree = _readme_tree_block()
+    assert tree, (
+        "README 目录树扫描面为空——锚点 `medkit/` 顶格行丢失或代码块被改动。"
+        "上面的计数守卫会因此失去靶子（本守卫就是为拦住这种塌缩而存在）。"
+    )
+    assert len(tree.splitlines()) >= 10, (
+        f"README 目录树只剩 {len(tree.splitlines())} 行（预期 ≥10）——"
+        "扫描面疑似被写窄。"
+    )
+    # 关键成员：两条守卫各自依赖的形态，必须真的在场（独立于上面的 re.search）
+    assert re.search(r"\d+\s*项（单元", tree), "目录树里没有测试计数行"
+    assert re.search(r"/api/errors/\*\s*·", tree), "目录树里没有端点计数行"
