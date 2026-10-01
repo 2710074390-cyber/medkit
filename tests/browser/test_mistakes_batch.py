@@ -212,3 +212,110 @@ def test_apkg_import_empty_package_warns(page, server_url):
         "() => { const t = document.getElementById('toasts');"
         " return t && t.innerText.includes('没有可导入'); }", timeout=15000)
     assert page.locator("#md_body").count() == 0 or not page.locator("#md_body").is_visible()
+
+
+# ---------------------------------------------------------------- EP-01 阶段 4：错题检索
+def _stub_search(page, payload):
+    page.route("**/api/errors/search*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps(payload, ensure_ascii=False)))
+
+
+def test_mistake_search_renders_ranked_hits(page, server_url):
+    """检索结果渲染：命中行 + 分词回显 + 范围声明 + 片段高亮。"""
+    _stub_search(page, {
+        "query": "湿啰音", "tokens": ["湿啰", "啰音"], "count": 1,
+        "scope": "错题与笔记（不含教材正文）",
+        "items": [{"id": "m1", "subject": "儿科学", "chapter": "呼吸", "topic": "",
+                   "question": "双肺闻及中细湿啰音", "error_tag": "机制混淆",
+                   "round": "早鸟轮", "score": 18.0, "coverage": 1.0,
+                   "matched_fields": ["analysis", "question"],
+                   "snippet": "双肺闻及中细湿啰音，固定体征"},
+                  ],
+    })
+    _goto_mistakes_no_wait(page, server_url)
+    page.fill("#mk_search", "湿啰音")
+    page.click("#btn_mk_search")
+    page.wait_for_selector("#mk_search_results .mk-row", timeout=15000)
+
+    meta = page.inner_text("#mk_search_meta")
+    assert "命中 1 条" in meta
+    assert "湿啰" in meta, "应回显实际分词"
+    assert "不含教材正文" in meta, "检索范围必须明说"
+    box = page.locator("#mk_search_results")
+    assert box.locator("mark").count() >= 1, "命中词应高亮"
+    assert "机制混淆" in box.inner_text()
+    assert page.locator("#btn_mk_search_clear").is_visible()
+
+
+def test_search_distinguishes_too_short_from_no_hit(page, server_url):
+    """**「没搜」与「没命中」必须区分**——否则用户会以为功能坏了。
+
+    后端 `tokens` 为空 = 查询串太短/全是单字（`len < 2` 一律过滤）。
+    """
+    _stub_search(page, {"query": "的", "tokens": [], "count": 0, "items": [],
+                        "scope": "错题与笔记（不含教材正文）"})
+    _goto_mistakes_no_wait(page, server_url)
+    page.fill("#mk_search", "的")
+    page.click("#btn_mk_search")
+    page.wait_for_function(
+        "() => document.getElementById('mk_search_results').innerText.includes('至少输入两个字')",
+        timeout=15000)
+    txt = page.inner_text("#mk_search_results")
+    assert "没有命中" not in txt, "太短 ≠ 没命中，不能给同一条提示"
+
+    # 反过来：有 tokens 但零命中 → 提示「没有命中」并说明边界
+    _stub_search(page, {"query": "心衰", "tokens": ["心衰"], "count": 0, "items": [],
+                        "scope": "错题与笔记（不含教材正文）"})
+    page.click("#btn_mk_search")
+    page.wait_for_function(
+        "() => document.getElementById('mk_search_results').innerText.includes('没有命中')",
+        timeout=15000)
+    txt2 = page.inner_text("#mk_search_results")
+    assert "教材正文" in txt2 and "缩写" in txt2, "零命中要说明检索范围与缩写边界"
+
+
+def test_search_snippet_is_escaped(page, server_url):
+    """**XSS 守卫**：片段与题干里的 HTML 必须转义——高亮是"先 esc 再包 `<mark>`"。
+
+    这条守的是真风险：高亮实现若往**未转义**文本里插标签，就等于开了注入口子
+    （错题内容来自用户上传的图/文本，不可信）。
+    """
+    evil = '<img src=x onerror="alert(1)">湿啰音'
+    _stub_search(page, {
+        "query": "湿啰音", "tokens": ["湿啰", "啰音"], "count": 1,
+        "scope": "错题与笔记（不含教材正文）",
+        "items": [{"id": "m1", "subject": "儿科学", "chapter": "", "topic": "",
+                   "question": evil, "error_tag": "", "round": "",
+                   "score": 5.0, "coverage": 1.0, "matched_fields": ["question"],
+                   "snippet": evil}],
+    })
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    _goto_mistakes_no_wait(page, server_url)
+    page.fill("#mk_search", "湿啰音")
+    page.click("#btn_mk_search")
+    page.wait_for_selector("#mk_search_results .mk-row", timeout=15000)
+    html = page.locator("#mk_search_results").inner_html()
+    assert "<img" not in html, "片段未转义 —— 注入口子"
+    assert "&lt;img" in html
+    assert page.locator("#mk_search_results img").count() == 0
+    assert not errors, f"不应有未捕获异常：{errors}"
+    # 高亮仍然生效（转义后包 mark）
+    assert page.locator("#mk_search_results mark").count() >= 1
+
+
+def test_search_clear_restores_list(page, server_url):
+    """清除检索后：结果块清空、正常错题列表仍在（检索是叠加，不是替换）。"""
+    _stub_search(page, {"query": "湿啰音", "tokens": ["湿啰音"], "count": 0,
+                        "items": [], "scope": "错题与笔记（不含教材正文）"})
+    _goto_mistakes_no_wait(page, server_url)
+    page.fill("#mk_search", "湿啰音")
+    page.click("#btn_mk_search")
+    page.wait_for_function(
+        "() => document.getElementById('mk_search_results').innerText.includes('没有命中')",
+        timeout=15000)
+    page.click("#btn_mk_search_clear")
+    assert page.input_value("#mk_search") == ""
+    assert page.locator("#mk_search_results .mk-row").count() == 0
+    assert page.locator("#mk_search_results").inner_text().strip() == ""

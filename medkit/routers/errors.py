@@ -24,7 +24,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core import apkg_import, kpid, metacog, vision
+from ..core import apkg_import, errsearch, kpid, metacog, vision
 from ..core import errorpipe as ep
 from ..core import errors as errs
 from ..core import library as lib
@@ -224,6 +224,27 @@ def subtract(subject: str = "", bottom_ratio: float = 0.25) -> dict[str, Any]:
     （**不假装有数据**）。
     """
     return metacog.subtract_plan(_cards(subject), freq=_freq_map(), bottom_ratio=bottom_ratio)
+
+
+@router.get("/api/errors/search")
+def search_errors(q: str = "", subject: str = "",
+                  limit: int = errsearch.DEFAULT_LIMIT) -> dict[str, Any]:
+    """**在自己的错题与笔记里检索**（EP-01 阶段 4，原方案 D1）。
+
+    - **检索面严格限定在用户自己的数据内**（题干 / 我的想法 / 错因 / 修正 / 解析 / 科目章节）：
+      **不含教材正文**（《总纲》§2.4：不许把机构讲义灌进知识库；教材内容走生成链的 `slices_fts`）。
+    - 分词复用 `db.fts_tokens`（jieba + **CJK 二元组**兜底）⇒ 词典外的词组也能召回
+      （实测：「湿啰音」经二元组「啰音」命中「中细湿啰音」）。
+    - 排序：**先覆盖率、再分数**（全 token 命中的排最前）。
+    - `subject` 是**作用域过滤**（与错题本科目下拉同口径），不是查询条件。
+
+    ⚠️ `tokens` 回显实际用的 token：**空数组 = 查询串太短/全是单字**（`len < 2` 一律过滤），
+    与「搜了但没命中」是两件事——前端据此给不同提示。
+
+    ⚠️ **已知边界（不是 bug）**：**缩写/别名召回不在能力范围内**（「心衰」搜不到「心力衰竭」
+    ——缩写不是前缀，真 FTS5 实测也是 0 命中）。那需要**别名表**（方案 §9.4 / 待办 D4）。
+    """
+    return errsearch.search(_cards(), q, subject=subject, limit=limit)
 
 
 @router.get("/api/errors/overview")

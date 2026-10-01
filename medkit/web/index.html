@@ -492,6 +492,17 @@ try {
           </span>
         </div>
         <label class="chk" style="margin:4px 0 8px"><input type="checkbox" id="mk_filter_unlearned" onchange="renderLibraryCurrent()"> 只看未掌握（隐藏已归档「已掌握」错题）</label>
+        <!-- EP-01 阶段 4：在自己的错题里检索（检索面**不含教材正文**） -->
+        <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
+          <div style="flex:2;min-width:200px">
+            <input type="text" id="mk_search" placeholder="在自己的错题里搜…（如：湿啰音 / 前负荷）"
+                   onkeydown="if(event.key==='Enter'){mkSearch();}">
+          </div>
+          <button class="act" id="btn_mk_search" onclick="mkSearch()">搜索</button>
+          <button class="act gray" id="btn_mk_search_clear" onclick="mkSearchClear()" style="display:none">清除</button>
+          <span class="hint" id="mk_search_meta"></span>
+        </div>
+        <div id="mk_search_results"></div>
         <div class="mk-bar" id="mk_bar" style="display:none">
           <button class="mini-btn" id="btn_mk_all" onclick="mkToggleAllVisible()">全选可见</button>
           <button class="mini-btn" onclick="mkInvert()">反选</button>
@@ -763,6 +774,7 @@ try {
 <script src="/assets/js/learn-review.js"></script>
 <script src="/assets/js/learn-meta.js"></script>
 <script src="/assets/js/learn-meta-image.js"></script>
+<script src="/assets/js/learn-search.js"></script>
 <script src="/assets/js/review-desk.js"></script>
 <script src="/assets/js/review-desk-materials.js"></script>
 <script src="/assets/js/review-desk-project.js"></script>

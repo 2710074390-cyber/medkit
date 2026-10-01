@@ -26,9 +26,11 @@ MAX_LINES = 800
 # 分片族（按**加载顺序**）——与 index.html 的 <script> 顺序、与拆分时的行区间顺序一致
 # EP-01：learn 族增 learn-meta.js（元认知视图），接在 learn-review.js 之后
 # EP-01 图像录入：learn 族再增 learn-meta-image.js（拍照录入），接在 learn-meta.js 之后
+# EP-01 阶段 4：learn 族再增 learn-search.js（错题检索）——learn-study.js 加检索后达 871 行
+#   超 800 判据，故把检索块**纯搬迁**成独立片
 FAMILIES: dict[str, list[str]] = {
     "learn": ["learn.js", "learn-study.js", "learn-live.js", "learn-review.js",
-              "learn-meta.js", "learn-meta-image.js"],
+              "learn-meta.js", "learn-meta-image.js", "learn-search.js"],
     "review-desk": ["review-desk.js", "review-desk-materials.js",
                     "review-desk-project.js", "review-desk-review.js"],
 }
