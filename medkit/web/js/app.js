@@ -1,4 +1,4 @@
-/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, letters, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 const $ = id => document.getElementById(id);
 let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [], extra: [] },
@@ -310,6 +310,14 @@ async function checkUpdate(silent = false) {
 }
 
 /* ---- U-20 数据管理区（我的 tab）：路径 / 占用 / 一键备份 / 打开目录 / 清空全部 ---- */
+/* R3-16：统一选项字母标签（ABCDEFGHIJ 前 n 位，n 上限 10）——试出/审核台/复制/学习中心同口径。
+   2026-10-01（D2 剥离评估）：**从 `review-desk.js` 移到这里**。原位置属「生成链」域，
+   而 EP-01 学习中心（`learn-review.js` 的 Anki 卡样预览）也要用它 ⇒ 形成
+   「**核心 → 插件**」的依赖，正是剥离生成链时**必须消除**的那个方向。
+   移到共享基础片后：核心不依赖插件（插件依赖核心仍可接受，登记见
+   `tests/test_frontend_domain_coupling.py`）。纯字符串函数，零行为变化。 */
+function letters(n) { return "ABCDEFGHIJ".slice(0, Math.max(0, Math.min(parseInt(n, 10) || 0, 10))); }
+
 function fmtBytes(n) {
   if (n >= 1073741824) return (n / 1073741824).toFixed(2) + " GB";
   if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";

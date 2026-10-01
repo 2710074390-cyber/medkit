@@ -1,10 +1,8 @@
-/* exported BLOOM_SEGS, RATIO_SEGS, autoMap, b, bar, barW, base, baseUrl, baseUrlDirty, bindSegBar, bloomSum, body, box, btn, cap, chosen, createToken, cum, d, doPickProvider, el, estT, fillModelSelect, gen, got, grabOff, h, handle, html, i, in1, inp, j, k, keysR, labelTxt, lbl, leftOk, leftPos, letters, list, loadConfig, loadKeys, loadSearchOptions, manual, modelValue, move, moved, mu, normAnswer, note, nv, old, pct, pickProvider, pid, prefix, prev, prov, provNote, qc, r, r0, ratioSum, rect, renderSegBar, rightOk, s, savedGen, savedIds, savedQc, scheduleReady, searchBackends, seg, seg1, seg2, segEl, segVals, sel, setW, si, startX, sum, syncWsManual, t, target, total, u, up, updateWsNote, v, v1, validBaseUrl, vals, value, vs, wsc */
+/* exported BLOOM_SEGS, RATIO_SEGS, autoMap, b, bar, barW, base, baseUrl, baseUrlDirty, bindSegBar, bloomSum, body, box, btn, cap, chosen, createToken, cum, d, doPickProvider, el, estT, fillModelSelect, gen, got, grabOff, h, handle, html, i, in1, inp, j, k, keysR, labelTxt, lbl, leftOk, leftPos, list, loadConfig, loadKeys, loadSearchOptions, manual, modelValue, move, moved, mu, normAnswer, note, nv, old, pct, pickProvider, pid, prefix, prev, prov, provNote, qc, r, r0, ratioSum, rect, renderSegBar, rightOk, s, savedGen, savedIds, savedQc, scheduleReady, searchBackends, seg, seg1, seg2, segEl, segVals, sel, setW, si, startX, sum, syncWsManual, t, target, total, u, up, updateWsNote, v, v1, validBaseUrl, vals, value, vs, wsc */
 /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 /* ---- ① 服务商 */
 let createToken = "";   // R3-08：建课题意图令牌（双击/双标签幂等；失败保留供重试复用）
-/* R3-16：统一选项字母标签（ABCDEFGHIJ 前 n 位，n 上限 10）——试出/审核台/复制同口径 */
-function letters(n) { return "ABCDEFGHIJ".slice(0, Math.max(0, Math.min(parseInt(n, 10) || 0, 10))); }
 /* C-11：答案归一化第三口径——去空格并剥离中英文逗号/顿号/分号（B,D → BD） */
 function normAnswer(s) { return String(s || "").replace(/[\s,，、;；]+/g, "").toUpperCase(); }
 function modelValue(id) {
