@@ -121,7 +121,11 @@ def test_notices_closure_count_matches_lock():
     text = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     section = text.split("## 运行时依赖闭包", 1)
     assert len(section) == 2, "notices 缺少「运行时依赖闭包」小节"
-    body = section[1].split("## ", 1)[0]
+    # 小节边界必须用 `^## `（行首 + **恰好两个** `#` + 空格）。
+    # ⚠️ 裸 `"## "` 会被 `### 子标题` 匹配（`"### x"` 里含子串 `"## "`）⇒
+    # 小节内一旦加子标题，正文被**提前截断** ⇒ 组件行全"看不见" ⇒ 假红。
+    # 注入实测见 `.workbuddy-ai/tmp/diag_notices_guard.py`（K1：加 `### 补充说明` ⇒ 旧版红）。
+    body = re.split(r"^## ", section[1], maxsplit=1, flags=re.M)[0]
     rows = re.findall(r"^\|\s*([A-Za-z0-9_.\-]+)\s*\|\s*([0-9][^|]*)\|", body, re.M)
     names = {cn(n) for n, _v in rows}
     lock = _lock_names()
