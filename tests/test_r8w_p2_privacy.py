@@ -102,19 +102,61 @@ def test_harden_config_dir_windows_never_modifies(tmp_path, monkeypatch):
     assert warn and "权限较宽" in warn, "过宽时应给出可操作告警"
 
 
+# 写 ACL 的 icacls 参数（本模块只允许**检查**，不允许改）
+_ACL_WRITE_FLAGS = ("/grant", "/inheritance", "/remove", "/deny", "/setowner")
+# 各种 spawn 形态（旧版只看 `run`，换 `call`/`Popen` 就漏）
+_SPAWN_ATTRS = ("run", "call", "check_call", "check_output", "Popen")
+
+
+def _spawn_string_args(fn: ast.AST) -> list[str]:
+    """`fn` 里所有 `subprocess.<spawn>(...)` 实参中的**字符串常量**（递归进 list/tuple/关键字）。"""
+    out: list[str] = []
+    for n in ast.walk(fn):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if not (isinstance(f, ast.Attribute) and f.attr in _SPAWN_ATTRS
+                and isinstance(f.value, ast.Name) and f.value.id == "subprocess"):
+            continue
+        for arg in [*n.args, *(k.value for k in n.keywords if k.value is not None)]:
+            for c in ast.walk(arg):
+                if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                    out.append(c.value)
+    return out
+
+
 def test_harden_config_dir_source_has_no_acl_write():
-    """源码级守卫：本模块不得出现写 ACL 的 icacls 参数（只检查）。"""
-    src = (ROOT / "medkit" / "core" / "config.py").read_text(encoding="utf-8")
-    seg = src[src.index("def harden_config_dir"):]
-    seg = seg[:seg.index("\ndef ", 1)]
-    assert "icacls" in seg
-    # ⚠️ 只扫 **subprocess.run(...) 的实参**——告警文案里会给出「建议用户手动执行」的命令串
-    # （含 /grant:r），那是提示文本不是调用；扫整段函数体会误报。
-    run_calls = [ln for ln in seg.splitlines() if "subprocess.run(" in ln]
-    assert run_calls, "未找到 icacls 调用点"
-    for ln in run_calls:
-        for flag in ("/grant", "/inheritance", "/remove", "/deny"):
-            assert flag not in ln, f"icacls 调用里出现写 ACL 的参数 {flag}"
+    """源码级守卫：本模块**不得真的去写 ACL**（只允许检查 + 告警）。
+
+    ## 为什么改成 AST（2026-10-01，C3 门禁加固）
+
+    旧版只扫「**含 `subprocess.run(` 的那一行**」里的参数
+    （`run_calls = [ln for ln in seg.splitlines() if "subprocess.run(" in ln]`）。
+    注入实测（`.workbuddy-ai/tmp/diag_acl_guard.py`）**假绿（P0）**：
+    把调用改成**多行**、参数落到续行、并加上 `/grant:r` ⇒ 那一行不含参数 ⇒
+    守卫**照样绿**。而「误删继承项可能把用户自己锁在目录外」正是本函数 docstring
+    自己写明的风险——这条假绿会静默放行它。
+
+    现按 AST 取「`subprocess.<spawn>(...)` 实参里的**全部字符串常量**」：
+    多行 / 嵌套 list-tuple / 关键字参数一律覆盖，且覆盖 `call`/`check_output`/`Popen`
+    等其它 spawn 形态。
+    """
+    tree = ast.parse((ROOT / "medkit" / "core" / "config.py").read_text(encoding="utf-8"))
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "harden_config_dir"), None)
+    assert fn is not None, "找不到 `harden_config_dir`——改名了？"
+
+    strings = _spawn_string_args(fn)
+    # 正面证据：确实在调 icacls —— 否则下面「没写 ACL」的断言会在空集上恒真
+    assert any("icacls" in s for s in strings), (
+        "`harden_config_dir` 里没有 `subprocess.*(\"icacls\", …)` 调用——检查逻辑没了？"
+    )
+    for s in strings:
+        for flag in _ACL_WRITE_FLAGS:
+            assert flag not in s, (
+                f"icacls 调用里出现写 ACL 的参数 {flag!r}——"
+                "Windows 分支只允许检查、不允许改 ACL（可能把用户锁在目录外）"
+            )
 
 
 def test_config_dir_hardening_is_wired():
@@ -229,8 +271,18 @@ def test_restore_deferral_is_documented():
 
 
 def test_downgrade_to_documents_why_unwired():
-    """S3-20：`downgrade_to` 零调用是有意的，须在 docstring 说明。"""
-    src = (ROOT / "medkit" / "core" / "db.py").read_text(encoding="utf-8")
-    seg = src[src.index("def downgrade_to"):]
-    seg = seg[:seg.index("\ndef ", 1)]
-    assert re.search(r"有意不接入|不是.*死代码|人工排障", seg), "未说明为何零调用"
+    """S3-20：`downgrade_to` 零调用是有意的，须在 docstring 说明。
+
+    ## 为什么改成 AST（2026-10-01，C3 门禁加固）
+
+    旧版 `src[src.index("def downgrade_to"):]` + `seg.index("\\ndef ", 1)` 切段：
+    函数改名即 `ValueError`（假红），且切段边界依赖「下一个顶层 def」这一书写事实。
+    改用 `ast.get_docstring()` 直接取 docstring——那才是本用例真正要检的对象。
+    """
+    tree = ast.parse((ROOT / "medkit" / "core" / "db.py").read_text(encoding="utf-8"))
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "downgrade_to"), None)
+    assert fn is not None, "找不到 `downgrade_to`——改名了？"
+    doc = ast.get_docstring(fn) or ""
+    assert re.search(r"有意不接入|不是.*死代码|人工排障", doc), (
+        "`downgrade_to` 的 docstring 未说明为何零调用（不是死代码，是有意不接）")
