@@ -10,6 +10,34 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Fixed（门禁假红 · C3：`test_recover_user_data` 的两条文本判据 → AST）
+
+`tests/test_recover_user_data.py` 里守「**先快照再写库**」与「**快照失败必须中止**」的两条用例，
+用的是 `src.index("shutil.copytree")` / `src.split('print("[2/2]')` 这类**文本位置 / 字面量**判据
+（R24「判据绑书写格式」那一类）。注入测量（`.workbuddy-ai/tmp/diag_recover_guards.py`）实测
+**两条假红**：
+
+| 等价改写（本该绿） | 旧判据结果 |
+|---|---|
+| 变量改名 `live` → `conn`（纯重构） | ❌ 红（`src.index("live.commit()")` 抛 `ValueError`） |
+| 快照后加一句**含 "pass" 的注释**（「这里不能 pass，必须 return」） | ❌ 红（`assert "pass" not in tail`） |
+
+假红会逼人删守卫 ⇒ 改为 **AST**：
+
+- 顺序判据：按**调用形态**取最早一次 `*.copytree(...)` 与 `*.commit(...)` 的行号（与变量名/空格/注释无关）；
+- 中止判据：定位包着 `copytree` 的 `try`，断言每个 `except` 体**含 `return`**（真中止）
+  且**不是裸 `pass`**，且返回值不是假值（`return 0` / `return None` 会被调用方当成成功）。
+
+**改后 6/6 符合预期**：3 条等价改写全绿（含 DDL 空格重排）+ 3 条真断点全红。
+顺带把「四张库表必须有 `id` 主键」的裸子串断言改成**容忍空白**的正则
+（`id  TEXT   PRIMARY KEY` 是等价写法）。
+
+> **探针自身的坑（值得记）**：给 `db.py` 注入「DDL 空格重排」时锚点写裸串
+> `id TEXT PRIMARY KEY`，而它**第一次出现在模块 docstring**、真 DDL 在 `_tbl()` 里
+> ⇒ 替换成功、自检全过、探针**报绿，但什么都没测**。揭穿它的是**共用同一锚点的另一条注入**
+> （「删掉 `id` 主键」，期望红，却报绿）。⇒ **注入前断言锚点命中次数恰好为 1**；
+> **「期望绿」的注入本身不产出信息，它只是「期望红」的对照**。已补进技能 `gate-falsifiability`。
+
 ### Fixed（D6 迁移演练：`reset_conn()` 不释放文件句柄）
 
 **双轨退役（ADR-006）的迁移演练**（`docs/双轨退役_迁移演练_D6_2026-10-01.md`）在临时目录里

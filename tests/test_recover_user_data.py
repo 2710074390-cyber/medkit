@@ -23,7 +23,9 @@
 不测"恢复得对不对"（那要看取证结论与真实备份目录，属人工核对）。
 本文件只锁**破坏性安全**，这是零覆盖下性价比最高的部分。
 """
+import ast
 import importlib.util
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -40,6 +42,22 @@ def _load():
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
+
+
+def _tree() -> ast.Module:
+    return ast.parse(SCRIPT.read_text(encoding="utf-8"))
+
+
+def _first_call_line(tree: ast.Module, attr: str) -> int | None:
+    """源码里**最早**一次 `*.attr(...)` 调用的行号（没有则 None）。
+
+    用 AST 而非 `src.index("live.commit()")`：后者绑死**书写格式**
+    （变量名、空格、注释都能让它假红，实测见文件末尾「为什么用 AST」）。
+    """
+    lines = [n.lineno for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == attr]
+    return min(lines) if lines else None
 
 
 # ------------------------------------------------------------------ 污染判定
@@ -124,34 +142,76 @@ def test_real_schema_has_id_primary_key(table):
     ddl = "\n".join(dbmod._V1_UP)
     assert f"CREATE TABLE IF NOT EXISTS {table}" in ddl, f"{table} 不在 V1 建表语句里"
     seg = ddl.split(f"CREATE TABLE IF NOT EXISTS {table}", 1)[1].split(")", 1)[0]
-    assert "id TEXT PRIMARY KEY" in seg, f"{table} 缺 id 主键——脚本的幂等承诺失效"
+    # 容忍空白：`id  TEXT  PRIMARY KEY`（重排空格）是**等价写法**，
+    # 旧的裸子串断言 `"id TEXT PRIMARY KEY" in seg` 会在那种情况下假红。
+    assert re.search(r"\bid\s+TEXT\s+PRIMARY\s+KEY\b", seg, re.I), (
+        f"{table} 缺 id 主键——脚本的幂等承诺失效")
 
 
 # ------------------------------------------------------------------ 快照先于写入
 
 def test_snapshot_happens_before_any_write_to_live_db():
-    """源码顺序：快照 `copytree` 必须出现在 `live.commit()` **之前**。
+    """源码顺序：快照必须出现在**写库提交**之前。
 
     这条不能靠"代码看起来是对的"——写入是不可逆的，
-    必须有个判据在顺序被调换时变红。用行号做判据（简单且够用）。
+    必须有个判据在顺序被调换时变红。
+
+    ## 为什么改用 AST（2026-10-01，C3 门禁加固）
+
+    旧版 `src.index("shutil.copytree")` / `src.index("live.commit()")` 绑死**书写格式**。
+    注入实测（`.workbuddy-ai/tmp/diag_recover_guards.py`）：
+    把变量 `live` 改名为 `conn`（**纯等价重构**）⇒ `src.index("live.commit()")` 抛
+    `ValueError` ⇒ **假红**。而假红会逼人删守卫。
+    现按「调用形态」定位（`*.copytree(...)` / `*.commit(...)`），与变量名/空格/注释无关。
+
+    ⚠️ 已知边界：本判据取的是**全模块最早**一次 `.commit()`。
+    若将来把快照抽成 helper 且其定义落在 commit 之后，需按实际情况调整本用例。
     """
-    src = SCRIPT.read_text(encoding="utf-8")
-    snap_idx = src.index("shutil.copytree")
-    commit_idx = src.index("live.commit()")
-    assert snap_idx < commit_idx, (
-        "快照（copytree）出现在 live.commit() 之后——"
+    tree = _tree()
+    snap_line = _first_call_line(tree, "copytree")
+    commit_line = _first_call_line(tree, "commit")
+    assert snap_line is not None, "源码里找不到 `shutil.copytree` 调用——快照没了？"
+    assert commit_line is not None, "源码里找不到任何 `.commit()` 调用——写库路径变了？"
+    assert snap_line < commit_line, (
+        f"快照（copytree，第 {snap_line} 行）出现在写库提交（commit，第 {commit_line} 行）之后——"
         "一旦写入出错就没有回退点了。顺序必须：先快照、再写库。"
     )
 
 
 def test_snapshot_failure_aborts():
-    """快照失败必须**中止**（不得吞掉异常继续写库）。"""
-    src = SCRIPT.read_text(encoding="utf-8")
-    # 快照的 try/except 里必须 return（中止），不能 pass
-    tail = src.split("shutil.copytree", 1)[1].split('print("[2/2]', 1)[0]
-    assert "except Exception" in tail, "快照没有异常保护"
-    assert "return 2" in tail, "快照失败后没有中止（应当 return 非零）"
-    assert "pass" not in tail.replace("shutil", ""), "快照失败被 pass 吞掉了"
+    """快照失败必须**中止**（不得吞掉异常继续写库）。
+
+    ## 为什么改用 AST（2026-10-01，C3 门禁加固）
+
+    旧版用 `src.split("shutil.copytree")[1].split('print("[2/2]')[0]` 切一段源码，
+    再 `assert "pass" not in tail`。两处都绑书写格式，注入实测**两条假红**：
+    ① 变量改名 `live`→`conn`；② 在快照后加一句**含 "pass" 的注释**
+    （例如「这里不能 pass，必须 return」——一句正当的说明注释！）。
+    现按 AST 判：包着 `copytree` 的那个 `try`，其每个 `except` 体
+    **必须含 `return`**（真中止）且**不得是裸 `pass`**（静默吞掉）。
+    """
+    tree = _tree()
+    try_node = None
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Try):
+            continue
+        if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+               and c.func.attr == "copytree" for c in ast.walk(n)):
+            try_node = n
+            break
+    assert try_node is not None, "找不到包着 `shutil.copytree` 的 try——快照没有异常保护"
+    assert try_node.handlers, "快照的 try 没有 except——异常会直接冒泡（或更糟：被外层吞掉）"
+
+    for h in try_node.handlers:
+        assert not (len(h.body) == 1 and isinstance(h.body[0], ast.Pass)), (
+            "快照失败被裸 `pass` 吞掉了——必须中止（return 非零）"
+        )
+        rets = [s for s in ast.walk(h) if isinstance(s, ast.Return)]
+        assert rets, "快照失败的 except 里没有 return——不会中止，会继续写库"
+        for r in rets:
+            assert not (isinstance(r.value, ast.Constant) and not r.value.value), (
+                "快照失败却 `return` 了假值（0/None）——调用方会当成成功"
+            )
 
 
 def test_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
