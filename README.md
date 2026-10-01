@@ -9,7 +9,7 @@
 
 ## 医学生快速上手（拿到安装包开始）
 
-1. **安装**：双击 `MedKit-Setup-0.10.5.exe` → 一路下一步（可选桌面图标）。
+1. **安装**：双击 `MedKit-Setup-0.10.6.exe` → 一路下一步（可选桌面图标）。
    或绿色版：解压 `MedKit` 文件夹到任意位置，双击 `MedKit.exe`，浏览器自动打开（无需安装 Python）。
 2. **首次启动**：会弹出 3 步欢迎向导——软件做什么、怎么拿 API Key、怎么开始，跟完即可。
 3. **连接 AI**（只需一次）：推荐注册 [DeepSeek 开放平台](https://platform.deepseek.com) → 充值 ¥10 →
@@ -94,14 +94,14 @@ medkit/
 │   ├── agents/                 # medgen / medqc / medfix / medreview / agents/error_analysis.py(归因) / agents/socratic_review.py(苏格拉底)
 │   ├── prompts/                # 从 MedAgentWork Prompt版本/ 模板化迁移（含 error_analysis.md / socratic_review.md）
 │   ├── gates/                  # options_check / bloom_check / trace_check / dedup_check
-│   ├── routers/                # 17 个既有路由域 + medkit/routers/errors.py（/api/errors/* · 22 端点）
+│   ├── routers/                # 17 个既有路由域 + medkit/routers/errors.py（/api/errors/* · 30 端点）
 │   └── web/                    # 零 CDN 单页 UI（learn-meta.js = 元认知视图）
 ├── pack/                       # build.bat / medkit.spec / check-release-consistency.py(五件套门禁) / smoke-run-isolated.py(隔离冒烟)
 ├── docs/                       # AGENT_HANDOFF.md(交接入口) / 错题归因流水线_EP-01_设计与实现.md / 考研错题分析专项重构方案_2026-09-27.md / 生成链剥离为插件_评估_D2_2026-10-01.md / 双轨退役_迁移演练_D6_2026-10-01.md
-└── tests/                      # 1052 项（单元 1052 / 浏览器层 60，分进程跑）
+└── tests/                      # 1228 项（单元 1228 / 浏览器层 82，分进程跑）
 ```
 
-## 已实现功能（v0.10.5）
+## 已实现功能（v0.10.6）
 
 - **错题归因流水线（EP-01 · v0.10.5 新增）**：把「考生自己记下的错题」变成**可纵向追踪的元认知档案**——记录的不只是「我选错了」，而是「我**为什么**选错、当时**有多确信**、这个错因**跨轮次怎么演变**」。
   - **五阶段管线**（`core/errorpipe.py`，可任意跳过子集）：`intake` 归一录入 → `kp_align` 知识点对齐 → `attribute` LLM 归因 → `persist` 落库 → `analyze` 统计。**P3 是唯一有外部依赖的阶段**，跳过即全程零 LLM（离线可用，医院/图书馆场景）。归因走 `agents/error_analysis.py` + `prompts/error_analysis.md`。
