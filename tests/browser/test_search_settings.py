@@ -42,6 +42,12 @@ def test_search_settings_trusted_roundtrip(page, server_url):
 
 
 def test_search_settings_manual_test_message(page, server_url):
+    """manual 后端点「测试」→ 给出「手动粘贴」的用法提示。
+
+    ⚠️ 原版只有一个 `wait_for_function`（超时即失败）——那是**隐式断言**：
+    读代码看不出在断言什么，也区分不出「提示出现了」与「等待超时了」。
+    现补一条显式断言把期望结果写出来（2026-10-01 R30）。
+    """
     _goto_mine(page, server_url)
     page.select_option("#ws_backend", "manual")
     page.click("#btn_ws_test")
@@ -49,3 +55,5 @@ def test_search_settings_manual_test_message(page, server_url):
         "() => document.getElementById('ws_test_result')?.innerText.includes('手动粘贴')",
         timeout=15000,
     )
+    assert "手动粘贴" in page.inner_text("#ws_test_result"), \
+        "manual 后端应提示「手动粘贴」的用法（而非空结果或报错）"

@@ -269,21 +269,51 @@ def test_socratic_start_failure_shows_readable_detail(page, server_url):
 
 
 def test_socratic_close_hides_panel_and_refreshes_list(page, server_url):
+    """结束复习：面板收起 **且** 重新拉取可复习列表。
+
+    ⚠️ 这条用例**曾经只验了一半**（2026-10-01 R30 补）：原版只有一个
+    `wait_for_function` 等面板隐藏（超时即失败 = **隐式断言**），
+    而用例名承诺的「refreshes list」**完全没验**——
+    把 `mtCloseSocratic()` 里的 `mtLoadSocratic()` 删掉，用例照样绿。
+    ⇒ 现在两半都显式断言：① 面板隐藏（读状态，不是"等它隐藏"）；
+    ② `socratic/eligible` 被**再次**请求（计数，直接证明刷新发生）。
+    """
+    calls = {"eligible": 0}
+
+    def _eligible(route):
+        calls["eligible"] += 1
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps(_ELIGIBLE, ensure_ascii=False))
+
+    page.route("**/api/errors/socratic/eligible*", _eligible)
     _stub(page, "**/api/errors/overview*", {"counts": {}, "calibration": {},
                                             "heatmap": {}, "migration": {},
                                             "agreement": {}, "subtract": {}})
-    _stub(page, "**/api/errors/socratic/eligible*", _ELIGIBLE)
     _stub(page, "**/api/errors/socratic/start*", _FIRST)
     page.goto(server_url)
     _open_meta(page)
     _wait_text(page, "#mt_soc", "开始复习")
+    assert calls["eligible"] >= 1, "进入视图应至少拉一次可复习列表"
+    before = calls["eligible"]
+
     page.click('#mt_soc button:has-text("开始复习")')
     _wait_text(page, "#mt_soc_panel", "先别查书")
     page.click('#mt_soc_panel button:has-text("结束复习")')
+    # ① 等隐藏（超时即失败，防时序竞态）
     page.wait_for_function(
         "() => { const p = document.querySelector('#mt_soc_panel');"
         " return !p || p.style.display === 'none' || !p.innerText.trim(); }",
         timeout=15000)
+    # ② **显式**断言：面板确实收起（读状态，而不是"没抛超时"）
+    assert not page.locator("#mt_soc_panel").is_visible(), "结束复习后面板应隐藏"
+    # ③ 刷新列表真的发生了（删掉 `mtCloseSocratic` 里的 `mtLoadSocratic()` 这里会红）。
+    # 刷新是异步 fetch，故**有界轮询**（不用固定 sleep 赌时长）。
+    for _ in range(50):
+        if calls["eligible"] > before:
+            break
+        page.wait_for_timeout(100)
+    assert calls["eligible"] > before, (
+        f"结束复习后应重新拉取可复习列表——调用次数仍为 {before}（未刷新）")
 
 
 # ------------------------------------------------------------------ 红线 / 响应式

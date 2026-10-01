@@ -74,6 +74,47 @@
   ② 刷新后停在错题本时能力横幅卡在"正在检测…"——`learn.js` 的 `initLearnView()`
   在**它自己加载时**就调 `showLearnView(记住的视图)`，那一刻本片还没加载、包装钩子还没装上。
 
+## 新增守卫 `tests/test_assertion_audit.py`（4 项）
+
+把 R23 的「零断言用例」修复**从逐文件推广到全仓**（此前 `test_no_silent_skip_in_doc_guards`
+只管 `test_docs_coverage.py` 一个文件）。判据按 R23 的三个坑都避开：
+
+| 口径 | 说明 |
+|---|---|
+| **`ast.walk` 整个函数体** | 只看顶层语句会漏掉**循环体内**的 `assert` |
+| **认 `raise AssertionError`** | 它是合规断言形态（「前提分流」里常用：CI 跳过 / 本地红） |
+| **裸 `assert <Name>` 算实质断言** | 它可证伪；只有 `assert True` 不算（恒真 = 写了等于没写） |
+| **登记制 + 防腐烂** | 断言在**同文件共用的辅助函数**里时扫描器看不见，须显式登记；新增未登记即红，登记了但已不再是零断言也红 |
+
+**元守卫**：用**内存构造**的样本自证检测器真的能命中（4 个应命中 + 6 个不应命中）——
+否则一个"永远返回空集"的检测器会让上面两条断言在空集上恒真（方向 D）。
+
+**注入验证 3/3 按预期变红**（`.workbuddy-ai/tmp/diag_assertion_audit.py`）：
+新加零断言用例 · 给已登记的那条补上实质断言（登记腐烂）· 把检测器改成恒不命中。
+
+### Fixed（门禁假绿 · R30 第三批：零断言 / 隐式断言）
+
+扫全仓 `test_*` 函数体的**断言形态**（AST `ast.walk`，认 `assert` / `pytest.raises` /
+`pytest.fail` / `raise AssertionError`；裸 `assert <Name>` 算实质断言）。
+候选 4 处，其中 1 处是误报（断言在 `_assert_active()` 辅助里），**3 处真问题**：
+
+| # | 问题 | 性质 |
+|---|---|---|
+| ① | `test_socratic_close_hides_panel_and_refreshes_list`：只有一个 `wait_for_function` 等面板隐藏，而**用例名承诺的「refreshes list」完全没验**——把 `mtCloseSocratic()` 里的 `mtLoadSocratic()` 删掉，用例**照样绿** | **真假绿**（名不副实） |
+| ② | `test_search_settings_manual_test_message`：只有 `wait_for_function`（超时即失败） | 隐式断言（R23 ② 同族） |
+| ③ | `test_study_subject_card_filter`：同上 | 隐式断言 |
+
+修法：① 补**计数断言**（`socratic/eligible` 被**再次**请求 ⇒ 直接证明刷新发生）+ 显式读面板可见性；
+②③ 在等待之后补一条**显式断言**把期望结果写出来（读代码就能看出在断言什么，
+且能区分「值对了」与「等超时了」）。
+
+> ②③ 的诚实说明：它们断言的条件与那句 `wait_for_function` **相同**，
+> 故**可证伪性没有变化**——改进的是**可读性与失败诊断**（超时只说"等了 15s"，
+> 显式断言会说"科目没填进 `rv_subject`"）。① 才是真正的覆盖缺口。
+
+**注入验证 3/3 按预期变红**（`.workbuddy-ai/tmp/diag_browser_asserts.py`）：
+删掉 `mtLoadSocratic()`（不刷新列表）· manual 后端不提示「手动粘贴」· 科目卡不回填 `rv_subject`。
+
 ### Fixed（门禁假绿 · R30 第二批：源码子串断言扫荡）
 
 上批扫的是机械可判的 skip，这批扫**最大的一类**：`"字面量" in 源码`。

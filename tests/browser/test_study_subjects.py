@@ -59,6 +59,10 @@ def test_study_subject_card_filter(page, server_url):
             "() => document.getElementById('rv_subject')?.value === '" + subject + "'",
             timeout=15000,
         )
+        # 显式断言（2026-10-01 R30 补）：上面那句 `wait_for_function` 超时即失败，
+        # 属**隐式断言**——读代码看不出在断言什么，也区分不出「值对了」与「等超时了」。
+        assert page.input_value("#rv_subject") == subject, \
+            "点科目卡应把该科目填进刷题页的科目选择"
     finally:
         _cleanup(page, subject)
 
