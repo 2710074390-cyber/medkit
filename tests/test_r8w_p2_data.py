@@ -7,6 +7,7 @@
 - **S3-23**：`substeps.jsonl` 裁剪必须**原子**（原裸 `write_text` 覆盖 → 崩溃留截断 jsonl）。
 """
 
+import ast
 import json
 import sys
 import threading
@@ -202,7 +203,54 @@ def test_substep_trim_is_atomic(tmp_path):
 
 
 def test_substep_source_uses_atomic_replace():
-    """源码级守卫：裁剪不得回退成裸 write_text 覆盖。"""
-    src = (ROOT / "medkit" / "core" / "orchestrator.py").read_text(encoding="utf-8")
+    """源码级守卫：裁剪不得回退成裸 `write_text` 覆盖。
+
+    ## 为什么改成 AST（2026-10-01，C3 门禁加固）
+
+    旧版是**位置切段 + 子串在场**：
+
+    ```python
     seg = src[src.index("def _substep("):src.index("def _substeps_terminate(")]
-    assert ".replace(path)" in seg, "裁剪应走临时文件 + replace"
+    assert ".replace(path)" in seg
+    ```
+
+    注入实测（`.workbuddy-ai/tmp/diag_substep_guard.py`）**三个方向都坏**：
+
+    | 注入 | 旧判据 | 说明 |
+    |---|---|---|
+    | `_tmp.replace( path )`（只加空格） | ❌ 假红 | 绑死书写格式 |
+    | `def _substep (`（只加空格） | ❌ 假红 | 切段锚点绑死签名文本 |
+    | 删掉真调用、**注释里留 `.replace(path)` 字样** | ❌ **假绿（P0）** | 注释骗过子串断言——正是它要防的「回退成裸覆盖」被放过 |
+
+    现按**结构**判：找到 `_substep` 的函数体，取出 `.replace(X)` 调用，
+    要求「**先写临时文件、再 replace 过去**」：
+
+    - 存在 `.replace(...)` 调用（原子替换的正面证据）；
+    - 其**接收者**（临时文件）必须被 `write_text` 写过；
+    - 其**实参**（最终文件）**不得**被 `write_text` 直接写过（那正是要防的裸覆盖）。
+
+    变量名、空格、注释一律无关；注释也不再能冒充调用。
+    """
+    tree = ast.parse((ROOT / "medkit" / "core" / "orchestrator.py").read_text(encoding="utf-8"))
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "_substep"), None)
+    assert fn is not None, "找不到 `_substep` 函数——改名了？"
+
+    def _calls(attr: str) -> list[ast.Call]:
+        return [c for c in ast.walk(fn)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                and c.func.attr == attr]
+
+    repl = [c for c in _calls("replace") if len(c.args) == 1]
+    assert repl, "`_substep` 里没有 `.replace(...)` 调用——裁剪不再是原子的"
+    written = {ast.unparse(c.func.value) for c in _calls("write_text")}
+    for c in repl:
+        tmp = ast.unparse(c.func.value)     # 临时文件
+        final = ast.unparse(c.args[0])      # 最终文件
+        assert tmp in written, (
+            f"`.replace` 的接收者 {tmp!r} 没有被 `write_text` 写过——"
+            "不是「先写临时文件、再原子替换」"
+        )
+        assert final not in written, (
+            f"裁剪直接 `write_text` 覆盖了最终文件 {final!r}——非原子（崩溃留截断 jsonl）"
+        )

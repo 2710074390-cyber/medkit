@@ -10,7 +10,14 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
-### Fixed（门禁假红 · C3：`test_recover_user_data` 的两条文本判据 → AST）
+### Fixed（门禁假绿/假红 · C3：三处「源码文本判据」→ AST）
+
+**C3（继续门禁加固）**：把守卫里「用文本位置/字面量判源码结构」的判据（R24/R20 类）逐处改成 AST。
+先做全仓扫描（`.workbuddy-ai/tmp/scan_text_judgments.py`，**69 处候选 / 19 文件**），
+**分诊**后确认绝大多数是**正当**的（`html`/`md`/`review` 是**产物内容**、`readme`/`changelog`
+是**文档内容**、提示词 `.md` 是**数据**），只修真正判**代码结构**的三处。
+
+**① `tests/test_recover_user_data.py`（两条）** —— 守「先快照再写库」「快照失败必须中止」：
 
 `tests/test_recover_user_data.py` 里守「**先快照再写库**」与「**快照失败必须中止**」的两条用例，
 用的是 `src.index("shutil.copytree")` / `src.split('print("[2/2]')` 这类**文本位置 / 字面量**判据
@@ -32,11 +39,34 @@
 顺带把「四张库表必须有 `id` 主键」的裸子串断言改成**容忍空白**的正则
 （`id  TEXT   PRIMARY KEY` 是等价写法）。
 
+**② `tests/test_r8w_p2_data.py::test_substep_source_uses_atomic_replace`** —— 守「裁剪必须原子」。
+旧版 `src[src.index("def _substep("):src.index("def _substeps_terminate(")]` + `".replace(path)" in seg`，
+注入实测**三个方向都坏**：
+
+| 注入 | 旧判据 |
+|---|---|
+| `_tmp.replace( path )`（加空格） | ❌ 假红 |
+| `def _substep (`（加空格） | ❌ 假红 |
+| 真调用删掉、**注释里留 `.replace(path)`**、改回裸 `write_text` 覆盖 | ❌ **假绿（P0）** |
+
+⇒ 改 AST：找到 `_substep` 函数体，要求存在 `.replace(...)` 调用，且
+**其接收者被 `write_text` 写过**（先写临时文件）、**其实参不得被 `write_text` 写过**（不得裸覆盖）。
+
+**③ `tests/test_r3_batch3.py::test_c12_safe_filename_used_in_render_paths`** —— 守**安全**：
+subject 拼文件名必须过 `safe_filename`（否则路径穿越）。旧版 `assert needle in txt`，注入实测
+同样双向有病，其中假绿是 **P0**：真调用删掉、改成 `f"{subject}"` 直接拼、**注释里留
+`safe_filename(subject)`** ⇒ 守卫**照样绿**（**路径穿越回归被放过**）。
+⇒ 改 AST：该模块必须**真的调用** `safe_filename`，且至少一次调用的实参涉及 `subject`。
+
+**验证**：三处合计 **13 条注入**（等价改写该绿 / 削真行为该红）全部符合预期。
+
 > **探针自身的坑（值得记）**：给 `db.py` 注入「DDL 空格重排」时锚点写裸串
 > `id TEXT PRIMARY KEY`，而它**第一次出现在模块 docstring**、真 DDL 在 `_tbl()` 里
 > ⇒ 替换成功、自检全过、探针**报绿，但什么都没测**。揭穿它的是**共用同一锚点的另一条注入**
 > （「删掉 `id` 主键」，期望红，却报绿）。⇒ **注入前断言锚点命中次数恰好为 1**；
 > **「期望绿」的注入本身不产出信息，它只是「期望红」的对照**。已补进技能 `gate-falsifiability`。
+> 另：`safe_filename` 的第三条注入首跑 **`rc=4`（收集失败）**——我把注释插进了 f-string 中间
+> 造成语法错。**判据必须是 `rc == 1`**；`rc == 4` 说明注入自己坏了，红得毫无意义。
 
 ### Fixed（D6 迁移演练：`reset_conn()` 不释放文件句柄）
 

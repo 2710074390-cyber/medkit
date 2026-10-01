@@ -4,6 +4,7 @@
 隔离：项目/学习库全部走临时目录；不发起任何真实 LLM / 网络调用。
 """
 
+import ast
 import json
 import sqlite3
 import sys
@@ -172,19 +173,59 @@ def test_c12_safe_filename():
     assert safe_filename("a" + chr(0) + "b") == "a_b"
 
 
+# C-12：subject 拼文件名的**落点**（这些模块必须把用户可控的 subject 过 safe_filename）
+_SAFE_FILENAME_SITES = (
+    "medkit/routers/review.py",
+    "medkit/routers/projects.py",
+    "medkit/routers/library.py",
+    "medkit/core/orchestrator.py",
+)
+
+
+def _safe_filename_calls(path: str) -> list[ast.Call]:
+    """模块里所有 `safe_filename(...)` 调用（`Name` 与 `Attribute` 两种形态都认）。"""
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    out = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if (isinstance(f, ast.Name) and f.id == "safe_filename") or \
+           (isinstance(f, ast.Attribute) and f.attr == "safe_filename"):
+            out.append(n)
+    return out
+
+
 def test_c12_safe_filename_used_in_render_paths(tmp_path):
-    """C-12：subject 拼文件名落点统一走 safe_filename（orchestrator/review/projects/library）。"""
+    """C-12：subject 拼文件名落点统一走 safe_filename（orchestrator/review/projects/library）。
+
+    ## 为什么改成 AST（2026-10-01，C3 门禁加固）
+
+    旧版是 `assert needle in txt`（needle = `safe_filename(subject)` 之类**字面拼法**）。
+    注入实测（`.workbuddy-ai/tmp/diag_safefilename_guard.py`）**双向都有病**：
+
+    | 注入 | 旧判据 | 说明 |
+    |---|---|---|
+    | `safe_filename( subject )`（只加空格） | ❌ 假红 | 绑死书写格式 |
+    | 真调用删掉、改成 `f"{subject}"` 直接拼、**注释里留 `safe_filename(subject)`** | ❌ **假绿（P0）** | 注释骗过子串断言 ⇒ **路径穿越回归被放过** |
+
+    现按 AST 判：该模块必须**真的调用** `safe_filename`，且至少一次调用的实参涉及 `subject`
+    （不是拿别的常量糊弄）。注释不再能冒充调用。
+    """
     from medkit.core.fsutil import safe_filename as sf
     assert sf("内:科") == "内_科"
-    # review.py / projects.py / library.py 已使用（静态断言防回退）
-    for path, needle in [
-        ("medkit/routers/review.py", "safe_filename(subject)"),
-        ("medkit/routers/projects.py", "safe_filename(meta.get('subject'"),
-        ("medkit/routers/library.py", "safe_filename(subject or '全部')"),
-        ("medkit/core/orchestrator.py", "safe_filename(subject)"),
-    ]:
-        txt = (ROOT / path).read_text(encoding="utf-8")
-        assert needle in txt, f"{path} 应使用 safe_filename：{needle}"
+    # 防空转：落点清单非空 + 每个文件真实存在（否则下面的断言会在空集上恒真）
+    assert _SAFE_FILENAME_SITES, "落点清单为空——断言会空转"
+    missing = [p for p in _SAFE_FILENAME_SITES if not (ROOT / p).exists()]
+    assert not missing, f"落点文件不存在：{missing}"
+    for path in _SAFE_FILENAME_SITES:
+        calls = _safe_filename_calls(path)
+        assert calls, (
+            f"{path} 未调用 `safe_filename`——subject 直接拼进文件名 = 路径穿越风险"
+        )
+        assert any("subject" in ast.unparse(a) for c in calls for a in c.args), (
+            f"{path} 的 `safe_filename` 调用没有针对 subject（拿别的常量糊弄？）"
+        )
 
 
 # ---------------------------------------------------------------- C-13 案例子题媒体
