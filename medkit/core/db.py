@@ -306,7 +306,26 @@ def get_conn() -> sqlite3.Connection:
 
 
 def reset_conn() -> None:
-    """丢弃当前线程的缓存连接（测试替换 DB_PATH 后用）。"""
+    """丢弃当前线程的缓存连接（测试替换 DB_PATH 后用）。
+
+    ⚠️ 2026-10-01（D6 迁移演练发现）——**必须 `close()`，不能只丢引用**。
+    旧实现只做 `_local.conn = None`，但 `sqlite3.Connection` 处在**引用环**里
+    （连接 ↔ 游标），引用计数不会归零，要等**循环 GC** 才 `__del__`。
+    在此之前 **Windows 上文件句柄一直占着 `medkit.db`**：实测
+    `shutdown()` / `reset_conn()` 之后 `os.rename(medkit.db, …)` 仍报
+    `WinError 32`，只有 `gc.collect()` 之后才成功。
+
+    这直接卡住 ADR-006 §4 的**回滚**——回滚的本质就是「把 medkit.db 移走」
+    （`pack/rollback-json-track.py`）。故改为**确定性关闭**（失败不阻断，
+    句柄终会随 GC 释放）。与 `shutdown()` 的区别：后者额外做 WAL 被动检查点，
+    用于进程正常退出；本函数用于「换库/换路径」这类丢弃场景。
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
     _local.conn = None
 
 

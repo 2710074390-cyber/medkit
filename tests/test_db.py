@@ -180,3 +180,38 @@ def test_import_rejects_missing_ids(iso):
         json.dumps([{"question": "无 id 的记录"}], ensure_ascii=False), encoding="utf-8")
     result = db.import_from_json()
     assert result["mistakes"] == "skip(empty)"       # 无 id 不入库（保主键完整性）
+
+
+# ---------------------------------------------------------------- 句柄释放（2026-10-01）
+
+def test_reset_conn_releases_db_file_handle(iso):
+    """`reset_conn()` 必须**确定性释放** `medkit.db` 的文件句柄。
+
+    ## 为什么有这条（D6 迁移演练发现）
+
+    旧实现只做 `_local.conn = None`，但 `sqlite3.Connection` 处在**引用环**里
+    （连接 ↔ 游标），引用计数不归零 ⇒ 要等**循环 GC** 才 `__del__`。
+    在此之前 **Windows 上 `medkit.db` 一直被占**：实测 `reset_conn()` / `shutdown()`
+    之后 `os.rename` 仍报 `WinError 32`，只有 `gc.collect()` 之后才成功。
+    而 ADR-006 §4 的**回滚**（`pack/rollback-json-track.py`）本质就是
+    「把 medkit.db 移走」——句柄不放就回滚不了。
+
+    ## 判据
+
+    取**真实可观测行为**（能不能给 db 文件改名），不是「源码里有没有调 close」——
+    后者是子串/结构断言，句柄仍可能没释放。
+    """
+    db.migrate()
+    with db.tx(write=True) as cur:
+        db.put_row(cur, "mistakes", {"id": "m_1", "subject": "儿科学"})
+    db.reset_conn()
+
+    src = iso / "medkit.db"
+    dst = iso / "medkit.db.moved"
+    try:
+        src.rename(dst)
+    except OSError as e:
+        raise AssertionError(
+            f"reset_conn() 后 medkit.db 仍被占用（句柄未确定性释放）：{e}") from e
+    dst.rename(src)                       # 复原，保持用例幂等
+    assert src.exists()
