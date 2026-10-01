@@ -10,13 +10,13 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
-### Fixed（门禁假绿/假红 · C3：四处「源码文本判据」→ AST，修掉 3 处 P0 假绿）
+### Fixed（门禁假绿/假红 · C3：六处「源码文本判据」→ AST/剥注释，修掉 6 处 P0 假绿）
 
 **C3（继续门禁加固）**：把守卫里「用文本位置/字面量判源码结构」的判据（R24/R20 类）逐处改成 AST。
 先做全仓扫描（`.workbuddy-ai/tmp/scan_text_judgments.py`，**69 处候选 / 19 文件**），
 **分诊**后确认绝大多数是**正当**的（`html`/`md`/`review` 是**产物内容**、`readme`/`changelog`
 是**文档内容**、提示词 `.md` 是**数据**、PS1 的 param 块切分还**刻意**避开了注释误报），
-只修真正判**代码结构**的四处（合计 **17 条注入**全部符合预期）。
+只修真正判**代码结构/闸门**的六处（合计 **23 条注入**全部符合预期）。
 
 **① `tests/test_recover_user_data.py`（两条）** —— 守「先快照再写库」「快照失败必须中止」：
 
@@ -71,7 +71,24 @@ subject 拼文件名必须过 `safe_filename`（否则路径穿越）。旧版 `
 - `test_downgrade_to_documents_why_unwired`：改用 `ast.get_docstring()` 直接取 docstring
   （原为 `src.index("def downgrade_to")` 切段，改名即假红，且边界依赖「下一个顶层 def」）。
 
-**验证**：本轮新增 4 条注入（G1–G4）全部符合预期；**C3 累计 17 条注入**。
+**⑤ `tests/test_check_package.py::test_spec_excludes_test_only_packages`** ——
+**AST 迁移的漏网之鱼**：同文件早已有 AST 版 `_spec_excludes()`（还带防截断回归锁
+`test_spec_excludes_survive_bracket_entries`），但这条仍用文本切片
+`spec[spec.index("excludes=["):spec.index("]", …)]`。注入实测**假红**：
+在 excludes 的**注释里**加一个 `[R8+W]`（纯文档改动）⇒ 切片在第一个 `]` 处**截断**
+⇒ 后半段包名全"看不见"。⇒ 改用 `_spec_excludes()`。
+
+**⑥ `tests/test_r8w_p2_frontend.py::test_ci_has_no_npm_install_fallback`** —— **CI 闸门完整性**。
+旧版直接对 ci.yml **全文**做子串断言，注入实测**两处假绿**：
+
+| 注入 | 旧判据 | 说明 |
+|---|---|---|
+| 删掉 `npm ci --no-fund` 那一行 | ❌ 绿 | **注释里本来就有 `npm ci` 字样**（ci.yml 第 54 行），子串仍在 |
+| `npm ci --no-fund` → `npm install --no-fund` | ❌ 绿 | **正是本用例明文禁止的回归**（S3-16：不得用 npm install 弱化 lock） |
+
+⇒ 改为**先剥 YAML 注释**再判，并把判据从 `\|\| npm install` **收紧为任何 `npm install`**。
+
+**验证**：本轮新增 6 条注入（H1–H3 / J1–J3）全部符合预期；**C3 累计 23 条注入、6 处 P0 假绿**。
 
 > **探针自身的坑（值得记）**：给 `db.py` 注入「DDL 空格重排」时锚点写裸串
 > `id TEXT PRIMARY KEY`，而它**第一次出现在模块 docstring**、真 DDL 在 `_tbl()` 里

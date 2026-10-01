@@ -585,9 +585,24 @@ def test_build_env_check_wired_before_pyinstaller():
 
 
 def test_spec_excludes_test_only_packages():
-    """spec 必须主动排除测试/开发专用包（前置一道闸，不只靠事后检查）。"""
-    spec = (ROOT / "medkit.spec").read_text(encoding="utf-8")
+    """spec 必须主动排除测试/开发专用包（前置一道闸，不只靠事后检查）。
+
+    ## 为什么改用 `_spec_excludes()`（2026-10-01，C3 门禁加固）
+
+    旧版是**文本切片**：
+
+    ```python
     seg = spec[spec.index("excludes=["):spec.index("]", spec.index("excludes=["))]
+    ```
+
+    注入实测（`.workbuddy-ai/tmp/diag_spec_excludes_guard.py`）**假红**：
+    在 excludes 的**注释里**加一个 `[R8+W]`（纯文档改动）⇒ 切片在第一个 `]` 处**截断**
+    ⇒ 后半段的包名全"看不见" ⇒ 守卫误红。而假红会逼人删守卫或删条目。
+
+    ⇒ 改用同文件已有的 AST 版 `_spec_excludes()`——它本身还带一条防截断的回归锁
+    （`test_spec_excludes_survive_bracket_entries`），且**不受方括号嵌套影响**。
+    """
+    ex = set(_spec_excludes())
     for pkg in ("pytest", "_pytest", "coverage", "playwright", "debugpy", "pluggy"):
-        assert f'"{pkg}"' in seg, f"spec excludes 缺 {pkg}"
-    assert '"setuptools"' not in seg, "setuptools 是运行期依赖，不得排除"
+        assert pkg in ex, f"spec excludes 缺 {pkg}"
+    assert "setuptools" not in ex, "setuptools 是运行期依赖，不得排除"

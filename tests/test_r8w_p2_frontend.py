@@ -341,8 +341,26 @@ def test_regen_releases_lock_on_success_and_failure(iso_db, monkeypatch):
 # ---------------------------------------------------------------- S3-16
 
 def test_ci_has_no_npm_install_fallback():
-    """S3-16：CI 不得再用 `npm install` 静默回退（弱化 lock 约束）。"""
+    """S3-16：CI 不得再用 `npm install` 静默回退（弱化 lock 约束）。
+
+    ## 为什么先剥注释（2026-10-01，C3 门禁加固）
+
+    旧版直接对 **ci.yml 全文**做子串断言。注入实测
+    （`.workbuddy-ai/tmp/diag_ci_npm_guard.py`）**两处假绿**：
+
+    | 注入 | 旧判据 | 说明 |
+    |---|---|---|
+    | 删掉 `npm ci --no-fund` 那一行 | ❌ 绿 | **注释里本来就有 `npm ci` 字样**（ci.yml 第 54 行），子串仍在 |
+    | `npm ci --no-fund` → `npm install --no-fund` | ❌ 绿 | 正是本用例**明文禁止**的回归；`"\\|\\| npm install"` 匹配不到裸 `npm install` |
+
+    ⇒ 现：**先剥 YAML 注释**再判；并把「回退」判据从 `|| npm install` **收紧为任何
+    `npm install`**（那才是 S3-16 要拦的东西）。判据只看 `run:` 正文，注释不再能冒充步骤。
+    """
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "|| npm install" not in ci, "仍存在 npm install 回退"
-    assert "npm ci" in ci
-    assert "npm audit" in ci, "缺少 npm 侧审计信号"
+    # 剥注释：`#` 之后到行尾不算代码（本文件 npm 段内没有引号含 `#` 的情形）
+    code = "\n".join(ln.split("#", 1)[0] for ln in ci.splitlines())
+    assert "npm ci" in code, "CI 未用 `npm ci`（或只剩注释里的字样）"
+    assert "npm audit" in code, "缺少 npm 侧审计信号"
+    assert not re.search(r"\bnpm\s+install\b", code), (
+        "CI 里出现 `npm install`——S3-16 要求只用 `npm ci`，回退会弱化 lock 约束"
+    )
