@@ -313,17 +313,35 @@ def _resolve(ref: str):
     return None
 
 
-def _active_docs():
+def _active_docs(tracked_only: bool = False):
     """活跃文档 = 排除历史快照与历史审查产物（它们记录的是当时的状态）。
 
     - `docs/archive/`：历史快照，路径按当时事实写，不该按现在校正
     - `docs/reviews/`：历史审查产物，同上
     - `0.10.0-*.md`：规划任务书，列的是**待创建**的文件
+
+    ## `tracked_only`（2026-10-02 加，**计数漂移**的根治）
+
+    默认（`False`）扫**工作区磁盘**——含尚未 `git add` 的草稿。这让
+    `test_active_doc_path_refs_exist` 的参数化用例数**取决于开发者手边有没有
+    未提交的 docs**：本地有 2 篇未跟踪 md 时收集 27 个用例，CI（干净 checkout）
+    只有 25 个 ⇒ **README 的全仓计数守卫在 CI 上必红**
+    （实测 ubuntu/windows 均报「单元声称 1360，实际 1358」，差 2 恰为草稿数）。
+
+    这不是 CI 环境问题，是**测试设计缺陷**：被断言的那个"计数"量必须是
+    **已入库集合的属性**，与工作区草稿无关——否则换台机器/换个分支数就不一样。
+
+    ⇒ 参数化（决定用例数）一律用 `tracked_only=True`（`git ls-files docs`）；
+    未被跟踪的草稿改由**单条非参数化用例**兜住（`test_untracked_active_docs_*`，
+    用例数恒为 1），覆盖不缩水而计数恒定。
     """
+    tracked = _tracked_docs() if tracked_only else None
     for f in sorted((ROOT / "docs").glob("**/*.md")):
         if "archive" in f.parts or "reviews" in f.parts:
             continue
         if f.name.startswith("0.10.0-"):
+            continue
+        if tracked is not None and f.relative_to(ROOT).as_posix() not in tracked:
             continue
         yield f
 
@@ -399,15 +417,12 @@ def _tracked_docs() -> set[str] | None:
     return {x for x in r.stdout.split() if x.endswith(".md")}
 
 
-@pytest.mark.parametrize("doc", list(_active_docs()), ids=lambda p: p.name)
-def test_active_doc_path_refs_exist(doc):
-    """活跃文档里反引号标注的仓库内路径，必须真实存在（或已显式豁免）。
+def _missing_refs(doc) -> list[str]:
+    """返回 `doc` 里引用了不存在仓库路径的反引号片段（判据见调用方 docstring）。
 
-    判据刻意保守：只认 5 个确定前缀 + 反引号包裹，避免把散文、示例、
-    命令片段误判成文件引用。宁可漏检，不可误伤（误伤会逼人删守卫）。
-
-    「扫描面非空」由 `test_active_docs_scan_face_is_not_empty` 单独把守
-    （parametrize 里没法断言非空——空集合根本不会进入本函数体）。
+    抽成独立函数是为了让**已跟踪**（参数化）与**未跟踪草稿**（单条兜底用例）
+    两条路径共用**同一**校验实现——否则两处判据会各自漂移，
+    出现「参数化那条改了判据、草稿那条还是旧判据」的隐性不一致。
     """
     text = doc.read_text(encoding="utf-8")
     missing = []
@@ -422,11 +437,68 @@ def test_active_doc_path_refs_exist(doc):
             continue
         if _resolve(ref) is None:
             missing.append(raw)
+    return missing
 
+
+@pytest.mark.parametrize("doc", list(_active_docs(tracked_only=True)), ids=lambda p: p.name)
+def test_active_doc_path_refs_exist(doc):
+    """活跃文档里反引号标注的仓库内路径，必须真实存在（或已显式豁免）。
+
+    判据刻意保守：只认 5 个确定前缀 + 反引号包裹，避免把散文、示例、
+    命令片段误判成文件引用。宁可漏检，不可误伤（误伤会逼人删守卫）。
+
+    「扫描面非空」由 `test_active_docs_scan_face_is_not_empty` 单独把守
+    （parametrize 里没法断言非空——空集合根本不会进入本函数体）。
+    """
+    missing = _missing_refs(doc)
     assert not missing, (
         "%s 引用了不存在的仓库内路径：\n  %s\n"
         "要么改正路径，要么在 _PATH_EXEMPT 里登记并写明理由。"
         % (doc.relative_to(ROOT), "\n  ".join(sorted(set(missing))))
+    )
+
+
+def test_untracked_active_docs_path_refs_exist():
+    """未跟踪的活跃文档（`git add` 前的草稿）同样要过路径校验。
+
+    ## 为什么必须有这条（2026-10-02 计数漂移根治的另一半）
+
+    `test_active_doc_path_refs_exist` 已改用 `tracked_only=True` 口径（见
+    `_active_docs` docstring）——的好处是用例数与工作区草稿解耦，本地==CI；
+    代价是**未跟踪草稿不再被参数化覆盖**。
+
+    本条把那份覆盖补回来，且**用例数恒为 1**（非参数化）：内部遍历
+    「磁盘活跃 − git 跟踪」逐篇校验。于是
+
+        README 计数（= 参数化用例数）稳定  ⟺  草稿覆盖不缩水
+
+    两个目标同时成立。若某天草稿被 `git add`，它会自动从本条移出、
+    进入参数化那条——**两边都不漏、也不重**。
+
+    拿不到 git 时（脱离仓库的源码包）跳过遍历，但**不许静默**：
+    此时 `_active_docs(tracked_only=True)` 会退化，由
+    `test_active_docs_scan_face_is_not_empty` 的 git 核对腿照出来。
+    """
+    tracked = _tracked_docs()
+    if tracked is None:
+        pytest.fail(
+            "拿不到 git 索引，无法区分「已跟踪 / 草稿」——"
+            "本守卫与 test_active_doc_path_refs_exist 的计数口径都会失效。"
+            "请在有 git 的仓库里运行（CI 与本地开发环境均满足）。"
+        )
+    untracked = [
+        p for p in _active_docs(tracked_only=False)
+        if p.relative_to(ROOT).as_posix() not in tracked
+    ]
+    bad: list[str] = []
+    for p in untracked:
+        miss = _missing_refs(p)
+        if miss:
+            bad.append("%s → %s" % (p.relative_to(ROOT), sorted(set(miss))))
+    assert not bad, (
+        "以下**未跟踪**的活跃文档引用了不存在的仓库路径：\n  "
+        + "\n  ".join(bad)
+        + "\n（草稿也适用：要么改正路径，要么在 _PATH_EXEMPT 登记。）"
     )
 
 
@@ -604,6 +676,77 @@ def test_readme_tree_endpoint_count_matches_router():
     assert claimed == actual, (
         f"README 目录树声称 {claimed} 个端点，实际 {actual} 个。"
         f"真身：medkit/routers/errors.py 的装饰器数。"
+    )
+
+
+def test_readme_per_file_test_counts_match_reality():
+    """README「已实现功能」段里每一处 `` `test_xxx` N `` 的 N 都必须等于该文件实际收集数。
+
+    ## 为什么这条必须存在（2026-10-02 实测的真缺陷）
+
+    README 用「文件 + 项数」的写法登记了几十个测试文件的规模，但**没有任何守卫
+    覆盖这些数字**——它们只靠"改完顺手改一下"维持。实测当场抓到 **2 处已腐烂**：
+
+        test_docs_coverage     声称 62  实际 48（本次改动所致，且改前 62 也已陈旧）
+        test_persistent_errors 声称 6   实际 10（此前就漂了 4）
+
+    这与 README 总数守卫（`test_readme_test_count_is_not_stale`）**同源**：
+    总数是"文件级数字之和"的近似，总数对得上**并不意味着**每个文件级数字都对。
+    只盯总数 = 逐项腐烂被稀释掉。
+
+    ## 判据（两侧都要，避免误伤与漏检）
+
+    - **正面**：README 里每处 `` `test_xxx` N `` 的 N == `pytest --collect-only`
+      该文件的收集数；
+    - **反**：README 提到的 `test_xxx` 必须**真实存在**，否则是"文档写了测试没有"。
+
+    扫描面用正则 `` `(test_[a-z0-9_]+)`\\s*\\*{0,2}(\\d+) `` —— 只认**全小写下划线**
+    的文件名形态，避免把散文里偶然出现的「test 5」当成登记。
+    扫描面非空由本用例末段的自证钉住（`>= 20`，实测 39）。
+    """
+    text = _readme_text()
+    pats = re.findall(r"`(test_[a-z0-9_]+)`\s*\*{0,2}(\d+)", text)
+    assert len(pats) >= 20, (
+        f"README 里只扫到 {len(pats)} 处「`test_xxx` N」登记（下限 20）——"
+        "扫描面疑似被写窄或这条守卫的正则失效了。实测应为 39 处。"
+    )
+
+    def _file_collected(rel_path: str) -> int:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q", rel_path],
+            cwd=ROOT, capture_output=True, text=True, timeout=120,
+        )
+        tail = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+        mm = re.search(r"(\d+)\s+tests? collected", tail)
+        assert mm, (
+            f"未能从 `pytest --collect-only {rel_path}` 解析收集数"
+            f"（尾行：{tail!r}，rc={proc.returncode}）。"
+            f"**不许 skip**——请修解析正则或确认文件存在。"
+        )
+        return int(mm.group(1))
+
+    bad: list[str] = []
+    for mod, n in pats:
+        # 文件可能不在 tests/ 根下——`test_photo_intake` 在 tests/browser/。
+        # 先按根目录找，找不到再全 tests/ 递归找（找多个即歧义，报错而非猜）。
+        cands = sorted((ROOT / "tests").rglob(f"{mod}.py"))
+        if not cands:
+            bad.append(f"README 提到 `{mod}` 但 tests/**/{mod}.py 不存在（文档写了测试没有）")
+            continue
+        if len(cands) > 1:
+            bad.append(
+                f"`{mod}` 在 tests/ 下命中多个文件，无法判定读数对象："
+                f"{[c.relative_to(ROOT).as_posix() for c in cands]}"
+            )
+            continue
+        rel = cands[0].relative_to(ROOT).as_posix()
+        actual = _file_collected(rel)
+        if int(n) != actual:
+            bad.append(f"{mod}：README 声称 {n}，实际 {actual}（{rel}）")
+    assert not bad, (
+        "README 的文件级测试计数与真身不符：\n  " + "\n  ".join(bad)
+        + "\n真身：pytest --collect-only <file>。"
+        "新增/删除用例后请同步 README「已实现功能」段那处数字。"
     )
 
 
