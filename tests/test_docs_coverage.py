@@ -399,15 +399,107 @@ def test_active_docs_scan_face_is_not_empty():
         )
 
 
+def test_tracked_docs_path_encoding_is_not_escaped():
+    """元守卫：`_tracked_docs()` 返回的路径必须与**磁盘相对路径**逐字对得上。
+
+    ## 为什么（2026-10-02 我自己的坑，影响面极大）
+
+    `git ls-files` 默认 `core.quotepath=true`，会把非 ASCII 路径输出成
+    `"docs/EP-01_\\351\\230\\266..."` 转义形式，于是**中文名的已跟踪文档**
+    在集合比对里全部落空（本仓绝大多数文档是中文名）。实测本仓：
+
+        默认 quotepath  → 与磁盘能对上 33 / 78
+        quotepath=false → 能对上 78 / 78
+
+    危害**不是"少几篇"而是"覆盖被悄悄砍掉一半"**：`_active_docs(tracked_only=True)`
+    会把它们当草稿跳过，参数化用例数从 27 掉到 10 —— 而数字变小**看着像问题被修好了**，
+    实则是守卫扫描面被砍。这正是「检查通过 ≠ 检查跑全了」的又一变体。
+
+    判据：`_tracked_docs()` 的所有**活跃**成员，都必须**逐个**在磁盘上真实存在。
+    凡是转义路径（含 `\\` 或 `"`）必然在磁盘上不存在 ⇒ 立刻红。
+    """
+    tracked = _tracked_docs()
+    if tracked is None:
+        pytest.fail("拿不到 git 索引——本元守卫与 tracked_only 口径都失效，请在有 git 的环境运行")
+
+    # ── 判据①（源码，AST）：`_tracked_docs()` 内部的 git 调用必须带 quotepath=false ──
+    # 我第一版把判据写在"自己再跑一次 git 看原始输出"上，**错得离谱**：
+    # 那样跑出来的**必然**是转义的（不关 quotepath 就是转义），于是守卫恒红、
+    # 与真实实现脱节。判据必须盯**被测函数自己的命令**，不是另起一次调用。
+    import ast as _ast
+    src = (ROOT / "tests" / "test_docs_coverage.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    cmd_lits: list[list[str]] = []
+    for node in _ast.walk(tree):
+        # 找 `subprocess.run([...], ...)` 的实参列表字面量
+        if (isinstance(node, _ast.Call)
+                and isinstance(node.func, _ast.Attribute)
+                and node.func.attr == "run"):
+            for arg in node.args:
+                if isinstance(arg, _ast.List) and arg.elts and all(
+                    isinstance(e, _ast.Constant) and isinstance(e.value, str)
+                    for e in arg.elts
+                ):
+                    cmd_lits.append([e.value for e in arg.elts])
+    ls_cmds = [c for c in cmd_lits if "ls-files" in c and any("docs" in x for x in c)]
+    assert ls_cmds, (
+        "在源码里找不到 `git ... ls-files ... docs` 形式的 subprocess.run 调用——"
+        "`_tracked_docs()` 的实现形态变了，本守卫的 AST 判据已失效，请同步。"
+    )
+    for c in ls_cmds:
+        assert "-c" in c and any(x == "core.quotepath=false" for x in c), (
+            f"`_tracked_docs()` 的 git 调用没有 `-c core.quotepath=false`：{c}\n"
+            "非 ASCII 路径不关 quotepath 会输出成 `\"docs/EP-01_\\351\\230\\266...\"`，"
+            "与磁盘路径比对**全部落空** ⇒ `_active_docs(tracked_only=True)` 把"
+            "**已跟踪的中文名文档误判成草稿**（实测扫描面 27 → 10，"
+            "且数字变小**看着像问题被修好了**）。"
+        )
+
+    # ── 判据②（行为）：返回值里的活跃文档必须逐篇在磁盘上真实存在 ──
+    active_tracked = {
+        d for d in tracked
+        if "/archive/" not in d and "/reviews/" not in d
+        and not pathlib.Path(d).name.startswith("0.10.0-")
+    }
+    assert len(active_tracked) >= 10, (
+        f"追踪到的活跃文档只有 {len(active_tracked)} 篇（下限 10）——"
+        f"疑似 quotepath 转义导致解析失败：{sorted(active_tracked)[:5]}"
+    )
+    missing_on_disk = [d for d in active_tracked if not (ROOT / d).exists()]
+    assert not missing_on_disk, (
+        "`_tracked_docs()` 返回了磁盘上不存在的路径（编码/分隔符不一致）：\n  "
+        + "\n  ".join(missing_on_disk[:5])
+    )
+
+
 def _tracked_docs() -> set[str] | None:
     """从 **git 索引**取 `docs/**/*.md` —— 独立于磁盘 glob 与排除规则。
 
     返回 None 表示拿不到 git（源码包脱离仓库）——调用方应跳过该条断言，
     但仍保留上面的非空与数量下限（那两条不依赖 git）。
+
+    ## 必须 `-c core.quotepath=false`（2026-10-02 我自己的坑）
+
+    默认 `core.quotepath=true` 时，git 把**非 ASCII 路径**输出成转义形式：
+
+        "docs/EP-01_\\351\\230\\266\\346\\256\\2650_...md"
+
+    与磁盘相对路径（`docs/EP-01_阶段0_....md`）**比对必然失败**。实测本仓：
+
+        默认 quotepath     → 与磁盘路径能对上 33 / 78
+        quotepath=false    → 能对上 78 / 78
+
+    后果很隐蔽：`_active_docs(tracked_only=True)` 会把**中文名的已跟踪文档误判成
+    草稿**而跳过——扫描面从应得的 27 篇掉到 10 篇（**恰好全是中文名的那些**），
+    而用例数"变小"看着像是被修好了，实则**守卫覆盖被砍掉一截**。
+    （本仓绝大多数文档是中文名，所以这个坑的影响面极大。）
+
+    ⇒ 一律传 `-c core.quotepath=false`；且下面的元守卫会钉住"能对上数 == 跟踪总数"，
+    防止哪天有人把这个参数去掉。
     """
     try:
         r = subprocess.run(
-            ["git", "ls-files", "docs/"],
+            ["git", "-c", "core.quotepath=false", "ls-files", "docs/"],
             cwd=str(ROOT), capture_output=True, text=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
