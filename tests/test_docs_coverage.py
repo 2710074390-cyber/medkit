@@ -429,30 +429,49 @@ def test_tracked_docs_path_encoding_is_not_escaped():
     import ast as _ast
     src = (ROOT / "tests" / "test_docs_coverage.py").read_text(encoding="utf-8")
     tree = _ast.parse(src)
-    cmd_lits: list[list[str]] = []
+    run_calls: list[_ast.Call] = []
     for node in _ast.walk(tree):
-        # 找 `subprocess.run([...], ...)` 的实参列表字面量
         if (isinstance(node, _ast.Call)
                 and isinstance(node.func, _ast.Attribute)
                 and node.func.attr == "run"):
-            for arg in node.args:
-                if isinstance(arg, _ast.List) and arg.elts and all(
-                    isinstance(e, _ast.Constant) and isinstance(e.value, str)
-                    for e in arg.elts
-                ):
-                    cmd_lits.append([e.value for e in arg.elts])
-    ls_cmds = [c for c in cmd_lits if "ls-files" in c and any("docs" in x for x in c)]
-    assert ls_cmds, (
+            run_calls.append(node)
+
+    def _cmd_of(call: _ast.Call) -> list[str]:
+        for arg in call.args:
+            if isinstance(arg, _ast.List) and arg.elts and all(
+                isinstance(e, _ast.Constant) and isinstance(e.value, str)
+                for e in arg.elts
+            ):
+                return [e.value for e in arg.elts]
+        return []
+
+    ls_calls = [c for c in run_calls
+                if "ls-files" in _cmd_of(c) and any("docs" in x for x in _cmd_of(c))]
+    assert ls_calls, (
         "在源码里找不到 `git ... ls-files ... docs` 形式的 subprocess.run 调用——"
         "`_tracked_docs()` 的实现形态变了，本守卫的 AST 判据已失效，请同步。"
     )
-    for c in ls_cmds:
-        assert "-c" in c and any(x == "core.quotepath=false" for x in c), (
-            f"`_tracked_docs()` 的 git 调用没有 `-c core.quotepath=false`：{c}\n"
+    for c in ls_calls:
+        cmd = _cmd_of(c)
+        assert "-c" in cmd and "core.quotepath=false" in cmd, (
+            f"`_tracked_docs()` 的 git 调用没有 `-c core.quotepath=false`：{cmd}\n"
             "非 ASCII 路径不关 quotepath 会输出成 `\"docs/EP-01_\\351\\230\\266...\"`，"
             "与磁盘路径比对**全部落空** ⇒ `_active_docs(tracked_only=True)` 把"
             "**已跟踪的中文名文档误判成草稿**（实测扫描面 27 → 10，"
             "且数字变小**看着像问题被修好了**）。"
+        )
+        # ── 判据①b：同一调用必须显式 encoding="utf-8" ──
+        # 关掉 quotepath 后输出是真 UTF-8 中文；若继续用 text=True 的 locale 默认，
+        # Windows CI（cp1252）会在 subprocess._readerthread 抛 UnicodeDecodeError，
+        # **stdout 变成 None**，而本函数跑在模块加载期 ⇒ 整个文件收集失败
+        # （run 36980725028 实证）。
+        kw = {k.arg: k.value for k in c.keywords if k.arg}
+        enc = kw.get("encoding")
+        assert (isinstance(enc, _ast.Constant) and enc.value == "utf-8"), (
+            f"`_tracked_docs()` 的 git 调用没显式 `encoding=\"utf-8\"`：{cmd}\n"
+            "text=True 会按 **locale** 解码（Windows CI 是 cp1252），"
+            "非 ASCII 输出会抛 UnicodeDecodeError ⇒ stdout=None ⇒ "
+            "在模块加载期令整个 test_docs_coverage.py **收集失败**。"
         )
 
     # ── 判据②（行为）：返回值里的活跃文档必须逐篇在磁盘上真实存在 ──
@@ -496,15 +515,29 @@ def _tracked_docs() -> set[str] | None:
 
     ⇒ 一律传 `-c core.quotepath=false`；且下面的元守卫会钉住"能对上数 == 跟踪总数"，
     防止哪天有人把这个参数去掉。
+
+    ## 必须显式 `encoding="utf-8"`（2026-10-02 CI Windows 实证）
+
+    关掉 quotepath 后输出就是**真 UTF-8 中文**，若还用 `text=True` 的默认行为
+    （按 **locale** 解码），Windows CI（cp1252）会直接炸在 `subprocess._readerthread`：
+
+        UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f ...
+        AttributeError: 'NoneType' object has no attribute 'strip'   ← stdout 成了 None
+
+    且因为它跑在**模块加载期**（`@pytest.mark.parametrize` 求值），
+    整个 `test_docs_coverage.py` **收集失败**（run 36980725028 实证）。
+    ⇒ 显式 `encoding="utf-8", errors="replace"`，**不依赖 locale**；
+    并把 `AttributeError` 一并纳入兜底（stdout 可能为 None）。
     """
     try:
         r = subprocess.run(
             ["git", "-c", "core.quotepath=false", "ls-files", "docs/"],
-            cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, AttributeError):
         return None
-    if r.returncode != 0 or not r.stdout.strip():
+    if r.returncode != 0 or not (r.stdout or "").strip():
         return None
     return {x for x in r.stdout.split() if x.endswith(".md")}
 
