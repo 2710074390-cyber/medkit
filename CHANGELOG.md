@@ -10,6 +10,136 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+## [0.11.0] - 2026-10-02
+
+> **本版为何是 minor（而非 patch）**：0.10.6 之后合入了**一项新功能**——D4 别名表
+> （`core/kp_aliases.py`，缩写/别名双向召回）。按 SemVer，`feat` ⇒ minor。
+> 同时 0.10.6 的发布产物（构建于 2026-10-02 00:32）**早于**随后的 10 个提交，
+> 其中 5 个改动 `medkit/`（生产代码）——**产物内容已陈旧**，与 0.10.5 当初的处境相同。
+>
+> **内容范围**：D4 别名表；二轮审计 W1–W12 全部落地（含 W12 测试假绿收尾）；
+> 测试隔离 R5-01 第三次触发根治；CI 在 Windows runner 上的两处 cp1252 崩溃；
+> 「计数真身」与工作区草稿解耦；文档守卫缺口（绝对路径引用）；`docs/research/` 调研入库。
+
+### Added（D4 别名表：缩写/别名双向召回）
+
+背景：`errsearch` 的子串 + 二元组召回对「缩写 vs 全称」无能为力——实测「心衰」搜不到
+只写「心力衰竭」的记录，FTS5 同样 0 命中。这是当时唯一剩下的纯工程待办。
+
+- 新增 `medkit/core/kp_aliases.py`：**25 组等价组**（74 个成员），模块级 `_INDEX`
+  在 import 时 fail-fast 去重。`alias_of` / `expand`（token→组，保序去重透传）/
+  `match_query`（整串兜底）。
+- `errsearch` 接线：`query_tokens` 加**整串匹配**（兜 jieba 切碎中文简称，如「慢阻肺」
+  被切成 `['慢阻','阻肺']` 逐 token 查表全落空）；`_score_card` 按组 `any()` 命中计分，
+  覆盖率 = 命中组数 / 总组数；`_pick_snippet` 用**实际命中的成员**定位片段。
+
+### Fixed（二轮审计 W1–W12）
+
+- **W4 端点 SSRF**：`core/config.py` 新增 `endpoint_safety_error()`，拦云元数据
+  （`169.254.0.0/16` · `fe80::/10` · 元数据主机名），**不误伤**回环与内网（Ollama）；
+  `routers/config.py` 三处（`put_config` / `llm_test` / `llm_models`）接入。
+- **W6 建项目阻塞事件循环**：`routers/projects.py:create_project` 改 `async` +
+  `asyncio.to_thread`，与 `upload_asset` / `pipeline` 同口径。
+- **W9 页数闸失败留痕**：`core/mineru.py:_page_count` 失败不再静默 `None`，
+  记 `mineru.page_count_unavailable`——「没量到」不得等同「没超限」。
+- **W10 token 硬上限**：`core/usage.py` 新增 `BudgetExceeded` + `UsageContext(limit_tokens)`；
+  `DEFAULTS["run_token_limit"]=0`（不限制）；`run_project` 接线。
+- **W11 删除预演**：`routers/projects.py:delete_asset` 支持 `?dry_run=1`（只回报不 unlink）。
+- **W12 测试假绿收尾**（W6 回归暴出的两个独立缺陷）：
+  - `tests/test_smoke.py::test_project_ratio_validation` **长期假绿**——直接调 async
+    handler 只拿到**从未运行的协程**，`except HTTPException` 因此 0 次执行仍计 PASS。
+    改走 `conftest.run_coro`，断言收紧为**闸门探针** `routers.projects._GATE_PROBE[0] == "ratio"`
+    ——从「抛了 400」变为「**是配比这一闸**拦的」。
+  - `medkit/main.py:_open` 探活由 `urllib.request.urlopen` 改**裸 socket**：urllib 读
+    `getproxies()`（Windows 注册表 `ProxyOverride`）实测阻塞 >1s。
+- **W1/W2 原子写**：`slices.json` / `stage.json` 等改走 `write_json_atomic`。
+- **W5 门禁三态**：失败分支不得静默置空列表，必须记入 `unverified` 并落 meta + 产物页 ⛔ 徽标。
+- **W7 OCR 任务态归一**：重启时 `running`/`queued` → `interrupted`，终态不改写。
+- **W8 持久错误清单**：落盘 JSONL + 模拟重启可查 + 去重 + 裁剪 + 脱敏 + 损坏行容错。
+
+### Fixed（测试隔离：R5-01 防污染哨兵第三次触发）
+
+现象：`logs/errors.jsonl` 每跑一次测试就多几行。根因链条（查证完整，非猜测）：
+
+1. 大量 `TestClient(m.app)` 一进 `lifespan` 就 spawn `main._open` 守护线程；
+   测试进程没有 uvicorn 监听 ⇒ `socket` 必然超时 ⇒ 每次都 `errs.record(...)`。
+2. 该**守护线程生命周期长于 function 级 fixture**；`monkeypatch.setenv` 在 teardown
+   时被还原，线程随后写盘读到空 env ⇒ 回落真实 `~/.medkit/logs/`。
+3. 项目**本来就有** `MEDKIT_NO_BROWSER=1`，但只有 browser 层与 `test_shutdown_lifecycle`
+   设了它——其余用例全漏。
+
+修法（三层，从源头到兜底）：
+
+- **会话级 `MEDKIT_NO_BROWSER=1`**：测试**从不**需要自动开浏览器 ⇒ 让这条探活路径
+  **根本不启动**（比事后拦写正确）。
+- **会话级钉死 `MEDKIT_LOG_DIR`**（临时目录，非 function 级 `tmp_path`），
+  覆盖任何「活过 function fixture」的调用者。
+- **`core/errors._errors_log_path()` 支持显式关闭落盘**（返回 `None`）：
+  `MEDKIT_ERRORS_LOG=""` / `MEDKIT_LOG_DIR=""` / `MEDKIT_NO_DISK=1`。
+  理由：**一次探活超时不该替用户在家目录凭空建 `logs/errors.jsonl`**。
+
+> **通用规律**：function 级 fixture 兜不住守护线程——凡「活过用例」的后台写盘路径，
+> 隔离必须放**会话级**。
+
+### Fixed（CI：Windows runner 上的两处 cp1252 崩溃）
+
+GitHub Actions 的 Windows runner 默认 locale 是 **cp1252**（本机是 cp936/GBK）；
+**CP1252 类 bug 在本地复现不出**。本版闭合两处：
+
+- **`bbc568d`｜`pack/` 脚本输出**：凡 `print` 实参含 CJK 却无 `sys.stdout.reconfigure`
+  的脚本即红（AST 守卫）。否则子进程 `UnicodeEncodeError`。
+  （run 36968684662 实证 `test_stage0_export_cases` 挂在这里。）
+- **`23d6a83`｜`subprocess` 捕获 git 输出**：`text=True` 按 **locale** 解码 ⇒
+  Windows CI（cp1252）`UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f`
+  ⇒ `stdout=None` ⇒ `AttributeError`；又因跑在**模块加载期**（parametrize 求值），
+  **整个 `test_docs_coverage.py` 收集失败**。修：显式 `encoding="utf-8", errors="replace"`
+  ——**不依赖 locale**。
+
+> **两条硬通则**：① `subprocess` 捕获"可能含非 ASCII"的输出，必须显式 `encoding="utf-8"`；
+> ② `git ls-files` 列非 ASCII 路径必须 `-c core.quotepath=false`（否则输出转义串，
+> 与磁盘路径**比对全部落空**——实测 33/78 vs 78/78）。
+
+### Fixed（门禁：「计数真身」必须对工作区状态免疫）
+
+- **`b8acfe6`**：`_active_docs()` 曾扫**磁盘** `docs/**/*.md` 决定参数化用例数 ⇒
+  **未跟踪的 docs 草稿让本地比 CI 多数**（实测 2 篇草稿 = 差 2，CI 因此必红）。
+  现参数化走 `tracked_only=True`（`git ls-files`），草稿另由**单条非参数化**用例兜住。
+- **`ca7ec25`**：`_tracked_docs()` 未关 `core.quotepath` ⇒ 把**已跟踪的中文名文档
+  误判成草稿**，扫描面 27 → 10。**最阴处**：用例数"变小"看着像问题被修好了，
+  实则守卫覆盖被砍掉 17 篇。
+
+### Fixed（文档守卫缺口：仓内资产不得用绝对路径引用）
+
+- **`7881bbd`**：迁移 `docs/research/` 时当场打断 4 处引用，暴露一处**此前零覆盖**的
+  盲区——`_missing_refs()` 只认相对路径前缀，**绝对路径一律跳过**（全仓另有 33 处）。
+  新守卫判据 =「**仓内**资产不得用绝对路径引用」（路径段含仓名），
+  **放行**仓外资产（`.medkit` / `MedAgentWork` / `Windows\Fonts` 只能写绝对值）。
+
+### Added（调研文档入库）
+
+4 篇调研 md + 1 份 HTML 看板 + 8 张截图，迁入新建的 `docs/research/`
+（根目录只放 `CHANGELOG` / `README` / `THIRD_PARTY_NOTICES` 三个规范文件）。
+内容：MCP Server 可行性、学习功能开源机制、商业产品错题功能机制、错题工作台方案 B、
+题库刷题功能——均为后续产品决策的调研依据。
+
+### Changed（新增守卫）
+
+| 守卫 | 项数 | 作用 |
+|---|---|---|
+| `test_kp_aliases` | 37 | 结构（非空/不跨组重复/对称/无冗余）+ 元守卫自证 + 双向行为召回 |
+| `test_errsearch` | 18 | 覆盖率优先排序 / 片段取实际命中成员 / 检索面只有自己的数据 |
+| `test_endpoint_ssrf_guard` | 19 | 拦云元数据与链路本地，**不误伤** Ollama 与内网 |
+| `test_create_project_async` | 5 | AST 判 `async` + `await asyncio.to_thread` 包住建项目 |
+| `test_usage_budget_guard` | 7 | token 越线抛 `BudgetExceeded`；默认 0 = 不限制 |
+| `test_w9_w11_asset_guards` | 6 | 页数闸失败留痕 / 删除预演只回报不 unlink |
+| `test_persistent_errors` | 10→14 | 持久错误清单 + 显式关闭落盘三开关 |
+| `test_docs_coverage` | 65→71 | 新增绝对路径检测 + README 文件级登记数守卫 |
+
+### 测试
+
+**1449 项 pytest**（1449 passed；主分支全绿，无 skip；含浏览器层 82 项，分进程执行）。
+ruff 全仓 clean；mypy 85 源文件 0 error。
+
 ## [0.10.6] - 2026-10-02
 
 > **本版为何要 bump**：0.10.5 的发布产物（构建于 2026-09-28）**早于** EP-01 图像录入、
