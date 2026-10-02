@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23b3342a'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='white' font-family='sans-serif'%3E%E9%94%99%3C/text%3E%3C/svg%3E">
+<title>商业产品「错题生成 / 错题管理 / 元认知分析」机制调研</title>
+<style>
+  :root{
+    --bg:#f6f5f1; --card:#ffffff; --ink:#1f2937; --muted:#6b7280;
+    --med:#b3342a; --med-bg:#fbeeed;
+    --gen:#2c6e8f; --gen-bg:#eaf2f6;
+    --ok:#1a7f4b; --ok-bg:#e6f4ec;
+    --ad:#b7791f; --ad-bg:#fbf1de;
+    --unk:#6b7280; --unk-bg:#eef0f2;
+    --line:#e6e3db;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:"Noto Sans SC","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    line-height:1.65;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:36px 22px 80px}
+  header.hero{margin-bottom:28px}
+  header.hero h1{font-size:26px;font-weight:800;letter-spacing:.5px;margin-bottom:10px}
+  header.hero p.sub{color:var(--muted);font-size:14px;max-width:820px}
+  .meta-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px;align-items:center}
+  .legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px;color:var(--muted)}
+  .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+  .tag.med{background:var(--med-bg);color:var(--med)}
+  .tag.gen{background:var(--gen-bg);color:var(--gen)}
+  .tag.ok{background:var(--ok-bg);color:var(--ok)}
+  .tag.ad{background:var(--ad-bg);color:var(--ad)}
+  .tag.unk{background:var(--unk-bg);color:var(--unk)}
+  .section-h{display:flex;align-items:center;gap:12px;margin:38px 0 18px}
+  .section-h h2{font-size:19px;font-weight:800}
+  .section-h .bar{width:5px;height:20px;border-radius:3px}
+  .section-h.med .bar{background:var(--med)} .section-h.gen .bar{background:var(--gen)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .card-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px;
+    padding-bottom:12px;border-bottom:1px dashed var(--line)}
+  .card-head h3{font-size:17px;font-weight:800}
+  .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
+  .col h4{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.5px;
+    text-transform:uppercase;margin-bottom:9px;display:flex;align-items:center;gap:7px}
+  .col h4 .dot{width:7px;height:7px;border-radius:2px;display:inline-block}
+  .col.gen-c h4 .dot{background:var(--gen)}
+  .col ul{list-style:none}
+  .col li{margin-bottom:10px;font-size:13.8px;line-height:1.6}
+  .li-t{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;margin-bottom:2px}
+  .li-t b{font-weight:600}
+  .src{font-size:12px}
+  .src a{color:var(--gen);text-decoration:none;word-break:break-all}
+  .src a:hover{text-decoration:underline}
+  .note{font-size:12.5px;color:var(--muted);font-style:italic}
+  /* 归纳区 */
+  .pattern{background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:10px}
+  .pattern h2{font-size:19px;font-weight:800;margin-bottom:6px}
+  .pattern>p.lead{color:var(--muted);font-size:14px;margin-bottom:18px}
+  .pblock{margin-bottom:18px}
+  .pblock h3{font-size:15px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .pblock h3 .n{width:22px;height:22px;border-radius:6px;background:var(--ink);color:#fff;
+    font-size:12.5px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+  .pblock ol{margin-left:4px}
+  .pblock li{margin-bottom:9px;font-size:14px;line-height:1.6}
+  .from{color:var(--muted);font-size:12.5px}
+  table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;table-layout:fixed}
+  th,td{border:1px solid var(--line);padding:8px 10px;vertical-align:top;text-align:left;word-break:break-word}
+  th{background:#faf9f5;font-weight:700}
+  .footnote{margin-top:30px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+  @media(max-width:820px){
+    .cols{grid-template-columns:1fr}
+    .wrap{padding:24px 14px 60px}
+    header.hero h1{font-size:21px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>商业产品「错题生成 / 错题管理 / 元认知分析」实现机制调研</h1>
+    <p class="sub">委托人：2027 考研 · 首都医科大学全科医学（西医综合）。目的：为「不写代码、用 Cherry Studio 的 Agent + 知识库 + Skills 复刻三大学习功能」提供商业产品参照。调研对象为医考垂直产品与通用学习产品，每条结论均标注证据等级与来源。</p>
+    <div class="meta-row">
+      <span class="legend">证据等级：
+        <span class="tag ok">查证</span> 有公开依据（官方文档 / 官方商店描述 / 产品内可见 / 权威媒体）
+        <span class="tag ad">宣传</span> 仅官网或第三方宣称，缺独立依据
+        <span class="tag unk">未查证</span> 未检索到公开依据
+      </span>
+    </div>
+  </header>
+
+  <!-- ===================== 医考垂直 ===================== -->
+  <div class="section-h med"><span class="bar"></span><h2>一、医考垂直产品（西综相关，优先参照）</h2></div>
+
+  <!-- 医考帮 -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag med">医考垂直 · 西医综合考研</span>
+      <h3>医考帮</h3>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>AI 自助组题</b><span class="tag ok">查证</span></div>
+            <div>官方功能介绍页将「AI自助组题」与错题、收藏、刷题统计并列为实用功能。</div>
+            <div class="src"><a href="https://m.yikaobang.com.cn/app/introduce.html" target="_blank">m.yikaobang.com.cn/app/introduce.html</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>多模态 AI 伴学助手（2026-09 上线）</b><span class="tag ok">查证</span></div>
+            <div>官方抖音号发布：支持放射/超声/CT 影像读图、语音口述、纸质试卷拍照，拆解病灶特征并对应考点。</div>
+            <div class="src"><a href="https://www.iesdouyin.com/share/video/7687919870385736969" target="_blank">iesdouyin.com 官方视频</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>错题智能推送相似题型</b><span class="tag ad">宣传</span></div>
+            <div>第三方下载站称「自动记录错题并智能推送相似题型强化」，官网未明确。</div>
+            <div class="src"><a href="https://m.goapk.com/anzhuo/42543.html" target="_blank">m.goapk.com</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>错题自动归集 + 按章节/年份筛选</b><span class="tag ok">查证</span></div>
+            <div>应用商店描述：错题自动归集，支持按章节、年份分类筛选；收藏不受做题记录清空影响。官网仅列「错题」功能未明说自动。</div>
+            <div class="src"><a href="https://m.pc6.com/s/1701182" target="_blank">pc6 应用描述</a> · <a href="https://m.3h3.com/az/424585.html" target="_blank">3h3</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>四种刷题模式</b><span class="tag ok">查证</span></div>
+            <div>练习 / 快刷 / 测试 / 背题；题库按学科、年份、系统、题型、考频分类。</div>
+            <div class="src"><a href="https://m.yikaobang.com.cn/app/introduce.html" target="_blank">官方功能介绍页</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>类 Anki 间隔调度</b><span class="tag unk">未查证</span></div>
+            <div>刷题侧未检索到跨天间隔重复算法公开依据；「艾宾浩斯记忆法」仅为名师教学法，非 APP 调度。</div>
+            <div class="src"><a href="https://www.yikaobang.com.cn/mstd.html" target="_blank">名师团队页（教学法）</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>刷题统计</b><span class="tag ok">查证</span></div>
+            <div>官方列出「刷题统计」为内置功能。</div>
+            <div class="src"><a href="https://m.yikaobang.com.cn/app/introduce.html" target="_blank">官方功能介绍页</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>逐题正确率统计</b><span class="tag ok">查证</span></div>
+            <div>产品描述：每题展示全体平均正确率、本人正确率、答题次数。</div>
+            <div class="src"><a href="https://www.anfensi.com/down/135437.html" target="_blank">anfensi 产品描述</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>知识图谱定位薄弱 / 万人模考提分报告</b><span class="tag ad">宣传</span></div>
+            <div>第三方下载站称「知识图谱定位薄弱环节、万人模考生成个性化提分报告、错题追杀」，缺官网独立依据。</div>
+            <div class="src"><a href="https://m.onlinedown.net/soft/10106932.htm" target="_blank">华军软件园</a> · <a href="https://m.onlinedown.net/soft/10041574.htm" target="_blank">对比文</a></div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 蓝基因 -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag med">医考垂直 · 西医综合考研</span>
+      <h3>蓝基因</h3>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>自定义组题（按章节/题型组合）</b><span class="tag ok">查证</span></div>
+            <div>官方头条号：可按章节、题型组合习题，针对性强化；另有「每日一练」每日推送核心考点题。</div>
+            <div class="src"><a href="http://m.toutiao.com/group/7621108909914210879/" target="_blank">蓝基因官方头条号</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>考点按考频分级</b><span class="tag ok">查证</span></div>
+            <div>App Store 官方描述：必背考点按高/中/低频分类；章节内题目智能乱序。</div>
+            <div class="src"><a href="https://apps.apple.com/cn/app/id1642455052" target="_blank">App Store 官方描述</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>「AI 生成薄弱考点专项训练」</b><span class="tag ad">宣传</span></div>
+            <div>第三方下载站称「机器学习分析答题数据自动生成薄弱考点专项训练」，官方头条号与商店描述均未提 AI。</div>
+            <div class="src"><a href="https://m.goapk.com/anzhuo/48953.html" target="_blank">goapk 第三方描述</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>智能错题本：自动归纳 + 重组重做</b><span class="tag ok">查证</span></div>
+            <div>官方头条号明确：「自动归纳错题，支持重组重做，高效复盘查漏」。</div>
+            <div class="src"><a href="http://m.toutiao.com/group/7621108909914210879/" target="_blank">蓝基因官方头条号</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>纸质书配套扫码录答案生成错题本</b><span class="tag ok">查证</span></div>
+            <div>官方视频：做完《解析霸》纸质书后 APP 扫码录答案，自动识别错误并生成专属电子错题本。</div>
+            <div class="src"><a href="https://www.iesdouyin.com/share/video/7127492899415002405" target="_blank">蓝基因官方抖音</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>类 Anki 间隔调度</b><span class="tag unk">未查证</span></div>
+            <div>官方仅提「错题重练 / 重组重做」，未检索到跨天间隔重复算法公开依据。</div>
+            <div class="src note">App Store 模块列表（错题重练）见上</div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>数据统计：刷题量 + 正确率定位薄弱</b><span class="tag ok">查证</span></div>
+            <div>官方头条号：自动记录刷题量与正确率，清晰定位薄弱环节；另有全国刷题排行对比。</div>
+            <div class="src"><a href="http://m.toutiao.com/group/7621108909914210879/" target="_blank">蓝基因官方头条号</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>薄弱项分析模块</b><span class="tag ok">查证</span></div>
+            <div>App Store 官方描述将「薄弱项分析」列为高效学习模块之一。</div>
+            <div class="src"><a href="https://apps.apple.com/cn/app/id1642455052" target="_blank">App Store 官方描述</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>考点还原（解析定位教材出处）</b><span class="tag ok">查证</span></div>
+            <div>官方：考点精准对应官方教材，逐项拆解选项与易错陷阱。</div>
+            <div class="src"><a href="http://m.toutiao.com/group/7621108909914210879/" target="_blank">蓝基因官方头条号</a></div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 昭昭医考 -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag med">医考垂直 · 临床执业医师为主</span>
+      <h3>昭昭医考</h3>
+      <span class="note">（西综非主线，但「AI 错题变式题」机制最贴近委托人目标，单列参照）</span>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>AI 错题再练：秒级生成变式题</b><span class="tag ok">查证</span></div>
+            <div>官网官方文章：针对错题考点「2 秒生成全新改编题」，替代人工整理；还原病例分析与干扰项设计。</div>
+            <div class="src"><a href="https://m.yikao88.com/bkzl/63517.html" target="_blank">昭昭官网官方文章</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>自主组卷</b><span class="tag ok">查证</span></div>
+            <div>可按科目章节、年份、题型、来源、模式、题数自由组卷。</div>
+            <div class="src"><a href="https://m.yikao88.com/bkzl/63430.html" target="_blank">昭昭官网</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>智能错题系统：定位盲区 + 推同类题</b><span class="tag ok">查证</span></div>
+            <div>官网：智能错题系统精准定位薄弱环节并推送同类题强化训练。</div>
+            <div class="src"><a href="https://m.yikao88.com/bkzl/63509.html" target="_blank">昭昭官网</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>错因分类（知识混淆/审题不清/逻辑缺失）</b><span class="tag ad">宣传</span></div>
+            <div>官网红榜文称可区分错因类型，属自家宣传口径。</div>
+            <div class="src"><a href="https://m.yikao88.com/bkzl/63434.html" target="_blank">昭昭官网</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>AI 私教 / AI 智学 1v1 规划</b><span class="tag ok">查证</span></div>
+            <div>App Store 官方描述列「AI 私教」；官网推「小昭智学」1v1 规划班。</div>
+            <div class="src"><a href="https://apps.apple.com/cn/app/id1446876619" target="_blank">App Store</a> · <a href="https://m.yikao88.com/bkzl/63350.html" target="_blank">昭昭官网</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>AI 分析学习数据推送高频考点</b><span class="tag ad">宣传</span></div>
+            <div>官网宣传口径，缺第三方测评。</div>
+            <div class="src"><a href="https://www.yikao88.com/bkzl/63373.html" target="_blank">昭昭官网</a></div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 通用学习产品 ===================== -->
+  <div class="section-h gen"><span class="bar"></span><h2>二、通用学习产品（错题本 / 学习报告 / 间隔重复）</h2></div>
+
+  <!-- 猿题库 -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag gen">通用学习 · K12/中高考刷题</span>
+      <h3>猿题库</h3>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>专项智能练习：知识点拆分 + 能力评估</b><span class="tag ok">查证</span></div>
+            <div>官网教程：详细拆分知识点，记录答题进度并做能力评估，点考点可展开更细层级。</div>
+            <div class="src"><a href="https://yuantiku.com/activity/gaokao/tutorial" target="_blank">猿题库官网教程</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>按做题数据动态调难度组卷</b><span class="tag ad">宣传</span></div>
+            <div>第三方下载站称「依据做题数据调整出题范围与难度生成个性化练习」。</div>
+            <div class="src"><a href="https://lwjgames.com/apps/posts/884.html" target="_blank">lwjgames 第三方描述</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>错题自动整理 + 按考点分类</b><span class="tag ok">查证</span></div>
+            <div>App Store 官方描述：「错题自动整理，随身错题本，按照考点分类整理，巩固复习不落下」。</div>
+            <div class="src"><a href="https://apps.apple.com/cn/app/id852188634" target="_blank">App Store 官方描述</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>错因批注 / 同类题二练 / 导出打印</b><span class="tag ad">宣传</span></div>
+            <div>第三方：按知识点与错题时间分组、加个人批注标注错因、筛选同类错题集中重练、错题集导出打印。</div>
+            <div class="src"><a href="https://soft.china.com/down/2229158.html" target="_blank">中华网软件</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>类 Anki 跨天间隔调度</b><span class="tag unk">未查证</span></div>
+            <div>机制为「定期复习错题本」，未检索到 SM-2 / 间隔重复算法公开依据。</div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>实时做题报告：分析弱项 + 评估掌握水平</b><span class="tag ok">查证</span></div>
+            <div>App Store 官方描述：实时提供做题报告，分析弱项、查缺补漏、智能评估掌握水平。</div>
+            <div class="src"><a href="https://apps.apple.com/cn/app/id852188634" target="_blank">App Store 官方描述</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>考点掌握度可视化（香蕉图标）+ 预测分</b><span class="tag ok">查证</span></div>
+            <div>官网：香蕉越多代表考点掌握越好；点预测分区域进入详细数据报告。</div>
+            <div class="src"><a href="https://yuantiku.com/activity/gaokao/tutorial" target="_blank">猿题库官网教程</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>雷达图 / 预判分数 / 失分高频知识点</b><span class="tag ad">宣传</span></div>
+            <div>第三方下载站称答题后自动生成雷达图、预判考分区间、标记失分高频知识点。</div>
+            <div class="src"><a href="https://soft.china.com/down/2229158.html" target="_blank">中华网软件</a></div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 作业帮 -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag gen">通用学习 · K12（拍照搜题/学习机/喵喵错题）</span>
+      <h3>作业帮</h3>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>智能组卷（按学情定制）</b><span class="tag ad">宣传</span></div>
+            <div>第三方：根据学情分析结果定制个性化练习试卷；练习可按知识点/题型/难度组合出卷、做完自动批改。</div>
+            <div class="src"><a href="https://m.onlinedown.net/soft/10123394.htm" target="_blank">华军软件园</a> · <a href="https://www.ijinshan.com/softinstall/software20260629092250.html" target="_blank">金山教程</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>相似错题反复练习 / 举一反三</b><span class="tag ad">宣传</span></div>
+            <div>错题线（喵喵错题/学习机）：相似错题反复练习，避免重复失分。</div>
+            <div class="src"><a href="https://m.onlinedown.net/soft/587116.htm/" target="_blank">华军软件园</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>错题自动归类知识点 + 一键生成错题卷打印</b><span class="tag ad">宣传</span></div>
+            <div>第三方：自动收纳错题、归类对应知识点，按学期/学科筛选生成错题卷打印。</div>
+            <div class="src"><a href="https://m.onlinedown.net/soft/587116.htm/" target="_blank">华军软件园</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>拍照录入 / 自动去手写 / 排版打印</b><span class="tag ok">查证</span></div>
+            <div>砍柴网报道喵喵机错题学习机：精准文本识别，录入错题后生成个性化学情报告。</div>
+            <div class="src"><a href="http://m.ikanchai.com/pcarticle/418938" target="_blank">砍柴网报道</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>学情分析生成个性化复习计划</b><span class="tag ad">宣传</span></div>
+            <div>第三方称依托大题库智能分析错题知识点、生成个性化复习计划。</div>
+            <div class="src"><a href="https://m.onlinedown.net/soft/10123394.htm" target="_blank">华军软件园</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>学情报告：正确率/时长/薄弱点诊断</b><span class="tag ok">查证</span></div>
+            <div>第三方教程（产品内可见）：图表展示各科练习情况、答题正确率、学习时长分布，智能诊断掌握不牢的知识点。</div>
+            <div class="src"><a href="https://m.oppozhijia.com/wz/949290.html" target="_blank">oppo之家教程</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>错因三级溯源 + 红绿黄掌握度</b><span class="tag ad">宣传</span></div>
+            <div>学习机线媒体评测：对错题做三层错因溯源、回溯历史薄弱点，用绿/黄/红区分掌握等级。</div>
+            <div class="src"><a href="https://aicrunchx.com/zuoyebang-x70-ultra-learning-machine-real-person-ai-learning-companion/" target="_blank">AICrunchX 评测</a></div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quizlet -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag gen">通用学习 · 闪卡/记忆（海外）</span>
+      <h3>Quizlet</h3>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>Learn 题型自适应递进</b><span class="tag ok">查证</span></div>
+            <div>官方帮助中心：答案越来越难，按熟悉度生成个性化序列，从多选过渡到书写。</div>
+            <div class="src"><a href="https://help.quizlet.com/hc/en-us/articles/360030841732-Studying-on-Quizlet" target="_blank">Quizlet 官方帮助中心</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>Q-Chat 对话式 AI 教练</b><span class="tag ok">查证</span></div>
+            <div>第三方评测：不直接给答案，而是追问、解释错因、生成新例子（产品内可见）。</div>
+            <div class="src"><a href="https://aiwiser.nl/quizlet-ai/" target="_blank">aiwiser.nl 评测</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理（间隔重复调度）</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>Learn：ML 个性化学习路径</b><span class="tag ok">查证</span></div>
+            <div>官方帮助中心：基于学习科学 + 机器学习，按学习目标与内容熟悉度打造路径；为 Quizlet Plus 付费功能。</div>
+            <div class="src"><a href="https://help.quizlet.com/hc/zh-cn/articles/360030986971" target="_blank">Quizlet 中文帮助中心</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>技术机制：logistic 回归预测遗忘概率</b><span class="tag ok">查证</span></div>
+            <div>第三方引述 Quizlet 官方 Tech@Blog(2017)：模型训练自约 150 万采样答案，预测哪些词最接近遗忘并优先呈现。</div>
+            <div class="src"><a href="https://dev.learnclash.com/blog/does-quizlet-have-spaced-repetition" target="_blank">dev.learnclash.com</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>非跨天 SM-2 调度（关键区别）</b><span class="tag ok">查证</span></div>
+            <div>第三方技术分析：Learn 是 session 内按预测回忆概率排序，不像 SM-2/FSRS 按天/周排每卡间隔；跨 session 调度有限，付费 Memory Score 提供。</div>
+            <div class="src"><a href="https://www.mindomax.com/quizlet-spaced-repetition" target="_blank">mindomax.com</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>Progress 追踪 + Smart Grading</b><span class="tag ok">查证</span></div>
+            <div>官方帮助中心：订阅者可追踪 Progress、用 smart grading 聚焦概念、自定义学习路径。</div>
+            <div class="src"><a href="https://help.quizlet.com/hc/en-us/articles/360030841732-Studying-on-Quizlet" target="_blank">官方帮助中心</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>掌握判断基于答题速度与正确率</b><span class="tag ok">查证</span></div>
+            <div>第三方：追踪每张卡答得快不快、准不准，难卡更频繁出现。</div>
+            <div class="src"><a href="https://www.notelyn.com/blog/quizlet-spaced-repetition" target="_blank">NoteLyn</a></div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Anki -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag gen">通用学习 · 开源闪卡（间隔重复标杆）</span>
+      <h3>Anki / AnkiWeb</h3>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>无 AI 出题；卡片自制/共享导入</b><span class="tag ok">查证</span></div>
+            <div>不做 AI 组卷，卡片由用户自制或从 ankiweb.net/shared 导入共享 deck。</div>
+            <div class="src"><a href="https://docs.ankiweb.net/" target="_blank">Anki 官方文档</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理（间隔重复调度）</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>官方 SM-2 调度算法</b><span class="tag ok">查证</span></div>
+            <div>官方 FAQ：基于 SuperMemo SM-2；初始间隔 1 天→6 天，Anki 允许自定义初学步骤。</div>
+            <div class="src"><a href="https://faqs.ankiweb.net/what-spaced-repetition-algorithm" target="_blank">Anki 官方 FAQ</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>已集成 FSRS 替代 SM-2</b><span class="tag ok">查证</span></div>
+            <div>官方文档：最近集成新算法 FSRS 作为 SM-2 的替代选项。</div>
+            <div class="src"><a href="https://docs.ankiweb.net/background.html" target="_blank">Anki 官方文档</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>自评驱动 + 易感性因子 EF</b><span class="tag ok">查证</span></div>
+            <div>每次回忆后自评（忘记/困难/良好/简单），系统按间隔×EF 定下次复习日；失败评分重置间隔。</div>
+            <div class="src"><a href="https://mikeydoes.com/glossary/sm-2/" target="_blank">SM-2 机制详解</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>AnkiWeb 跨设备自动同步</b><span class="tag ok">查证</span></div>
+            <div>官方文档：开启后每次开/关 collection 自动多端同步，可在线学习。</div>
+            <div class="src"><a href="https://docs.ankiweb.net/syncing.html" target="_blank">Anki 官方同步文档</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>无自动掌握度报告（刻意设计）</b><span class="tag ok">查证</span></div>
+            <div>不自动诊断薄弱知识点、不出学习报告；掌握度由 due 队列、复习日历与用户自建 tag 体现。</div>
+            <div class="src"><a href="https://docs.ankiweb.net/" target="_blank">Anki 官方文档</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>「遗忘」由调度本身实现，非曲线报告</b><span class="tag ok">查证</span></div>
+            <div>不靠遗忘曲线可视化，而是用调度算法保证在遗忘临界点前再次出现。</div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 墨墨背单词 -->
+  <div class="card">
+    <div class="card-head">
+      <span class="tag gen">通用学习 · 背单词（移动端 SRS 产品化标杆）</span>
+      <h3>墨墨背单词</h3>
+    </div>
+    <div class="cols">
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题生成</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>无 AI 变式题；按目标词书推词</b><span class="tag ok">查证</span></div>
+            <div>用户选目标词汇书，系统按记忆计划推词，不做医学式变式题。</div>
+            <div class="src"><a href="https://memodocs.maimemo.com/docs/memo" target="_blank">墨墨百科</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>错题管理（间隔重复调度）</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>自研 MM 记忆算法 + 千亿级数据</b><span class="tag ok">查证</span></div>
+            <div>官方：基于间隔重复理论与大数据，累计 1900 亿条记忆行为数据，实时评估记忆状态、动态规划复习间隔。</div>
+            <div class="src"><a href="https://memodocs.maimemo.com/docs/memo" target="_blank">墨墨百科</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>逐词/逐人拟合遗忘曲线（非固定艾宾浩斯表）</b><span class="tag ok">查证</span></div>
+            <div>官方 KDD 论文页：用学习者回忆比例估算二元回忆背后的潜在概率，预测遗忘临界点；选「认识/模糊/不认识」实时调下次复习日。</div>
+            <div class="src"><a href="https://memodocs.maimemo.com/docs/2022_KDD/" target="_blank">墨墨 KDD 论文页</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>学术背书（SIGKDD / TKDE）</b><span class="tag ok">查证</span></div>
+            <div>发表《A Stochastic Shortest Path Algorithm for Optimizing Spaced Repetition Scheduling》(SIGKDD) 等。</div>
+            <div class="src"><a href="https://m.wandoujia.com/apps/6700169" target="_blank">豌豆荚官方页</a></div>
+          </li>
+          <li>
+            <div class="li-t"><b>反馈规则：首现影响长期规划</b><span class="tag ok">查证</span></div>
+            <div>官方帮助：单词当天首次出现的反馈决定未来第几天再出现；当天非首次只影响当天内间隔。</div>
+            <div class="src"><a href="https://www.maimemo.com/help30" target="_blank">墨墨官方帮助</a></div>
+          </li>
+        </ul>
+      </div>
+      <div class="col gen-c">
+        <h4><span class="dot"></span>元认知分析</h4>
+        <ul>
+          <li>
+            <div class="li-t"><b>遗忘曲线 / 记忆持久度可视化</b><span class="tag ok">查证</span></div>
+            <div>App Store 官方介绍：据艾宾浩斯曲线设计计划，统计页可看学习遗忘曲线、每日复习量、未来复习压力、已学词熟知度。</div>
+            <div class="src"><a href="https://apps.apple.com/cn/iphone/story/id1472723129" target="_blank">App Store 官方介绍</a></div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 产品化模式归纳 ===================== -->
+  <div class="pattern">
+    <h2>三、商业产品在三大功能上的常见产品化模式归纳</h2>
+    <p class="lead">下列模式均由上面 8 个产品的实际机制归纳而成，每条标注「来自哪些产品」。这是委托人用 Cherry Studio 复刻功能时最值得对标的范式。</p>
+
+    <div class="pblock">
+      <h3><span class="n">1</span>错题生成：考点标签组卷是底座，AI 变式题是新趋势</h3>
+      <ol>
+        <li><b>模式 A｜考点标签驱动的人工题库组卷</b>：题库预先按章节/年份/题型/考频打标，用户或系统按标签筛选组合成卷。
+          <div class="from">来自：医考帮、蓝基因、猿题库、昭昭医考、作业帮（全行业最普遍，证据多为官方/商店描述）。</div></li>
+        <li><b>模式 B｜错题触发 AI 变式题/同类题推送</b>：针对错题对应的考点，生成新题或推荐同类题，实现「举一反三」。
+          <div class="from">来自：昭昭医考（官方明确「2 秒生成变式题」，查证）；猿题库/作业帮（宣传「同类题/举一反三」）；医考帮（宣传「推送相似题型」）。<b>这是最贴近委托人「错题生成」目标、且被官方验证可行的范式。</b></div></li>
+        <li><b>模式 C｜AI 自助组题入口</b>：给用户一个「AI 组题」按钮，按需生成。
+          <div class="from">来自：医考帮（官方列「AI 自助组题」，查证）。</div></li>
+        <li><b>模式 D｜AI 对话答疑（不直接出题，解释+追问+举例）</b>。
+          <div class="from">来自：医考帮 AI 伴学助手（多模态影像/拍照）、Quizlet Q-Chat（对话式教练）。</div></li>
+      </ol>
+    </div>
+
+    <div class="pblock">
+      <h3><span class="n">2</span>错题管理：自动收录+考点打标是标配，间隔重复分两档</h3>
+      <ol>
+        <li><b>模式 E｜错题答错即自动收录</b>：无需手动抄题，答错自动入本。
+          <div class="from">来自：医考帮、蓝基因、猿题库、作业帮、昭昭（几乎全行业标配）。</div></li>
+        <li><b>模式 F｜按考点/章节/年份自动归类打标</b>：错题本不是时间流水账，而是挂到知识点树上。
+          <div class="from">来自：医考帮（章节/年份）、蓝基因（章节）、猿题库（考点）、昭昭。</div></li>
+        <li><b>模式 G｜重组重做 / 错题卷导出打印</b>。
+          <div class="from">来自：蓝基因（重组重做）、猿题库/作业帮（导出打印）。</div></li>
+        <li><b>模式 H｜学术派间隔重复调度（逐词/逐卡拟合遗忘曲线）</b>：系统估算每个知识点的遗忘临界点，动态定下次复习日。
+          <div class="from">来自：Anki（SM-2，已升级 FSRS）、墨墨（自研 MM 模型，KDD 论文）、Quizlet Learn（logistic 回归预测遗忘概率，但仅 session 内排序）。</div></li>
+        <li><b>模式 I｜刷题派无公开算法，靠「定期重练+考点掌握度」</b>：不做跨天调度，只把错题挂在考点上反复刷。
+          <div class="from">来自：医考帮、蓝基因、猿题库、作业帮、昭昭（均<b>未查证</b>到类 Anki 跨天调度公开依据）。</div></li>
+      </ol>
+    </div>
+
+    <div class="pblock">
+      <h3><span class="n">3</span>元认知分析：正确率打底，薄弱点诊断+掌握度可视化是主流</h3>
+      <ol>
+        <li><b>模式 J｜正确率/刷题量基础统计</b>（最底层标配）。
+          <div class="from">来自：蓝基因、猿题库、墨墨、医考帮。</div></li>
+        <li><b>模式 K｜薄弱知识点诊断（定位到考点级）</b>：报告不只说「你错了」，而是说「你哪个考点弱」。
+          <div class="from">来自：蓝基因（薄弱项分析）、猿题库（分析弱项）、昭昭（定位知识盲区）、作业帮（薄弱点报告）。</div></li>
+        <li><b>模式 L｜掌握度可视化（图标/颜色分级）</b>。
+          <div class="from">来自：猿题库（香蕉图标+雷达图）、作业帮学习机（绿/黄/红三色掌握度）。</div></li>
+        <li><b>模式 M｜错因归类</b>：区分「知识不会 / 审题不清 / 粗心习惯」。
+          <div class="from">来自：昭昭（知识混淆/审题不清/逻辑缺失）、作业帮学习机（三级错因溯源）、猿题库（错因批注）。</div></li>
+        <li><b>模式 N｜遗忘曲线可视化</b>。
+          <div class="from">来自：墨墨（统计页遗忘曲线/记忆持久度）；Anki、Quizlet 则不靠曲线报告，而靠调度算法本身实现抗遗忘。</div></li>
+        <li><b>模式 O｜预测分/提分报告</b>。
+          <div class="from">来自：猿题库（预测分）、医考帮（万人模考个性化提分报告）。</div></li>
+      </ol>
+    </div>
+
+    <h3 style="margin-top:22px;margin-bottom:6px">对照速查表</h3>
+    <table>
+      <colgroup>
+        <col style="width:16%"><col style="width:22%"><col style="width:31%"><col style="width:31%">
+      </colgroup>
+      <thead><tr><th>产品</th><th>错题生成</th><th>错题管理</th><th>元认知分析</th></tr></thead>
+      <tbody>
+        <tr><td>医考帮</td><td>AI 自助组题；多模态 AI 伴学助手</td><td>自动收录·按章节/年份；四模式刷题；无公开间隔调度</td><td>刷题统计·逐题正确率；提分报告(宣传)</td></tr>
+        <tr><td>蓝基因</td><td>自定义组题·按考频；每日一练</td><td>智能错题本自动归纳·重组重做；扫码录答案；无公开间隔调度</td><td>刷题量+正确率·薄弱项分析·考点还原</td></tr>
+        <tr><td>昭昭医考</td><td><b>AI 秒级生成错题变式题</b>；自主组卷</td><td>智能错题·推同类题；错因分类(宣传)</td><td>AI 私教·定位盲区；推送高频考点(宣传)</td></tr>
+        <tr><td>猿题库</td><td>知识点拆分智能练习；动态调难度组卷(宣传)</td><td>错题自动按考点归类；错因批注；导出打印；无公开间隔调度</td><td>实时做题报告·香蕉掌握度·预测分；雷达图(宣传)</td></tr>
+        <tr><td>作业帮</td><td>按学情智能组卷(宣传)；相似题重练</td><td>错题自动归类知识点；拍照录入去手写打印；学情复习计划(宣传)</td><td>学情报告正确率/时长；三级错因·红绿黄掌握度(宣传)</td></tr>
+        <tr><td>Quizlet</td><td>Learn 题型递进；Q-Chat 对话教练</td><td>Learn：ML 预测遗忘概率排序（session 内，非跨天 SM-2）；付费 Memory Score</td><td>Progress 追踪·Smart Grading</td></tr>
+        <tr><td>Anki</td><td>无 AI 出题，卡片自制/共享导入</td><td><b>SM-2 官方调度（已集成 FSRS）</b>；自评驱动；AnkiWeb 自动同步</td><td>无自动报告；靠 due 队列/复习日历</td></tr>
+        <tr><td>墨墨背单词</td><td>无变式题，按词书推词</td><td><b>自研 MM 模型逐词拟合遗忘曲线（KDD 论文）</b>；实时动态调度</td><td>遗忘曲线·记忆持久度可视化</td></tr>
+      </tbody>
+    </table>
+
+    <div class="footnote">
+      <p><b>给 Cherry Studio 方案的对标提示：</b>① 错题生成可直接对标昭昭「错题考点 → AI 生成变式题」（模式 B），用知识库内西综考点 + Agent 出题实现；② 错题管理对标蓝基因/猿题库「答错自动收录 + 挂到章节/考点标签」（模式 E+F），这是无代码最容易复刻的；③ 复习计划若想做间隔重复，商业产品里真正有算法门槛的是墨墨/Anki/Quizlet（模式 H），刷题派产品普遍不做跨天调度——Cherry Studio 侧可用「按考点掌握度 + 简单的到期复习队列」近似，不必硬上 SM-2。④ 元认知分析对标「正确率 + 薄弱考点 + 错因分布」三件套（模式 J+K+M）即可覆盖主流学习报告形态。</p>
+      <p style="margin-top:8px">证据等级说明：本卡片中「查证」= 官方文档 / 官方应用商店描述 / 官方账号 / 权威媒体或产品内可见描述；「宣传」= 官网或第三方下载站宣称、缺独立依据；「未查证」= 公开渠道未检索到可靠依据。所有 URL 均为实际检索所得，未作编造。</p>
+    </div>
+  </div>
+
+
+</div>
+</body>
+</html>

@@ -643,6 +643,107 @@ def test_path_exempt_entries_are_still_needed():
 
 
 # ---------------------------------------------------------------------------
+# 仓内资产不得用绝对路径引用（2026-10-02 新增）
+# ---------------------------------------------------------------------------
+
+# 本仓在磁盘上的名字。出现在绝对路径里即视为「引用本仓」。
+_REPO_DIRNAME = "medkit"
+
+
+def _abs_refs_in(doc) -> list[str]:
+    """返回 doc 里形如 `C:\\...\\medkit\\...` 的**仓内资产**绝对路径引用。
+
+    ## 为什么需要这条守卫（2026-10-02 实测）
+
+    现有 `_missing_refs()` 只认 `_PATH_PREFIXES`（相对路径）开头，
+    **绝对路径一律跳过**。于是「文档用 `C:\\Users\\xxx\\Desktop\\medkit\\docs\\a.md`
+    引用仓内文件」时：既不受路径存在性校验，也随目录迁移**静默腐烂**——
+    实测迁移 `docs/research/` 当场打断 4 处（附录 A 三行 + 一处 prompts 路径），
+    全仓另有 33 处绝对路径引用无人过问。
+
+    ## 判据只禁「仓内」，放行「仓外」
+
+    很多绝对路径是**正当**的：数据目录 `C:\\Users\\xxx\\.medkit`、
+    外部素材 `...\\MedAgentWork\\...`、系统字体 `C:\\Windows\\Fonts\\...`——
+    这些本来就不在仓库里，只能写绝对路径。因此判据不是"禁绝对路径"，
+    而是"**禁指向本仓的绝对路径**"：路径里出现 `\\<本仓名>\\` 段即命中。
+
+    ## 为什么用 `\\medkit\\` 而非 `\\Desktop\\medkit`
+
+    用户可能换机、换盘、换目录名；只认目录名这一最稳的锚。
+    误报风险：仓库外若恰好有个同名目录（如 `...\\MedKitAssets\\medkit\\x`）
+    会被误判——但那种路径**写成相对路径也确实更该**，误报方向是可接受的。
+    """
+    text = doc.read_text(encoding="utf-8")
+    # 反斜杠与正斜杠两种写法都要认（实测元守卫抓出：只写 `\\` 会漏掉
+    # `C:/Users/.../medkit/docs/b.md` 这类正斜杠绝对路径）。
+    pat = re.compile(r"`([A-Za-z]:[\\/][^`]+)`")
+    hits = []
+    for m in pat.finditer(text):
+        raw = m.group(1)
+        # 归一斜杠，按目录段查找本仓名
+        segs = [s for s in raw.replace("/", "\\").split("\\") if s]
+        if _REPO_DIRNAME in segs:
+            hits.append(raw)
+    return hits
+
+
+def test_active_docs_do_not_use_absolute_paths_for_repo_files():
+    """活跃文档引用**仓内**资产必须用相对路径（绝对路径随迁移静默腐烂）。
+
+    覆盖面与 `test_active_doc_path_refs_exist` 一致：已跟踪（参数化）+ 草稿兜底。
+    两条路径共用 `_abs_refs_in()` 同一实现，避免判据各自漂移。
+    """
+    tracked = _tracked_docs()
+    if tracked is None:
+        pytest.fail("拿不到 git 索引，无法区分「已跟踪 / 草稿」")
+    docs = list(_active_docs(tracked_only=False))
+    assert docs, "活跃文档扫描面为空，守卫形同虚设"
+    bad: list[str] = []
+    for p in docs:
+        hits = _abs_refs_in(p)
+        if hits:
+            bad.append("%s → %s" % (p.relative_to(ROOT), sorted(set(hits))))
+    assert not bad, (
+        "以下活跃文档用绝对路径引用本仓资产（迁移即失效，改为仓库相对路径）：\n  "
+        + "\n  ".join(bad)
+        + "\n（若确为仓外资产请忽略——判据只拦路径段含 `%s` 的引用。）" % _REPO_DIRNAME
+    )
+
+
+def test_abs_ref_detector_hits_and_clears():
+    """元守卫：自证 `_abs_refs_in()` 既能命中真违规，也不误伤仓外资产。
+
+    判据本身要可证伪：给一段构造文本，仓内绝对路径必须被认出，
+    仓外绝对路径（`.medkit` / `MedAgentWork` / `Windows\\Fonts`）必须不被认出。
+    """
+    import tempfile
+
+    sample = "\n".join([
+        r"仓内：`C:\Users\x\Desktop\medkit\docs\a.md`",
+        r"仓内（正斜杠）：`C:/Users/x/Desktop/medkit/docs/b.md`",
+        r"仓外数据：`C:\Users\x\.medkit\library\medkit.db`",   # 段名是 .medkit，非 medkit
+        r"仓外素材：`C:\Users\x\Desktop\MedAgentWork\GoldenSet`",
+        r"系统字体：`C:\Windows\Fonts\segoeuib.ttf`",
+    ])
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".md", delete=False, encoding="utf-8"
+    ) as fh:
+        fh.write(sample)
+        tmp = pathlib.Path(fh.name)
+    try:
+        hits = _abs_refs_in(tmp)
+    finally:
+        tmp.unlink()
+    assert len(hits) == 2, "应恰好命中 2 处仓内引用，实际 %r" % (hits,)
+    joined = " ".join(hits)
+    assert "docs\\a.md" in joined and "docs/b.md" in joined, hits
+    assert ".medkit" not in joined, "仓外 `.medkit` 数据目录被误伤：%r" % (hits,)
+    assert "MedAgentWork" not in joined, "仓外素材目录被误伤：%r" % (hits,)
+    assert "Fonts" not in joined, "系统字体路径被误伤：%r" % (hits,)
+
+
+# ---------------------------------------------------------------------------
 # 元守卫：本文件不许用 skip 掩盖"前提不成立"
 # ---------------------------------------------------------------------------
 
