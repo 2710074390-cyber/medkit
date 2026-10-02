@@ -113,10 +113,36 @@ def _sentinel_no_home_touch():
     「tests must never touch user home」——即使某测试绕过本文件顶部的常量重定向，
     哨兵也会在套件结束时失败并给出具体变更文件清单（而非静默污染用户数据）。
     注意：browser 子进程测试（server_launcher）使用隔离 home，不触碰真实 ~/.medkit。
+
+    **2026-10-02 第三次触发的补丁**（两层，缺一不可）：
+      ① **`MEDKIT_NO_BROWSER=1`（会话级）**——测试**从不**需要自动开浏览器，
+         但此前只有 `tests/browser/` 与 `test_shutdown_lifecycle` 设了它。
+         其余任何 `TestClient(m.app)` 一进 `lifespan` 就 spawn `main._open` 守护线程：
+         它去连 `127.0.0.1:<port>`（测试进程里**没人监听**，因为 uvicorn 没起），
+         必然 timeout ⇒ 十来次循环里每次都 `errs.record("main._open", ...)`。
+         该线程的存活期长于 function 级 fixture ⇒ env 还原后 `errs.record` 读到空
+         `MEDKIT_LOG_DIR` ⇒ 回落真实 `~/.medkit/logs/errors.jsonl` ⇒ 哨兵红。
+         钉死该开关等于**从源头不让这条探活路径启动**（比事后拦写更正确）。
+      ② `MEDKIT_LOG_DIR`（会话级）+ `errors._errors_log_path()` 的「显式关闭」语义——
+         兜住其余任何「生命周期长于 function fixture」的调用者（守护线程、迟到 lifespan）。
     """
+    import os as _os
+    _saved = {k: _os.environ.get(k)
+              for k in ("MEDKIT_LOG_DIR", "MEDKIT_NO_DISK", "MEDKIT_NO_BROWSER")}
+    import tempfile as _tf
+    _sess_logdir = _tf.mkdtemp(prefix="medkit-tests-logs-")
+    _os.environ["MEDKIT_LOG_DIR"] = _sess_logdir
+    _os.environ["MEDKIT_NO_BROWSER"] = "1"   # 见 ①：测试里永不自动开浏览器
     before = _snapshot_home_medkit()
-    yield
-    after = _snapshot_home_medkit()
+    try:
+        yield
+    finally:
+        after = _snapshot_home_medkit()
+        for k, v in _saved.items():          # 还原会话级 env（不污染调用方 shell）
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
     changed = {k: (before.get(k), after.get(k)) for k in set(before) | set(after)
                if before.get(k) != after.get(k)}
     assert not changed, (

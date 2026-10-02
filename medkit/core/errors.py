@@ -97,28 +97,42 @@ def record(code: str, msg: str, **ctx: Any) -> None:
 # ---------------------------------------------------------------- W7：持久错误清单
 # 背景（2026-10-02 二轮审计）：RECENT 是进程内缓冲，重启即清空——用户遇到「出问题→重启」
 # 后无法回查「上次为何失败」（除非手工翻项目目录）。此处追加 JSONL 落盘，snapshot 合并读取。
-def _errors_log_path() -> Path:
+def _errors_log_path() -> Path | None:
     """错误清单落盘路径（默认 `~/.medkit/logs/errors.jsonl`）。可用 env 覆盖（测试隔离）。
 
     优先读 `MEDKIT_LOG_DIR`（与 logging_setup 同口径，测试用同一 env 隔离），
     回落 `cfg.CONFIG_DIR/logs`。
+
+    **返回 `None` = 本次不落盘**（改为只留内存清单）。两种情况：
+      - `MEDKIT_ERRORS_LOG=""` / `MEDKIT_LOG_DIR=""`（显式空串 ⇒ 调用方明确要求关闭落盘）；
+      - `MEDKIT_NO_DISK=1`（整仓级开关，测试用）。
+    留 None 分支的原因（2026-10-02 实测，R5-01 哨兵第三次触发）：
+    `main._open` 是**守护线程**，它可能在 conftest 的 `monkeypatch.setenv`
+    已被 function-teardown 撤销**之后**才跑到 `errs.record`。此时 env 已空 ⇒
+    回落真实 `~/.medkit/logs/` ⇒ 哨兵报「测试套件触碰了真实家目录」。
+    更本质地说：**一次探活超时不该替用户在家目录里凭空建 `logs/errors.jsonl`**
+    ——这只是个瞬时探测失败，用户重启后回查它也没有意义（真正的失败会有别的留痕途径）。
     """
     override = os.environ.get("MEDKIT_ERRORS_LOG")
-    if override:
-        return Path(override)
+    if override is not None:            # 显式设置（含空串 ⇒ 关闭）
+        return Path(override) if override else None
+    if os.environ.get("MEDKIT_NO_DISK") == "1":
+        return None
     log_dir = os.environ.get("MEDKIT_LOG_DIR")
-    if log_dir:
-        return Path(log_dir) / "errors.jsonl"
+    if log_dir is not None:             # 显式设置（含空串 ⇒ 关闭）
+        return (Path(log_dir) / "errors.jsonl") if log_dir else None
     try:
         from .config import CONFIG_DIR  # 单一来源（~/.medkit）
         return Path(CONFIG_DIR) / "logs" / "errors.jsonl"
     except Exception:  # noqa: BLE001  配置不可用时不阻塞记录
-        return Path.home() / ".medkit" / "logs" / "errors.jsonl"
+        return None
 
 
 def _append_disk(entry: dict[str, Any]) -> None:
     """追加一条到磁盘 JSONL（失败**留痕**但不抛——留痕功能自身不应拖垮调用方）。"""
     path = _errors_log_path()
+    if path is None:                    # 落盘被显式关闭（见 `_errors_log_path` 说明）
+        return
     try:
         with _DISK_LOCK:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,8 +156,10 @@ def _trim_disk(path: Path) -> None:
 
 
 def read_disk(limit: int = 50) -> list[dict[str, Any]]:
-    """读磁盘错误清单（最后 N 条，按时间正序）。文件缺失/损坏 → 空列表。"""
+    """读磁盘错误清单（最后 N 条，按时间正序）。文件缺失/损坏/落盘关闭 → 空列表。"""
     path = _errors_log_path()
+    if path is None:                    # 落盘被显式关闭 ⇒ 无磁盘清单可读
+        return []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except Exception:  # noqa: BLE001
