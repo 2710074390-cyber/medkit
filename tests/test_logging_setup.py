@@ -26,15 +26,26 @@ def test_redacts_sk_key():
 
 
 def test_redacts_authorization_value():
+    """Authorization 头必须整体掩码（含 `Bearer ` 之后的值）。
+
+    W8（2026-10-02）：原断言写死 `== "请求头 Authorization: Bearer ***"`，**绑定了旧实现
+    的书写格式**——旧正则只吃 `Bearer` 一个词，把真 token 漏在后面（`Bearer *** tok-secret`）。
+    这正属「文本子串断言绑书写格式」：格式一改就假红，且**漏掩码时未必红**（只要掩码串对得上）。
+    现改为行为断言：**真值必须消失**；掩码细节不再钉死。
+    """
     out = _capture(logging.LogRecord(
         "t", logging.INFO, __file__, 1, "请求头 Authorization: Bearer tok-secret-123", None, None))
-    assert out == "请求头 Authorization: Bearer ***"
+    assert "tok-secret-123" not in out, f"Bearer 后的 token 未被掩码：{out!r}"
+    assert "Authorization" in out          # 字段名保留（便于排障）
+    assert "***" in out
 
 
 def test_redacts_api_key_equals():
+    """`api_key=` / `api_key:` 两种分隔符都要掩码，且不得漏掉值。"""
     out = _capture(logging.LogRecord(
         "t", logging.INFO, __file__, 1, "config api_key=sk-zzz999888", None, None))
-    assert out == "config api_key=***"
+    assert "sk-zzz999888" not in out, f"api_key 的值未被掩码：{out!r}"
+    assert "***" in out
 
 
 def test_keeps_plain_text():

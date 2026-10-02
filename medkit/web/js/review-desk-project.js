@@ -301,6 +301,10 @@ async function showProject(pid) {
   if (meta.bloom && Object.keys(meta.bloom).length) extra.push(`Bloom：${["记忆","理解","应用","创造"].map(k => (meta.bloom[k] ?? 0) + "%").join("/")}`);
   if (meta.web_search) extra.push(`网络检索${meta.web_ref_quota ? "（引用 " + meta.web_ref_quota + "%）" : ""}`);
   if (meta.image_warning) extra.push(`⚠️ 本轮未产出图题（已有图片素材可重试/加大题量）`);
+  // W2（2026-10-02 二轮审计）：门禁① 有子项未跑成 → 必须与「通过」明确区分（非「无问题」）
+  if ((meta.gate1_unverified || []).length) {
+    extra.push(`⛔ 门禁① 未校验：${esc((meta.gate1_unverified || []).join("、"))}（未跑成 ≠ 无问题，请人工复核）`);
+  }
   if (meta.exam_chars) extra.push(`自备真题 ${meta.exam_chars.toLocaleString()} 字（考点/风格校准，不照抄）`);
   if (meta.extra_chars) extra.push(`补充资料 ${meta.extra_chars.toLocaleString()} 字`);
   if ((meta.artifacts || []).some(n => /人工复核清单/.test(n))) {

@@ -219,13 +219,16 @@ async function runOcrJobs(group, role) {
     done: ["done", "完成 ✓"],
     failed: ["failed", "失败"],
     cancelled: ["cancel", "已取消"],
+    interrupted: ["failed", "已中断"],   // W5：上一进程遗留的非终态，恢复时归一
   };
+  // W5：终态集合单源——轮询/按钮禁用/计数三处判断共用，避免「新增状态忘了同步」
+  const OCR_TERMINAL = ["done", "failed", "cancelled", "interrupted"];
   const updateOcrUi = () => {
     const n = jobs.length;
     const doneN = jobs.filter(j => j.state === "done").length;
-    const failN = jobs.filter(j => j.state === "failed").length;
+    const failN = jobs.filter(j => j.state === "failed" || j.state === "interrupted").length;
     const cancelN = jobs.filter(j => j.state === "cancelled").length;
-    const runningN = jobs.filter(j => !["done", "failed", "cancelled"].includes(j.state)).length;
+    const runningN = jobs.filter(j => !OCR_TERMINAL.includes(j.state)).length;
     const finished = doneN + failN + cancelN;
     const tEl = box.querySelector('[data-role="t"]');
     const cntEl = box.querySelector('[data-role="cnt"]');
@@ -252,8 +255,8 @@ async function runOcrJobs(group, role) {
       row.classList.toggle("running", j.state === "queued" || j.state === "running");
       const msgEl = row.querySelector("[data-role=msg]");
       msgEl.textContent = j.state === "done" ? "已自动加入输入" : j.state === "queued" ? "" : (j.msg || "");
-      msgEl.className = "msg " + (j.state === "done" ? "good" : j.state === "failed" ? "bad" : "");
-      row.querySelector("[data-role=cancel]").disabled = ["done", "failed", "cancelled"].includes(j.state);
+      msgEl.className = "msg " + (j.state === "done" ? "good" : (j.state === "failed" || j.state === "interrupted") ? "bad" : "");
+      row.querySelector("[data-role=cancel]").disabled = OCR_TERMINAL.includes(j.state);
     });
   };
   jobs.forEach(j => {
@@ -281,10 +284,10 @@ async function runOcrJobs(group, role) {
   await Promise.all(jobs.map(j => j.promise));
 
   const started = jobs.filter(j => j.jobId);
-  while (myToken === ocrRunToken && started.some(j => !["done", "failed", "cancelled"].includes(j.state))) {
+  while (myToken === ocrRunToken && started.some(j => !OCR_TERMINAL.includes(j.state))) {
     await new Promise(r => setTimeout(r, 2000));
     await Promise.all(started.map(async j => {
-      if (["done", "failed", "cancelled"].includes(j.state)) return;
+      if (OCR_TERMINAL.includes(j.state)) return;
       const s = await api("/api/ocr/jobs/" + j.jobId).catch(() => null);
       if (!s) return;
       j.state = s.state; j.msg = s.msg || s.state;

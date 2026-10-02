@@ -7,28 +7,26 @@ UI 实时日志（run.log 回调通道）不动。
 
 import logging
 import os
-import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Optional, cast
 
 from .core import config as cfg
+from .core.errors import redact as _redact
 
 _MAX_BYTES = 1_000_000       # 1 MB × 3 个备份
 _BACKUP_COUNT = 3
 
-# U-24（R6-18）：写盘/控制台前的主动脱敏——掩码 `sk-***` 与 `Authorization/api_key: ***`
-_SCRUB_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
-    (re.compile(r"sk-[A-Za-z0-9_\-]{6,}"), "sk-***"),
-    (re.compile(r"(?i)(\bapi[_-]?key\b\s*[:=]\s*)\S+"), r"\1***"),
-    (re.compile(r"(?i)(\bauthorization\b\s*[:=]\s*(?:Bearer\s+)?)\S+"), r"\1***"),
-)
-
 
 def _scrub(text: str) -> str:
-    for pat, repl in _SCRUB_PATTERNS:
-        text = pat.sub(repl, text)
-    return text
+    """W8：脱敏**单源**——直接复用 `core.errors.redact`，不再本地维护第二份模式表。
+
+    背景（2026-10-02 二轮审计 W8）：此处原有 `_SCRUB_PATTERNS`（只认 `sk-` /
+    `api_key` / `authorization`），与 `errors.redact`（另认 `mr-`、JWT、已登记实际密钥）
+    **两份模式表漂移**——同一串密钥经不同入口落盘时掩码结果不一致，且新形态只补一处。
+    收敛为单源后，`redact` 的每一次增强自动作用于日志链路。
+    """
+    return _redact(text, limit=0)  # limit=0 ⇒ 不截断（日志需要完整上下文，仅脱敏）
 
 
 class RedactingFilter(logging.Filter):
@@ -36,7 +34,7 @@ class RedactingFilter(logging.Filter):
 
     背景：Logger 一旦把含 Key 的异常串写日志，Key 即随 `~/.medkit/logs/medkit.log`
     落盘/上屏。此 Filter 在**格式化之前**改写 record，作为写盘前最后一层防线；
-    与 `core.errors.redact()`（进程内回显/诊断）分工互补。
+    与 `core.errors.redact()`（进程内回显/诊断）**同源**（W8 收敛，消除双份模式漂移）。
     """
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: D102
@@ -44,8 +42,9 @@ class RedactingFilter(logging.Filter):
             text = record.getMessage()
         except Exception:  # noqa: BLE001  格式化异常不该阻断日志链路
             return True
-        if any(p.search(text) for p, _ in _SCRUB_PATTERNS):
-            record.msg = _scrub(text)
+        scrubbed = _scrub(text)
+        if scrubbed != text:
+            record.msg = scrubbed
             record.args = ()
         return True
 

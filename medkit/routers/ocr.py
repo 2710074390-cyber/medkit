@@ -58,8 +58,22 @@ def _save_jobs_to_disk() -> None:
         _errs.record("ocr._save_jobs_to_disk", "静默容错（U-15 留痕）", e=e)
 
 
+_TERMINAL_STATES = frozenset({"done", "failed", "cancelled"})
+"""W5：终态集合——`queued`/`running` 之外的一切都算终态，不在此集合内的即「非终态」。
+
+背景（2026-10-02 二轮审计 W5）：jobs.json 里的 `running`/`queued` 是**上一进程**的状态，
+重启后后台线程已死，若不归一，前端轮询会永远停在「识别中…」且永不推进（僵尸任务）；
+更糟的是 `_cleanup_orphan_tmp` 靠 `known` 集合判断，僵尸记录会让对应上传 tmp 永不被清。
+"""
+
+
 def _restore_jobs_from_disk() -> None:
-    """B34：启动时把 jobs.json 中的任务记录恢复进内存（重建 cancel Event）。"""
+    """B34：启动时把 jobs.json 中的任务记录恢复进内存（重建 cancel Event）。
+
+    W5：**非终态归一为 `interrupted`**——上一进程退出时仍在 `queued`/`running` 的任务，
+    其后台线程已随进程消失，恢复后不可能再推进。保留原状态会让 UI 永久卡在「识别中…」，
+    也不会有任何错误提示。归一后前端可明确提示「上次中断，请重试」。
+    """
     try:
         if not _jobs_file().exists():
             return
@@ -71,7 +85,12 @@ def _restore_jobs_from_disk() -> None:
             if not isinstance(j, dict):
                 continue
             j["cancel"] = threading.Event()
+            if j.get("state") not in _TERMINAL_STATES:
+                prev = j.get("state")
+                j["state"] = "interrupted"
+                j["msg"] = f"上次运行中断（原状态 {prev}），请重新提交"
             OCR_JOBS[jid] = j
+        _save_jobs_to_disk()   # 归一结果即刻落盘（下次启动不再重复判为运行中）
 
 
 def _cleanup_orphan_tmp() -> None:

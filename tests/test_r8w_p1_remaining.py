@@ -253,7 +253,9 @@ def test_log_project_masks_secret(tmp_path):
     _log_project(tmp_path, f"LLM 调用失败：Authorization: Bearer {secret}")
     text = (tmp_path / "run.log").read_text(encoding="utf-8")
     assert secret not in text, "run.log 泄漏了密钥"
-    assert "sk-***" in text
+    # W8（2026-10-02）：不再钉死 `sk-***` 字面量（旧断言绑定了掩码的书写格式）。
+    # `Authorization: Bearer sk-xxx` 现被整段掩码为 `Authorization: ***` —— 密钥已消失即达标。
+    assert "***" in text, f"run.log 未做任何掩码：{text!r}"
 
 
 def test_llm_and_search_hints_are_redacted():

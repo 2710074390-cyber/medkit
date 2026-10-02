@@ -117,8 +117,9 @@ def create_project_record(payload: dict[str, Any]) -> dict[str, Any]:
                       + [{**s, "role": "teacher"} for s in teacher_slices]
                       + [{**s, "role": "exam"} for s in exam_slices]
                       + [{**s, "role": "extra"} for s in extra_slices])
-        (proj_path / "slices.json").write_text(
-            json.dumps(all_slices, ensure_ascii=False, indent=1), encoding="utf-8")
+        # W1（2026-10-02 二轮审计）：原子写——裸 write_text 在崩溃/断电时留下截断 JSON，
+        # 会让 orchestrator 的 json.loads 永久抛异常（项目报废）。与 meta.json 同口径。
+        write_json_atomic(proj_path / "slices.json", all_slices)
 
         title_by_sid = {s["sid"]: s.get("title", "") for s in textbook_slices}
         quota = [{**q, "title": title_by_sid.get(q["sid"], "")} for q in
@@ -147,9 +148,9 @@ def create_project_record(payload: dict[str, Any]) -> dict[str, Any]:
             "created": datetime.now().isoformat(),
         }
         write_meta_atomic(proj_path, meta)
-        (proj_path / "stage.json").write_text(
-            json.dumps({"stage": "quota", "updated": datetime.now().isoformat()}),
-            encoding="utf-8")
+        # W1：stage.json 同样原子写（进度文件被崩溃截断会被前端当合法状态读）
+        write_json_atomic(proj_path / "stage.json",
+                          {"stage": "quota", "updated": datetime.now().isoformat()})
         if client_token:
             _TOKEN_PIDS[client_token] = (time.time(), pid)
         _now = time.time()   # 机会式清理过期键

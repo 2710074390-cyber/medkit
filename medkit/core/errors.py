@@ -15,16 +15,21 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 import threading
 import time
 from collections import Counter
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 _MAX_RECENT = 50
 _MAX_MSG = 300
+_MAX_DISK_LINES = 500   # W7：磁盘错误清单保留上限（超出自动裁剪，防无限增长）
+_DISK_LOCK = threading.Lock()
 
 _LOCK = threading.Lock()
 COUNTS: Counter[str] = Counter()
@@ -38,7 +43,8 @@ _KEY_RE = re.compile(r"sk-[A-Za-z0-9_\-]{6,}")
 _EXTRA_KEY_RE = re.compile(
     r"\bmr-[A-Za-z0-9_\-]{6,}"
     r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}")
-_AUTH_RE = re.compile(r"(?i)\b(authorization|api[_-]?key)\b\s*[:=]\s*\S+")
+_AUTH_RE = re.compile(
+    r"(?i)\b(authorization|api[_-]?key)\b\s*[:=]\s*(?:Bearer\s+)?\S+")
 
 # 已登记的「本机实际密钥明文」（由 config.resolve_key 登记）。
 # 正则只能覆盖已知前缀形态；智谱 `xxx.yyyy`、自建网关自定义 token 等抓不住，
@@ -54,7 +60,11 @@ def register_secret(value: Any) -> None:
 
 
 def redact(text: Any, limit: int = _MAX_MSG) -> str:
-    """脱敏 + 截断：掩码已登记密钥、`sk-***`、`mr-***`/JWT，以及 `Authorization/api_key: ***`。"""
+    """脱敏 + 截断：掩码已登记密钥、`sk-***`、`mr-***`/JWT，以及 `Authorization/api_key: ***`。
+
+    `limit <= 0` ⇒ **不截断**（返回完整脱敏文本）。日志链路（`logging_setup._scrub`）
+    依赖此语义取得完整上下文；若按 `t[:0]` 处理会把整条日志清空（2026-10-02 实测踩坑）。
+    """
     t = str(text)
     for s in _SECRETS:
         if s in t:
@@ -62,11 +72,11 @@ def redact(text: Any, limit: int = _MAX_MSG) -> str:
     t = _KEY_RE.sub("sk-***", t)
     t = _EXTRA_KEY_RE.sub("***", t)
     t = _AUTH_RE.sub(r"\1: ***", t)
-    return t[:limit]
+    return t if limit <= 0 else t[:limit]
 
 
 def record(code: str, msg: str, **ctx: Any) -> None:
-    """记录一次错误（留痕 + 计数）。`code` 为稳定标识（如 `LLM_ERROR` / `GATE1`）。"""
+    """记录一次错误（留痕 + 计数 + **落盘**）。`code` 为稳定标识（如 `LLM_ERROR` / `GATE1`）。"""
     code = str(code or "UNKNOWN")
     entry: dict[str, Any] = {
         "t": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -80,15 +90,93 @@ def record(code: str, msg: str, **ctx: Any) -> None:
         RECENT.append(entry)
         if len(RECENT) > _MAX_RECENT:
             del RECENT[:len(RECENT) - _MAX_RECENT]
+    _append_disk(entry)   # W7：跨重启可回查（内存 RECENT 重启即清空）
     _logger.warning("[%s] %s %s", code, entry["msg"], entry.get("ctx", ""))
 
 
-def snapshot(limit: int = 50) -> dict[str, Any]:
-    """诊断快照：计数 + 最近 N 条（只读，供 `/api/diagnostics/errors`）。"""
+# ---------------------------------------------------------------- W7：持久错误清单
+# 背景（2026-10-02 二轮审计）：RECENT 是进程内缓冲，重启即清空——用户遇到「出问题→重启」
+# 后无法回查「上次为何失败」（除非手工翻项目目录）。此处追加 JSONL 落盘，snapshot 合并读取。
+def _errors_log_path() -> Path:
+    """错误清单落盘路径（默认 `~/.medkit/logs/errors.jsonl`）。可用 env 覆盖（测试隔离）。
+
+    优先读 `MEDKIT_LOG_DIR`（与 logging_setup 同口径，测试用同一 env 隔离），
+    回落 `cfg.CONFIG_DIR/logs`。
+    """
+    override = os.environ.get("MEDKIT_ERRORS_LOG")
+    if override:
+        return Path(override)
+    log_dir = os.environ.get("MEDKIT_LOG_DIR")
+    if log_dir:
+        return Path(log_dir) / "errors.jsonl"
+    try:
+        from .config import CONFIG_DIR  # 单一来源（~/.medkit）
+        return Path(CONFIG_DIR) / "logs" / "errors.jsonl"
+    except Exception:  # noqa: BLE001  配置不可用时不阻塞记录
+        return Path.home() / ".medkit" / "logs" / "errors.jsonl"
+
+
+def _append_disk(entry: dict[str, Any]) -> None:
+    """追加一条到磁盘 JSONL（失败**留痕**但不抛——留痕功能自身不应拖垮调用方）。"""
+    path = _errors_log_path()
+    try:
+        with _DISK_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            _trim_disk(path)
+    except Exception as e:  # noqa: BLE001  落盘失败不阻断（内存清单仍可用），但必须留痕
+        # 注意：此处**不能**递归调 `record()`（会再触发落盘 → 栈溢出）。
+        # 只写 logger（不落盘），保证「静默吞掉」被审计用例识别为「已留痕」。
+        _logger.warning("errors._append_disk 落盘失败（内存清单仍可用）：%s", e)
+
+
+def _trim_disk(path: Path) -> None:
+    """超出上限时保留最后 _MAX_DISK_LINES 行（在锁内调用；裁剪失败留痕不抛）。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if len(lines) > _MAX_DISK_LINES:
+            path.write_text("\n".join(lines[-_MAX_DISK_LINES:]) + "\n", encoding="utf-8")
+    except Exception as e:  # noqa: BLE001  裁剪失败不阻断写入，但必须留痕
+        _logger.warning("errors._trim_disk 裁剪失败：%s", e)
+
+
+def read_disk(limit: int = 50) -> list[dict[str, Any]]:
+    """读磁盘错误清单（最后 N 条，按时间正序）。文件缺失/损坏 → 空列表。"""
+    path = _errors_log_path()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[dict[str, Any]] = []
+    for ln in lines[-max(1, int(limit or 50)):]:
+        try:
+            out.append(json.loads(ln))
+        except Exception:  # noqa: BLE001  单行损坏跳过
+            continue
+    return out
+
+
+def snapshot(limit: int = 50, *, include_disk: bool = True) -> dict[str, Any]:
+    """诊断快照：计数 + 最近 N 条（供 `/api/diagnostics/errors`）。
+
+    `include_disk=True`（默认）时合并**磁盘历史**——重启后仍能回查上次的错误。
+    合并判据：内存清单已有则不重复（按 `t`+`code`+`msg` 去重），磁盘独有项排在前。
+    """
     n = max(1, min(int(limit or 50), _MAX_RECENT))
     with _LOCK:
-        return {"counts": dict(COUNTS), "total": int(sum(COUNTS.values())),
-                "recent": list(RECENT[-n:])}
+        mem = list(RECENT[-n:])
+        counts = dict(COUNTS)
+        total = int(sum(COUNTS.values()))
+    if not include_disk:
+        return {"counts": counts, "total": total, "recent": mem, "disk_only": []}
+
+    seen = {(e.get("t"), e.get("code"), e.get("msg")) for e in mem}
+    disk = read_disk(limit=n)
+    disk_only = [e for e in disk if (e.get("t"), e.get("code"), e.get("msg")) not in seen]
+    # 历史在前，内存（本次会话）在后——用户重启后先看到的是上次的失败
+    merged = (disk_only + mem)[-n:]
+    return {"counts": counts, "total": total, "recent": merged, "disk_only": disk_only[-n:]}
 
 
 def reset() -> None:

@@ -340,9 +340,9 @@ def _update_meta(meta_path: Path, **fields: Any) -> dict[str, Any]:
 
 def _set_stage(proj_dir: Path, meta_path: Path, stage: str, msg: str) -> None:
     _update_meta(meta_path, stage=stage)
-    (proj_dir / "stage.json").write_text(
-        json.dumps({"stage": stage, "msg": msg, "updated": datetime.now().isoformat()}),
-        encoding="utf-8")
+    # W1（2026-10-02 二轮审计）：stage.json 原子写（此前裸 write_text，崩溃截断→前端读到半截状态）
+    _write_json_atomic(proj_dir / "stage.json",
+                       {"stage": stage, "msg": msg, "updated": datetime.now().isoformat()})
     _log(proj_dir, msg)
 
 
@@ -417,9 +417,8 @@ def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any
 def _save_paper_ids(base: Path, paper_qs: list[dict[str, Any]]) -> None:
     """ME-7：记录押题卷抽样的题目 id —— 审核台「保存并重渲染」据此复用，避免抽样漂移。"""
     try:
-        (base / "最终产物" / "paper_ids.json").write_text(
-            json.dumps({"ids": [q.get("id") for q in paper_qs]}, ensure_ascii=False),
-            encoding="utf-8")
+        _write_json_atomic(base / "最终产物" / "paper_ids.json",
+                           {"ids": [q.get("id") for q in paper_qs]})
     except OSError:  # 写失败不阻断渲染（仅失去防漂移能力）
         pass
 
@@ -692,8 +691,7 @@ def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
             if _n_conf:
                 _log(base, f"  ⚠️ 网络素材中 {_n_conf} 条与教材冲突——已单独成节并标注"
                            f"「禁止作为题干/答案依据」；若答案误用其数值，门禁① 数值核验会拦下")
-            (base / "网络参考素材.json").write_text(
-                json.dumps(materials, ensure_ascii=False, indent=2), encoding="utf-8")
+            _write_json_atomic(base / "网络参考素材.json", materials)
             if cancel.is_set():
                 # F2：检索中途取消 → 落盘结果标记 incomplete，续跑将重新检索而非复用残缺结果
                 inc_flag.write_text("incomplete", encoding="utf-8")
@@ -780,8 +778,7 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
             # S1-2：数值核验（正确选项的临床数值必须有源文本出处）
             "numeric": numeric_check.check_numbers(questions, source_texts=text_by_sid),
         }
-        (base / "质检报告" / "gate1_final.json").write_text(
-            json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_json_atomic(base / "质检报告" / "gate1_final.json", gate)
         trace_md = "\n".join(f"- {t['q_id']}: {t['reason']}" for t in fixed["trace"]) or "无修复项"
     else:
         trace_md = "质检通过（PASS / PASS_WITH_FIXES），无需修复。"
@@ -806,6 +803,7 @@ def _stage_gate1(*, base: Path, meta_path: Path,
     """
     non_action_flagged = False   # B-18：非定向核查项只留痕一次（避免每轮重复写清单）
     _dup_marks: dict[str, str] = {}   # U-07：查重未消除题的留痕（q_id → reason）
+    _unverified: list[str] = []       # W2：本轮未跑成的门禁① 子项（供产物页显式标 ⛔，勿与「通过」混淆）
     for round_i in range(1, FIX_ROUNDS_GATE + 2):
         if cancel.is_set():   # B24：门禁循环轮次间可取消
             return questions, _cancel_out(base, meta_path, done_sids, questions)
@@ -817,9 +815,12 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             lambda ev, qs=questions: options_check.check_all(qs)["issues"],
             detail=f"第 {round_i} 轮")
         if opt_err:
+            # W2（2026-10-02 二轮审计）：失败不再写成「无问题」（[]）——那会让未校验题库
+            # 冒充「已通过门禁」。改为 None = 「未校验」，并登记 unverified 供产物页显式区分。
             _append_manual_section(base, "门禁① 选项校验",
-                                   [f"第 {round_i} 轮失败：{opt_err}", "已按无问题继续，建议人工复核。"])
-            _opt_issues = []
+                                   [f"第 {round_i} 轮失败：{opt_err}", "本轮未校验（非通过），产物页标 ⛔ 请人工复核。"])
+            _opt_issues = None
+            _unverified.append("选项校验")
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
                       sub="Bloom 校验", sub_done=1, sub_total=5)
         _bloom_issues, bloom_err = _run_substep(
@@ -828,8 +829,9 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             detail=f"第 {round_i} 轮")
         if bloom_err:
             _append_manual_section(base, "门禁① Bloom 校验",
-                                   [f"第 {round_i} 轮失败：{bloom_err}", "已按无问题继续，建议人工复核。"])
-            _bloom_issues = []
+                                   [f"第 {round_i} 轮失败：{bloom_err}", "本轮未校验（非通过），产物页标 ⛔ 请人工复核。"])
+            _bloom_issues = None
+            _unverified.append("Bloom 校验")
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
                       sub="溯源回查", sub_done=2, sub_total=5)
         _trace_issues, trace_err = _run_substep(
@@ -839,8 +841,9 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             detail=f"第 {round_i} 轮")
         if trace_err:
             _append_manual_section(base, "门禁① 溯源回查",
-                                   [f"第 {round_i} 轮失败：{trace_err}", "已按无问题继续，建议人工复核。"])
-            _trace_issues = []
+                                   [f"第 {round_i} 轮失败：{trace_err}", "本轮未校验（非通过），产物页标 ⛔ 请人工复核。"])
+            _trace_issues = None
+            _unverified.append("溯源回查")
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
                       sub="查重", sub_done=3, sub_total=5)
         _dup, dup_err = _run_substep(
@@ -850,8 +853,9 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             detail=f"第 {round_i} 轮")
         if dup_err:
             _append_manual_section(base, "门禁① 查重",
-                                   [f"第 {round_i} 轮失败：{dup_err}", "已按无问题继续，建议人工复核。"])
-            _dup = {"issues": []}
+                                   [f"第 {round_i} 轮失败：{dup_err}", "本轮未校验（非通过），产物页标 ⛔ 请人工复核。"])
+            _dup = {"issues": None}
+            _unverified.append("查重")
         # S1-2（R8+W）：数值核验——不依赖 LLM 的硬锚点（正确选项的临床数值必须有源文本出处）
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
                       sub="数值核验", sub_done=4, sub_total=5)
@@ -861,29 +865,37 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             detail=f"第 {round_i} 轮")
         if num_err:
             _append_manual_section(base, "门禁① 数值核验",
-                                   [f"第 {round_i} 轮失败：{num_err}", "已按无问题继续，建议人工复核。"])
-            _num = {"issues": []}
+                                   [f"第 {round_i} 轮失败：{num_err}", "本轮未校验（非通过），产物页标 ⛔ 请人工复核。"])
+            _num = {"issues": None}
+            _unverified.append("数值核验")
         gate = {
             "options": {"issues": _opt_issues},
             "bloom": {"issues": _bloom_issues},
             "trace": {"issues": _trace_issues},
             "dup": _dup,
             "numeric": _num,
+            # W2：本轮「未跑成」的子项名单（非空 ⇒ 产物页必须标 ⛔ 未校验，不得显示为通过）
+            "unverified": sorted(set(_unverified)),
         }
         _set_progress(base, "gate1", round_i, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮完成",
                       sub="门禁检查", sub_done=5, sub_total=5)
-        dup_issues = [x for x in gate["dup"]["issues"] if x.get("severity") in ("fail", "warn")]
+        # W2：issues 可能是 None（=该子项本轮未校验）。过滤器必须显式区分——
+        # 旧的 `for x in None` 会 TypeError；旧的 `= []` 则把「未校验」伪装成「无问题」。
+        def _filt(issues: Any, severities: tuple[str, ...]) -> list[dict[str, Any]]:
+            return [x for x in (issues or []) if x.get("severity") in severities]
+
+        dup_issues = _filt(gate["dup"]["issues"], ("fail", "warn"))
         # S1-2：数值核验的 fail/warn 与查重同路（进 MedFix 定向修复 + 人工复核留痕）
-        num_issues = [x for x in gate["numeric"]["issues"]
-                      if x.get("severity") in ("fail", "warn")]
+        num_issues = _filt(gate["numeric"]["issues"], ("fail", "warn"))
         # U-07：按轮刷新查重留痕（最后一轮仍命中的 = 修复轮用尽仍未消除）
         _dup_marks = {x["q_id"]: x.get("reason", "") for x in dup_issues if x.get("q_id")}
-        all_issues = (gate["options"]["issues"] + gate["bloom"]["issues"]
-                      + gate["trace"]["issues"] + dup_issues + num_issues)
+        all_issues = (_filt(_opt_issues, ("fail", "warn", "info"))
+                      + _filt(_bloom_issues, ("fail", "warn", "info"))
+                      + _filt(_trace_issues, ("fail", "warn", "info"))
+                      + dup_issues + num_issues)
         fails = [x for x in all_issues if x["severity"] == "fail"]
         (base / "质检报告").mkdir(exist_ok=True)
-        (base / "质检报告" / f"gate1_round{round_i}.json").write_text(
-            json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_json_atomic(base / "质检报告" / f"gate1_round{round_i}.json", gate)
         # B-18：区分「可定向修复」（有真实 q_id）与「非定向核查项」（比例级 Bloom
         # q_id='BLOOM' 等哨兵——MedFix 按 issue 序号找不到原题，修复必然是空转白烧 token）：
         # 非定向项只留痕一次（人工复核清单 + log），不参与 MedFix 循环与后续剔除
@@ -980,6 +992,16 @@ def _stage_gate1(*, base: Path, meta_path: Path,
              "已在产物中对这些题显示「⚠ 疑似重复」标记；如影响复习体验，"
              "可在逐题审核台改写题干或直接剔除后「保存并重渲染」。",
              *[f"  {qid}：{_dup_marks[qid]}" for qid in list(_dup_marks)[:10]]])
+    # W2（2026-10-02 二轮审计）：门禁① 有子项**未跑成**时必须写进 meta，让产物页显式标 ⛔。
+    # 此前这些子项失败被静默当成「无问题」（issues=[]），未校验题库冒充已通过门禁——
+    # 违反项目总原则「『检查通过』与『检查没跑』必须能区分」。
+    if _unverified:
+        _uniq = sorted(set(_unverified))
+        _update_meta(meta_path, gate1_unverified=_uniq)
+        _log(base, f"  ⛔ 门禁① 有 {len(_uniq)} 个子项未跑成（非通过）：{'、'.join(_uniq)}"
+                   f"——产物页将标「未校验」，请人工复核")
+    else:
+        _update_meta(meta_path, gate1_unverified=[])
     return questions, None
 
 
@@ -1265,8 +1287,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _save_checkpoint(base, done_sids, questions)
         (base / "中间产物").mkdir(exist_ok=True)
         if questions:
-            (base / "中间产物" / "questions_raw.json").write_text(
-                json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
+            _write_json_atomic(base / "中间产物" / "questions_raw.json", questions)
         _set_stage(base, meta_path, "cancelled",
                    f"⏹ 已取消：已生成 {len(questions)} 题并保留断点，可再次「开始生成」续跑")
         return {"stage": "cancelled", "questions": len(questions), "partial": True}
@@ -1276,8 +1297,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     if questions and len(questions) < meta.get("target", 1):
         _log(base, f"  ⚠️ 题数不足：共 {len(questions)}/{meta.get('target')} 题（模型补足尝试后仍缺）")
     (base / "中间产物").mkdir(exist_ok=True)
-    (base / "中间产物" / "questions_raw.json").write_text(
-        json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
+    _write_json_atomic(base / "中间产物" / "questions_raw.json", questions)
     _log(base, f"  出题完成：{len(questions)} 题")
     # NX-03（R-2）：软校验契约告警计数落项目 meta（学习中心概览卡可见；0 也会覆盖旧值）
     _update_meta(meta_path, contract_warnings=len(contract_bad))
@@ -1304,8 +1324,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         bloom_target=bloom_target, known_sids=known_sids)
     if _g1_cancel is not None:
         return _g1_cancel
-    (base / "中间产物" / "questions_gate1.json").write_text(
-        json.dumps(questions, ensure_ascii=False, indent=1), encoding="utf-8")
+    _write_json_atomic(base / "中间产物" / "questions_gate1.json", questions)
 
     # ---------------- ③ MedQC 质检（并发批次）
     if cancel.is_set():
@@ -1356,8 +1375,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                               "issues": [], "summary": "质检结果缺失，降级继续"}
     if qc_report.get("cancelled"):
         return _cancel_out(base, meta_path, done_sids, questions)
-    (base / "质检报告" / "质检报告.json").write_text(
-        json.dumps(qc_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_atomic(base / "质检报告" / "质检报告.json", qc_report)
     # NX-03（R-2）：契约硬闭环失败批次 → 人工复核清单（与网络冲突/渲染前剔除并存）
     contract_fails = [i for i in qc_report.get("issues", []) if i.get("code") == "QC_CONTRACT"]
     if contract_fails:
@@ -1411,8 +1429,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
         _rex.annotate_questions(questions, subject)
     except Exception as _e:  # noqa: BLE001  标注失败不阻断产物落盘
         _log(base, f"  ⚠️ 真题来源标注失败（不影响产物）：{_e}")
-    (base / "最终产物" / "questions_final.json").write_text(
-        json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_atomic(base / "最终产物" / "questions_final.json", questions)
     _set_progress(base, "finalizing", 1, 1, "题库已落盘", sub="渲染前终检", sub_done=1, sub_total=1)
     _log(base, f"  最终题库 {len(questions)} 题")
 
@@ -1445,12 +1462,18 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
     # S1-1b（R8+W）：质检未完成的批次必须**在产物页上可见**——原先该状态只写进 run.log 与
     # 人工复核清单，读者拿到题库/押题卷时完全看不出来。
     _qc_unverified = [i for i in qc_report.get("issues", []) if i.get("code") == "QC_UNVERIFIED"]
+    # W2：门禁① 有子项未跑成 → 产物页标 ⛔（与质检未完成并列，二者独立）
+    _g1_unverified = list(meta.get("gate1_unverified") or [])
+    _g1_notice = ("本批题目有部分**门禁① 校验子项未跑成**（" + "、".join(_g1_unverified)
+                  + "）——这部分**未经校验**（并非「无问题」），请务必人工复核。"
+                  if _g1_unverified else "")
     _qc_notice = ("本批题目中有部分批次未能完成 AI 质检（质检调用失败或超时），"
                   "这部分题目**未经事实校验**——请以教材与指南为准，重要结论请人工复核。"
                   if _qc_unverified else "")
+    _notice = " ".join(p for p in (_g1_notice, _qc_notice) if p)
     qbank_html_text = qbank_html.export_html(questions, f"{subject} 题库",
                                              image_index=image_index, pid=pid,
-                                             notice=_qc_notice)
+                                             notice=_notice)
     (base / "最终产物" / "qbank.md").write_text(qbank_md, encoding="utf-8")
     (base / "最终产物" / "qbank.html").write_text(qbank_html_text, encoding="utf-8")
     rendered = ["qbank.md", "qbank.html"]
@@ -1468,7 +1491,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
             qbank_html.export_paper_html(paper_qs, f"{subject} 押题卷",
                                          pid=pid, subject=subject,
                                          image_index=image_index,
-                                         notice=_qc_notice), encoding="utf-8")
+                                         notice=_notice), encoding="utf-8")
         rendered.append("押题卷.html")
         _substep(base, "rendering", "paper", "押题卷", "done",
                  f"{len(paper_qs)} 题")
@@ -1517,9 +1540,9 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                  usage={**snap,
                         "est_cost_cny": round(est_cost, 2) if est_cost is not None else None,
                         "price_unit": "元/1M token（官网为准）"})
-    (base / "stage.json").write_text(
-        json.dumps({"stage": "done", "msg": "✅ 全部产物生成完成",
-                    "updated": datetime.now().isoformat()}), encoding="utf-8")
+    _write_json_atomic(base / "stage.json",
+                       {"stage": "done", "msg": "✅ 全部产物生成完成",
+                        "updated": datetime.now().isoformat()})
     _set_progress_clear(base)
     _log(base, "✅ 全部产物生成完成")
     return {"stage": "done", "questions": len(questions),

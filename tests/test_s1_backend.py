@@ -443,7 +443,11 @@ def test_ocr_jobs_persist_across_restart(monkeypatch, tmp_path):
         ocr_mod.restore_ocr_persistence()
 
         assert set(ocr_mod.OCR_JOBS) >= {"persist1", "persist2"}, "重启后任务记录应仍在"
-        assert ocr_mod.OCR_JOBS["persist1"]["state"] == "running"
+        # W5（2026-10-02）：原断言写死 `== "running"`——那**正是缺陷本身**：上一进程的
+        # `running` 后台线程已随进程消失，原样恢复会让前端轮询永真、永久转圈无提示。
+        # 现归一为 `interrupted`（终态），前端可提示「上次中断，请重试」。
+        assert ocr_mod.OCR_JOBS["persist1"]["state"] == "interrupted", \
+            "非终态（running/queued）重启后必须归一为 interrupted"
         assert ocr_mod.OCR_JOBS["persist2"]["result"]["text"] == "# md"
         assert isinstance(ocr_mod.OCR_JOBS["persist1"]["cancel"], threading.Event), \
             "恢复的任务应重建 cancel Event"
