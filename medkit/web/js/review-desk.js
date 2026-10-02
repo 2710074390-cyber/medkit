@@ -1,4 +1,4 @@
-/* exported BLOOM_SEGS, RATIO_SEGS, autoMap, b, bar, barW, base, baseUrl, baseUrlDirty, bindSegBar, bloomSum, body, box, btn, cap, chosen, createToken, cum, d, doPickProvider, el, estT, fillModelSelect, gen, got, grabOff, h, handle, html, i, in1, inp, j, k, keysR, labelTxt, lbl, leftOk, leftPos, list, loadConfig, loadKeys, loadSearchOptions, manual, modelValue, move, moved, mu, normAnswer, note, nv, old, pct, pickProvider, pid, prefix, prev, prov, provNote, qc, r, r0, ratioSum, rect, renderSegBar, rightOk, s, savedGen, savedIds, savedQc, scheduleReady, searchBackends, seg, seg1, seg2, segEl, segVals, sel, setW, si, startX, sum, syncWsManual, t, target, total, u, up, updateWsNote, v, v1, validBaseUrl, vals, value, vs, wsc */
+/* exported BLOOM_SEGS, MODEL_GROUP_LABEL, RATIO_SEGS, autoMap, b, bar, barW, base, baseUrl, baseUrlDirty, bindSegBar, bloomSum, body, box, btn, cap, chosen, createToken, cum, d, doPickProvider, el, estT, fillModelSelect, gen, got, grabOff, h, handle, html, i, in1, inp, j, k, keysR, labelTxt, lbl, leftOk, leftPos, list, loadConfig, loadKeys, loadSearchOptions, manual, modelCapsText, modelHintText, modelMetaText, modelValue, move, moved, mu, normAnswer, note, nv, old, pct, pickProvider, pid, prefix, prev, prov, provNote, qc, r, r0, ratioSum, rect, renderModelOptions, renderSegBar, rightOk, s, savedGen, savedIds, savedQc, scheduleReady, searchBackends, seg, seg1, seg2, segEl, segVals, sel, setW, si, startX, sum, syncWsManual, t, target, total, u, up, updateWsNote, v, v1, validBaseUrl, vals, value, vs, wsc */
 /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 /* ---- ① 服务商 */
@@ -11,32 +11,92 @@ function modelValue(id) {
   const v = $(id).value;
   return (v && v !== "__manual__") ? v : (manual.value.trim() || "");
 }
-function fillModelSelect(selId, models, saved, hintId) {
+/* 2026-10：模型下拉的三层数据（`/api/llm/models` 的 `items`）由后端合并好，
+ * 前端只负责**如实呈现**——不重新排序、不重算能力（避免前后端各判一套）。 */
+function modelCapsText(caps) {
+  const c = caps || {};
+  const out = [];
+  if (c.vision) out.push("🖼 视觉");
+  if (c.reasoning) out.push("🧠 推理");
+  // 未知即不显示——**不编**（宁缺勿假）
+  return out.join(" · ");
+}
+function modelMetaText(it) {
+  const parts = [];
+  if (it.ctx_label) parts.push("上下文 " + it.ctx_label);
+  if (it.tier) parts.push(it.tier);
+  const caps = modelCapsText(it.caps);
+  if (caps) parts.push(caps);
+  return parts.join(" · ");
+}
+/* 分组：★推荐（内置目录）/ ⚡最新拉取（服务商有、目录未收录）/ 其它（仅已保存） */
+const MODEL_GROUP_LABEL = { catalog: "★ 推荐", remote: "⚡ 最新拉取（目录未收录）" };
+function renderModelOptions(sel, items, saved) {
+  const groups = { catalog: [], remote: [] };
+  const ids = [];
+  (items || []).forEach(it => {
+    if (!it || !it.id) return;
+    ids.push(it.id);
+    // `both` = 目录里有且服务商也确认了 —— 归入「推荐」（能力判定最准）
+    const g = (it.source === "remote") ? "remote" : "catalog";
+    groups[g].push(it);
+  });
+  const appendGroup = (label, arr) => {
+    if (!arr.length) return;
+    const og = document.createElement("optgroup");
+    og.label = label;
+    arr.forEach(it => {
+      const o = new Option(it.name || it.id, it.id);
+      const meta = modelMetaText(it);
+      // `title` 供鼠标悬停看完整信息（含**实际 API model ID**——
+      // 显示名可能带版本后缀，选之前核对它，避免选到同名的另一版）
+      o.title = (meta ? meta + " · " : "") + "API ID: " + it.id;
+      og.append(o);
+    });
+    sel.append(og);
+  };
+  appendGroup(MODEL_GROUP_LABEL.catalog, groups.catalog);
+  appendGroup(MODEL_GROUP_LABEL.remote, groups.remote);
+  return ids;
+}
+/* 展示提示：把「后端给的默认项 + 理由」如实说出来。
+ * `default_reason` 由 `modelcatalog.pick_default` 给出——**文案与动作同源**，
+ * 不再出现「写了『默认选最新』但代码只是取 list[0]」这种假承诺。 */
+function modelHintText(count, reason, sourceOk) {
+  if (!count) return "";
+  const t = "已加载 " + count + " 个模型";
+  const r = reason ? "，默认选中「" + reason + "」" : "";
+  return sourceOk === false ? t + "（实时拉取失败，列表来自内置目录）" : t + r;
+}
+function fillModelSelect(selId, items, saved, hintId) {
   const sel = $(selId), manual = $(selId + "_manual");
   manual.style.display = "none"; manual.value = "";
   sel.innerHTML = "";
-  const list = (models || []).slice();
+  const list = (items || []).filter(it => it && it.id);
   let value = saved || "";
   if (list.length) {
-    list.forEach(m => sel.append(new Option(m, m)));
-    if (saved && !list.includes(saved)) {
+    const ids = renderModelOptions(sel, list, saved);
+    if (saved && !ids.includes(saved)) {
       // A-新5：已保存模型不在新列表 → 作为附加 option（标注已保存）追加并保持选中，不得替换为 list[0]
-      sel.append(new Option(`${saved}（已保存）`, saved));
+      const og = document.createElement("optgroup");
+      og.label = "⏱ 已保存";
+      og.append(new Option(`${saved}（已保存）`, saved));
+      sel.append(og);
     }
-    value = saved || list[0];
+    value = saved || sel.value || list[0].id;
   } else if (value) {
     sel.append(new Option(`${value}（已保存，待获取列表）`, value));
   } else {
-    sel.append(new Option("（点击「获取模型列表」自动填充最新）", ""));
+    sel.append(new Option("（点击「获取模型列表」自动填充）", ""));
   }
   sel.append(new Option("手动输入…", "__manual__"));
   sel.value = value || "";
-  if (hintId) $(hintId).textContent = list.length ? `已加载 ${list.length} 个模型，默认选最新` : "";
+  if (hintId) $(hintId).textContent = list.length ? modelHintText(list.length, "", true) : "";
 }
 ["model_gen", "model_qc"].forEach(id => {
   $(id).addEventListener("change", () => {
     const manual = $(id + "_manual");
-    if ($(id).value === "__manual__") { manual.style.display = "block"; manual.focus(); manual.placeholder = "手动输入模型名（如 deepseek-v4-flash）"; }
+    if ($(id).value === "__manual__") { manual.style.display = "block"; manual.focus(); manual.placeholder = "手动输入模型名（如 deepseek-v4-pro）"; }
     else manual.style.display = "none";
   });
 });
@@ -208,7 +268,7 @@ function doPickProvider(pr) {
     const gen = modelValue("model_gen");
     if (!gen) fillModelSelect("model_gen", [], pr.default_model, "gen_hint");
     const qc = modelValue("model_qc");
-    if (!qc || qc === "deepseek-v4-flash" || qc === "glm-5.3" || qc === "qwen-plus" || qc === "deepseek-chat") {
+    if (!qc || qc === "deepseek-flash" || qc === "glm-5.3" || qc === "qwen-plus" || qc === "deepseek-chat") {
       fillModelSelect("model_qc", [], pr.default_model, "");
     }
   } else {
@@ -242,15 +302,25 @@ $("btn_models").onclick = async () => {
   $("btn_models").innerHTML = '<span class="spin"></span>获取中…';
   try {
     const r = await api("/api/llm/models", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base_url: $("base_url").value.trim(), api_key: $("api_key").value.trim() }) });
-    if (r.models && r.models.length) {
+      body: JSON.stringify({ base_url: $("base_url").value.trim(), api_key: $("api_key").value.trim(),
+        provider: state.provider || "" }) });
+    const items = r.items || [];
+    if (items.length) {
       const savedGen = modelValue("model_gen");
       const savedQc = modelValue("model_qc");
-      fillModelSelect("model_gen", r.models, savedGen || (await api("/api/config")).model_gen || "", "gen_hint");
-      fillModelSelect("model_qc", r.models, savedQc || "", "");
-      toast("已加载 " + r.models.length + " 个模型，默认选中最新");
+      // 默认项由后端 `pick_default` 给出（口径单一），前端不再自己挑 list[0]
+      fillModelSelect("model_gen", items, savedGen || r.default || "", "gen_hint");
+      fillModelSelect("model_qc", items, savedQc || "", "");
+      if ($("gen_hint")) $("gen_hint").textContent = modelHintText(items.length, r.default_reason, r.source_ok);
+      if (r.source_ok === false) {
+        // 拉取失败但有目录兜底：**必须如实说**（不许把降级包装成成功）
+        toast("未能从服务商拉取（" + (r.msg || "原因未知") + "），已列出内置目录中的模型", false);
+      } else {
+        toast("已加载 " + items.length + " 个模型，默认选中「" + (r.default_reason || "推荐档") + "」");
+      }
     } else {
       fillModelSelect("model_gen", [], modelValue("model_gen"), "gen_hint");
+      fillModelSelect("model_qc", [], modelValue("model_qc"), "");
       toast(r.msg || "未能获取模型列表（可「手动输入」）", false);
     }
   } catch (e) { toast(e.message, false); }

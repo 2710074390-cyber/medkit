@@ -55,18 +55,53 @@ def test_mask_api_key_short_keys():
 
 # ---------------------------------------------------------------- R4-15 llm_models 归一化
 def test_llm_models_error_hint_normalized(monkeypatch):
+    """R4-15 判据不变（**异常串必须归一化、不回显**），但口径要跟上 2026-10 的改动：
+
+    拉取失败后**不再直接返回空列表**——内置模型目录仍会兜底
+    （`source_ok=False` + `ok=True`），所以「失败」这件事现在由
+    `source_ok` 表达，而不是 `ok`。**归一化本身照旧必须做到**。
+
+    ⚠️ 注意这里打的是 `list_models_detailed`：路由已改为调它
+    （`list_models` 现在只是它的薄封装）。打在旧名字上会**静默失效**——
+    失败注入根本没进路由，`source_ok` 会是 True，用例变成测空气。
+    """
     from medkit.core.llm import LLMClient, LLMError
 
-    def _fake_list_models(self, raise_on_error=True):
+    def _fake_detailed(self, raise_on_error=True):
         raise LLMError("获取模型列表失败：API key 401 authentication failed for xyz.test/v1")
 
-    monkeypatch.setattr(LLMClient, "list_models", _fake_list_models)
-    resp = cfg_router.llm_models(cfg_router.ModelsBody(base_url="https://x.abc", api_key="k"))
+    monkeypatch.setattr(LLMClient, "list_models_detailed", _fake_detailed)
+    # 用**无内置目录**的服务商，才能走到「真没东西可展示」的分支
+    resp = cfg_router.llm_models(
+        cfg_router.ModelsBody(base_url="https://x.abc", api_key="k", provider="custom"))
+    assert resp["source_ok"] is False
     assert resp["ok"] is False
+    assert resp["models"] == []
     assert "API Key 无效或未授权" in resp["msg"]
     # 不回显原始异常串（含 base_url/响应片段）
     assert "x.abc" not in resp["msg"]
     assert "authentication" not in resp["msg"]
+
+
+def test_llm_models_falls_back_to_catalog(monkeypatch):
+    """拉取失败但也**不许空白**：预置服务商有内置目录 ⇒ 仍能选模型。
+
+    与上一条互为一对：同一注入、不同 provider，`ok`/`source_ok` 取值相反。
+    这正是「`ok` 表达『有东西可展示』、`source_ok` 表达『拉取成功』」两字段分开的意义。
+    """
+    from medkit.core.llm import LLMClient, LLMError
+
+    def _fake_detailed(self, raise_on_error=True):
+        raise LLMError("获取模型列表失败：timeout")
+
+    monkeypatch.setattr(LLMClient, "list_models_detailed", _fake_detailed)
+    resp = cfg_router.llm_models(
+        cfg_router.ModelsBody(base_url="https://x.abc", api_key="k", provider="deepseek"))
+    assert resp["source_ok"] is False      # 没拉到
+    assert resp["ok"] is True              # 但目录兜底，用户仍可选
+    assert resp["models"], "内置目录必须提供兜底条目"
+    assert all(it["source"] == "catalog" for it in resp["items"])
+    assert resp["msg"], "失败原因必须如实给出（不许静默）"
 
 
 # ---------------------------------------------------------------- R4-13 import-image 上限

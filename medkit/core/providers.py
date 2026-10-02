@@ -18,7 +18,9 @@ PROVIDERS: list[dict[str, Any]] = [
         "id": "deepseek",
         "name": "DeepSeek",
         "base_url": "https://api.deepseek.com",
-        "default_model": "deepseek-v4-flash",
+        # 2026-10-03 实测：官方 /v1/models 现行 id 为 deepseek-flash / deepseek-v4-pro
+        # （旧的 deepseek-v4-flash 已不在列表里；详见 core/config.py 的 _MODEL_RENAMES）
+        "default_model": "deepseek-v4-pro",
         "register_url": "https://platform.deepseek.com",
         "note": "国内直连 · OpenAI/Anthropic 兼容；模型与能力以官方最新为准（点「获取模型列表」自动拉取）",
         "search_support": True,

@@ -10,6 +10,52 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Added（模型列表：最新可用模型 + 能力展示 · 仿 Cherry Studio 三层合并）
+
+背景：模型下拉此前只回显上游返回的 `id` 列表，**上游其实是带富元数据的**（`name` /
+`context_window` / `max_output_tokens` / `input_modalities` / `effort`），全被
+`LLMClient.list_models` 裁掉了；且界面与 README 都声称「**默认选最新**」，
+实现却是 `value = saved || list[0]`（服务商返回第一条，**无任何排序**）——
+**两处声明、零处实现、零处守卫**。视觉能力则靠名字里有没有「v」猜，
+而权威字段 `input_modalities` 就在同一次响应里。
+
+- 新增 `medkit/core/modelcatalog.py`（纯函数 · 零 IO · 零 LLM · 零状态）：
+  - **三层能力解析**：① 上游字段 → ② 内置目录 → ③ 名称启发式；
+  - **`None`（未知）与 `False`（已知不具备）严格区分**——否则上层信息会被下层降级覆盖；
+  - `merge()` 合流：目录命中的标 `catalog`（前端显示 ★ 推荐），
+    未收录的实时模型标 `remote`（前端显示 ⚡ 最新拉取），**不丢弃**；
+  - `pick_default()` 返回 `(id, reason)` 三档理由：`已保存` / `推荐档` / `服务商列表首项`。
+- `medkit/core/llm.py`：新增 `list_models_detailed()`——用 pydantic `model_dump()`
+  **保留上游全字段**（旧 `list_models()` 改为其薄封装，返回 `id` 列表的契约不破）。
+- `medkit/routers/config.py`：`/api/llm/models` 收 `provider` 入参（不再从配置里猜），
+  **拉取失败回落内置目录**（离线也有可选项）；`source_ok`（真拉到没）与 `ok`（有没有东西可展示）
+  **分离表达两件事**，不再用一个布尔混指。
+- `medkit/core/vision.py`：`looks_like_vision` 改为**先查目录、再退回名称启发式**，
+  并回填 `vision_source`（`catalog`/`name`/`none`）——`deepseek-flash` 的视觉能力
+  由目录正面判据纠偏，不再靠名字猜。
+- 前端 `review-desk.js`：模型下拉改 `<optgroup>` 分组（★ 推荐 / ⚡ 最新拉取），
+  选项 `title` 带 API ID 与能力摘要；**文案由「默认选最新」改为「推荐档」+ 理由**。
+
+### Fixed
+
+- **服务商默认模型陈旧**：DeepSeek 的 `default_model` 仍为 `deepseek-v4-flash`，
+  而官方 API 现返回 `deepseek-flash` / `deepseek-v4-pro` ⇒ 自洽改名链
+  （`config.py` 的 `_MODEL_RENAMES` + `providers.py`），并**迁移存量用户配置**；
+  **未知/私有模型名不擅动**（不被改名链误伤）。
+- **README / 前端「默认选最新」失实文案**——改为可兑现的「推荐档」表述
+  （README 全量 + `review-desk.js`）。
+
+### 测试
+
+- 新增 `tests/test_model_catalog.py` **44 项**：`format_ctx` 黄金值、
+  `_modalities_caps` 的 None-vs-False、`caps_of` 分层、`merge` 来源/顺序/畸形输入/名称兜底、
+  `pick_default` 五态、vision 三层来源、目录良构 + `default_model` 覆盖，以及
+  **防复发守卫**「UI 有『最新』承诺 ⇒ 必须真有排序/目录查序背书；撤下承诺 ⇒ 必须已上替代口径」
+  （**双向 · 不 skip**）与前端「必须带 `provider`」「必须采用后端 `default`」的结构守卫。
+- `tests/test_r4_batch3.py` 重写 `test_llm_models_error_hint_normalized`（对齐新的
+  `source_ok`/`ok` 诚实语义）+ 新增 `test_llm_models_falls_back_to_catalog`。
+- 真身：单元 **1413** / 浏览器层 **82** / 全量 **1495**（README 五处 + `test_docs_coverage` 已同步）。
+
 ## [0.11.0] - 2026-10-02
 
 > **本版为何是 minor（而非 patch）**：0.10.6 之后合入了**一项新功能**——D4 别名表

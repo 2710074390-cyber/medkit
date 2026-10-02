@@ -117,7 +117,7 @@ def test_provider_key_archive_and_promotion():
     _install_isolated_cfg()
 
     def put(provider, key):
-        model = "kimi-k2-thinking" if provider == "kimi" else "deepseek-v4-flash"
+        model = "kimi-k2-thinking" if provider == "kimi" else "deepseek-flash"
         return c.put("/api/config", json={
             "provider": provider, "base_url": "", "api_key": key,
             "model_gen": model, "model_qc": model,
@@ -435,7 +435,7 @@ def test_search_backends_2026():
     assert out and out[0]["url"] == "https://a.example.com/x"
 
     from medkit.core.providers import get_provider
-    assert get_provider("deepseek")["default_model"] == "deepseek-v4-flash"
+    assert get_provider("deepseek")["default_model"] == "deepseek-v4-pro"
     assert get_provider("deepseek")["search_support"] is True
     assert get_provider("qwen")["default_model"] == "qwen-plus"
     assert get_provider("zhipu")["default_model"] == "glm-5.3"

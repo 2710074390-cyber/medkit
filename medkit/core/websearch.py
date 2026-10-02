@@ -38,6 +38,11 @@ MAX_HTTP_TIMEOUT = 75.0
 SEARCH_TOOL_CURRENT = "web_search"             # 现行工具名（2026-09 官方文档）
 SEARCH_TOOL_LEGACY = "web_search_2025_08_26"   # 400 回退：2025 版工具名（官方兼容变体）
 
+# 2026-10-03 实测：DeepSeek 官方现行检索可用 id 是 `deepseek-flash`
+# （`_MODEL_RENAMES` 里的旧名会被迁移到它）。集中常量——此前 body 与 400 回退
+# 两处各写一份字面量，改一处忘另一处即回归（同 `SEARCH_TOOL_CURRENT` 的教训）。
+_DEEPSEEK_SEARCH_DEFAULT = "deepseek-flash"
+
 BANNED_HOSTS = ("bilibili.com", "douyin.com", "youtube.com", "weibo.com",
                 "tieba.baidu.com", "xiaohongshu.com", "kuaishou.com",
                 "sohu.com", "sina.com.cn")
@@ -64,7 +69,7 @@ BACKEND_LABELS = {
 BACKENDS: list[dict[str, Any]] = [
     {"id": "deepseek_tool", "label": "DeepSeek 内置联网搜索", "builtin": True,
      "note": "自带：官方 Responses API web_search 工具（服务端托管搜索，无需第三方 Key；"
-             "deepseek-v4-flash / v4-pro / v4-flash-vision-exp）"},
+             "deepseek-flash / deepseek-v4-pro（以官方 /v1/models 为准）"},
     {"id": "zhipu_tool", "label": "智谱 GLM 网络搜索", "builtin": True,
      "note": "自带：专用 Web Search API（open.bigmodel.cn/api/paas/v4/web_search；"
              "用你的智谱 Key；检索计费见官网）"},
@@ -215,8 +220,21 @@ def _collect_urls(obj: Any, out: list[dict[str, Any]]) -> None:
 
 
 def _normalize_deepseek_model(model: Optional[str]) -> str:
-    """v0.5：DeepSeek 内置检索仅支持 v4 系列；非 v4（如旧默认 deepseek-chat）→ 回退 v4-flash。"""
-    return model if model and str(model).startswith("deepseek-v4") else "deepseek-v4-flash"
+    """DeepSeek 内置检索只支持现行 flash 系列；其余（旧 deepseek-chat / 已改名的
+    deepseek-v4-flash）一律回退到现行 id。
+
+    2026-10-03 实测：官方现行 id 是 `deepseek-flash`，`deepseek-v4-flash` 已不在
+    `/v1/models` 里。旧判断 `startswith("deepseek-v4")` 会把**已经改名的** id 判成
+    可用而放行 ⇒ 服务端 400。改为按**现行前缀**放行 + 显式迁移表兜底。
+    """
+    from .config import _MODEL_RENAMES  # 迁移链单一来源（不在这里再抄一份旧 id）
+
+    m = str(model or "")
+    if not m:
+        return _DEEPSEEK_SEARCH_DEFAULT
+    if m in _MODEL_RENAMES:
+        return _MODEL_RENAMES[m]
+    return m if m.startswith("deepseek-") and m != "deepseek-chat" else _DEEPSEEK_SEARCH_DEFAULT
 
 
 def _push(out: list[dict[str, Any]], url: str, title: str = "",
@@ -231,7 +249,7 @@ def _push(out: list[dict[str, Any]], url: str, title: str = "",
                 "snippet": _clip(snippet or "")})
 
 
-def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") -> list[dict[str, Any]]:
+def search_deepseek(query: str, api_key: str, model: str = "") -> list[dict[str, Any]]:
     """DeepSeek 内置联网搜索（2026-08 官方文档核查）：
     官方 Responses API（POST https://api.deepseek.com/responses）web_search 工具，
     服务端托管搜索，无需第三方搜索 Key；仅 deepseek-v4 系列。
@@ -244,10 +262,9 @@ def search_deepseek(query: str, api_key: str, model: str = "deepseek-v4-flash") 
     """
     if not api_key:
         raise SearchError("未配置 DeepSeek API Key")
-    # v0.5 防御：非 v4 系列模型（如旧默认 deepseek-chat）会 400 → 回退 deepseek-v4-flash
     model = _normalize_deepseek_model(model)
     body = {
-        "model": model or "deepseek-v4-flash",
+        "model": model or _DEEPSEEK_SEARCH_DEFAULT,
         "input": [{"type": "message", "role": "user",
                    "content": [{"type": "input_text", "text": query}]}],
         "tools": [{"type": SEARCH_TOOL_CURRENT, "name": "web_search"}],
@@ -387,7 +404,7 @@ def build_backend_fn(backend: str, api_key: str, model: str,
                      ) -> Callable[[str], list[dict[str, Any]]]:
     """后端 → 可注入的 search_fn（测试可替换）。"""
     if backend == "deepseek" or backend == "deepseek_tool":
-        return lambda q: search_deepseek(q, api_key, model or "deepseek-v4-flash")
+        return lambda q: search_deepseek(q, api_key, model or _DEEPSEEK_SEARCH_DEFAULT)
     if backend == "zhipu_tool":
         return lambda q: search_zhipu(q, api_key, model or "glm-5.3")
     if backend == "qwen_tool":

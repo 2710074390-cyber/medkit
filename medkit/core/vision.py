@@ -84,11 +84,47 @@ VISION_MODEL_HINTS: tuple[str, ...] = (
 _VL_RE = re.compile(r"(?:^|[-_.])vl(?:$|[-_.])")
 
 
+def _authoritative_vision(model: str) -> Optional[bool]:
+    """从**内置模型目录**取该模型的视觉能力；目录里没有则返回 `None`（= 不知道）。
+
+    存在的理由（2026-10-02 实测的真漏判）：`looks_like_vision` 靠**模型名**猜，
+    而 `deepseek-flash` 的官方 `input_modalities` 明确含 `"image"`
+    ——名字里既没有 `vision` 也没有 `vl` ⇒ 被误判为不支持 ⇒ **白跑一次 OCR**。
+    目录是我们维护的权威清单，优先于名字启发式。
+
+    **循环 import 处理**：`modelcatalog` 反过来要用 `looks_like_vision` 作第 ③ 层，
+    故此处**延迟 import**（函数内），模块加载期不互相引用。
+    """
+    if not model:
+        return None
+    try:
+        from . import modelcatalog as _mc
+    except ImportError:   # pragma: no cover - 仅在极端裁剪环境下
+        return None
+    entry = _mc._catalog_entry(str(model), "")
+    caps = (entry or {}).get("caps") or {}
+    v = caps.get("vision")
+    return bool(v) if isinstance(v, bool) else None
+
+
 def looks_like_vision(model: str) -> bool:
-    """模型名是否带视觉标记（**正面判据**，认不出即 False → 走 OCR）。"""
+    """模型是否支持图像输入。**三层判据，权威优先**：
+
+    1. **内置模型目录**（`modelcatalog`）——我们维护的清单，最准；
+    2. 回落到**名字启发式**（本模块的正面清单 + `vl` 词边界）。
+
+    第 1 层是 2026-10-02 加的：此前只有名字判据，实测 `deepseek-flash`
+    （官方声明支持图像）被误判为不支持。**上游 `input_modalities` 那层
+    由 `modelcatalog.merge` 在拉取时并入目录条目**，故这里只需读目录。
+    目录里没有 + 名字认不出 ⇒ 仍返回 `False`（**保守方向不变**，
+    与模块 docstring 的「反了的代价是 400 报错」那段一致）。
+    """
     m = str(model or "").strip().lower()
     if not m:
         return False
+    auth = _authoritative_vision(m)
+    if auth is not None:
+        return auth
     if any(h in m for h in VISION_MODEL_HINTS):
         return True
     return bool(_VL_RE.search(m))
@@ -120,14 +156,25 @@ def capability(cfg: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     c = cfg if cfg is not None else _cfg.load()
     model = str(c.get("model_gen") or "")
     vision = looks_like_vision(model)
+    auth = _authoritative_vision(model) if model else None
     mode = ocr_mode(c)
+    if auth is True:
+        why = f"模型目录：{model} 支持图像输入"
+    elif auth is False:
+        why = f"模型目录：{model} 不支持图像输入"
+    elif vision:
+        why = f"模型 {model} 带视觉标记，可直接读图"
+    else:
+        why = (f"模型 {model or '（未配置）'} 未带视觉标记——"
+               "无法确认支持图像输入，将走 OCR 兜底")
     return {
         "vision": vision,
         "model": model,
         "preferred": "vision" if vision else "ocr",
-        "reason": (f"模型 {model} 带视觉标记，可直接读图" if vision
-                   else f"模型 {model or '（未配置）'} 未带视觉标记——"
-                        "无法确认支持图像输入，将走 OCR 兜底"),
+        "reason": why,
+        # 判定来源：`catalog`=目录/上游权威字段，`name`=名字启发式。
+        # 前端展示这个字段，用户就知道「支持」是确认过的还是猜的。
+        "vision_source": "catalog" if auth is not None else ("name" if vision else "none"),
         # OCR 永远在（agent 模式免 Token）。但它是**联网**服务，离线时会失败——
         # 这一点由 `needs_network` 明说，而不是让用户以为"本地兜底一定可用"。
         "ocr_mode": mode,

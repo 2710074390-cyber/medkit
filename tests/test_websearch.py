@@ -97,8 +97,9 @@ def test_search_deepseek_parses_real_responses_shape(monkeypatch):
     assert "https://who.int/health" in urls                     # action.url（含 #ws_call_id）
     assert "https://www.nhc.gov.cn/xw/2026/p.html" in urls      # annotations url_citation
     assert len(out) == 2, f"正文重复 URL 应去重：{urls}"
-    # 非 v4 模型回退不改动
-    assert ws._normalize_deepseek_model("deepseek-chat") == "deepseek-v4-flash"
+    # 2026-10-03：官方现行 id 是 `deepseek-flash`；旧名与旧默认一律迁到它
+    assert ws._normalize_deepseek_model("deepseek-chat") == "deepseek-flash"
+    assert ws._normalize_deepseek_model("deepseek-v4-flash") == "deepseek-flash"
 
 
 def test_search_deepseek_400_falls_back_legacy_tool(monkeypatch):

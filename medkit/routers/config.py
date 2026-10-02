@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from .. import __version__
 from ..core import config as cfg
+from ..core import modelcatalog
 from ..core.config import resolve_key
 from ..core.llm import LLMClient
 from ..core.providers import PROVIDERS, get_provider
@@ -78,7 +79,7 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
     model_gen = body.model_gen or prov.get("default_model", saved.get("model_gen", ""))
     model_qc = body.model_qc or model_gen or saved.get("model_qc", "")
     if not model_gen:
-        raise HTTPException(400, "请填写生成模型（如 deepseek-v4-flash）")
+        raise HTTPException(400, "请填写生成模型（如 deepseek-v4-pro）")
 
     # 1) 归档旧服务商（含 Key 的最新加密值 + 端点 + 模型）
     old_key = body.api_key if (same and body.api_key) else saved.get("api_key", "")
@@ -200,21 +201,57 @@ def llm_test(body: TestBody) -> dict[str, Any]:
 class ModelsBody(BaseModel):
     base_url: str
     api_key: str = ""
+    provider: str = ""
 
 
 @router.post("/api/llm/models")
 def llm_models(body: ModelsBody) -> dict[str, Any]:
-    """POST + JSON body：Key 不进 URL（避免日志记录）。失败时返回真实原因（Key 错/网络/端点不支持）。"""
+    """POST + JSON body：Key 不进 URL（避免日志记录）。失败时返回真实原因。
+
+    响应体（**向后兼容**：`models` 字段保留旧语义 `list[str]`）：
+
+    - `models: list[str]` —— 合并后的 id 列表（旧前端照常工作）
+    - `items: list[dict]` —— 富条目（显示名 / API ID / 上下文 / 能力 / 来源），
+      由 `core/modelcatalog` 三层合并得出
+    - `default` / `default_reason` —— 默认选中项与**理由**（文案与动作必须一致，
+      见 `modelcatalog.pick_default` 的 docstring：这里不叫「最新」）
+    - `source_ok` —— 是否真的从服务商拉到了（`False` = 只回落到内置目录）
+    """
     key = body.api_key or resolve_key(cfg.load().get("api_key", ""))
     # W4：与 llm_test 同口径，先过端点安全校验
     ep_err = cfg.endpoint_safety_error(body.base_url)
     if ep_err:
-        return {"ok": False, "models": [], "msg": ep_err}
+        return {"ok": False, "models": [], "items": [], "msg": ep_err, "source_ok": False}
+    provider = body.provider or str(cfg.load().get("provider") or "")
+    upstream: list[dict[str, Any]] = []
+    source_ok = False
     try:
         client = LLMClient(body.base_url, key, "x", timeout=20)
-        models = client.list_models(raise_on_error=True)
-        return {"ok": True, "models": models}
+        upstream = client.list_models_detailed(raise_on_error=True)
+        source_ok = True
     except Exception as e:  # noqa: BLE001
-        # R4-15：复用 _test_error_hint 归一化——不回显可能含 base_url/响应片段的原始异常串
-        # （与 llm_test 的 client.test() 同口径：Key 错/地址错/超时给可操作中文原因）
-        return {"ok": False, "models": [], "msg": LLMClient._test_error_hint(e)}
+        # 拉取失败**不再直接返回空列表**：内置目录仍然可用（降级不空白）。
+        # 失败原因照 R4-15 的归一化口径给出可操作中文提示。
+        msg = LLMClient._test_error_hint(e)
+    else:
+        msg = ""
+
+    items = modelcatalog.merge(provider, upstream)
+    if not items and not source_ok:
+        # 既拉不到、目录里也没有（自定义端点 + 网络失败）⇒ 真的没东西可展示
+        return {"ok": False, "models": [], "items": [], "msg": msg, "source_ok": False}
+
+    default, reason = modelcatalog.pick_default(items)
+    out: dict[str, Any] = {
+        # 拉取失败但有目录兜底时 ok=True（用户仍能选模型），但 source_ok=False
+        # ——两个字段分开，避免「有东西可展示」被误读成「拉取成功」
+        "ok": source_ok or bool(items),
+        "models": modelcatalog.ids_of(items),
+        "items": items,
+        "default": default,
+        "default_reason": reason,
+        "source_ok": source_ok,
+    }
+    if msg:
+        out["msg"] = msg
+    return out

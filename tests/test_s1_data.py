@@ -46,12 +46,19 @@ def test_zhipu_search_default_model_synced():
 
 
 def test_deepseek_search_model_fallback():
-    # 非 v4（旧默认 deepseek-chat）→ 回退 v4-flash（修「默认配置下联网检索必 400」）
-    assert ws._normalize_deepseek_model("deepseek-chat") == "deepseek-v4-flash"
-    assert ws._normalize_deepseek_model("") == "deepseek-v4-flash"
-    assert ws._normalize_deepseek_model(None) == "deepseek-v4-flash"
+    """回退口径 2026-10-03 更新：官方现行 id 是 `deepseek-flash`。
+
+    旧断言把 `deepseek-v4-flash` 当现行默认值 —— 但那正是**这次要修的东西**：
+    该 id 已不在官方 `/v1/models` 里，用它发检索请求会 400。
+    """
+    assert ws._normalize_deepseek_model("deepseek-chat") == "deepseek-flash"
+    assert ws._normalize_deepseek_model("") == "deepseek-flash"
+    assert ws._normalize_deepseek_model(None) == "deepseek-flash"
+    # 已改名的旧 id 走迁移链（不是「放行」）
+    assert ws._normalize_deepseek_model("deepseek-v4-flash") == "deepseek-flash"
+    # 现行 id 原样放行
     assert ws._normalize_deepseek_model("deepseek-v4-pro") == "deepseek-v4-pro"
-    assert ws._normalize_deepseek_model("deepseek-v4-flash-vision-exp") == "deepseek-v4-flash-vision-exp"
+    assert ws._normalize_deepseek_model("deepseek-flash") == "deepseek-flash"
 
 
 def test_mineru_v4_page_limit_refreshed():
@@ -59,8 +66,10 @@ def test_mineru_v4_page_limit_refreshed():
 
 
 def test_config_default_model_refreshed():
-    assert cfgmod.DEFAULTS["model_gen"] == "deepseek-v4-flash", "默认模型应换代 v4-flash"
-    assert cfgmod.DEFAULTS["model_qc"] == "deepseek-v4-flash"
+    """2026-10-03 实测刷新：生成档默认取官方旗舰 `deepseek-v4-pro`，
+    质检档取速度档 `deepseek-flash`（两个 id 都在官方现行 `/v1/models` 里）。"""
+    assert cfgmod.DEFAULTS["model_gen"] == "deepseek-v4-pro", "默认生成模型应为官方现行旗舰"
+    assert cfgmod.DEFAULTS["model_qc"] == "deepseek-flash", "默认质检模型应为官方现行速度档"
 
 
 def test_config_legacy_model_migration(tmp_path, monkeypatch):
@@ -70,11 +79,13 @@ def test_config_legacy_model_migration(tmp_path, monkeypatch):
                                 "model_qc": "deepseek-chat"}), encoding="utf-8")
     monkeypatch.setattr(cfgmod, "CONFIG_FILE", conf)
     cfg = cfgmod.load()
-    assert cfg["model_gen"] == "deepseek-v4-flash", "旧值应自动迁移"
-    assert cfg["model_qc"] == "deepseek-v4-flash"
-    assert cfgmod.DEFAULTS["model_gen"] == "deepseek-v4-flash"
-    # 新值（v4 系列）不应被改动
+    assert cfg["model_gen"] == "deepseek-v4-pro", "旧值应自动迁移"
+    assert cfg["model_qc"] == "deepseek-v4-pro"
+    assert cfgmod.DEFAULTS["model_gen"] == "deepseek-v4-pro"
+    # 现行值不应被改动；**手填的未知模型名也必须原样保留**（对齐 A-新4，
+    # 「认不出就迁移」会把用户私有模型名冲掉）
     conf.write_text(json.dumps({"provider": "deepseek", "model_gen": "deepseek-v4-pro",
-                                "model_qc": "deepseek-v4-flash"}), encoding="utf-8")
+                                "model_qc": "my-private-model"}), encoding="utf-8")
     cfg2 = cfgmod.load()
     assert cfg2["model_gen"] == "deepseek-v4-pro"
+    assert cfg2["model_qc"] == "my-private-model", "认不出的模型名不许动"

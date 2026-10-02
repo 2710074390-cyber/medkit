@@ -251,12 +251,54 @@ class LLMClient:
         return parsed
 
     def list_models(self, raise_on_error: bool = False) -> list[str]:
+        return [str(m.get("id") or "") for m in
+                self.list_models_detailed(raise_on_error=raise_on_error)
+                if m.get("id")]
+
+    def list_models_detailed(self, raise_on_error: bool = False) -> list[dict[str, Any]]:
+        """拉取模型列表，**保留全部上游字段**（不只是 id）。
+
+        ## 为什么不能只取 `m.id`
+
+        实测（2026-10-02，DeepSeek 官方端点，`openai==2.41.0`）`GET /v1/models`
+        **已经返回富元数据**：
+
+        ```json
+        {"id": "deepseek-flash", "name": "DeepSeek-V4.1-Flash",
+         "context_window": 1048576, "max_output_tokens": 393216,
+         "input_modalities": ["text", "image"], "effort": {...}}
+        ```
+
+        SDK 的 `Model` 只声明了 `id` / `object` / `owned_by` 三个字段，
+        **其余全部落在 `model_extra`**（Pydantic 保留未声明字段，没有丢），
+        `model_dump()` 能完整导出。旧实现 `[m.id for m in ...]` 把它们**全扔了**——
+        于是前端只能显示裸 id，且视觉能力要靠模型名去猜。
+
+        ## 为什么用 `model_dump()` 而不是逐字段取值
+
+        `context_window` / `input_modalities` 等是**服务商私有扩展，不是协议保证**。
+        逐字段取值等于**把字段名硬编码**：服务商改一次名（或换一家）就静默拿不到，
+        而且 `getattr(m, "name", "")` 这种写法在字段不存在时会**退化到默认值**，
+        看起来"跑通了"但实际什么都没拿到——**「检查通过」与「检查没跑」没区分开**。
+        `model_dump()` 把「响应里到底有什么」**如实**带出来，
+        由 `modelcatalog` 按已知键去认，认不出就是不认（走下一层降级）。
+        """
         try:
-            return [m.id for m in self._client.models.list().data]
+            data = self._client.models.list().data
         except Exception as e:  # noqa: BLE001
             if raise_on_error:
                 raise LLMError(f"获取模型列表失败：{e}") from e
             return []
+        out: list[dict[str, Any]] = []
+        for m in data:
+            try:
+                d = m.model_dump()
+            except AttributeError:
+                # 服务商的 SDK 走非 pydantic 路径（或测试用假对象）→ 尽力而为
+                d = {"id": getattr(m, "id", "")}
+            if isinstance(d, dict) and d.get("id"):
+                out.append(d)
+        return out
 
     @staticmethod
     def _test_error_hint(e: Exception) -> str:

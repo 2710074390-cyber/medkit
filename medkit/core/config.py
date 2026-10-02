@@ -83,8 +83,8 @@ DEFAULTS: dict[str, Any] = {
     "provider": "deepseek",
     "base_url": "https://api.deepseek.com",
     "api_key": "",
-    "model_gen": "deepseek-v4-flash",   # v0.5：2026-08 换代（旧值 deepseek-chat 在 load 时自动迁移）
-    "model_qc": "deepseek-v4-flash",
+    "model_gen": "deepseek-v4-pro",     # v0.11.1：随 DeepSeek 现行模型名更新（见下方 _MODEL_RENAMES）
+    "model_qc": "deepseek-flash",
     "web_search": {"enabled": False, "backend": "auto", "api_key": "",
                  "trusted_only": False, "trusted_domains": []},
     "mineru": {"api_key": "", "auto_ocr": True},
@@ -94,9 +94,30 @@ DEFAULTS: dict[str, Any] = {
     "run_token_limit": 0,  # W10（2026-10-02）：单次运行 token 硬上限（0 = 不限制）；越线中止运行
 }
 
-# v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行 v4-flash 自动迁移
+# v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行模型自动迁移
 _LEGACY_MODEL = "deepseek-chat"
-_NEW_DEFAULT_MODEL = "deepseek-v4-flash"
+
+# v0.11.1（2026-10-03）：**服务商侧模型改名**的迁移链（旧 id → 现行 id）。
+#
+# 起因是实测：DeepSeek 官方 `GET /v1/models` 现已返回 **2 个**模型，
+# 其中对话/生成档的 id 是 **`deepseek-flash`**，而不再是 `deepseek-v4-flash`。
+# 本仓的默认值 `deepseek-v4-flash` 已**不在服务商的可用列表里**。
+#
+# 为什么不直接静默改名：用户存的 `model_gen` 可能被**手动填过**，
+# 也可能指向一个我们没见过的私有模型。按值匹配 + 只在**命中已知旧名**时改写，
+# 是本仓 `A-新4`（切服务商不得静默覆盖手填模型名）的一贯口径——
+# 认不出的一律不动，宁可让用户看到「已保存但不在列表」。
+_MODEL_RENAMES: dict[str, str] = {
+    "deepseek-v4-flash": "deepseek-flash",     # 实测官方现行 id
+    "deepseek-v4-pro": "deepseek-v4-pro",      # 未改名（列在此处仅作说明，等价映射）
+}
+_NEW_DEFAULT_MODEL = "deepseek-v4-pro"        # 顶部模型（旧引用点仍以本名迁移）
+
+# 按**当前服务商**区分的模型迁移链：`{provider_id: {旧 id: 新 id}}`。
+# 只有 DeepSeek 需要——其余服务商尚未观察到改名。
+_PROVIDER_MODEL_RENAMES: dict[str, dict[str, str]] = {
+    "deepseek": {_LEGACY_MODEL: _NEW_DEFAULT_MODEL, **_MODEL_RENAMES},
+}
 
 _DPAPI_PREFIX = "dpapi:"
 
@@ -299,11 +320,17 @@ def load() -> dict[str, Any]:
             cfg["base_url"] = prov["base_url"]
         if not cfg.get("model_gen"):
             cfg["model_gen"] = prov["default_model"]
-    # v0.5：默认模型换代自动迁移（旧值 deepseek-chat 无法用联网检索等新能力 → 提示并改写）
+    # v0.5 / v0.11.1：默认模型换代或**服务商侧改名**的自动迁移。
+    # 只在**命中已知旧名**时改写；手填的私有模型名一律不动（对齐 A-新4）。
+    renames = _PROVIDER_MODEL_RENAMES.get(str(cfg.get("provider") or ""), {})
     for k in ("model_gen", "model_qc"):
-        if cfg.get(k) == _LEGACY_MODEL:
-            logger.warning("配置模型「%s」为旧一代 deepseek-chat，已自动迁移为 %s", k, _NEW_DEFAULT_MODEL)
-            cfg[k] = _NEW_DEFAULT_MODEL
+        cur = cfg.get(k)
+        if not cur:
+            continue
+        new = renames.get(str(cur))
+        if new and new != cur:
+            logger.warning("配置模型「%s」=%s 已不是服务商现行 id，自动迁移为 %s", k, cur, new)
+            cfg[k] = new
     return cfg
 
 
