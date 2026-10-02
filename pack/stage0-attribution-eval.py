@@ -201,6 +201,12 @@ def _preflight(cases: list) -> list:
 
 # ------------------------------------------------------------------ 主流程
 def main() -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="只跑前 N 题（冒烟）")
     ap.add_argument("--no-judge", action="store_true", help="跳过 AI 评审")

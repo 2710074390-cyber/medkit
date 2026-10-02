@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -136,6 +137,12 @@ def installer_contains_sources(ver: str) -> tuple[bool, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(description="发布五件套一致性检查")
     ap.add_argument("--strict", action="store_true",
                     help="产物缺失/不一致即失败（发布前用）；缺省则产物缺失只警告")

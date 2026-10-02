@@ -48,6 +48,12 @@ def _live_name(bak: Path) -> str | None:
 
 
 def main() -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(description="学习库 SQLite → JSON 轨回滚")
     ap.add_argument("--yes", action="store_true", help="真正执行（缺省只打印计划）")
     ap.add_argument("--home", default=str(Path.home() / ".medkit"),

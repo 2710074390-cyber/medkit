@@ -134,6 +134,12 @@ def _live_count(conn: sqlite3.Connection, table: str) -> dict[int, int]:
 
 
 def main() -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(description="R5-04 修正版：仅恢复污染前的真实用户数据（幂等）")
     ap.add_argument("--backup", type=Path, default=DEFAULT_BACKUP)
     ap.add_argument("--dry-run", action="store_true")

@@ -346,6 +346,12 @@ def _print_summary(s: dict, base: pathlib.Path) -> None:
 
 
 def main() -> None:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", action="store_true", help="阶段1：导出 prompt 供 Agent 作答")
     ap.add_argument("--run", action="store_true", help="阶段2：喂回 analyze 并聚合")

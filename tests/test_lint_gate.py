@@ -513,3 +513,150 @@ def _is_gated_behind_skip(text: str, cmd: str) -> bool:
     has_skip_goto = any(ln.startswith("goto :") and ln != "goto :fail"
                         for ln in block)
     return has_cond and has_skip_goto
+
+
+# ---------------------------------------------------------------- pack 脚本输出编码
+# 2026-10-02 新增（CI Windows 实证）。
+#
+# ## 病灶
+# `pack/` 下的脚本大量 `print` 中文。**CI 的 Windows runner 默认 locale 是 cp1252**
+# （非 UTF-8），此时写中文到 stdout/stderr 会抛
+# `UnicodeEncodeError: 'charmap' codec can't encode ...` ⇒ 子进程 returncode=1。
+# 实证：run 36968684662 的 `test_stage0_export_cases::test_end_to_end_against_isolated_store`
+# 因 `stage0-export-cases.py` 在子进程里炸而失败；同一 commit 的 ubuntu job 却全绿
+# （Linux 默认 UTF-8）——**平台特有、本地同平台也复现不出来**（本机 locale 恰是 UTF-8）。
+#
+# ## 既定范式（已有 4 处，本仓早已存在的约定）
+#     for _s in (sys.stdout, sys.stderr):
+#         try:
+#             _s.reconfigure(encoding="utf-8", errors="replace")
+#         except (AttributeError, OSError):
+#             pass
+# 见 `pack/check-package.py` / `check-build-env.py` / `gen-lock-hashes.py` / `make_release.py`。
+# 本守卫把「有中文 print ⇒ 必须有该兜底」变成机械判据，防止再次漂移。
+#
+# ## 判据（AST，非文本子串）
+# 扫描 `git ls-files pack` 里的 `.py`（独立事实来源）：
+#   ① 若有 `print(...)` 且其**实参源码**含 CJK 字符，
+#   ② 且全文件**没有** `sys.stdout.reconfigure` / `sys.stderr.reconfigure` 调用 ⇒ 红。
+# 含元守卫：检测器自证（用内存构造的样本证明它真能命中）+ 扫描面非空且与 git 索引核对。
+
+
+def _pack_py_files() -> list[pathlib.Path]:
+    """`git ls-files pack` 里的 Python 脚本（独立事实来源，防扫描面塌缩）。"""
+    out = subprocess.run(["git", "ls-files", "pack"], cwd=str(ROOT),
+                         capture_output=True, text=True)
+    names = [n for n in (out.stdout or "").splitlines() if n.strip()]
+    return [ROOT / n for n in names if n.endswith(".py")]
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _prints_cjk(src: str) -> list[int]:
+    """返回「print 了中文」的行号列表（AST 取实参源码，避免把注释/docstring 当输出）。"""
+    import ast as _ast
+
+    tree = _ast.parse(src)
+    hits: list[int] = []
+    for node in _ast.walk(tree):
+        if (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name)
+                and node.func.id == "print"):
+            seg = _ast.get_source_segment(src, node) or ""
+            if _has_cjk(seg):
+                hits.append(node.lineno)
+    return hits
+
+
+def _has_stdout_reconfigure(src: str) -> bool:
+    """是否把 stdout/stderr 重配置为 UTF-8（AST 判调用形态，认本仓两种既定写法）。
+
+    形态 A（直接）：`sys.stdout.reconfigure(...)` / `sys.stderr.reconfigure(...)`
+    形态 B（既有范式，4 处原有脚本都用它）：
+        for _s in (sys.stdout, sys.stderr):
+            _s.reconfigure(...)          <- 目标是个**循环变量**，不是 sys.stdout 字面量
+
+    ⇒ 只认形态 A 会**漏判既有范式**（第一版就是这么写的，元守卫当场抓到：
+    给 good 样本判了 False）。故 B 的判定 = 「存在 `<某名>.reconfigure` 调用」
+    **且**「文件里确有 `for <同名> in (sys.stdout, sys.stderr)`」。
+    """
+    import ast as _ast
+
+    tree = _ast.parse(src)
+    # 形态 A：sys.stdout.reconfigure / sys.stderr.reconfigure
+    for node in _ast.walk(tree):
+        if (isinstance(node, _ast.Call)
+                and isinstance(node.func, _ast.Attribute)
+                and node.func.attr == "reconfigure"):
+            tgt = node.func.value
+            if (isinstance(tgt, _ast.Attribute) and tgt.attr in ("stdout", "stderr")
+                    and isinstance(tgt.value, _ast.Name) and tgt.value.id == "sys"):
+                return True
+
+    # 形态 B：先收集「for X in (sys.stdout, sys.stderr)」里的 X
+    loop_vars: set[str] = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.For) and isinstance(node.target, _ast.Name):
+            it = node.iter
+            if isinstance(it, (_ast.Tuple, _ast.List)):
+                names = {e.attr for e in it.elts
+                         if isinstance(e, _ast.Attribute)
+                         and e.attr in ("stdout", "stderr")
+                         and isinstance(e.value, _ast.Name) and e.value.id == "sys"}
+                if names:
+                    loop_vars.add(node.target.id)
+    if not loop_vars:
+        return False
+    # 再看有没有这些循环变量上的 .reconfigure 调用
+    for node in _ast.walk(tree):
+        if (isinstance(node, _ast.Call)
+                and isinstance(node.func, _ast.Attribute)
+                and node.func.attr == "reconfigure"
+                and isinstance(node.func.value, _ast.Name)
+                and node.func.value.id in loop_vars):
+            return True
+    return False
+
+
+def test_pack_script_cjk_output_forces_utf8():
+    """含中文 `print` 的 pack 脚本，必须把 stdout/stderr 重配置为 UTF-8。
+
+    Windows CI runner 默认 cp1252，否则子进程炸（run 36968684662 实证）。
+    """
+    offenders = []
+    for p in _pack_py_files():
+        src = p.read_text(encoding="utf-8", errors="replace")
+        try:
+            lines = _prints_cjk(src)
+        except SyntaxError as e:  # pragma: no cover - 语法错由 ruff/编译期拦
+            offenders.append(f"{p.relative_to(ROOT)}: 语法错误 {e}")
+            continue
+        if lines and not _has_stdout_reconfigure(src):
+            offenders.append(f"{p.relative_to(ROOT)}: 第 {lines[:5]} 行 print 了中文，"
+                             f"但全文件无 sys.stdout.reconfigure")
+    assert not offenders, (
+        "以下 pack 脚本在 cp1252 控制台（Windows CI）会抛 UnicodeEncodeError——"
+        "必须加既有的 UTF-8 兜底范式（见 check-package.py 头部）：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_pack_script_encoding_scan_face_is_not_empty():
+    """元守卫：扫描面非空 + 与 git 索引一致 + 检测器自证能命中（防掏空成恒绿）。"""
+    files = _pack_py_files()
+    assert files, "pack/ 下没扫到任何 Python 脚本——扫描面塌缩（git 索引？）"
+    assert len(files) >= 10, f"pack/ 脚本数 {len(files)} 异常偏少，扫描面被写窄"
+
+    # 检测器自证：用内存样本证明「有中文 print 且无 reconfigure」真能被判出。
+    bad = "print('你好')\n"
+    assert _prints_cjk(bad) == [1], "检测器漏判中文 print"
+    assert not _has_stdout_reconfigure(bad), "检测器误判 reconfigure 在场"
+    good = ("import sys\n"
+            "for _s in (sys.stdout, sys.stderr):\n"
+            "    _s.reconfigure(encoding='utf-8', errors='replace')\n"
+            "print('你好')\n")
+    assert _has_stdout_reconfigure(good), "检测器没认出既有的 reconfigure 范式"
+
+    # 反面样本：只 print ASCII 的脚本不该被要求 reconfigure
+    assert _prints_cjk("print('hello')\n") == [], "检测器把 ASCII print 误判为中文"

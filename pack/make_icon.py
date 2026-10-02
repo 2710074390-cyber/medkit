@@ -4,9 +4,17 @@
 """
 import io
 import struct
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+# Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
 
 ROOT = Path(__file__).resolve().parent.parent
 FONT = r"C:\Windows\Fonts\segoeuib.ttf"

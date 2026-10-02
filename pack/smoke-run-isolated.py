@@ -82,6 +82,12 @@ def wait_ready_any(ports: range, timeout: float) -> tuple[bool, str, int | None]
 
 
 def main(argv: list[str]) -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     if len(argv) < 2:
         print(__doc__)
         return 2

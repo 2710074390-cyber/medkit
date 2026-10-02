@@ -141,6 +141,12 @@ def check_case(c: dict, tags: set) -> tuple:
 
 
 def main(argv=None) -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(description="阶段 0 题样预检（只读、零成本）")
     ap.add_argument("--cases", default=str(DEFAULT_CASES))
     ap.add_argument("--strict", action="store_true",

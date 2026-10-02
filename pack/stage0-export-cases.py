@@ -104,6 +104,12 @@ def _to_case(rec: dict) -> dict:
 
 
 def main(argv=None) -> int:
+    # Windows 控制台常为 cp1252 而本脚本输出中文——强制 UTF-8，避免 UnicodeEncodeError（R6-11 CI 实证）
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(description="从真实错题库导出阶段 0 题样（只读）")
     ap.add_argument("--check", action="store_true", help="只体检，不写文件")
     ap.add_argument("--out", default="pack/stage0_cases_real.json",
