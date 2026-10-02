@@ -12,6 +12,7 @@ import ctypes
 import json
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -90,6 +91,7 @@ DEFAULTS: dict[str, Any] = {
     "projects_dir": str(CONFIG_DIR / "projects"),
     "provider_keys": {},   # v0.5.1：多服务商 Key 存档 {pid: {api_key, base_url, model_gen, model_qc}}
     "features": {},        # v0.8 (IMP-02)：WP 级 feature flag 节 {name: bool}，缺省 True（state.flag 读取）
+    "run_token_limit": 0,  # W10（2026-10-02）：单次运行 token 硬上限（0 = 不限制）；越线中止运行
 }
 
 # v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行 v4-flash 自动迁移
@@ -205,6 +207,54 @@ def resolve_key(value: str) -> str:
         from . import errors as _errs
         _errs.register_secret(plain)
     return plain
+
+
+# ---------------------------------------------------------------- W4：端点安全校验
+# 背景（2026-10-02 二轮审计 W4）：`base_url` 由用户在「自定义端点」里自由填写，直接传给
+# LLMClient 发起外呼。若用户被诱导（或误填）把地址指向**云元数据服务**
+# （`169.254.169.254`、`metadata.google.internal` 等），本机会代其请求并把响应体
+# 写进产物/日志 —— 这是 SSRF 的经典形态（云上拿临时凭证）。
+#
+# **设计取舍（重要，别一刀切）**：产品**明确支持公司内部网关 / 本机 Ollama**
+# （`providers.py:68` note 写了 "公司内部网关"；Ollama 惯例是 `127.0.0.1:11434`）。
+# 因此**不能**封所有私网地址——那会把正当用法一起封死。这里只拦**没有任何正当
+# LLM 用途**的目标：链路本地地址（`169.254.0.0/16`、`fe80::/10`）与已知云元数据主机名。
+_METADATA_HOSTS = frozenset({
+    "metadata.google.internal", "metadata.goog",
+    "169.254.169.254",                    # AWS/GCP/Azure/阿里云通用元数据 IP
+    "metadata", "instance-data",
+})
+
+
+def endpoint_safety_error(base_url: str) -> str | None:
+    """校验 LLM 端点地址；不安全返回**中文原因**，安全返回 None。
+
+    只拦两类「无正当 LLM 用途」的目标（见上方设计取舍）：
+    ① 云元数据主机名 / IP；② 链路本地地址（含 IPv6 `fe80::/10`）。
+    **不拦**内网与本机回环（Ollama `127.0.0.1:11434`、公司网关均属正当用法）。
+    """
+    raw = (base_url or "").strip()
+    if not raw:
+        return None
+    try:
+        from urllib.parse import urlsplit
+        parts = urlsplit(raw if "://" in raw else "http://" + raw)
+    except Exception:  # noqa: BLE001  解析不了就交给后续调用报错（不在此处静默放过/误拦）
+        return None
+    host = (parts.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return None
+    if host in _METADATA_HOSTS:
+        return ("该地址指向云服务商元数据服务（169.254.169.254 / metadata.*），"
+                "不是 LLM 接口。为避免本机代你请求云凭证，已拒绝保存。")
+    # 链路本地 IPv4：169.254.0.0/16
+    if re.match(r"^169\.254\.\d{1,3}\.\d{1,3}$", host):
+        return ("该地址属于链路本地网段（169.254.0.0/16），通常指向云元数据服务，"
+                "不是 LLM 接口，已拒绝保存。")
+    # 链路本地 IPv6：fe80::/10（形如 fe80~febf 开头）
+    if re.match(r"^fe[89ab][0-9a-f]:", host):
+        return ("该地址属于 IPv6 链路本地网段（fe80::/10），不是 LLM 接口，已拒绝保存。")
+    return None
 
 
 def encrypt_for_save(value: str) -> str:

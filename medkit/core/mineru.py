@@ -248,9 +248,18 @@ class MinerUClient:
 
     @staticmethod
     def _page_count(p: Path) -> Optional[int]:
+        """PDF 页数；读不出返回 None（调用方据此**跳过页数闸**）。
+
+        W9（2026-10-02 二轮审计）：返回 None 会让 `if pages and pages > LIMIT` 整条闸门
+        **静默失效**——「没量到」被当成「没超限」。此处**留痕**（写 `errors` 计数），
+        使「页数闸没跑」与「页数闸通过」可区分（否则就是「检查没跑」伪装成「检查通过」）。
+        """
         try:
             import fitz
             with fitz.open(str(p)) as doc:
                 return doc.page_count
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001  读不出页数不应阻断 OCR，但必须留痕
+            from . import errors as _errs
+            _errs.record("mineru.page_count_unavailable",
+                         f"页数读取失败，页数闸被跳过（{p.name}）：{e}")
             return None

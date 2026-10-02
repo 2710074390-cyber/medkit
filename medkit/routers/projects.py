@@ -36,6 +36,22 @@ DEFAULT_BLOOM_RATIOS = core_projects.DEFAULT_BLOOM_RATIOS
 _ASSET_LOCK_GUARD = threading.Lock()
 _ASSET_PID_LOCKS: dict[str, threading.RLock] = {}
 
+# W12（2026-10-02）：`create_project` 的**闸门探针**（测试观测点，默认 None = 零行为）。
+#
+# 起因：`tests/test_smoke.py::test_project_ratio_validation` 曾两次假绿，第二次形态是
+# 「直接用 `asyncio.run()` 调 async handler」——单跑绿、全量跑红（browser 层占住
+# 主线程 running-loop，见 conftest R6-01）。归纳出的教训是：
+# **「断言抛出了 400」区分不了「我这一闸拦住了」和「协程压根没执行 / 被更早的闸拦了」。**
+# 故在所有**前置**校验之后、目标闸门处打一个显式探针，让用例能断言
+# 「配比这条闸门确实被执行到并拦下」——这是 0 次执行也能 PASS 的写法所无法表达的。
+# 默认值为 None，生产路径**唯一次操作**是读全局再比较，无副作用。
+_GATE_PROBE: list[str | None] = [None]
+
+
+def _gate_probe(gate: str) -> None:
+    """记录最近一次命中的建课校验闸门（仅测试断言用；生产路径无副作用）。"""
+    _GATE_PROBE[0] = gate
+
 
 def _asset_lock(pid: str) -> threading.RLock:
     with _ASSET_LOCK_GUARD:
@@ -84,7 +100,16 @@ def _validate_bloom(bloom: dict[str, int]) -> dict[str, int]:
 
 
 @router.post("/api/projects")
-def create_project(body: ProjectBody) -> dict[str, Any]:
+async def create_project(body: ProjectBody) -> dict[str, Any]:
+    """建项目（W6：异步 handler + 落盘移出事件循环）。
+
+    背景（2026-10-02 二轮审计 W6）：本端点为**同步** def，FastAPI 会把它丢进
+    `run_in_threadpool`——单次调用虽被 `TEACHER_TEXT_LIMIT=4000` 钳住（`allocate` 里的
+    `extract_keywords` 是 O(len²)，4000×7 窗口 ≈ 数万次迭代 + 每窗口一次正则），
+    但 `proj_path.mkdir`、两次 `write_json_atomic`、目录遍历等都是**阻塞 IO**。
+    改为 `async def` + `asyncio.to_thread`，与隔壁 `upload_asset`、`pipeline` 的
+    trial/生成路径**同口径**（那里早已 `to_thread`）。判据不变：落盘委托 core（分层单向）。
+    """
     if not body.subject.strip():
         raise HTTPException(400, "科目不能为空")
     if not body.textbook_slices or not any(s.get("text") for s in body.textbook_slices):
@@ -95,6 +120,7 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
         raise HTTPException(400, "目标题数需在 10~500 之间")
     ratio_sum = sum(v for v in body.ratios.values() if v > 0)
     if abs(ratio_sum - 100) > 1:
+        _gate_probe("ratio")
         raise HTTPException(400, f"题型配比合计应为 100%（当前 {ratio_sum}%），请调整后重试")
     if not (0 <= body.web_ref_quota <= 30):
         raise HTTPException(400, "网络引用配额需在 0~30% 之间")
@@ -111,7 +137,7 @@ def create_project(body: ProjectBody) -> dict[str, Any]:
     payload = body.model_dump()
     payload["bloom"] = bloom
     payload["requirements"] = req
-    return core_projects.create_project_record(payload)
+    return await asyncio.to_thread(core_projects.create_project_record, payload)
 
 
 @router.get("/api/projects")
@@ -454,7 +480,13 @@ def asset_file(pid: str, sid: str) -> FileResponse:
 
 
 @router.delete("/api/projects/{pid}/assets/{sid}")
-def delete_asset(pid: str, sid: str) -> dict[str, Any]:
+def delete_asset(pid: str, sid: str, dry_run: int = 0) -> dict[str, Any]:
+    """删除项目内一张图片切片（W11：支持 `?dry_run=1` **预演**，不落盘）。
+
+    背景（2026-10-02 二轮审计 W11）：这是产物侧唯一的**真删除**端点，且删的是
+    `unlink()`（**不可逆**，不进回收站）。误点即丢图 —— 而前端此前无法「先看看会删什么」。
+    `dry_run=1` 时只回报将删除的文件与是否命中，**不 unlink、不写 slices.json**。
+    """
     require_flag("image_q")
     pid = _safe_pid(pid)
     base = proj_dir(pid)
@@ -463,7 +495,12 @@ def delete_asset(pid: str, sid: str) -> dict[str, Any]:
         s = next((x for x in _image_slices(base) if x.get("sid") == sid), None)
         if not s:
             raise HTTPException(404, "图片不存在")
-        f = base / str((s.get("image") or {}).get("path") or "")
+        rel = str((s.get("image") or {}).get("path") or "")
+        f = base / rel
+        if dry_run:
+            # 预演：只回报，不动文件系统
+            return {"ok": False, "dry_run": True, "sid": sid,
+                    "path": rel, "exists": f.exists()}
         f.unlink(missing_ok=True)
         # B-04：读失败同样显式 5xx（不静默重置）
         sp = base / "slices.json"
@@ -479,4 +516,4 @@ def delete_asset(pid: str, sid: str) -> dict[str, Any]:
             slices = []
         write_json_atomic(base / "slices.json",
                           [x for x in slices if x.get("sid") != sid])
-    return {"ok": True}
+    return {"ok": True, "sid": sid, "path": rel}

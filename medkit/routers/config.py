@@ -63,6 +63,11 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
     # A-新22：自定义端点 base_url 留空不允许保存（调用时才报错为时已晚）
     if body.provider == "custom" and not (body.base_url or "").strip():
         raise HTTPException(400, "自定义端点必须填写接口地址（base_url）")
+    # W4（2026-10-02 二轮审计）：端点安全校验——拦云元数据/链路本地（SSRF），
+    # **不拦**内网与回环（Ollama / 公司网关是正当用法，见 config.endpoint_safety_error）。
+    _ep_err = cfg.endpoint_safety_error(body.base_url or "")
+    if _ep_err:
+        raise HTTPException(400, _ep_err)
     saved = cfg.load()
     pkeys = dict(saved.get("provider_keys", {}) or {})
     old_provider = saved.get("provider", "")
@@ -177,6 +182,10 @@ class TestBody(BaseModel):
 @router.post("/api/llm/test")
 def llm_test(body: TestBody) -> dict[str, Any]:
     key = body.api_key or resolve_key(cfg.load().get("api_key", ""))
+    # W4：测试连接同样会外呼——先拦云元数据/链路本地，避免「测试」被当作 SSRF 跳板
+    ep_err = cfg.endpoint_safety_error(body.base_url)
+    if ep_err:
+        return {"ok": False, "msg": ep_err}
     try:
         # A-新21：测试连接 timeout 降到约 8s、retries 1（最长 ~16s），避免 90s+ 假卡死
         client = LLMClient(body.base_url, key, body.model, timeout=8, max_retries=1)
@@ -197,6 +206,10 @@ class ModelsBody(BaseModel):
 def llm_models(body: ModelsBody) -> dict[str, Any]:
     """POST + JSON body：Key 不进 URL（避免日志记录）。失败时返回真实原因（Key 错/网络/端点不支持）。"""
     key = body.api_key or resolve_key(cfg.load().get("api_key", ""))
+    # W4：与 llm_test 同口径，先过端点安全校验
+    ep_err = cfg.endpoint_safety_error(body.base_url)
+    if ep_err:
+        return {"ok": False, "models": [], "msg": ep_err}
     try:
         client = LLMClient(body.base_url, key, "x", timeout=20)
         models = client.list_models(raise_on_error=True)

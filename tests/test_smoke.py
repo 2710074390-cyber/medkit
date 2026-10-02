@@ -16,6 +16,41 @@ from medkit.core.providers import PROVIDERS, get_provider  # noqa: E402
 from medkit.core.quota import allocate  # noqa: E402
 from medkit.core.slice import slice_text  # noqa: E402
 
+
+def _fallback_run_coro(coro, timeout: float = 30.0):
+    """`run_coro` 的**同语义**兜底实现（仅 `python tests/test_smoke.py` 直跑时用到）。
+
+    本文件是**双用**的：既是 pytest 用例集（`pytest tests/test_smoke.py`），也是
+    可直跑的冒烟脚本（`python tests/test_smoke.py`）。后者不经 conftest，拿不到
+    `run_coro` fixture。故给一个**签名与语义完全一致**的兜底（同 conftest：
+    新线程里 `asyncio.run`，协程内异常原样回抛）。
+
+    ⚠️ 为什么两个入口都必须走「新线程 + asyncio.run」而不是就地 `asyncio.run()`：
+    browser 层的 Playwright 同步 API 会占住主线程的 running-loop 标记（R6-01），
+    此后主线程任何 `asyncio.run()` 都抛 `RuntimeError: cannot be called from a
+    running event loop`。pytest 走 conftest 的 `run_coro`，直跑走本兜底，
+    **两条路都不碰主线程事件循环**。
+    """
+    import asyncio
+    import threading
+
+    box: dict[str, object] = {}
+
+    def _target() -> None:
+        try:
+            box["value"] = asyncio.run(coro)
+        except BaseException as exc:  # 原样回抛（含 HTTPException / 断言失败）
+            box["error"] = exc
+
+    t = threading.Thread(target=_target, name="smoke-run-coro")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError(f"协程在 {timeout}s 内未结束")
+    if "error" in box:
+        raise box["error"]  # type: ignore[misc]
+    return box.get("value")
+
 FIX = ROOT / "medkit" / "data" / "samples"
 
 
@@ -153,18 +188,47 @@ def test_config_keep_key_on_empty():
         m.cfg.load, m.cfg.save = orig_load, orig_save
 
 
-def test_project_ratio_validation():
+def test_project_ratio_validation(run_coro=_fallback_run_coro):
     """配比合计 ≠ 100 → 400。"""
     import medkit.main as m
     body = m.ProjectBody(subject="儿科", target=100,
                          ratios={"A1": 40, "A2": 30, "B1": 20, "X": 30},
                          textbook_slices=[{"sid": "S001", "title": "章", "text": "x" * 300}],
                          teacher_slices=[{"sid": "T001", "title": "重点", "text": "y" * 200}])
+    # W6（2026-10-02）：create_project 已改 async（落盘移出事件循环）⇒ 必须 await 才会执行校验。
+    #
+    # ## 本用例连着两次「假绿」，两次形态不同，值得留档
+    #
+    # ① **第一版（HEAD 里那版）**：`m.create_project(body)` 直接调 async 函数 ⇒ 只拿到一个
+    #    **从未运行的协程**。`try` 体全绿（没跑当然没抛），`except` 不触发 ⇒ 断言 0 次执行。
+    #    它对「配比 120% 被拒」这件事**完全没有信息**，却一直以 PASS 计。
+    # ② **第二版（我的修法）**：改 `asyncio.run(...)`。单跑绿，**全量跑红**
+    #    （`RuntimeError: asyncio.run() cannot be called from a running event loop`）——
+    #    browser 层的 Playwright 同步 API 在整会话占住主线程 running-loop 标记
+    #    （R6-01 记录的就是这个坑，conftest 的 `run_coro` fixture 就是为它而建）。
+    # ⇒ 正解是走项目自己的 `run_coro`：**新线程里 asyncio.run**，免疫主线程事件循环状态，
+    #    且协程内的异常原样回抛。直接 `asyncio.run()` 在本仓一律禁止。
+    #
+    # ## 判据必须钉在「协程真的跑起来了」+「拦我的是哪一闸」
+    #
+    # `except m.HTTPException` 这种写法**区分不了**「校验拦住了」和「协程压根没执行」
+    # （①就是这样骗过所有人的）。故读 `routers.projects._GATE_PROBE` 这一显式探针：
+    # 只有真跑进 `create_project` 且命中**配比**那条闸门才置位成 `"ratio"`。
+    # 注意探针是**列表**（可变对象）而非字符串——测试侧不能 `import` 一次名字就绑死，
+    # 必须每次读 `[0]`，否则拿到的是被 re-import 覆盖前的旧值。
+    from medkit.routers import projects as r_projects
+    r_projects._GATE_PROBE[0] = None          # 清场：确保下面命中的是本用例这一击
     try:
-        m.create_project(body)
-        raise AssertionError("配比 120% 应被拒绝")
+        run_coro(m.create_project(body))
     except m.HTTPException as e:
-        assert e.status_code == 400
+        assert e.status_code == 400, f"应 400，实得 {e.status_code}"
+    else:
+        raise AssertionError("配比 120% 应被拒绝，但未抛 HTTPException")
+    # 走到这里说明确实抛了 400；仍要确认抛的是**参数校验**那一条，而不是别的 400
+    # （教材/教师重点校验在配比校验**之前**，若那条先红，本用例就在测一个别的东西）。
+    assert r_projects._GATE_PROBE[0] == "ratio", (
+        f"期望配比闸门拦下，实得 {r_projects._GATE_PROBE[0]!r}"
+        f"（None = 协程未执行或更早的闸先红）")
 
 
 if __name__ == "__main__":

@@ -587,8 +587,14 @@ def run_project(pid: str, seed: Optional[int] = None, overrides: Optional[dict[s
     returns {"stage", "questions", "qc_decision", ...}
     U5（v0.5）：按次上下文记账 — 本次 run 独立账本（trial/regen 不再串账），结束即还原。
     R3S-03/B27：取消与失败路径也 snapshot usage 落 meta——已烧 token 永久可见。
+    W10（2026-10-02）：若配置了 `run_token_limit`（>0），本次运行装**硬上限**——
+    越线抛 `usage.BudgetExceeded`，由下方异常出口记账 + 中止，避免「估算 5 元、实际烧 50 元」无人拦。
     """
-    token = usage.activate()
+    try:
+        limit = int((cfg.load().get("run_token_limit") or 0))
+    except Exception:  # noqa: BLE001  配置读不出 → 不限制（不因熔断配置本身阻断运行）
+        limit = 0
+    token = usage.activate(limit_tokens=limit)
     try:
         try:
             res = _run_project_impl(pid, seed, overrides, cancel)

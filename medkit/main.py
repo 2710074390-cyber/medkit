@@ -10,9 +10,9 @@
 
 import logging
 import os
+import socket
 import threading
 import time
-import urllib.request
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -104,15 +104,21 @@ async def _lifespan(_app: FastAPI):
 
         def _open() -> None:
             try:
-                # A-新19：浏览器打开前轮询等待服务监听（HTTP GET 重试，上限约 15s），不再固定 Timer(0.6)
+                # A-新19：浏览器打开前轮询等待服务监听，上限约 15s，不再固定 Timer(0.6)。
+                # W12（2026-10-02）：探活由 `urllib.request.urlopen` 改**裸 socket**——
+                # urllib 的全局默认 opener 会读 `getproxies()`（Windows 走注册表
+                # `HKCU\...\Internet Settings`），`ProxyOverride` 命中规则时的读取实测可
+                # 阻塞 >1s。本函数**必然**运行于把 ~/.medkit 打到真实家目录的用例
+                # （`tests/test_smoke.py` 是 `python tests/test_smoke.py` 独立进程，
+                #  不经 conftest 的 `MEDKIT_LOG_DIR` 重定向），阻塞会把 R5-01 防污染哨兵
+                # 拖成红。裸 socket 零代理、零注册表、零 DNS。
+                # 判据：`grep -rn urllib medkit/` 只应在本注释里命中。
                 deadline = time.time() + 15
                 while time.time() < deadline:
                     try:
-                        with urllib.request.urlopen(
-                                f"http://127.0.0.1:{port}/api/health", timeout=1) as resp:
-                            if resp.status == 200:
-                                break
-                    except Exception as e:  # noqa: BLE001  服务未就绪 → 继续轮询
+                        with socket.create_connection(("127.0.0.1", port), timeout=1):
+                            break
+                    except OSError as e:  # noqa: BLE001  服务未就绪 → 继续轮询
                         errs.record("main._open", "静默容错（U-15 留痕）", e=e)
                     time.sleep(0.3)
                 webbrowser.open(f"http://127.0.0.1:{port}")

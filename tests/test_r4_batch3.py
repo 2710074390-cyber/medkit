@@ -275,7 +275,7 @@ def test_run_project_error_terminates_inflight(monkeypatch, tmp_path):
 
 
 class _FakeUsage:
-    def activate(self):
+    def activate(self, limit_tokens: int = 0):   # W10：真身签名带 limit_tokens
         return object()
 
     def deactivate(self, token):
