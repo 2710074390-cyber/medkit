@@ -155,6 +155,10 @@ def page(browser):
     pg.add_init_script(
         "localStorage.setItem('medkit-onboarded','1');"
         "sessionStorage.setItem('medkit-wz-seen','1');"
+        # 2026-10-10：错题/生成「模式门」也是首启引导层——预置「已见过」前置状态，
+        # 使既有用例（都靠 hash 或点侧栏页签导航）不出现模式门、也不触发页签过滤。
+        # 模式门本身由 tests/browser/test_mode_gate.py 显式清掉该键后验证。
+        "localStorage.setItem('medkit-mode-seen','1');"
     )
     yield pg
     ctx.close()

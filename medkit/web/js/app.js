@@ -1,4 +1,4 @@
-/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, letters, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openDrillFor, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, letters, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 const $ = id => document.getElementById(id);
 let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [], extra: [] },
@@ -105,12 +105,14 @@ function confirmModal(title, body, okLabel, onOk, danger = true, onCancel = null
   };
   $("md_ok").focus();
 }
-/* 带文本输入的对话框（替代原生 prompt，风格统一） */
-function askModal(title, label, placeholder, onOk) {
+/* 带文本输入的对话框（替代原生 prompt，风格统一）
+   `value`（可选，默认空）：**预填值**——重命名/导入这类场景应当把当前值摆出来直接改，
+   而不是只给一个 placeholder 让用户重打一遍。 */
+function askModal(title, label, placeholder, onOk, value = "") {
   $("md_title").textContent = title;
   $("md_body").innerHTML = `<label style="margin:0">${esc(label)}</label>
     <input type="text" id="md_input" maxlength="40" placeholder="${esc(placeholder || "")}"
-      style="width:100%;margin-top:8px">`;
+      value="${esc(value || "")}" style="width:100%;margin-top:8px">`;
   $("md_ok").textContent = "保存";
   $("md_ok").className = "act";
   $("modal_mask").style.display = "flex";
@@ -388,6 +390,65 @@ function initDataMgmt() {
   bind("btn_dm_clear", () => dmClear());
 }
 
+/* ---- 错题 / 生成 双模式（2026-10-10） ----
+   首次进入先选模式；模式决定**落地页签**与**页签可见性**（`data-mode`）。
+
+   ⚠️ 三条与既有行为/用例共存的硬约束（改动前先读）：
+   ① 页签**默认全可见**（`currentMode` 为空）——只有用户**显式选过**模式才过滤。
+      浏览器用例都是「新 context → 无模式」或「hash 直达」，因此不受影响。
+   ② 模式门遮罩 `pointer-events:none` 且让开侧栏（`padding-left`）⇒ 侧栏页签任何时候都可点，
+      点页签即视为「我自己探索」（关闭本层、不过滤）。
+   ③ 模式门只在「无 hash 且从未见过」时出现；已选模式后 `showTab` 跟随跨模式导航自动切换。 */
+const MODE_KEY = "medkit-mode";
+const MODE_SEEN_KEY = "medkit-mode-seen";
+// 页签 → 模式（`开始` / `我的` 不在表内 = 中立页签，两种模式都显示）
+const TAB_MODE = { drill: "wrong", study: "wrong", learn: "wrong", bank: "gen" };
+const MODE_META = {
+  wrong: { label: "错题", land: "drill" },
+  gen: { label: "生成", land: "bank" },
+};
+const TABS_ALL = ["start", "drill", "study", "bank", "learn", "mine"];
+let currentMode = null;
+
+function _ls(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+function _lsSet(key, v) {
+  try { if (v == null) localStorage.removeItem(key); else localStorage.setItem(key, v); }
+  catch (e) { /* 隐私模式：仅本次会话生效 */ }
+}
+
+function applyMode() {
+  const mode = currentMode;
+  document.querySelectorAll("nav button[data-tab]").forEach(b => {
+    const m = TAB_MODE[b.dataset.tab];
+    b.style.display = (!mode || !m || m === mode) ? "" : "none";
+  });
+  const el = $("mode_name");
+  if (el) el.textContent = mode ? MODE_META[mode].label : "未选择";
+  const bar = $("modebar");
+  if (bar) bar.dataset.mode = mode || "";
+}
+function modeGateShow() { const g = $("modegate"); if (g) g.style.display = "flex"; }
+function modeGateHide() {
+  const g = $("modegate");
+  if (g && g.style.display !== "none") g.style.display = "none";
+  _lsSet(MODE_SEEN_KEY, "1");
+}
+function modeGateOpen() { modeGateShow(); }
+function setMode(mode) {
+  currentMode = MODE_META[mode] ? mode : null;
+  _lsSet(MODE_KEY, currentMode);
+  _lsSet(MODE_SEEN_KEY, "1");
+  applyMode();
+  modeGateHide();
+}
+function modeGatePick(mode) {
+  setMode(mode);
+  const land = MODE_META[mode] && MODE_META[mode].land;
+  if (land) { location.hash = land; showTab(land); }
+}
+function modeGateSkip() { modeGateHide(); applyMode(); }
+window.modeGateOpen = modeGateOpen; window.modeGatePick = modeGatePick; window.modeGateSkip = modeGateSkip;
+
 /* ---- 导航 + hash 路由 */
 let shownTab = null;   // A-新7：记录当前已展示 tab——hashchange 与 showTab 双入口去重（防双倍请求）
 function showTab(name) {
@@ -397,6 +458,12 @@ function showTab(name) {
     if (cur && cur !== name) history.replaceState(null, "", "#" + cur);
     return;
   }
+  // 模式：**已选模式**时跨模式导航自动跟随（未选模式则不过滤，页签保持全可见）
+  const tm = TAB_MODE[name];
+  if (currentMode && tm && tm !== currentMode) {
+    currentMode = tm; _lsSet(MODE_KEY, tm); applyMode();
+  }
+  modeGateHide();   // 任何页签导航都关掉模式门（含「我自己探索」）
   /* 只作用于主导航（data-tab）：学习中心子导航 #learnnav 也是 <nav>，
      若用裸 "nav button" 会误重置子导航的 aria-selected/active 状态。 */
   document.querySelectorAll("nav button[data-tab]").forEach(x => {
@@ -412,8 +479,9 @@ function showTab(name) {
     stopPoll();
     ocrRunToken++;
   }
-  /* v0.8.1：5 Tab 分发（开始/刷题/题库/学习中心/我的） */
+  /* v0.8.1：Tab 分发（开始/练习/刷题/题库/学习中心/我的） */
   if (name === "start") loadStart();
+  if (name === "drill" && typeof loadBankHome === "function") loadBankHome();   // 题库刷题域（bank.js）
   if (name === "study") { loadStudy(); setStudyKeys(true); }   // A-15：进入刷题页挂拼键监听
   if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
   if (name === "learn") loadLibrary();
@@ -434,9 +502,15 @@ document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () =>
    这些函数定义在 app.js 之后加载的 review-desk.js / learn.js 中。初始化须推迟到全部
    脚本执行完毕（DOMContentLoaded），否则 ReferenceError → tab 面板已切但内容空屏。 */
 function initTab() {
+  // 模式：先恢复上次选择（无则不过滤 = 全部页签可见）
+  const saved = _ls(MODE_KEY);
+  currentMode = MODE_META[saved] ? saved : null;
+  applyMode();
   const h = (location.hash || "").replace("#", "");
-  if (["start", "study", "bank", "learn", "mine"].includes(h)) showTab(h);
+  if (TABS_ALL.includes(h)) showTab(h);
   else loadStart();   // 无 hash → 默认落地「开始」仪表盘（此时各脚本已就绪）
+  // 首次进入（从未选过/见过模式门）且无 hash → 先选模式
+  if (!currentMode && !h && !_ls(MODE_SEEN_KEY)) modeGateShow();
   initDataMgmt();   // U-20：绑定数据管理区按钮（元素为静态 HTML，可安全绑定）
 }
 if (document.readyState === "loading") {
@@ -447,8 +521,22 @@ if (document.readyState === "loading") {
 window.addEventListener("hashchange", () => {
   const h = (location.hash || "").replace("#", "");
   // A-新7：hash=…; showTab(…) 双入口会让 hashchange 再触发一次 → 目标与当前已展示 tab 一致时跳过（防双倍请求）
-  if (["start", "study", "bank", "learn", "mine"].includes(h) && h !== shownTab) showTab(h);
+  if (TABS_ALL.includes(h) && h !== shownTab) showTab(h);
 });
+
+/* 错题 → 练习的**直达入口**（外壳层转发）。
+ *
+ * 为什么放在 app.js 而不是直接让学习中心调 `bankDrillStartMistakes`：
+ * EP-01（学习中心）与 bank（练习）是两个**核心域**，让前者直接依赖后者的符号会在
+ * 域清单里多一条「核心 → 核心」的隐式耦合；而外壳本就是宿主，转发一处即可，
+ * 依赖方向收敛为 EP-01 → 外壳 → bank（登记见 tests/test_frontend_domain_coupling.py）。
+ */
+function openDrillFor(focusId) {
+  showTab("drill");
+  if (typeof bankDrillStartMistakes !== "function") return;   // bank 族未加载（剥离构建）
+  bankDrillStartMistakes("all", focusId);
+}
+window.openDrillFor = openDrillFor;
 
 /* ---- ① 开始（仪表盘 · PRD 6.1）：今日任务 + 开始学习 + 考试倒计时 + 最近项目 ---- */
 async function loadStart() {

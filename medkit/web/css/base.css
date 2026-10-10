@@ -560,3 +560,61 @@
   .ob-t span{display:block;font-size:11.5px;color:var(--dim);margin-top:2px;line-height:1.55}
   .ob-btn{margin-top:7px}
   @media (max-width:720px){.ob-steps{grid-template-columns:1fr}}
+
+  /* ---- 错题 / 生成 双模式（2026-10-10） ---- */
+  .modebar{display:flex;align-items:center;gap:8px;padding:10px 12px 2px}
+  .modebar-lbl{font-size:11px;color:var(--dim);letter-spacing:.5px}
+  .modebar-btn{margin-left:auto;display:flex;align-items:center;gap:6px;background:var(--card2);
+    border:1px solid var(--line);color:var(--text);border-radius:20px;padding:4px 12px;
+    font-size:12px;font-family:inherit;cursor:pointer}
+  .modebar-btn:hover{border-color:var(--accent);color:var(--accent2)}
+  .modebar-btn .ic{width:13px;height:13px}
+  .modegate{position:fixed;inset:0;z-index:70;pointer-events:none;
+    display:flex;align-items:center;justify-content:center;
+    padding-left:212px;background:rgba(0,0,0,.55)}
+  :root[data-theme=light] .modegate{background:rgba(255,255,255,.72)}
+  .modegate-inner{pointer-events:auto;max-width:620px;width:calc(100% - 48px);
+    background:var(--card);border:1px solid var(--line);border-radius:16px;padding:26px 24px;
+    box-shadow:0 18px 60px rgba(0,0,0,.35);text-align:center}
+  .modegate-title{font-size:20px;margin-bottom:6px}
+  .modegate-sub{font-size:12.5px;color:var(--dim);margin-bottom:18px}
+  .modegate-cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .modecard{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;
+    background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:20px 14px;
+    color:var(--text);font-family:inherit;transition:border-color .15s,transform .15s}
+  .modecard:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .modecard .ic{width:30px;height:30px;color:var(--accent2)}
+  .modecard b{font-size:17px}
+  .modecard span{font-size:12px;color:var(--dim);line-height:1.6}
+  #modegate_skip{margin-top:18px;border:none;background:none;color:var(--dim);
+    font-size:12px;cursor:pointer;font-family:inherit}
+  @media (max-width:860px){.modegate{padding-left:60px}}
+  @media (max-width:520px){.modegate-cards{grid-template-columns:1fr}}
+
+  /* ---- 题库练习（bank 域） ---- */
+  .bank-item{display:flex;align-items:center;gap:12px;padding:11px 12px;border:1px solid var(--line);
+    border-radius:11px;margin-bottom:9px;background:var(--card2)}
+  .bank-item.on{border-color:var(--accent)}
+  .bank-item-main{flex:1;min-width:0}
+  .bank-item-name{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .bank-item-meta{font-size:11.5px;color:var(--dim);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap}
+  .bank-item-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .bank-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 10px}
+  .bank-preview-table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .bank-preview-table th,.bank-preview-table td{border-bottom:1px solid var(--line);
+    padding:7px 8px;text-align:left;vertical-align:top}
+  .bank-preview-table th{color:var(--dim);font-weight:600;white-space:nowrap}
+  .bank-q{font-size:15px;line-height:1.7;margin:4px 0 12px}
+  .bank-opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);
+    border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;background:var(--card2)}
+  .bank-opt:hover{border-color:var(--accent2)}
+  .bank-opt.sel{border-color:var(--accent);background:var(--good14)}
+  .bank-opt.right{border-color:var(--good)}
+  .bank-opt.wrong{border-color:var(--bad);background:var(--badbg)}
+  .bank-opt-k{width:22px;height:22px;flex:none;border-radius:50%;background:var(--card3);
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+  .bank-opt.sel .bank-opt-k{background:var(--accent);color:var(--onaccent)}
+  .bank-ans{margin-top:12px;padding:12px;border-radius:10px;background:var(--card2);
+    border:1px solid var(--line);font-size:13.5px;line-height:1.75}
+  .bank-ans.ok{border-color:var(--good)}
+  .bank-ans.no{border-color:var(--bad)}

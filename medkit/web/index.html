@@ -42,12 +42,21 @@ try {
     <svg class="ic logoicon" style="display:none"><use href="#i-learn"></use></svg>
   </div>
   <nav aria-label="主导航">
+    <!-- 错题 / 生成 双模式：进入时先选模式（首次），侧栏可随时切换。
+         模式决定**落地页签**与**页签可见性**（data-mode）；`开始` / `我的` 为中立页签（两种模式都显示）。 -->
+    <div class="modebar" id="modebar">
+      <span class="modebar-lbl">模式</span>
+      <button class="modebar-btn" id="btn_mode" onclick="modeGateOpen()" title="切换模式（错题 / 生成）">
+        <svg class="ic"><use href="#i-target"></use></svg><span id="mode_name">未选择</span>
+      </button>
+    </div>
     <div role="tablist" aria-label="主导航" class="tabs">
-      <button data-tab="start" class="active" role="tab" aria-selected="true" aria-controls="tab-start" title="开始（Ctrl+1）"><svg class="ic"><use href="#i-target"></use></svg><span>开始</span></button>
-      <button data-tab="study" role="tab" aria-selected="false" aria-controls="tab-study" title="刷题（Ctrl+2）"><svg class="ic"><use href="#i-refresh"></use></svg><span>刷题</span></button>
-      <button data-tab="bank" role="tab" aria-selected="false" aria-controls="tab-bank" title="题库（Ctrl+3）"><svg class="ic"><use href="#i-bank"></use></svg><span>题库</span></button>
-      <button data-tab="learn" role="tab" aria-selected="false" aria-controls="tab-learn" title="学习中心（Ctrl+4）"><svg class="ic"><use href="#i-learn"></use></svg><span>学习中心</span></button>
-      <button data-tab="mine" role="tab" aria-selected="false" aria-controls="tab-mine" title="我的（Ctrl+5）"><svg class="ic"><use href="#i-mine"></use></svg><span>我的</span></button>
+      <button data-tab="start" data-mode="" class="active" role="tab" aria-selected="true" aria-controls="tab-start" title="开始（Ctrl+1）"><svg class="ic"><use href="#i-target"></use></svg><span>开始</span></button>
+      <button data-tab="drill" data-mode="wrong" role="tab" aria-selected="false" aria-controls="tab-drill" title="练习（错题模式：导入题库刷题）"><svg class="ic"><use href="#i-doc"></use></svg><span>练习</span></button>
+      <button data-tab="study" data-mode="wrong" role="tab" aria-selected="false" aria-controls="tab-study" title="刷题（Ctrl+2）"><svg class="ic"><use href="#i-refresh"></use></svg><span>刷题</span></button>
+      <button data-tab="bank" data-mode="gen" role="tab" aria-selected="false" aria-controls="tab-bank" title="题库（Ctrl+3）"><svg class="ic"><use href="#i-bank"></use></svg><span>题库</span></button>
+      <button data-tab="learn" data-mode="wrong" role="tab" aria-selected="false" aria-controls="tab-learn" title="学习中心（Ctrl+4）"><svg class="ic"><use href="#i-learn"></use></svg><span>学习中心</span></button>
+      <button data-tab="mine" data-mode="" role="tab" aria-selected="false" aria-controls="tab-mine" title="我的（Ctrl+5）"><svg class="ic"><use href="#i-mine"></use></svg><span>我的</span></button>
     </div>
     <div class="navsep" role="separator"></div>
     <a class="navext" href="https://med-review-site.pages.dev/#reviews" target="_blank" rel="noopener"
@@ -103,6 +112,67 @@ try {
       <div class="rv-stats" id="rv_stats"></div>
       <div id="rv_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
       <div id="mem_area" style="margin-top:18px"></div>
+    </div>
+  </section>
+
+  <!-- ②b 练习（错题模式核心：导入自备 md 题库 → 应用内刷题 → 判错回流错题本） -->
+  <section id="tab-drill" class="panel">
+    <h1 class="ptitle"><svg class="ic"><use href="#i-doc"></use></svg>练习</h1>
+    <p class="psub">导入自备题库 → 应用内作答判分 → 判错自动进错题本 · 全程本地、零 LLM</p>
+
+    <div class="card" style="margin-top:14px">
+      <div class="cardh"><h2>我的题库</h2><span class="hint" id="bank_meta"></span></div>
+      <div class="hint" style="margin-bottom:8px">
+        导入<b>你自己准备</b>的题库（md / txt / json / csv），MedKit 只做本地解析与练习——<b>不内置、不分发任何题库</b>，数据权利归各自来源方。
+        想从教材生成新题？去「题库」页签（出题工坊）。
+      </div>
+      <div class="btns" style="flex-wrap:wrap">
+        <button class="act" id="btn_bank_import" onclick="bankImportPick()">⇧ 导入题库文件</button>
+        <button class="act gray" onclick="bankPasteOpen()">粘贴文本导入</button>
+        <button class="act gray" onclick="bankProjectOpen()">从出题项目导入</button>
+        <button class="act gray" onclick="bankCreateOpen()">＋ 新建空题库</button>
+        <button class="act gray" onclick="bankRetryStart()">错题重练</button>
+        <input type="file" id="bank_file" accept=".md,.markdown,.txt,.json,.csv" style="display:none" onchange="bankImportFile(this)">
+      </div>
+      <div class="bank-bar" style="margin-top:8px">
+        <label style="font-size:12px">今日目标（题）</label>
+        <input type="number" id="bank_goal" min="0" max="500" value="20" style="width:76px" onchange="bankGoalSave()">
+        <span class="hint" id="bank_goal_prog">今日已练 —</span>
+      </div>
+      <div id="bank_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
+    </div>
+
+    <div class="card" id="bank_paste_card" style="display:none;margin-top:14px">
+      <div class="cardh"><h2>粘贴文本导入</h2><span class="hint">支持 md / txt / csv / json</span></div>
+      <textarea id="bank_paste_text" rows="8" placeholder="例：&#10;### 1. 慢阻肺最主要的病因是&#10;- A. 吸烟&#10;- B. 感染&#10;**答案**：A&#10;**解析**：吸烟是 COPD 最重要的环境致病因素"></textarea>
+      <div class="btns" style="margin-top:10px">
+        <button class="act" onclick="bankPreviewPaste()">解析预览</button>
+        <button class="act gray" onclick="bankPasteClose()">取消</button>
+      </div>
+    </div>
+
+    <div class="card" id="bank_import_card" style="display:none;margin-top:14px">
+      <div class="cardh"><h2>导入预览</h2><span class="hint" id="bank_import_meta"></span></div>
+      <div id="bank_import_body"></div>
+    </div>
+
+    <div class="card" id="bank_manage_card" style="display:none;margin-top:14px">
+      <div class="cardh"><h2>题目管理</h2><span class="hint" id="bank_manage_meta"></span></div>
+      <div class="hint" style="margin-bottom:8px">
+        导入的题库常有解析偏差（答案错位、选项切分不对）——在这里直接改，不用重新导入。
+        <b>收藏</b>的题可在练习时用「只练收藏」单独刷；<b>笔记</b>在判分后才显示（可能写着答案）。
+      </div>
+      <div class="btns" style="margin-bottom:8px">
+        <button class="act gray" onclick="bankItemNew()">＋ 手动加题</button>
+        <button class="act gray" onclick="bankManageClose()">关闭</button>
+      </div>
+      <div id="bank_item_form"></div>
+      <div id="bank_item_list"></div>
+    </div>
+
+    <div class="card" id="bank_drill_card" style="display:none;margin-top:14px">
+      <div class="cardh"><h2 id="bank_drill_title">练习</h2><span class="hint" id="bank_drill_meta"></span></div>
+      <div id="bank_drill_body"></div>
     </div>
   </section>
 
@@ -606,6 +676,14 @@ try {
       </div>
       <div class="hint" id="exp_cost" style="margin:6px 0"></div>
       <div id="exp_live" class="exp-live" style="display:none"></div>
+      <!-- 批量删除讲解产物（与错题本批量工具栏同范式：全选可见 / 清空 / 批量删除带备份） -->
+      <div class="mk-bar" id="exp_bar" style="display:none">
+        <button class="mini-btn" id="btn_exp_all" onclick="expToggleAllVisible()">全选可见</button>
+        <button class="mini-btn" onclick="expInvert()">反选</button>
+        <button class="mini-btn" onclick="expClearSel()">清空</button>
+        <span class="hint" id="exp_sel_count">已选 0</span>
+        <button class="mini-btn danger" id="btn_exp_batch_del" onclick="expBatchDel()">批量删除</button>
+      </div>
       <div id="explain_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
     </div>
     </div>
@@ -742,6 +820,28 @@ try {
   </section>
 </main>
 <div id="toasts" role="status" aria-live="polite"></div>
+<!-- 错题 / 生成 双模式入口：首次进入先选模式。⚠️ 遮罩**不拦截点击**（pointer-events:none），
+     且卡片居中于主内容区（padding-left 让开侧栏）——侧栏页签在任何时候都可点，
+     点了即视为「我自己探索」并关闭本层。 -->
+<div id="modegate" class="modegate" style="display:none">
+  <div class="modegate-inner">
+    <h2 class="modegate-title">选择模式</h2>
+    <p class="modegate-sub">两种模式共用同一份本地数据，随时可在侧栏顶部切换。</p>
+    <div class="modegate-cards">
+      <button class="modecard" onclick="modeGatePick('wrong')">
+        <svg class="ic"><use href="#i-paper"></use></svg>
+        <b>错题</b>
+        <span>导入题库刷题 · 查看解析 · 管理错题记录</span>
+      </button>
+      <button class="modecard" onclick="modeGatePick('gen')">
+        <svg class="ic"><use href="#i-bank"></use></svg>
+        <b>生成</b>
+        <span>用教材生成题库与复习手册</span>
+      </button>
+    </div>
+    <button class="mini" id="modegate_skip" onclick="modeGateSkip()">先逛逛（显示全部页签）→</button>
+  </div>
+</div>
 <div id="modal_mask" class="modalMask" style="display:none">
   <div class="modal" role="dialog" aria-modal="true">
     <h3 id="md_title">确认</h3>
@@ -779,5 +879,11 @@ try {
 <script src="/assets/js/review-desk-materials.js"></script>
 <script src="/assets/js/review-desk-project.js"></script>
 <script src="/assets/js/review-desk-review.js"></script>
+<!-- 题库刷题族（bank）：**核心侧**（错题模式）——导入自备题库 + 应用内作答。
+     与 EP-01 同属核心，不得引用 review-desk*.js（生成链插件）独有符号
+     （守卫见 tests/test_frontend_domain_coupling.py）。 -->
+<script src="/assets/js/bank.js"></script>
+<script src="/assets/js/bank-import.js"></script>
+<script src="/assets/js/bank-drill.js"></script>
 </body>
 </html>

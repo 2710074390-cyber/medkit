@@ -83,16 +83,21 @@ async function loadExplains() {
     const r = await api("/api/library/explains?subject=" + encodeURIComponent(subject));
     const recs = r.explains || [];
     $("explain_total").textContent = `${subject || "全部"} · ${recs.length} 篇`;
+    expSelected.clear();     // 数据刷新 → 清空多选（与错题本 WP-5 同范式）
     if (!recs.length) {
       $("explain_list").innerHTML = `<div class="empty">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-book"></use></svg>
         <div class="sub">还没有讲解产物<br>上方选中薄弱知识点 →「生成讲解」，内容自动沉淀为个人复习手册</div>
       </div>`;
+      expUpdateBar();
       return;
     }
     $("explain_list").innerHTML = recs.map((e, i) => `
       <div class="exp-card" id="expc_${esc(e.id)}">
         <div class="exp-fold" data-id="${esc(e.id)}" onclick="expFold(this)" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <label class="chk" style="flex:none;margin:0" onclick="event.stopPropagation()" title="选择该讲解">
+            <input type="checkbox" class="expck" data-id="${esc(e.id)}" onchange="expToggle(this)">
+          </label>
           <b style="flex:1">${esc(e.kp_name || "")}</b>
           <span class="tag">${esc(e.subject || "未分类")}</span>
           ${e.grounded === false
@@ -116,6 +121,7 @@ async function loadExplains() {
           <button class="mini-btn danger" data-id="${esc(e.id)}" onclick="expDel(this)">删除</button>
         </div>
       </div>`).join("");
+    expUpdateBar();
   } catch (e) { $("explain_list").innerHTML = `<div class="hint">加载失败：${esc(e.message)}</div>`; }
 }
 /* 触发 LLM 前的成本提示（估算；以官网为准）——讲解/提问按次记账，明明白白 */
@@ -296,6 +302,68 @@ async function expDel(idOrEl) {
       catch (e) { toast(e.message, false); }
     });
 }
+
+/* ---- 讲解产物批量删除（2026-10-10）----
+   与错题本 WP-5 的批量工具栏同范式：多选 → 「批量删除」带自动备份（~/.medkit/exports/）。
+   为什么需要：讲解产物是「按知识点一篇」沉淀的，学期末动辄几十上百篇，逐条点删除不现实。 */
+let expSelected = new Set();
+function expToggle(cb) {
+  const id = cb && cb.dataset ? cb.dataset.id : "";
+  if (!id) return;
+  if (cb.checked) expSelected.add(id); else expSelected.delete(id);
+  expUpdateBar();
+}
+function expUpdateBar() {
+  const bar = $("exp_bar");
+  const total = document.querySelectorAll("#explain_list .expck").length;
+  if (bar) bar.style.display = total ? "flex" : "none";
+  const cnt = $("exp_sel_count");
+  if (cnt) cnt.textContent = "已选 " + expSelected.size;
+  const del = $("btn_exp_batch_del");
+  if (del) del.disabled = !expSelected.size;
+  const all = $("btn_exp_all");
+  if (all) all.textContent = total ? `全选可见（${total}）` : "全选可见";
+}
+function expToggleAllVisible() {
+  document.querySelectorAll("#explain_list .expck").forEach(c => { c.checked = true; expSelected.add(c.dataset.id); });
+  expUpdateBar();
+}
+function expInvert() {
+  document.querySelectorAll("#explain_list .expck").forEach(c => {
+    c.checked = !c.checked;
+    if (c.checked) expSelected.add(c.dataset.id); else expSelected.delete(c.dataset.id);
+  });
+  expUpdateBar();
+}
+function expClearSel() {
+  expSelected.clear();
+  document.querySelectorAll("#explain_list .expck").forEach(c => { c.checked = false; });
+  expUpdateBar();
+}
+function expBatchDel() {
+  const n = expSelected.size;
+  if (!n) { toast("请先勾选讲解产物", false); return; }
+  confirmModal(`批量删除 ${n} 篇讲解？`,
+    `<p style="margin:0;color:var(--dim)">删除前会自动导出所选讲解 JSON 备份（~/.medkit/exports/），删除后不可恢复。<br>
+     <span class="hint">由这些讲解派生的<b>医学记忆卡会一并删除</b>；错题、知识点掌握度不受影响。</span></p>`,
+    "导出并删除", async () => {
+      try {
+        const r = await api("/api/library/explains/batch-delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [...expSelected] }),
+        });
+        toast(`已删除 ${r.deleted || 0} 篇`
+          + (r.cards_removed ? `（含 ${r.cards_removed} 张派生记忆卡）` : "")
+          + (r.backup ? "，已备份" : ""));
+        expSelected.clear();
+        loadExplains();
+      } catch (e) { toast(e.message, false); }
+    });
+}
+window.expToggle = expToggle; window.expUpdateBar = expUpdateBar;
+window.expToggleAllVisible = expToggleAllVisible; window.expInvert = expInvert;
+window.expClearSel = expClearSel; window.expBatchDel = expBatchDel;
+
 function downloadText(name, content) {
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);

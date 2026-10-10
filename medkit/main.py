@@ -30,6 +30,7 @@ from .core.mineru import MinerUError
 from .core.orchestrator import PipelineError
 from .core.websearch import SearchError
 from .logging_setup import setup_logging
+from .routers import bank as r_bank
 from .routers import config as r_config
 from .routers import data as r_data
 from .routers import diagnostics as r_diagnostics
@@ -254,6 +255,7 @@ async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse
 
 
 # ---------------------------------------------------------------- 路由装配
+app.include_router(r_bank.router)
 app.include_router(r_config.router)
 app.include_router(r_data.router)
 app.include_router(r_diagnostics.router)

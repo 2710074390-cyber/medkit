@@ -10,6 +10,138 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Added（错题 / 生成 双模式 + 题库刷题 + 讲解产物批量删除）
+
+背景：用户诉求「为学习中心新增批量删除讲解产物，并实现 MD 题库的导入、解析与刷题；
+导入后记录错题、提供错题管理与查看解析；UI 重构为『错题』和『生成』两个模式」。
+调研与方案见 `docs/题库刷题功能_调研与实现方案_2026-10-02.md`（本版按其一期落地）。
+
+#### 错题 / 生成 双模式（UI 重构）
+
+- `index.html` / `app.js`：侧栏顶部**模式条** + 首启**模式门**（`#modegate`）。
+  - **错题模式** = 练习（新页签 `#tab-drill`）/ 刷题 / 学习中心（错题本 · 讲解产物=查看解析 · 元认知）；
+    **生成模式** = 开始 / 题库（出题工坊）/ 我的。
+  - 页签加 `data-mode`；模式决定**落地页签**与**页签可见性**。`开始` / `我的` 为**中立页签**（两模式都显示）。
+  - **默认不过滤**：未选模式时全部页签可见——模式只在用户**显式选择**后才生效。
+  - 模式门遮罩 `pointer-events:none` 且 `padding-left` 让开侧栏 ⇒ 侧栏任何时刻都可点，
+    点页签即「我自己探索」（关掉门且不过滤）。模式门只在「无 hash 且从未见过」时出现。
+  - 模式记忆：`medkit-mode`（`wrong`/`gen`）+ `medkit-mode-seen`（门是否出现过）。
+  - `review-desk-review.js`：Ctrl/⌘ 页签快捷键扩到 6（新增 Ctrl+6 = 练习；1~5 语义不变）。
+
+#### 题库刷题（`bank` 域 · 零 LLM）
+
+- `core/db.py`：**v9 迁移** —— `banks` / `bank_items` / `bank_attempts` 三张新表（可精确回滚）。
+  `bank_attempts` 是 **append-only 作答流水**（不复用 `error_events`：后者语义单位是**知识点**，
+  服务跨轮次迁移矩阵；前者单位是**题目**，服务「这题做过几次、对了几次」——粒度不同，混用两张报表都失真）。
+- `core/bank.py`（新）：题库域存储，**SQL-only**（无历史 JSON 数据，不做双轨回落）。
+  CRUD / 批量入题（重复题三选一 `update|skip|new`）/ 作答流水 / 统计（掌握率·正确率·薄弱考点，纯函数）。
+  判分口径 `answers_equal()` 与 `render/qbank_html.py` 内联 JS 的 `answersEqual()` **同源**（集合比较）。
+  判错回流复用 `library.sync_from_paper()`（与押题卷「同步错题到错题本」同一条通道）。
+- `core/bank_iq.py`（新）：导入解析。**核心原则：导入格式必须先兼容自己的导出格式**
+  （`export_md()` → `parse_bank_md()` → 逐字段相等）。按标题/题号切块（`### q1 · …` 的 `q1` 不是数字，
+  旧切块器不认）；一级标题 `# 题库` 视为文档标题而非题目；案例/选项组头不当题、B1 共享选项顺延给子题；
+  题型按答案字母数推断；三级去重键（严格全文 / 宽松前 80 字 / 包含检测，命中只提示不自动处理）；
+  选项入库剥字母前缀（否则渲染层再补一次 = `A. A. 甲`）；`QuestionItem` 契约校验**只产告警不拒收**。
+- `routers/bank.py`（新）：`/api/bank/*` —— 题库 CRUD（删除带备份）/ 导入预览（**不落库**）/
+  导入文件 / 确认入库 / 取练习题目（**不下发答案**）/ 判分 / 统计。分层：routers 不直接碰 SQL。
+- 前端新族 `bank.js` / `bank-import.js` / `bank-drill.js`（各 ≤800 行，登记进 `FAMILIES` 与分域清单）：
+  题库列表与元操作 / 三步导入向导（解析预览表 + 逐条告警）/ 作答引擎（题干·选项·提交·即时判分·解析·
+  只练错题/未做·错题重练）。
+
+#### 题目管理：编辑 / 收藏 / 笔记（F2 / F9）
+
+- `core/bank.py`：`update_item()`（**局部更新**，`_ITEM_EDITABLE` 正向白名单）+
+  `set_starred()`；`drill_items()` 增 `starred` 模式。改题后**重新走 `bank_iq.normalize_item`**
+  ——手改出来的题与导入进来的题形状一致，否则两种来源在渲染/判分上会分叉。
+  改题**不清作答历史**（`bank_attempts` 按 `item_id` 关联，id 不可改）。
+- `core/bank_iq.py`：`starred` / `note` 纳入条目形状（**只存在 `data` JSON，不加查询列**——
+  「只看收藏」在千题级用 Python 过滤足够，加列要动 schema（v10），多一个「列与 data 漂移」的失效面）。
+- `routers/bank.py`：`POST /api/bank/banks/{bid}/items`（手动加题）、
+  `PUT /api/bank/items/{iid}`（局部编辑）、`POST /api/bank/items/{iid}/star`（收藏）。
+  `GET .../drill` 的**剥离集扩到 `note`**（笔记可能写着答案 ⇒ 判分前不下发，判分后随结果回传）。
+- 前端：`bank.js` 新增「题目管理」卡（列表 + 内联表单 + 手动加题 + 逐题删除 + ★ 收藏）；
+  `bank-drill.js` 增「只练收藏」模式与练习中 ★ 开关、判分后展示笔记。
+
+#### 从出题工坊导入 + 导出回流（F11 / F10）
+
+- `routers/bank.py` 新增三个端点：
+  - `GET /api/bank/projects`——列出**已生成产物**的课题（`最终产物/questions_final.json`），
+    只读元数据与题数（不读题目正文，避免大文件被反复解析）；
+  - `POST /api/bank/import/project`——把产物**复制**进题库（**复制而非引用**：项目可被删，
+    题库不该跟着消失）；`pid` 走 `_safe_pid` 消毒；空产物 / 超 500 条 / 损坏产物都给可读错误；
+  - `GET /api/bank/banks/{bid}/export/paper`——题库 → **交互押题卷 HTML**
+    （复用 `render/qbank_html.export_paper_html`，零 LLM；缺省 `inline`，与项目产物同口径）。
+- `core/bank_iq.normalize_item()`：此前把 `case_id / case_order / case_stem / group_kind / group /
+  image_ref / data_table / source_type / source_year` **写死成空值** ⇒ 导入即降级
+  （案例题干丢、B1 共享选项丢、图题变普通题）。改为从原始记录搬运（含非法值容错）。
+- 前端：`bank.js` 行内新增「导出押题卷」（新标签页同源打开）；`bank-import.js` 新增
+  「从出题项目导入」弹层（列项目 → 命名 → 入库）；`app.js` 的 `askModal()` 增可选**预填值**参数
+  ——重命名/导入这类场景应把当前值摆出来直接改，而不是只给 placeholder 让用户重打一遍。
+
+#### 讲解产物批量删除
+
+- `core/explain.py` + `routers/library.py`：新增 `batch_delete_with_backup()` 与
+  `POST /api/library/explains/batch-delete`——删除前**自动导出备份 JSON** 到 `~/.medkit/exports/`，
+  并级联清理由这些讲解派生的医学记忆卡（与单条删除同口径）。
+- `learn-live.js` + `index.html`：讲解视图加多选工具栏（全选可见 / 反选 / 清空 / 批量删除）。
+
+### Fixed（讲解域：轨切换会让「刚生成的讲解」消失）
+
+- `core/explain.py` 补上 `library._backfill_json_once`（V-10）**同款保护**（此前只有库域有）。
+  这条路径是**必现**的：讲解存进 JSON 轨（db 还不存在）→ 别的动作建库（轨判定由
+  `_store_is_sql` 翻成 True，例如删除时级联清记忆卡的 `_ensure_schema()`）→ 读空 `explains` 表
+  ⇒ **界面里刚生成的讲解全消失**。生产里由 `main._lifespan` 启动即 `migrate()+import_from_json()`
+  兜住，故长期未暴露——但「靠启动顺序兜底」不是防线。
+  守卫 `test_track_flip_does_not_hide_explains` 已做**注入反向验证**
+  （把 `_sql_ready` 换回 `_store_is_sql` ⇒ 5 项红；还原 ⇒ 全绿）。
+
+### Fixed（md 导入：选项行的前导列表符 + 解析标记 `💡`）
+
+- **`parse_question_text` 不识别带列表符的选项行**（`- A. 吸烟`）——连 MedKit 自己
+  `export_md()` 的产出都读不回来：选项全丢、被当成题干正文，且**不报错、不告警**。
+  根因是 `_OPT_RE` 要求行首即字母。修法：逐行**先剥前导列表符再判选项**
+  （剥完仍需命中 `_OPT_RE` ⇒ 序号开头的题干行不会被误吞，误伤面已实测）。
+- 解析标记补 **`💡`**（MedKit 自己产物用 `💡 {解析}`，此前识别不到）。
+- 丢弃答案/解析段被摘走后剩下的**纯装饰残留行**（如 `**✅ **`），不并入选项也不混进题干。
+
+#### 错题重练（F7 增强）与每日目标（B7）
+
+- `core/library.py`：`retry_mistake()` —— 判一道**自己的错题**（复用 `core.bank.answers_equal`，
+  与题库/押题卷**同一份**集合比较）；判对 → 归档「已掌握」，判错 → 保持未掌握。
+  掌握度经 **`record_quiz`**（与提问判分同一条通道）记一次真实提取，**不另造计数**——
+  `_touch_knowledge_in` 是**入库**路径专用（含录入快照记账），混用会让删题回退失衡。
+  **已知边界已写进 docstring**：这样注入的样本不随错题删除而回退（与 quiz/review 样本的既有性质一致）。
+- `routers/library.py`：`POST /api/library/mistakes/{mid}/retry`（返回答案 + 解析 ⇒ 同时充当「查看解析」）。
+- `core/bank.py` + `routers/bank.py`：`today_attempts()` / `GET /api/bank/today`
+  （今日作答数·正确数·去重题数；`date` 可为过去日期，便于对账）。
+- 前端：`bank.js` 新增「错题重练」入口与「今日目标」（目标存 localStorage，进度取自服务端计数）；
+  `bank-drill.js` 增 `source`（`bank` / `mistakes`）——两种题源共用同一套作答/判分 UI，
+  只换判分端点与文案，模式条随来源切换（错题源为「全部错题 / 只看未掌握」，且不显示 ★）。
+
+#### 收尾一致性（错题重练计入每日目标 · 错题本直达重练）
+
+- `routers/library.py`：`retry` 端点补记一条作答流水（`bank_id=""`、`mode="retry"`）——
+  每日目标的今日计数**把错题重练也算进去**。此前的不一致很刺眼：用户设了目标、
+  重练一整晚，进度条还是 0。跨域写放在 **routers 层编排**（core 之间不互相写对方的表）。
+- 错题本每行新增 **「→ 重练」**：跳「练习」页并**定位到那道题**（只对有选项的错题显示）。
+  跨域调用**收敛到外壳一处**（`app.js::openDrillFor` 转发），依赖方向变成
+  EP-01 → 外壳 → bank（登记进 `SHELL_TO_BANK`），而不是让两个核心域直接互引。
+- `bank.js`：删除题库时若「题目管理」正打开着它，一并收起（否则卡片留在屏幕上显示已不存在的题）。
+
+### 测试
+
+- 新增 `tests/test_bank.py` **46 项** + `tests/test_bank_iq.py` **24 项** +
+  `tests/test_mistake_retry.py` **12 项** + `tests/test_explain_batch_delete.py` **8 项**；
+  浏览器层新增 `test_mode_gate.py` **4 项** + `test_bank_drill.py` **5 项**
+  （导入 → 作答判分 → 判错回流；从项目导入 + 导出押题卷；管理页改答案 → 判分口径跟着变 + 收藏 → 只练收藏；
+  错题本「→ 重练」直达 → 判对归档 → 只看未掌握 → 今日目标把重练算进进度）。
+- 每日目标那条守卫已做**注入反向验证**（删掉 `record_attempt` ⇒ 必红）。
+- 前端守卫同步：`FAMILIES` 增 `bank` 族；`test_frontend_domain_coupling.py` 增 `BANK` 域
+  （bank 引用插件独有符号 = 硬红线；外壳 → bank 引用走登记制），21 → 27 项。
+- `tests/browser/conftest.py`：预置 `medkit-mode-seen=1`（模式门是首启引导层，与向导同处理），
+  既有浏览器用例不出现模式门、不触发页签过滤；模式门本身由 `test_mode_gate.py` 清键后验证。
+- 真身数字：全量 **1600**（单元 1509 / 浏览器层 91）；mypy 89 源文件 0 error；ruff / eslint 干净。
+
 ### Added（模型列表：最新可用模型 + 能力展示 · 仿 Cherry Studio 三层合并）
 
 背景：模型下拉此前只回显上游返回的 `id` 列表，**上游其实是带富元数据的**（`name` /

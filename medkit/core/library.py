@@ -900,10 +900,50 @@ def mark_learned(mid: str, learned: bool = True) -> Optional[dict[str, Any]]:
     return cur
 
 
+def retry_mistake(mid: str, user_answer: str) -> Optional[dict[str, Any]]:
+    """错题重练：判一道**自己的错题**（集合判分，与题库/押题卷**同源**），并驱动掌握度。
+
+    - 判对 → 归档「已掌握」（`learned=True`）+ 记一次成功提取；
+    - 判错 → 保持未掌握 + 记一次失败。
+
+    ## 为什么经 `record_quiz` 而不是 `_touch_knowledge_in`
+
+    掌握度的既有口径是「**每次真实作答注入一个样本**」——提问判分（tutor）与复习卡判分
+    都走 `record_quiz` / `record_review`。重练是一次真实作答，走同一条通道才不会造出
+    第二套计数语义（`_touch_knowledge_in` 是**入库**路径专用的，含录入快照 `_correct_sample`
+    的记账逻辑，混用会让删题回退失衡）。
+
+    ## 已知边界（如实标注）
+
+    这样注入的样本**不随错题删除而回退**（`_drop_knowledge_of_in` 只按录入快照回滚一次）。
+    这与 quiz/review 样本的既有性质一致，不是本次新引入的；若要连它一起回退，
+    得给 `knowledge.history` 加来源标记，属另一件事。
+
+    返回判分结果（含答案/解析，故本入口同时充当「查看解析」）。
+    """
+    from .bank import answers_equal  # 局部导入：与题库共用同一份判分口径（不复制规则）
+
+    rec = get_mistake(mid)
+    if rec is None:
+        return None
+    correct = answers_equal(user_answer, str(rec.get("answer") or ""))
+    for name in _kp_key(rec):
+        record_quiz(name, 5 if correct else 0)
+    if correct:
+        mark_learned(mid, True)
+    return {
+        "correct": correct,
+        "answer": str(rec.get("answer") or ""),
+        "analysis": str(rec.get("analysis") or ""),
+        "question": str(rec.get("question") or ""),
+        "options": list(rec.get("options") or []),
+        "learned": correct,
+    }
+
+
 # ---------------------------------------------------------------- 知识点掌握度
 def list_knowledge() -> list[dict[str, Any]]:
     return _load(KNOWLEDGE_FILE)
-
 
 def log_knowledge_events(names: list[str], event: str, note: str = "") -> list[Any]:
     """批量向命中知识点追加 history 事件（V-09），返回命中 kp 的 id 列表（未命中跳过）。
@@ -996,12 +1036,20 @@ def record_review(kp_name: str, quality: int) -> str | None:
 
 # ---------------------------------------------------------------- 文本结构化（本地规则，零 LLM）
 _OPT_RE = re.compile(r"^[（(]?([A-Ha-h])[)）、.．\s]+(?=\S)")
+# R1（2026-10-10）：**剥前导列表符再判选项行**。
+# md 里最自然的写法是 `- A. 吸烟`，而旧实现要求行首即字母 ⇒ 连 MedKit 自己
+# `render/qbank_html.py::export_md()` 的产出都读不回来（选项全丢、被当成题干、**不报错**）。
+# 剥完仍需命中 `_OPT_RE` 才计入选项 ⇒ 序号开头的题干行不会被误吞（误伤面已实测）。
+_LIST_MARK_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+# 无实义残留行（如 `**✅ **`）：答案/解析段被摘走后剩下的装饰行，不得混进题干或并进选项
+_HAS_CONTENT_RE = re.compile(r"[\w\u4e00-\u9fff]")
 
 
 def parse_question_text(text: str) -> dict[str, Any]:
     """把一段错题文本按常见标记拆结构（题干/选项/答案/解析）。非严格、可被用户二次编辑。
 
-    支持标记：答案【答案】；解析【解析】；选项行 A./A、/（A）。
+    支持标记：答案【答案】/答案：/✅ 答案：；解析【解析】/解析：/💡；选项行
+    A./A、/（A）/`- A.`（列表符）。
     D-16：答案支持多字母（BD / B,D / B、D）→ 归一为紧凑大写（BD）；答案后的余文
     归入题干（解析前的中间文本），不静默丢弃。无法识别时整体放入 question。
     返回可直接入库的结构（best-effort）。
@@ -1010,7 +1058,8 @@ def parse_question_text(text: str) -> dict[str, Any]:
     ans_re = re.compile(
         r"[【\[(]?(?:答案|答|正确答案)[】\])]?\s*[:：]?\s*"
         r"([A-Ha-h](?:[、,，.．/；;、\- ]*[A-Ha-h])*)")
-    ana_re = re.compile(r"[【\[(]?解析[】\])]?\s*[:：]?\s*(.*)$", re.S)
+    # R1：解析标记补 `💡` —— MedKit 自己的产物用 `💡 {解析}`，此前识别不到
+    ana_re = re.compile(r"[【\[(]?(?:解析|💡)[】\])]?\s*[:：]?\s*(.*)$", re.S)
 
     ans_match = ans_re.search(text)
     ana_match = ana_re.search(text)
@@ -1038,14 +1087,18 @@ def parse_question_text(text: str) -> dict[str, Any]:
     options: list[str] = []
     option_begun = False
     q_lines: list[str] = []
-    for line in lines:
-        m = _OPT_RE.match(line.strip())
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line and not _HAS_CONTENT_RE.search(line):
+            continue     # 纯装饰残留行（`**✅ **` / `**`）——丢弃，不并入选项也不混进题干
+        probe = _LIST_MARK_RE.sub("", line)     # R1：剥前导列表符（`- ` / `* ` / `1. `）
+        m = _OPT_RE.match(probe)
         if m:
-            options.append(line.strip())
+            options.append(probe)
             option_begun = True
-        elif option_begun and line.strip():
+        elif option_begun and line:
             if options:
-                options[-1] = options[-1] + " " + line.strip()
+                options[-1] = options[-1] + " " + line
         elif not option_begun:
             q_lines.append(line)
 

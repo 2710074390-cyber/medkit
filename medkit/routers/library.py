@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..agents import medcards
+from ..core import bank as banklib
 from ..core import cards as cardlib
 from ..core import config as cfg
 from ..core import dashboard as dash
@@ -178,6 +179,29 @@ def learn_mistake(mid: str, learned: bool = True) -> dict[str, Any]:
     if rec is None:
         raise HTTPException(404, "错题不存在")
     return {"ok": True, "mistake": rec}
+
+
+class RetryBody(BaseModel):
+    user_answer: str = ""
+
+
+@router.post("/api/library/mistakes/{mid}/retry")
+def retry_mistake(mid: str, body: RetryBody) -> dict[str, Any]:
+    """错题重练（F7 增强）：判一道自己的错题 → 判对归档「已掌握」，判错保持。
+
+    判分口径与题库练习 / 押题卷**同源**（`core.bank.answers_equal`，集合比较）；
+    返回答案与解析 ⇒ 本入口同时充当「查看解析」。
+    """
+    res = lib.retry_mistake(mid, body.user_answer)
+    if res is None:
+        raise HTTPException(404, "错题不存在")
+    # 记一条作答流水（`bank_id` 空 = 非题库来源，`mode="retry"`）。
+    # 为什么：每日目标的「今日作答数」取自 `bank_attempts`——错题重练也是练习，
+    # 不记的话用户设了目标、重练一整晚，进度条还是 0（自相矛盾的体验）。
+    # 跨域写放在 **routers 层编排**（core 之间不互相写对方的表）。
+    banklib.record_attempt("", mid, user_answer=body.user_answer,
+                           correct=bool(res.get("correct")), mode="retry")
+    return {"ok": True, **res}
 
 
 @router.delete("/api/library/mistakes/{mid}")
@@ -672,6 +696,28 @@ def explains_export(subject: str = "") -> dict[str, Any]:
     if not md:
         raise HTTPException(404, "该科目还没有讲解产物")
     return {"ok": True, "markdown": md, "subject": subject}
+
+
+class ExplainBatchBody(BaseModel):
+    ids: list[str] = []
+
+
+@router.post("/api/library/explains/batch-delete")
+def explains_batch_delete(body: ExplainBatchBody) -> dict[str, Any]:
+    """批量删除讲解产物（删除前自动导出备份 JSON 到 ~/.medkit/exports/）。
+
+    级联清理由各篇讲解派生的医学记忆卡（与单条删除 `explains_delete` 同口径）。
+    """
+    ids = [str(x).strip() for x in (body.ids or []) if str(x).strip()]
+    if not ids:
+        raise HTTPException(400, "请先选择讲解产物")
+    if len(ids) > 500:
+        raise HTTPException(400, "单次最多操作 500 条")
+    res = expl.batch_delete_with_backup(ids)
+    removed = 0
+    for eid in ids:
+        removed += cardlib.delete_by_source(eid)
+    return {"ok": True, "cards_removed": removed, **res}
 
 
 # ---------------------------------------------------------------- M4 提问式学习（MedTutor）

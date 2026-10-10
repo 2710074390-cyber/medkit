@@ -1,4 +1,4 @@
-/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkApkgFile, mkApkgPick, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
+/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkApkgFile, mkApkgPick, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, mkRetry, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
 const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
 const LEARN_ORDER = ["weak", "shaky", "solid", "mastered"];
@@ -531,6 +531,7 @@ function mkRowHTML(mm) {
     <div class="mk-actions">
       ${kp ? `<button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 讲解</button>
       <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 提问</button>` : ""}
+      ${(mm.options || []).length ? `<button class="mini-btn" data-id="${esc(mm.id)}" onclick="mkRetry(this)" title="到「练习」页把这道错题再做一遍（判对即归档已掌握）">→ 重练</button>` : ""}
       ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" data-id="${esc(mm.id)}" onclick="mkLearn(this,true)">已掌握</button>`}
       ${mm.learned && kp ? `<button class="act gray" style="padding:5px 11px;font-size:12px" data-subject="${esc(mm.subject || "")}" data-kp="${esc(kp)}" onclick="mkPurgeSameCards(this)">清同名卡</button>` : ""}
       <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" data-id="${esc(mm.id)}" onclick="mkDel(this)">删除</button>
@@ -600,6 +601,14 @@ async function healLibrary() {
   } catch (e) { toast(e.message, false); }
 }
 window.mkDetailTgl = mkDetailTgl; window.learnRecAction = learnRecAction; window.healLibrary = healLibrary;
+/* 错题 → 练习 直达（跨域调用收敛在**外壳** app.js 的 `openDrillFor`，
+   学习中心不直接引用 bank 域符号——依赖方向 EP-01 → 外壳 → bank）。 */
+function mkRetry(btn) {
+  const id = btn && btn.dataset ? (btn.dataset.id || "") : btn;
+  if (!id) return;
+  if (typeof openDrillFor === "function") openDrillFor(id);
+}
+window.mkRetry = mkRetry;
 async function mkLearn(idOrEl, learned) {
   // RV1：双签名——内联传 this（data-id），程序化调用传 (id, learned)
   const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;

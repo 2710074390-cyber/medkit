@@ -200,7 +200,40 @@ _V8_UP: list[str] = [
 # 且新增两表若被 DROP 会丢流水。DOWN 留空——回滚兜底依赖升级前的全量自动备份（ADR-005 既有机制）。
 _V8_DOWN: list[str] = []
 
-MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8]  # 版本列表（只增不改）
+# v9（题库刷题域）：banks + bank_items + bank_attempts 三张新表。
+# - `banks`：题库实体（对齐 Anki deck / Quizlet set），全局资产（不挂项目）。
+# - `bank_items`：题目，一道一行、按 bank_id 取（与 mistakes 同构；千题级不必整体读入）。
+#   `data` 里除 `schema.QuestionItem` 的字段外，另带题库域独有的 origin/origin_ref
+#   （**不放同一 Pydantic 类**：QuestionItem 是 extra="forbid" 的生成链契约，改它等于动生成链）。
+# - `bank_attempts`：**append-only 作答流水**（与 error_events 同精神）。
+#   为什么不复用 error_events：后者的语义单位是**知识点**（kp_id/round/error_tag），
+#   服务「跨轮次迁移矩阵」；bank_attempts 的单位是**题目**，服务「这道题做过几次、对了几次」。
+#   粒度不同，混用会让两张报表都失真。
+#
+# 设计文档 `docs/题库刷题功能_调研与实现方案_2026-10-02.md` 把它拆成 v9/v10 两版；
+# 实际落一版（同一事务、同一测试面），减少迁移分支。语义不变。
+_V9_UP: list[str] = [
+    _tbl("banks", "name TEXT, subject TEXT, source TEXT, created_at TEXT, updated_at TEXT"),
+    _tbl("bank_items", "bank_id TEXT, qtype TEXT, topic TEXT, answer TEXT, origin TEXT, created_at TEXT"),
+    _tbl("bank_attempts", "bank_id TEXT, item_id TEXT, session_id TEXT, "
+                          "correct INTEGER, mode TEXT, occurred_at TEXT"),
+    "CREATE INDEX IF NOT EXISTS idx_banks_subject ON banks(subject)",
+    "CREATE INDEX IF NOT EXISTS idx_bi_bank ON bank_items(bank_id)",
+    "CREATE INDEX IF NOT EXISTS idx_bi_topic ON bank_items(bank_id, topic)",
+    "CREATE INDEX IF NOT EXISTS idx_ba_item ON bank_attempts(item_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ba_sess ON bank_attempts(session_id, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_ba_bank ON bank_attempts(bank_id, occurred_at)",
+]
+
+# v9 可精确回滚：三张表都是新增的（不涉及既有表的 ALTER），DROP 即回到 v8 结构。
+# 注意 DROP 会丢题库数据 —— 回滚兜底仍是升级前全量自动备份（ADR-005）。
+_V9_DOWN: list[str] = [
+    "DROP TABLE IF EXISTS bank_attempts",
+    "DROP TABLE IF EXISTS bank_items",
+    "DROP TABLE IF EXISTS banks",
+]
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -247,6 +280,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
                     continue
             cur.execute(stmt)
         return
+    if ver == 9:
+        for stmt in _V9_UP:
+            cur.execute(stmt)
+        return
     raise ValueError(f"未知迁移版本 {ver}")
 
 
@@ -282,6 +319,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
     if ver == 8:
         # _V8_DOWN 为空（见上）：仅允许回退版本号，结构保持——依赖升级前全量备份兜底。
         for stmt in _V8_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 9:
+        for stmt in _V9_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

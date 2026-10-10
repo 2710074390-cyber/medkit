@@ -1,0 +1,522 @@
+# -*- coding: utf-8 -*-
+"""题库域（`core/bank.py` + `routers/bank.py`）测试：迁移 / CRUD / 导入 / 作答判分 / 判错回流 / 统计。
+
+隔离：`tests/conftest.py` 的 autouse fixture 已把 `dbs.DB_PATH` / `LIBRARY_DIR` 与各域文件常量
+重定向到本用例的 tmp_path；本文件不触碰真实 `~/.medkit`。
+
+判分口径（与导出的押题卷同源）：**集合比较**——`"B D"` == `"BD"` == `"D,B"`。
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import shutil
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import medkit.core.bank as bank  # noqa: E402
+import medkit.core.config as cfg  # noqa: E402
+import medkit.core.db as dbs  # noqa: E402
+import medkit.core.library as lib  # noqa: E402
+import medkit.main as m  # noqa: E402
+
+_MD = """# 呼吸系统题库
+### q1 · A1 型 · 单选 · 理解
+**慢阻肺的诊断**
+慢阻肺最主要的病因是
+- A. 吸烟
+- B. 感染
+**✅ 答案：A**
+💡 吸烟是主要危险因素
+
+### q2 · X 型 · 多选 · 应用
+**心衰治疗**
+下列属于治疗要点的是
+- A. 限盐
+- B. 利尿
+- C. 绝对卧床
+**✅ 答案：AC**
+💡 限盐与利尿是基石
+"""
+
+
+@pytest.fixture()
+def client():
+    return TestClient(m.app, base_url="http://127.0.0.1")
+
+
+def _make_bank(client, name="呼吸系统", items=None):
+    r = client.post("/api/bank/import/commit", json={
+        "name": name, "subject": "内科学",
+        "items": items if items is not None else _parsed(client),
+    })
+    assert r.status_code == 200, r.text
+    return r.json()["bank_id"]
+
+
+def _parsed(client):
+    r = client.post("/api/bank/import/preview", json={"text": _MD, "fmt": "md"})
+    assert r.status_code == 200, r.text
+    return r.json()["items"]
+
+
+# ---------------------------------------------------------------- 迁移
+def test_migration_creates_bank_tables_and_is_idempotent():
+    assert dbs.migrate() == dbs.MIGRATIONS[-1]
+    conn = dbs.get_conn()
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert {"banks", "bank_items", "bank_attempts"} <= names
+    # 幂等：重复调用不再前进版本、不报错
+    assert dbs.migrate() == dbs.MIGRATIONS[-1]
+    assert dbs.user_version() == dbs.MIGRATIONS[-1]
+
+
+# ---------------------------------------------------------------- 题库 CRUD
+def test_create_list_get_rename_delete_bank(client):
+    bid = _make_bank(client)
+    lst = client.get("/api/bank/banks").json()["banks"]
+    assert [b["id"] for b in lst] == [bid]
+    assert lst[0]["items"] == 2 and lst[0]["name"] == "呼吸系统"
+
+    detail = client.get(f"/api/bank/banks/{bid}").json()
+    assert len(detail["items"]) == 2
+    assert detail["stats"]["items"] == 2
+
+    assert client.put(f"/api/bank/banks/{bid}", json={"name": "呼吸系统(改)"}).json()["bank"]["name"] == "呼吸系统(改)"
+
+    r = client.delete(f"/api/bank/banks/{bid}")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["deleted"] is True and j["items"] == 2
+    assert j["backup"], "删除题库必须先导出备份（可追溯）"
+    assert Path(j["backup"]).is_file()
+    assert client.get("/api/bank/banks").json()["banks"] == []
+    assert client.get(f"/api/bank/banks/{bid}").status_code == 404
+
+
+def test_create_bank_requires_name(client):
+    assert client.post("/api/bank/banks", json={"name": "  "}).status_code == 400
+
+
+# ---------------------------------------------------------------- 导入
+def test_preview_does_not_persist(client):
+    r = client.post("/api/bank/import/preview", json={"text": _MD, "fmt": "md"})
+    assert r.status_code == 200 and r.json()["total"] == 2
+    assert client.get("/api/bank/banks").json()["banks"] == [], "预览不得落库"
+
+
+def test_preview_empty_text_is_400(client):
+    assert client.post("/api/bank/import/preview", json={"text": "  ", "fmt": "md"}).status_code == 400
+
+
+def test_import_file_preview(client):
+    r = client.post("/api/bank/import/file",
+                    files={"file": ("bank.md", _MD.encode("utf-8"), "text/markdown")})
+    assert r.status_code == 200 and r.json()["total"] == 2
+
+
+@pytest.mark.parametrize("dedupe,expect", [
+    ("update", {"added": 0, "updated": 2, "skipped": 0}),
+    ("skip", {"added": 0, "updated": 0, "skipped": 2}),
+    ("new", {"added": 2, "updated": 0, "skipped": 0}),
+])
+def test_import_dedupe_strategies(client, dedupe, expect):
+    """重复题三选一（对齐 Anki 文本导入的「更新 / 忽略 / 新建」）。"""
+    bid = _make_bank(client)
+    r = client.post("/api/bank/import/commit", json={
+        "bank_id": bid, "items": _parsed(client), "dedupe": dedupe})
+    assert r.status_code == 200
+    j = r.json()
+    assert {k: j[k] for k in ("added", "updated", "skipped")} == expect
+    n = len(client.get(f"/api/bank/banks/{bid}").json()["items"])
+    assert n == (2 if dedupe != "new" else 4)
+
+
+def test_import_commit_without_items_is_400(client):
+    assert client.post("/api/bank/import/commit", json={"items": []}).status_code == 400
+
+
+# ---------------------------------------------------------------- 练习与判分
+def test_drill_never_leaks_answers(client):
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    assert len(items) == 2
+    for it in items:
+        assert "answer" not in it and "analysis" not in it, "练习题目不得带答案/解析"
+
+
+@pytest.mark.parametrize("user,correct", [
+    ("A", True), ("a", True), (" B ", False), ("", False),
+])
+def test_grade_single_choice(client, user, correct):
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    q1 = next(i for i in items if "慢阻肺" in i["question"])
+    j = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": q1["id"], "user_answer": user}).json()
+    assert j["correct"] is correct, (user, j)
+
+
+@pytest.mark.parametrize("user,correct", [
+    ("AC", True), ("A,C", True), ("CA", True), ("c a", True),
+    ("A", False), ("ABC", False), ("", False),
+])
+def test_grade_multi_choice_is_set_semantics(client, user, correct):
+    """X 型判分 = 集合比较（顺序/分隔符无关）——与 `answersEqual()` 同口径。"""
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    q2 = next(i for i in items if i.get("subtopic") == "心衰治疗")     # answer AC
+    j = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": q2["id"], "user_answer": user}).json()
+    assert j["correct"] is correct, (user, j)
+    assert j["answer"] == "AC" and "限盐" in j["analysis"]
+
+
+def test_grade_returns_analysis_and_syncs_wrong_answer_to_mistakes(client):
+    """判错 → 自动回流错题本（复用 `library.sync_from_paper`，含 user_answer）。"""
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    q1 = next(i for i in items if "慢阻肺" in i["question"])
+    assert lib.list_mistakes() == []
+
+    j = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": q1["id"], "user_answer": "B"}).json()
+    assert j["correct"] is False and j["synced_mistakes"] == 1
+    ms = lib.list_mistakes()
+    assert len(ms) == 1
+    assert ms[0]["question"] == "慢阻肺最主要的病因是"
+    assert ms[0]["user_answer"] == "B", "回流必须带上用户作答（否则错题本无法复盘）"
+    assert ms[0]["answer"] == "A"
+    # 回流必须带**题库科目**：否则错题与派生知识点落进「未分类」，不便按科目检索，
+    # 也会让「铺卡（薄弱点全部入队）」把别处的卡铺进来。
+    assert ms[0]["subject"] == "内科学", ms[0]["subject"]
+
+    # 再判错同一题 → 不重复入库（sync_from_paper 按 question_id 去重）
+    j2 = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": q1["id"], "user_answer": "C"}).json()
+    assert j2["synced_mistakes"] == 0
+    assert len(lib.list_mistakes()) == 1
+
+    # 判对 → 不回流
+    j3 = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": q1["id"], "user_answer": "A"}).json()
+    assert j3["correct"] is True and j3["synced_mistakes"] == 0
+
+
+def test_grade_rejects_item_outside_bank(client):
+    bid = _make_bank(client)
+    other = _make_bank(client, name="别的题库")
+    items = client.get(f"/api/bank/banks/{other}/drill").json()["items"]
+    r = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": items[0]["id"], "user_answer": "A"})
+    assert r.status_code == 404, "跨题库判分必须拒绝（否则统计会被污染）"
+
+
+def test_grade_missing_item_is_400(client):
+    assert client.post("/api/bank/grade", json={"bank_id": "b", "item_id": ""}).status_code == 400
+
+
+# ---------------------------------------------------------------- 统计（黄金值）
+def test_stats_golden_values(client):
+    """统计量必须与手算常量对齐（禁止「端点 == 另一个端点」式恒真判据）。"""
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    q1 = next(i for i in items if "慢阻肺" in i["question"])   # answer A
+    q2 = next(i for i in items if i.get("subtopic") == "心衰治疗")     # answer AC     # answer AC
+    # q1: 错一次 → 对一次（最后一次对 ⇒ 掌握）；q2: 对一次
+    for body in ({"item_id": q1["id"], "user_answer": "B"},
+                 {"item_id": q1["id"], "user_answer": "A"},
+                 {"item_id": q2["id"], "user_answer": "AC"}):
+        assert client.post("/api/bank/grade", json={"bank_id": bid, **body}).status_code == 200
+    s = client.get(f"/api/bank/banks/{bid}/stats").json()["stats"]
+    assert s["items"] == 2
+    assert s["attempts"] == 3
+    assert s["correct"] == 2
+    assert s["attempted"] == 2
+    assert s["mastered"] == 2
+    assert s["accuracy"] == round(2 / 3, 4)
+    assert s["mastery"] == 1.0
+    weak = {t["topic"]: t for t in s["weak_topics"]}
+    assert weak["慢阻肺的诊断"]["attempts"] == 2 and weak["慢阻肺的诊断"]["correct"] == 1
+    assert weak["心衰治疗"]["accuracy"] == 1.0
+
+
+def test_drill_modes_wrong_and_undone(client):
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    q1 = next(i for i in items if "慢阻肺" in i["question"])
+    q2 = next(i for i in items if i.get("subtopic") == "心衰治疗")     # answer AC
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": q1["id"], "user_answer": "B"})
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": q2["id"], "user_answer": "AC"})
+
+    wrong = client.get(f"/api/bank/banks/{bid}/drill?mode=wrong").json()["items"]
+    assert [i["id"] for i in wrong] == [q1["id"]]
+    undone = client.get(f"/api/bank/banks/{bid}/drill?mode=undone").json()["items"]
+    assert undone == []
+
+
+def test_list_banks_reports_mastery_and_accuracy(client):
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": items[0]["id"], "user_answer": "A"})
+    b = client.get("/api/bank/banks").json()["banks"][0]
+    assert b["attempted"] == 1 and b["mastery"] == 0.5 and b["accuracy"] == 1.0
+
+
+def test_delete_item_removes_attempts(client):
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    iid = items[0]["id"]
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": iid, "user_answer": "A"})
+    assert client.delete(f"/api/bank/items/{iid}").status_code == 200
+    assert client.delete(f"/api/bank/items/{iid}").status_code == 404
+    s = client.get(f"/api/bank/banks/{bid}/stats").json()["stats"]
+    assert s["items"] == 1 and s["attempts"] == 0, "删题必须连带删掉它的作答流水"
+
+
+# ---------------------------------------------------------------- 题目编辑 / 收藏笔记（F2 / F9）
+def _first_item(client, bid):
+    return client.get(f"/api/bank/banks/{bid}/drill").json()["items"][0]
+
+
+def test_add_item_manual_and_reject_empty(client):
+    bid = _make_bank(client)
+    r = client.post(f"/api/bank/banks/{bid}/items", json={
+        "question": "手加题", "options": ["甲", "乙"], "answer": "b", "analysis": "解",
+        "type": "A1", "subtopic": "考点"})
+    assert r.status_code == 200 and r.json()["added"] == 1
+    items = client.get(f"/api/bank/banks/{bid}").json()["items"]
+    added = next(i for i in items if i["question"] == "手加题")
+    assert added["answer"] == "B", "答案必须归一为大写（与导入同一条通道）"
+    assert added["origin"] == "manual"
+    assert client.post(f"/api/bank/banks/{bid}/items", json={"question": "  "}).status_code == 400
+    assert client.post("/api/bank/banks/nope/items", json={"question": "题"}).status_code == 404
+
+
+def test_update_item_partial_patch_normalizes_and_keeps_id(client):
+    bid = _make_bank(client)
+    it = next(i for i in client.get(f"/api/bank/banks/{bid}").json()["items"]
+              if "慢阻肺" in i["question"])
+    r = client.put(f"/api/bank/items/{it['id']}", json={"answer": "b", "options": ["A. 吸烟", "乙"]})
+    assert r.status_code == 200
+    rec = r.json()["item"]
+    assert rec["id"] == it["id"], "id 不可改（作答流水按它关联）"
+    assert rec["answer"] == "B"
+    assert rec["options"] == ["吸烟", "乙"], "编辑同样要剥字母前缀"
+    assert rec["question"] == it["question"], "局部更新不得动未提交的字段"
+    assert rec["created_at"] == it["created_at"]
+    # 落库生效（不是只改了返回值）
+    again = next(i for i in client.get(f"/api/bank/banks/{bid}").json()["items"]
+                 if i["id"] == it["id"])
+    assert again["answer"] == "B" and again["options"] == ["吸烟", "乙"]
+
+
+def test_update_item_errors(client):
+    bid = _make_bank(client)
+    it = _first_item(client, bid)
+    assert client.put(f"/api/bank/items/{it['id']}", json={"question": "   "}).status_code == 400
+    assert client.put("/api/bank/items/nope", json={"answer": "A"}).status_code == 404
+
+
+def test_update_item_does_not_touch_attempts(client):
+    bid = _make_bank(client)
+    it = _first_item(client, bid)
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": it["id"], "user_answer": "A"})
+    assert client.get(f"/api/bank/banks/{bid}/stats").json()["stats"]["attempts"] == 1
+    client.put(f"/api/bank/items/{it['id']}", json={"analysis": "补充解析"})
+    s = client.get(f"/api/bank/banks/{bid}/stats").json()["stats"]
+    assert s["attempts"] == 1, "改题不得清掉作答历史"
+
+
+def test_star_item_and_starred_drill_mode(client):
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}").json()["items"]
+    a, b = items[0], items[1]
+    r = client.post(f"/api/bank/items/{a['id']}/star", json={"starred": True})
+    assert r.status_code == 200 and r.json()["item"]["starred"] is True
+    assert client.post("/api/bank/items/nope/star", json={"starred": True}).status_code == 404
+
+    starred = client.get(f"/api/bank/banks/{bid}/drill?mode=starred").json()["items"]
+    assert [i["id"] for i in starred] == [a["id"]]
+    assert starred[0]["starred"] is True
+    # 取消收藏 → 集合变空
+    client.post(f"/api/bank/items/{a['id']}/star", json={"starred": False})
+    assert client.get(f"/api/bank/banks/{bid}/drill?mode=starred").json()["items"] == []
+    assert b["starred"] is False
+
+
+def test_note_is_hidden_in_drill_but_returned_after_grading(client):
+    """笔记可能写着答案 ⇒ 判分前不下发；判分后随结果回传。"""
+    bid = _make_bank(client)
+    it = _first_item(client, bid)
+    client.put(f"/api/bank/items/{it['id']}", json={"note": "这题答案是 A，别再错"})
+    drill = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    assert all("note" not in d for d in drill), "练习题目不得带笔记"
+    j = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": it["id"], "user_answer": "A"}).json()
+    assert j["note"] == "这题答案是 A，别再错"
+
+
+def test_edit_imported_answer_takes_effect_in_grading(client):
+    """改完答案，判分口径立刻跟着变（改题不是「显示层」的事）。"""
+    bid = _make_bank(client)
+    it = next(i for i in client.get(f"/api/bank/banks/{bid}").json()["items"]
+              if "慢阻肺" in i["question"])
+    assert client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": it["id"], "user_answer": "A"}).json()["correct"] is True
+    client.put(f"/api/bank/items/{it['id']}", json={"answer": "B"})
+    assert client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": it["id"], "user_answer": "A"}).json()["correct"] is False
+    assert client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": it["id"], "user_answer": "B"}).json()["correct"] is True
+
+
+# ---------------------------------------------------------------- 每日目标（B7）
+def test_today_attempts_counts_today_only(client):
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": items[0]["id"], "user_answer": "A"})
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": items[1]["id"], "user_answer": "A"})
+    today = client.get("/api/bank/today").json()
+    assert today["attempts"] == 2 and today["correct"] == 1 and today["items"] == 2
+    # 指定日期（过去）→ 0（证明真的按日期过滤，不是恒返回总数）
+    past = client.get("/api/bank/today?date=1999-01-01").json()
+    assert past["attempts"] == 0 and past["items"] == 0
+    assert past["date"] == "1999-01-01"
+    # 题被删掉后流水一并消失
+    client.delete(f"/api/bank/items/{items[0]['id']}")
+    assert client.get("/api/bank/today").json()["attempts"] == 1
+
+
+# ---------------------------------------------------------------- 分层契约
+def test_routers_bank_never_touches_sql_directly():
+    """`routers → core → db` 单向：routers 不得直接 `cur.execute` / `dbs.tx` / `dbs.get_conn`。"""
+    tree = ast.parse((ROOT / "medkit" / "routers" / "bank.py").read_text(encoding="utf-8"))
+    bad = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in ("execute", "executemany", "tx", "get_conn"):
+            bad.append(f"{node.attr} @ line {node.lineno}")
+    assert not bad, "routers/bank.py 直接碰了 SQL 层：" + ", ".join(bad)
+
+
+def test_core_bank_does_not_import_routers():
+    """`core` 不得 import `routers`（跨层反向依赖）。"""
+    tree = ast.parse((ROOT / "medkit" / "core" / "bank.py").read_text(encoding="utf-8"))
+    hits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("..routers"):
+            hits.append(node.module)
+        if isinstance(node, ast.Import):
+            hits += [a.name for a in node.names if a.name.startswith("medkit.routers")]
+    assert not hits, f"core/bank.py 反向依赖 routers：{hits}"
+
+
+def test_answers_equal_matches_frontend_semantics():
+    """判分口径与前端 `answersEqual()` 同源（集合比较）。"""
+    assert bank.answers_equal("B D", "BD")
+    assert bank.answers_equal("d,b", "BD")
+    assert not bank.answers_equal("", "BD")
+    assert not bank.answers_equal("A", "BD")
+
+
+# ---------------------------------------------------------------- 从出题工坊导入（F11）
+@pytest.fixture()
+def projects_root(tmp_path, monkeypatch):
+    """临时项目根。
+
+    ⚠️ `cfg.DEFAULTS["projects_dir"]` 是**导入时**由真实 `CONFIG_DIR` 算出的常量，
+    `tests/conftest.py` 只 patch 了 `CONFIG_DIR`（不影响已算好的默认值）⇒ 不显式改写这里，
+    读 `cfg.load()["projects_dir"]` 会落到**真实** `~/.medkit/projects`（R5-01 哨兵会红）。
+    """
+    root = tmp_path / "projects"
+    root.mkdir()
+    monkeypatch.setitem(cfg.DEFAULTS, "projects_dir", str(root))
+    return root
+
+
+def _seed_project(root: Path, pid: str, subject: str, questions: list[dict]) -> None:
+    d = root / pid / "最终产物"
+    d.mkdir(parents=True)
+    (root / pid / "meta.json").write_text(json.dumps({"subject": subject}), encoding="utf-8")
+    (d / "questions_final.json").write_text(
+        json.dumps(questions, ensure_ascii=False), encoding="utf-8")
+
+
+def test_list_project_sources_only_lists_those_with_artifacts(client, projects_root):
+    _seed_project(projects_root, "p1", "内科学",
+                  [{"id": "q1", "question": "题一", "options": ["甲"], "answer": "A"}])
+    (projects_root / "p2").mkdir()
+    (projects_root / "p2" / "meta.json").write_text("{}", encoding="utf-8")   # 无产物 → 不列出
+    r = client.get("/api/bank/projects").json()["projects"]
+    assert [p["pid"] for p in r] == ["p1"]
+    assert r[0]["subject"] == "内科学" and r[0]["count"] == 1
+
+
+def test_import_from_project_keeps_media_and_group_fields(client, projects_root):
+    """导入必须**搬运**案例/选项组/图/表字段——不搬运等于导入即降级。"""
+    _seed_project(projects_root, "p1", "内科学", [
+        {"id": "q1", "type": "A1", "question": "题一", "options": ["甲", "乙"], "answer": "A",
+         "analysis": "解一", "subtopic": "考点一", "image_ref": "fig_1", "data_table": "|a|b|"},
+        {"id": "q2", "type": "B1", "question": "共用选项题", "options": [], "answer": "B",
+         "group_kind": "option_group", "group": {"options": ["甲", "乙"]}},
+    ])
+    r = client.post("/api/bank/import/project", json={"pid": "p1"}).json()
+    assert r["added"] == 2 and r["skipped"] == 0
+    items = client.get(f"/api/bank/banks/{r['bank_id']}").json()["items"]
+    by_q = {i["question"]: i for i in items}
+    assert by_q["题一"]["image_ref"] == "fig_1"
+    assert by_q["题一"]["data_table"] == "|a|b|"
+    assert by_q["题一"]["subtopic"] == "考点一"
+    assert by_q["共用选项题"]["group_kind"] == "option_group"
+    assert by_q["共用选项题"]["group"]["options"] == ["甲", "乙"]
+    assert all(i["origin"] == "project" for i in items)
+    b = client.get(f"/api/bank/banks/{r['bank_id']}").json()["bank"]
+    assert b["source"] == "project" and b["name"] == "内科学", b
+
+
+def test_import_from_project_is_copy_not_reference(client, projects_root):
+    """**复制而非引用**：删掉项目后题库仍在（题库不该跟着项目消失）。"""
+    _seed_project(projects_root, "p1", "内科学",
+                  [{"id": "q1", "question": "题一", "options": ["甲"], "answer": "A"}])
+    bid = client.post("/api/bank/import/project", json={"pid": "p1"}).json()["bank_id"]
+    shutil.rmtree(projects_root / "p1")
+    assert len(client.get(f"/api/bank/banks/{bid}").json()["items"]) == 1
+
+
+def test_import_from_project_rejects_bad_input(client, projects_root):
+    assert client.post("/api/bank/import/project", json={"pid": ""}).status_code == 400
+    assert client.post("/api/bank/import/project", json={"pid": "nope"}).status_code == 404
+    # 路径穿越：pid 走 _safe_pid 消毒（不得读到项目根之外）
+    assert client.post("/api/bank/import/project", json={"pid": "../x"}).status_code == 400
+    _seed_project(projects_root, "p3", "空项目", [])
+    assert client.post("/api/bank/import/project", json={"pid": "p3"}).status_code == 400
+
+
+def test_import_from_project_into_existing_bank(client, projects_root):
+    bid = _make_bank(client)
+    _seed_project(projects_root, "p1", "内科学",
+                  [{"id": "q1", "question": "慢阻肺最主要的病因是", "options": ["吸烟", "感染"],
+                    "answer": "A"}])
+    r = client.post("/api/bank/import/project",
+                    json={"pid": "p1", "bank_id": bid, "dedupe": "update"}).json()
+    assert r["bank_id"] == bid and r["updated"] == 1, r   # 同题干 → 按 update 归并
+    assert len(client.get(f"/api/bank/banks/{bid}").json()["items"]) == 2
+
+
+# ---------------------------------------------------------------- 导出回流（F10）
+def test_export_paper_html_is_inline_and_contains_questions(client):
+    bid = _make_bank(client)
+    r = client.get(f"/api/bank/banks/{bid}/export/paper")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "inline" in r.headers["content-disposition"], "缺省必须 inline（同源渲染）"
+    assert "慢阻肺最主要的病因是" in r.text and "吸烟" in r.text
+    assert client.get("/api/bank/banks/nope/export/paper").status_code == 404

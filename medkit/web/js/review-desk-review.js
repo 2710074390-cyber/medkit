@@ -710,14 +710,14 @@ $("wizard_mask").addEventListener("click", e => { if (e.target.id === "wizard_ma
 
 /* ---- init */
 ratioSum(); bloomSum();
-/* Ctrl/⌘+1..5 快速切换页签（v0.8.1：开始/刷题/题库/学习中心/我的） */
-const TAB_KEYS = ["", "start", "study", "bank", "learn", "mine"];
+/* Ctrl/⌘+1..6 快速切换页签（v0.8.1：开始/刷题/题库/学习中心/我的；2026-10-10 增「练习」= Ctrl+6） */
+const TAB_KEYS = ["", "start", "study", "bank", "learn", "mine", "drill"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发页签快捷键（防打字时被切走/吞键）
   const t = e.target;
   // A-新15：焦点守卫纳入 SELECT（下拉聚焦时不触发页签快捷键，防误切/吞键）
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-  if (!(e.ctrlKey || e.metaKey) || !(e.key >= "1" && e.key <= "5")) return;
+  if (!(e.ctrlKey || e.metaKey) || !(e.key >= "1" && e.key <= "6")) return;
   const tk = TAB_KEYS[+e.key];
   if (!tk) return;
   e.preventDefault();

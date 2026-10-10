@@ -34,9 +34,55 @@ def _store_is_sql(path: Path) -> bool:
     return path == EXPLAINS_FILE and DB_FILE.exists()
 
 
+def _backfill_json_once() -> bool:
+    """讲解域**首次**要走 SQL 轨之前，先把 JSON 轨的活数据补导进库（幂等）。
+
+    返回「是否可以安全走 SQL 轨」：无需补导或补导成功 → True；补导失败 → False
+    （调用方退回 JSON 轨，保证数据**始终可见**，下次访问再试）。
+
+    ## 为什么必须有这一层（2026-10-10 补）
+
+    与 `library._backfill_json_once`（V-10）是**同一类缺陷**，此前只有 `library` 修了：
+
+    `_store_is_sql()` 只看「`medkit.db` 是否存在」，而这个 db 是由**别的域**按需
+    `migrate()` 建立的。于是这条**必现**路径会让讲解「刚存就查不到」：
+
+    ```
+    讲解存进 JSON 轨（db 还不存在）→ 别的动作建库（如删除时级联清记忆卡的 _ensure_schema）
+        → 讲解域改判 SQL 轨 → 读 explains 表（空）→ 界面里刚生成的讲解全消失
+    ```
+
+    实测（`tests/test_explain_batch_delete.py` 的用例）：`save_explain()` 落 JSON →
+    `POST /explains/batch-delete` 经 `cards.delete_by_source()` 建库 → 随后
+    `GET /explains` 返回**空列表**。生产里由 `main._lifespan` 启动即
+    `migrate()+import_from_json()` 兜住，故长期未暴露——但「靠启动顺序兜底」不是防线。
+
+    `db.import_from_json()` 的 `IMPORT_MAP` 已含 `explains`（→ `explains.json`），
+    导入成功会把原 JSON 改名留档（可回滚）。零开销常态：补导成功后只剩两次 `exists()`。
+    """
+    if not DB_FILE.exists():
+        return True
+    if not EXPLAINS_FILE.exists():
+        return True                 # 已补导过（原 JSON 已改名）→ 常态路径
+    try:
+        dbs.import_from_json()
+        return True
+    except Exception as e:  # noqa: BLE001  补导失败 → 留痕 + 本次退回 JSON 轨（数据不隐身）
+        _errs.record("explain._backfill_json_once",
+                     "JSON→SQL 补导失败（本次退回 JSON 轨，下次重试）", e=e)
+        return False
+
+
+def _sql_ready(path: Path) -> bool:
+    """该路径是否走 SQL 轨；**首次**判定为真时先完成 JSON→SQL 补导。"""
+    if not _store_is_sql(path):
+        return False
+    return _backfill_json_once()
+
+
 def _load(path: Path) -> list[dict[str, Any]]:
     """读 JSON 数组；缺失/损坏 → 空。SQL 模式读 explains 表。"""
-    if _store_is_sql(path):
+    if _sql_ready(path):
         conn = dbs.get_conn()
         cur = conn.cursor()
         try:
@@ -48,7 +94,7 @@ def _load(path: Path) -> list[dict[str, Any]]:
 
 def _save(path: Path, data: list[dict[str, Any]]) -> None:
     """写 JSON 数组；SQL 模式事务整组替换。"""
-    if _store_is_sql(path):
+    if _sql_ready(path):
         with dbs.tx(write=True) as cur:
             dbs.replace_all(cur, "explains", data, _E_COLS)
         return
@@ -58,7 +104,7 @@ def _save(path: Path, data: list[dict[str, Any]]) -> None:
 @contextmanager
 def _store() -> Iterator[dict[str, Any]]:
     """讲解产物读-改-写视图；退出时按 dirty 写回（SQL 单事务 / JSON RLock+原子写）。"""
-    if _store_is_sql(EXPLAINS_FILE):
+    if _sql_ready(EXPLAINS_FILE):
         with dbs.tx(write=True) as cur:
             st: dict[str, Any] = {"recs": dbs.list_rows(cur, "explains"),
                                   "cur": cur, "dirty": False}
@@ -321,6 +367,39 @@ def delete_by_subject(subject: str) -> int:
             st["recs"] = remain
             st["dirty"] = True
     return n
+
+
+def batch_delete_with_backup(ids: list[str]) -> dict[str, Any]:
+    """批量删除讲解产物：删除前把所选记录导出为 JSON 备份到 ~/.medkit/exports/。
+
+    返回 {"deleted": n, "backup": <路径或空>}。
+    与错题域的 `library.batch_delete_with_backup` 同范式（删除可追溯，不静默不可恢复）。
+    **派生的医学记忆卡不在此处级联**——由 routers 层调用 `cards.delete_by_source()`
+    （core 之间不互相依赖，保持 explain 只管自己的存储）。
+    """
+    wanted = {str(i).strip() for i in (ids or []) if str(i).strip()}
+    if not wanted:
+        return {"deleted": 0, "backup": ""}
+    recs = [r for r in _load(EXPLAINS_FILE) if str(r.get("id")) in wanted]
+    backup = ""
+    if recs:
+        exports = cfg.CONFIG_DIR / "exports"
+        exports.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = exports / f"explains_batch_{ts}.json"
+        write_json_atomic(path, {
+            "exported_at": datetime.now().isoformat(timespec="seconds"),
+            "ids": sorted(wanted), "explains": recs,
+        })
+        backup = str(path)
+    with _store() as st:
+        all_recs = st["recs"]
+        remain = [r for r in all_recs if str(r.get("id")) not in wanted]
+        n = len(all_recs) - len(remain)
+        if n:
+            st["recs"] = remain
+            st["dirty"] = True
+    return {"deleted": n, "backup": backup}
 
 
 def export_subject_md(subject: str = "") -> str:

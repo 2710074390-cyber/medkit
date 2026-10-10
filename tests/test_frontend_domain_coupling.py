@@ -57,6 +57,9 @@ EP01 = ("learn.js", "learn-study.js", "learn-live.js", "learn-review.js",
 SHELL = ("app.js",)
 PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
+# 2026-10-10 题库刷题域（bank）：**核心侧**（与 EP-01 同级）——导入自备题库 + 应用内作答。
+# 剥离生成链后它也必须能独立工作 ⇒ 对它同样零容忍引用 PLUGIN 独有符号。
+BANK = ("bank.js", "bank-import.js", "bank-drill.js")
 
 # 顶层声明（行首；与 eslint.config.js 的 TOP_LEVEL_RE 同口径）
 _TOP_DECL = re.compile(r"^(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)", re.M)
@@ -84,6 +87,17 @@ PLUGIN_TO_CORE: dict[tuple[str, str], str] = {
         "项目页的「预览 Anki 卡样」按钮——卡样渲染复用学习中心的实现，避免两套渲染器漂移",
     ("review-desk-project.js", "ankiHelp"):
         "项目页的「Anki 导入指引」按钮——弹层文案与学习中心共用一份（同一份指引不该写两遍）",
+}
+
+# **外壳 → 题库刷题域（bank）** 的引用登记（与 SHELL_TO_PLUGIN 同范式）：
+# 外壳是宿主，引用允许，但必须写明「剥离/替换时怎么处理」。
+SHELL_TO_BANK: dict[tuple[str, str], tuple[str, str]] = {
+    ("app.js", "loadBankHome"): ("加 typeof 守卫",
+                                 "切到「练习」tab 时重拉题库列表（已用 typeof 守卫，插件缺失不炸）"),
+    ("app.js", "bankDrillStartMistakes"): ("加 typeof 守卫",
+                                           "错题本「→ 重练」的直达入口（`openDrillFor` 转发）——"
+                                           "把 EP-01 → bank 的跨域调用**收敛到外壳一处**，"
+                                           "依赖方向变成 EP-01 → 外壳 → bank"),
 }
 
 
@@ -239,16 +253,44 @@ def test_letters_lives_in_shared_piece():
     assert decls == ["app.js"], f"letters 的声明应唯一且落在 app.js，实际 {decls}"
 
 
+def test_bank_never_references_plugin_symbols():
+    """**硬红线（bank 域）**：题库刷题片不得引用插件（生成链）独有符号。
+
+    理由同 EP-01：剥离生成链后「练习」必须能独立工作（导入自备题库 + 作答全程零 LLM，
+    与出题工坊无任何数据依赖）。这类调用会在**点击时**炸，而加载期闸门管不到。
+    """
+    hits = sorted(_cross_refs(BANK, PLUGIN))
+    assert not hits, (
+        "题库刷题片引用了**插件独有**的顶层符号——剥离生成链后这些调用会在点击时炸：\n  "
+        + "\n  ".join(f"{f} → {s}" for f, s in hits)
+        + "\n（修法：把该符号移到共享基础片 `md.js`/`app.js`，或让 bank 自带一份实现。）")
+
+
+def test_shell_to_bank_refs_are_registered():
+    """**外壳 → bank** 的引用允许（外壳是宿主），但每处都要登记。"""
+    found = _cross_refs(SHELL, BANK)
+    unregistered = sorted(found - set(SHELL_TO_BANK))
+    assert not unregistered, (
+        "以下「外壳 → bank」引用未登记：\n  "
+        + "\n  ".join(f"{f} → {s}" for f, s in unregistered))
+
+
+def test_shell_bank_registry_is_not_rotted():
+    found = _cross_refs(SHELL, BANK)
+    rotten = sorted(set(SHELL_TO_BANK) - found)
+    assert not rotten, f"以下登记项已不再被引用，请从 SHELL_TO_BANK 删掉：{rotten}"
+
+
 def test_domain_lists_cover_all_js_files():
     """分域清单必须覆盖全部 JS（新增片忘了归类 ⇒ 它会成为"没人管的域"，耦合检测漏检）。"""
     on_disk = {p.name for p in JS_DIR.glob("*.js")}
-    covered = set(EP01) | set(SHELL) | set(PLUGIN) | set(SHARED)
+    covered = set(EP01) | set(SHELL) | set(PLUGIN) | set(SHARED) | set(BANK)
     assert on_disk == covered, (
         f"分域清单与磁盘不一致：\n  未归类 = {sorted(on_disk - covered)}\n"
         f"  清单里有而磁盘没有 = {sorted(covered - on_disk)}\n"
-        "（新增 JS 片必须归入 EP01 / SHELL / PLUGIN / SHARED——否则跨域耦合检测会漏检它。）")
+        "（新增 JS 片必须归入 EP01 / BANK / SHELL / PLUGIN / SHARED——否则跨域耦合检测会漏检它。）")
 
 
-@pytest.mark.parametrize("f", EP01 + SHELL + PLUGIN + SHARED)
+@pytest.mark.parametrize("f", EP01 + BANK + SHELL + PLUGIN + SHARED)
 def test_every_domain_file_exists(f: str):
     assert (JS_DIR / f).is_file(), f"{f} 不存在（分域清单过期？）"
