@@ -319,6 +319,48 @@ def test_list_items_keeps_insertion_order_across_id_digit_boundary(monkeypatch, 
     assert items[1]["question"] == "下列属于治疗要点的是"
 
 
+# 案例组（A3）：两道子题共用同一段案例题干，只有提问与选项不同。
+# ⚠️ 案例题干必须**长于 80 个归一字符**（否则前 80 字已含提问 ⇒ 测不到宽松键误判）。
+_CASE_STEM = ("男性,30岁。自服农药约100ml后30分钟被家人送来急诊。查体:意识模糊,全身湿冷,"
+              "双侧瞳孔针尖样缩小,口鼻大量分泌物,呼吸急促,双肺满布湿啰音,可见颜面及四肢肌纤维颤动。")
+_CASE_MD = (
+    "# 案例组题库\n\n"
+    "### 1. [A3型题｜应用] c-1\n\n"
+    f"**{_CASE_STEM}该患者最可能的诊断是**\n\n"
+    "- A. 急性有机磷杀虫剂中毒\n- B. 急性百草枯中毒\n\n**答案：A**\n\n---\n\n"
+    "### 2. [A3型题｜应用] c-2\n\n"
+    f"**{_CASE_STEM}对该患者应首先采取的治疗措施是**\n\n"
+    "- A. 清水洗胃\n- B. 立即行血液灌流治疗\n\n**答案：A**\n\n---\n"
+)
+
+
+def test_import_does_not_merge_case_series_subquestions(client):
+    """案例组子题必须**各自入库**——不得被宽松去重键覆盖丢失。
+
+    证伪：`bank_iq.loose_key` 去掉选项分量 ⇒ 两道子题同键 ⇒ `added` 变 1、丢 1 题。
+    实测 batch035：4 组 9 题被合并，220 题导入后只剩 215。
+    """
+    pv = client.post("/api/bank/import/preview", json={"text": _CASE_MD, "fmt": "md"})
+    assert pv.status_code == 200, pv.text
+    assert pv.json()["total"] == 2, pv.json()
+    # 前提守卫（与 `bank_iq.loose_key` 同口径：**先截断 raw[:80] 再归一**）：
+    # 两道子题的前 80 字必须相同，否则本用例测不到「宽松键误判」。
+    from medkit.core import bank_iq as _iq
+    assert _iq._norm_q((_CASE_STEM + "该患者最可能的诊断是")[:80]) == \
+        _iq._norm_q((_CASE_STEM + "对该患者应首先采取的治疗措施是")[:80]), \
+        "本用例前提不成立：案例题干太短 ⇒ 测不到宽松键误判"
+    r = client.post("/api/bank/import/commit", json={
+        "name": "案例组", "subject": "急诊", "items": pv.json()["items"]})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert (j["added"], j["updated"], j["skipped"]) == (2, 0, 0), j
+    items = client.get(f"/api/bank/banks/{j['bank_id']}/drill").json()["items"]
+    assert len(items) == 2, f"两道子题都应入库，实得 {len(items)}"
+    assert {i["question"] for i in items} == {
+        _CASE_STEM + "该患者最可能的诊断是",
+        _CASE_STEM + "对该患者应首先采取的治疗措施是"}, [i["question"] for i in items]
+
+
 def test_delete_item_removes_attempts(client):
     bid = _make_bank(client)
     items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]

@@ -411,3 +411,31 @@ def test_mistakes_md_path_strips_md_scaffold():
         "C. 急救人员、车辆、通信的调动准备和现场急救"], rows[0]["options"]
     # `> 解析：…` 是解析，**不得**被当成元数据剥掉
     assert rows[0]["analysis"].startswith("急诊医学是"), rows[0]["analysis"]
+
+
+def test_loose_key_distinguishes_case_series_subquestions():
+    """案例组子题（A3/A4 共用案例题干、只有提问与选项不同）**不得**被判为重复题。
+
+    证伪：`loose_key` 只取题干前 80 字 ⇒ 两道子题同键 ⇒ 导入时被 `dedupe="update"`
+    **覆盖丢失**（实测 batch035：4 组 9 题合并成 4 题，220 题导入后只剩 215）。
+    """
+    # ⚠️ 案例题干必须**长于 80 个字符**——`loose_key` 是**先截断 raw[:80] 再归一**
+    # （不是先归一再截断），题干太短时前 80 字里已含各自的提问，本用例就测不到误判了
+    # （第一版 stem 只有 64 字，守卫恒绿 = 假守卫）。
+    stem = ("男性,30岁。自服农药约100ml后30分钟被家人送来急诊。查体:意识模糊,全身湿冷,"
+            "双侧瞳孔针尖样缩小,口鼻大量分泌物,呼吸急促,双肺满布湿啰音,可见颜面及四肢肌纤维颤动。")
+    q1 = {"question": stem + "该患者最可能的诊断是",
+          "options": ["急性有机磷杀虫剂中毒", "急性百草枯中毒"]}
+    q2 = {"question": stem + "对该患者应首先采取的治疗措施是",
+          "options": ["清水洗胃", "立即行血液灌流治疗"]}
+    # 前提守卫（与 loose_key 同口径）：两题的前 80 字归一必须相同，否则测不到目标缺陷
+    assert bank_iq._norm_q(q1["question"][:80]) == bank_iq._norm_q(q2["question"][:80]), \
+        "本用例前提不成立：案例题干太短（前 80 字已含提问）⇒ 测不到宽松键误判"
+    assert bank_iq.loose_key(q1) != bank_iq.loose_key(q2), \
+        "案例组子题被判为同一题 ⇒ 导入会覆盖丢失"
+    # 本键原本的用途仍须成立：题干措辞微改（选项不变）⇒ 同键
+    q1_tweaked = {"question": stem + "该患者最可能的诊断是（单选）",
+                  "options": ["急性有机磷杀虫剂中毒", "急性百草枯中毒"]}
+    assert bank_iq.loose_key(q1) == bank_iq.loose_key(q1_tweaked)
+    # 严格键仍只认题干全文（选项不同不影响）
+    assert bank_iq.strict_key(q1) != bank_iq.strict_key(q2)

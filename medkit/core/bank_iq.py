@@ -102,8 +102,17 @@ def strict_key(item: dict[str, Any]) -> str:
 
 
 def loose_key(item: dict[str, Any]) -> str:
-    """② 宽松签名：题干措辞微改（取前 80 字归一）。"""
-    return hashlib.sha1(_norm_q(str(item.get("question") or "")[:80]).encode("utf-8")).hexdigest()
+    """② 宽松签名：题干前 80 字 **+ 选项**（均归一）——判「题干措辞微改」的重复。
+
+    ⚠️ **必须把选项并进键**：只取题干前 80 字会在**案例组题**（A3/A4）上误判——
+    同一案例的子题共用同一段案例题干，前 80 字完全相同，只有后面的**提问与选项**不同。
+    实测 batch035：4 组 9 题被当成重复 ⇒ `dedupe="update"` **覆盖丢失 5 题**
+    （220 题导入后只剩 215）。并进选项后子题各成一体，而「措辞微改」的重复
+    （题干微调、选项不变）仍能命中——这正是本键的用途。
+    """
+    base = _norm_q(str(item.get("question") or "")[:80])
+    opts = "|".join(_norm_q(o) for o in (item.get("options") or []))
+    return hashlib.sha1((base + "#" + opts).encode("utf-8")).hexdigest()
 
 
 def contains_hit(question: Any, others: list[dict[str, Any]]) -> Optional[str]:
