@@ -204,6 +204,28 @@ def star_item(iid: str, body: StarBody) -> dict[str, Any]:
     return {"ok": True, "item": rec}
 
 
+@router.get("/api/bank/items/{iid}/reveal")
+def reveal_item(iid: str) -> dict[str, Any]:
+    """背题模式：只读返回答案 / 解析 / 笔记 / 出处，**不记作答流水**。
+
+    与 `/grade` 的区别只有一处，但很关键：背题是「看答案」不是「作答」——
+    若走 grade 会把每道背过的题都记成一次作答（正确答案恒为「未作答 ⇒ 错」），
+    既污染正确率，又会把题库里所有题灌进错题本。故单开一个只读端点。
+    """
+    it = banklib.get_item(iid)
+    if it is None:
+        raise HTTPException(404, "题目不存在")
+    return {
+        "ok": True,
+        "answer": str(it.get("answer") or ""),
+        "analysis": str(it.get("analysis") or ""),
+        "note": str(it.get("note") or ""),
+        "source_type": str(it.get("source_type") or ""),
+        "source_year": str(it.get("source_year") or ""),
+        "starred": bool(it.get("starred")),
+    }
+
+
 @router.post("/api/bank/import/preview")
 def import_preview(body: ImportPreviewBody) -> dict[str, Any]:
     """解析预览（**不落库**）：返回识别到的题目 + 逐条告警，由用户确认后再 commit。"""

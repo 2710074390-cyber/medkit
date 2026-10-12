@@ -98,6 +98,12 @@ SHELL_TO_BANK: dict[tuple[str, str], tuple[str, str]] = {
                                            "错题本「→ 重练」的直达入口（`openDrillFor` 转发）——"
                                            "把 EP-01 → bank 的跨域调用**收敛到外壳一处**，"
                                            "依赖方向变成 EP-01 → 外壳 → bank"),
+    ("app.js", "studyView"): ("加 typeof 守卫",
+                              "切到「刷题」tab 时进入当前子视图（做题 / 复习）——"
+                              "做题入口数据由 bank 域自加载，外壳只负责「进页面时选对视图」"),
+    ("app.js", "bankDrillHide"): ("加 typeof 守卫",
+                                  "切页签时收起沉浸式作答层（作答层是 body 级 fixed 覆盖层，"
+                                  "切走页签必须收起，否则会挡住其它页面）"),
 }
 
 

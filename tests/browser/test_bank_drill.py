@@ -4,7 +4,8 @@
 在**加载期闸门**里看不见（那只看加载期前向引用），单元测试也覆盖不到 DOM 交互——
 点击时才炸的 `ReferenceError` 只有浏览器用例能抓（实测抓到 `classList.add("")` 抛异常）。
 
-另覆盖「从出题项目导入」（F11）与「导出押题卷」（F10）两条新接线。
+v0.13.0「医考帮式刷题」新增覆盖：点选项即判分、答题卡跳转、背题模式（**不记流水**）、
+上一题回看保留作答、多选需「确认作答」、「刷题」页做题入口。
 """
 
 from __future__ import annotations
@@ -15,7 +16,10 @@ from pathlib import Path
 
 _MD = ("# 题库\n\n### q1 · A1 型 · 单选 · 理解\n**慢阻肺的诊断**\n"
        "慢阻肺最主要的病因是\n- A. 吸烟\n- B. 感染\n"
-       "**✅ 答案：A**\n💡 吸烟是主要危险因素\n")
+       "**✅ 答案：A**\n💡 吸烟是主要危险因素\n\n"
+       "### q2 · X 型 · 多选 · 理解\n**哮喘的特征**\n"
+       "哮喘的典型特征包括\n- A. 发作性呼吸困难\n- B. 双肺哮鸣音\n- C. 症状可缓解\n- D. 咳大量脓痰\n"
+       "**✅ 答案：ABC**\n💡 哮喘三大特征：发作性、可逆性、气道高反应性\n")
 _BANK_NAME = "浏览器用例题库"
 # R7/V-10 隔离范式：**专属科目**——判错回流会在 `knowledge` 里建同名知识点，
 # 而「铺卡（薄弱点全部入队）」会把遗留知识点铺进 `#rv_body`，挤爆 test_study_quiz 的
@@ -60,7 +64,13 @@ def _open_drill(page, server_url: str) -> None:
     page.wait_for_selector("#tab-drill.show", timeout=15000)
 
 
+def _start_first_bank(page) -> None:
+    page.click('.bank-item button:has-text("开始练习")')
+    page.wait_for_selector(".bank-q", timeout=15000)
+
+
 def test_bank_import_list_and_correct_answer(page, server_url):
+    """单选：**点选项即判分**（不再需要「提交」那一步），判对不进错题本。"""
     _open_drill(page, server_url)
     _seed_bank(page)
     try:
@@ -69,14 +79,14 @@ def test_bank_import_list_and_correct_answer(page, server_url):
         page.wait_for_selector(".bank-item", timeout=15000)
         assert _BANK_NAME in page.locator("#bank_list").inner_text()
 
-        page.click('.bank-item button:has-text("开始练习")')
-        page.wait_for_selector(".bank-q", timeout=15000)
+        _start_first_bank(page)
         assert _Q_STEM in page.locator(".bank-q").inner_text()
         # 题目里不得带答案（判分前）
         assert "吸烟是主要危险因素" not in page.locator("#bank_drill_body").inner_text()
+        # 单选：不该有「确认作答」按钮（点选项即判分）
+        assert page.locator("#btn_bank_submit").count() == 0
 
-        page.click("#bopt_0")            # A = 正确
-        page.click("#btn_bank_submit")
+        page.click("#bopt_0")            # A = 正确 → 立即判分
         page.wait_for_selector(".bank-ans", timeout=15000)
         txt = page.locator(".bank-ans").inner_text()
         assert "答对了" in txt, txt
@@ -99,11 +109,9 @@ def test_wrong_answer_shows_analysis_and_syncs_to_mistakes(page, server_url):
     try:
         page.reload()
         page.wait_for_selector(".bank-item", timeout=15000)
-        page.click('.bank-item button:has-text("开始练习")')
-        page.wait_for_selector(".bank-q", timeout=15000)
+        _start_first_bank(page)
 
-        page.click("#bopt_1")            # B = 错
-        page.click("#btn_bank_submit")
+        page.click("#bopt_1")            # B = 错 → 立即判分
         page.wait_for_selector(".bank-ans", timeout=15000)
         txt = page.locator(".bank-ans").inner_text()
         assert "答错了" in txt, txt
@@ -119,6 +127,114 @@ def test_wrong_answer_shows_analysis_and_syncs_to_mistakes(page, server_url):
         assert row is not None, "判错后错题本里应有这道题"
         assert row.get("user_answer") == "B", f"回流必须带用户作答，实得 {row.get('user_answer')!r}"
         assert row.get("answer") == "A"
+    finally:
+        _cleanup(page)
+
+
+# ---------------------------------------------------------------- v0.13.0 医考帮式交互
+def test_multi_choice_needs_confirm(page, server_url):
+    """多选（X 型）：点选项只切换选中，须点「确认作答」才判分。"""
+    _open_drill(page, server_url)
+    _seed_bank(page)
+    try:
+        page.reload()
+        page.wait_for_selector(".bank-item", timeout=15000)
+        _start_first_bank(page)
+        # 跳到第 2 题（多选）
+        page.click("#btn_drill_card")
+        page.wait_for_selector(".dc-cell", timeout=15000)
+        page.locator(".dc-cell").nth(1).click()
+        page.wait_for_selector(".bank-q", timeout=15000)
+        assert page.locator("#btn_bank_submit").count() == 1, "多选必须有「确认作答」"
+
+        page.click("#bopt_0")
+        page.click("#bopt_1")
+        page.click("#bopt_2")
+        assert page.locator(".bank-ans").count() == 0, "多选未确认前不得判分"
+        page.click("#btn_bank_submit")
+        page.wait_for_selector(".bank-ans", timeout=15000)
+        assert "答对了" in page.locator(".bank-ans").inner_text(), "ABC 全选应判对"
+    finally:
+        _cleanup(page)
+
+
+def test_answer_card_jump_and_prev_keeps_answer(page, server_url):
+    """答题卡：题号网格可跳题；「上一题」回看已作答的题保留作答与解析。"""
+    _open_drill(page, server_url)
+    _seed_bank(page)
+    try:
+        page.reload()
+        page.wait_for_selector(".bank-item", timeout=15000)
+        _start_first_bank(page)
+        page.click("#bopt_0")                     # 第 1 题答对
+        page.wait_for_selector(".bank-ans", timeout=15000)
+
+        page.click("#btn_drill_card")             # 开答题卡
+        page.wait_for_selector(".dc-cell", timeout=15000)
+        assert page.locator(".dc-cell").count() == 2, "两题 → 两格"
+        assert page.locator(".dc-cell.ok").count() == 1, "答对的那格应标绿"
+        page.locator(".dc-cell").nth(1).click()   # 跳到第 2 题
+        page.wait_for_selector(".bank-q", timeout=15000)
+        assert "第 2 /" in page.locator(".bank-qidx").inner_text()
+
+        page.click('button:has-text("上一题")')    # 回到第 1 题
+        page.wait_for_selector(".bank-ans", timeout=15000)
+        assert "答对了" in page.locator(".bank-ans").inner_text(), "回看必须保留已作答结果"
+    finally:
+        _cleanup(page)
+
+
+def test_recite_mode_shows_answer_without_recording(page, server_url):
+    """背题模式：直接显示答案与解析，且**不记作答流水**（否则正确率与错题本会被污染）。"""
+    _open_drill(page, server_url)
+    _seed_bank(page)
+    try:
+        page.reload()
+        page.wait_for_selector(".bank-item", timeout=15000)
+        _start_first_bank(page)
+        before = page.evaluate("async () => (await (await fetch('/api/bank/today')).json()).attempts")
+
+        page.click("#btn_drill_runmode")           # 切到背题模式
+        page.wait_for_selector(".bank-ans", timeout=15000)
+        txt = page.locator(".bank-ans").inner_text()
+        assert "答案（背题）" in txt, txt
+        assert "正确答案：A" in txt, txt
+        assert "吸烟是主要危险因素" in txt, "背题模式也要给解析"
+        # 背题模式点选项不该判分/不产生作答（q1 只有 A/B 两个选项）
+        page.click("#bopt_1")
+        page.wait_for_timeout(300)
+        assert page.locator(".dc-cell.no").count() == 0
+
+        after = page.evaluate("async () => (await (await fetch('/api/bank/today')).json()).attempts")
+        assert after == before, f"背题模式不得记作答流水（{before} → {after}）"
+
+        # 切回练习模式：又变成「点选项即判分」
+        page.click("#btn_drill_runmode")
+        page.wait_for_timeout(300)
+        page.click("#bopt_0")
+        page.wait_for_selector(".bank-ans", timeout=15000)
+        assert "答对了" in page.locator(".bank-ans").inner_text()
+    finally:
+        _cleanup(page)
+
+
+def test_study_page_do_view_starts_drill(page, server_url):
+    """「刷题」页默认是「做题」子视图：快捷卡片可进入沉浸式作答；复习子标签仍在。"""
+    _open_drill(page, server_url)
+    _seed_bank(page)
+    try:
+        page.goto(f"{server_url}/#study")
+        page.wait_for_selector("#tab-study.show", timeout=15000)
+        assert page.locator("#sv-do").is_visible(), "默认应停在「做题」子视图"
+        assert not page.locator("#sv-review").is_visible()
+        page.wait_for_selector(".do-quick-card", timeout=15000)
+        page.locator(".do-quick-card").first.click()
+        page.wait_for_selector("#bank_drill_card .bank-q", timeout=15000)
+        assert _Q_STEM in page.locator(".bank-q").inner_text()
+
+        page.click("#bank_drill_card button:has-text('退出')")
+        page.wait_for_timeout(400)
+        assert not page.locator("#bank_drill_card").is_visible(), "退出后沉浸层应收起"
     finally:
         _cleanup(page)
 
@@ -163,21 +279,21 @@ def test_manage_edit_answer_and_star(page, server_url):
         page.fill("#bi_ans", "B")      # 把答案从 A 改成 B
         page.check("#bi_star")         # 顺便收藏
         page.click('#bank_item_form button:has-text("保存")')
+        # 等**星标真的变亮**（不能用「列表含 B」——q2 的多选答案 ABC 里也有 B，会提前满足）
         page.wait_for_function(
-            "() => (document.querySelector('#bank_item_list')||{}).innerText.includes('B')",
+            "() => { const b = document.querySelector('#bank_item_list button[title^=\"收藏\"]');"
+            "  return !!b && b.textContent.trim() === '★'; }",
             timeout=15000)
         star_btn = page.locator('#bank_item_list button[title^="收藏"]').first
         assert star_btn.inner_text().strip() == "★", "收藏后列表里星标应点亮"
 
         # 练习：只练收藏 → 只出这 1 题；判分用**改后**的答案
-        page.click('.bank-item button:has-text("开始练习")')
-        page.wait_for_selector(".bank-q", timeout=15000)
+        _start_first_bank(page)
         page.click('.bank-bar button:has-text("只练收藏")')
         page.wait_for_selector(".bank-q", timeout=15000)
         assert page.locator(".bank-q").count() == 1
         assert _Q_STEM in page.locator(".bank-q").inner_text()
-        page.click("#bopt_1")          # B —— 改后的正确答案
-        page.click("#btn_bank_submit")
+        page.click("#bopt_1")          # B —— 改后的正确答案（点选项即判分）
         page.wait_for_selector(".bank-ans", timeout=15000)
         assert "答对了" in page.locator(".bank-ans").inner_text(), \
             "改答案必须真的改到判分口径上（不是只改了显示）"
@@ -228,9 +344,8 @@ def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_u
         page.wait_for_selector(".bank-q", timeout=15000)
         assert _RETRY_Q in page.locator(".bank-q").inner_text(), "应直达被点的那道题"
 
-        # 判错 → 仍是未掌握
+        # 判错 → 仍是未掌握（点选项即判分）
         page.click("#bopt_0")
-        page.click("#btn_bank_submit")
         page.wait_for_selector(".bank-ans", timeout=15000)
         assert "答错了" in page.locator(".bank-ans").inner_text()
         assert "仍是未掌握" in page.locator(".bank-ans").inner_text()
@@ -239,7 +354,6 @@ def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_u
         page.click('.bank-bar button:has-text("全部错题")')
         page.wait_for_selector(".bank-q", timeout=15000)
         page.click("#bopt_1")          # B = 正解
-        page.click("#btn_bank_submit")
         page.wait_for_selector(".bank-ans", timeout=15000)
         assert "答对了" in page.locator(".bank-ans").inner_text()
         assert "已归档为「已掌握」" in page.locator(".bank-ans").inner_text()
@@ -256,9 +370,13 @@ def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_u
         page.wait_for_selector("#bank_drill_body .empty", timeout=15000)
 
         # B7：今日目标进度**把错题重练也算进去**（重练 2 次 → 至少 2）
+        # 每日目标在「刷题」页（tab-study）的「做题」子视图里
+        page.click("#bank_drill_card button:has-text('退出')")
+        page.goto(f"{server_url}/#study")
+        page.wait_for_selector("#tab-study.show", timeout=15000)
         page.wait_for_function(
             "() => { const t = document.querySelector('#bank_goal_prog');"
-            "  return t && /今日已练\\s*[2-9]/.test(t.innerText); }",
+            "  return t && /今日已练\\s*[2-9]/.test(t.textContent); }",
             timeout=15000)
         assert page.input_value("#bank_goal") == "20", "默认目标题数"
     finally:

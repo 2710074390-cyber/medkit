@@ -144,6 +144,9 @@ def test_hash_direct_navigation_initializes_tab(page, server_url):
     for tab, container, placeholder in cases:
         page.goto(f"{server_url}/#{tab}")
         page.wait_for_selector(f"#tab-{tab}.show", timeout=15000)
+        if tab == "study":
+            # v0.13.0：「刷题」页默认停在「做题」子视图；复习内容在「复习（卡片）」子视图里
+            page.click('#studynav button[data-sv="review"]')
         page.wait_for_function(
             "args => !document.querySelector(args[0]).innerText.includes(args[1])",
             arg=(container, placeholder), timeout=15000,

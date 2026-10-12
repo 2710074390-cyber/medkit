@@ -91,7 +91,59 @@ try {
   <!-- ② 刷题（卡片式：今日到期复习卡 + 记忆卡 + 科目卡片） -->
   <section id="tab-study" class="panel">
     <h1 class="ptitle"><svg class="ic"><use href="#i-refresh"></use></svg>刷题</h1>
-    <p class="psub">今日到期 · 卡片式复习：正面看题干、翻转看答案，红黄绿三键自评</p>
+    <p class="psub">选择题刷题：点选项即判分 · 答题卡跳转 · 背题模式 · 判错自动进错题本（本地零 LLM）</p>
+    <div class="css-pills" id="studynav" role="tablist" aria-label="刷题视图">
+      <button class="css-pill on" data-sv="do" role="tab" aria-selected="true" onclick="studyView('do')">做题</button>
+      <button class="css-pill" data-sv="review" role="tab" aria-selected="false" onclick="studyView('review')">复习（卡片）</button>
+    </div>
+
+    <!-- 视图 A：做题（医考帮式选择题刷题主入口；作答引擎在 bank-drill.js 的沉浸层） -->
+    <div class="studyview" id="sv-do">
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>开始刷题</h2><span class="hint" id="do_meta"></span></div>
+        <div class="hint" style="margin-bottom:10px">
+          选题库（或错题）→「开始刷题」进入沉浸式作答。<b>点选项即判分</b>，判错自动进错题本；
+          随时可切<b>背题模式</b>（直接看答案）或用<b>答题卡</b>跳题。
+        </div>
+        <div class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
+          <div style="flex:2;min-width:200px"><label>题库</label>
+            <select id="do_bank" onchange="doBankChange()"><option value="">— 选择题库 —</option></select>
+          </div>
+          <div style="flex:1;min-width:140px"><label>范围</label>
+            <select id="do_mode">
+              <option value="all">全部题目</option>
+              <option value="undone">只练未做</option>
+              <option value="wrong">只练错题</option>
+              <option value="starred">只练收藏</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:150px"><label>模式</label>
+            <select id="do_runmode">
+              <option value="practice">练习模式（即时判分）</option>
+              <option value="recite">背题模式（直接看答案）</option>
+            </select>
+          </div>
+          <div style="flex:none;align-self:flex-end">
+            <label style="display:block;height:1px;overflow:hidden">.</label>
+            <button class="act" onclick="doStart()">开始刷题</button>
+            <button class="act gray" onclick="doStartMistakes()">错题重练</button>
+          </div>
+        </div>
+        <div id="do_quick" style="margin-top:12px"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>今日进度</h2><span class="hint" id="do_today"></span></div>
+        <div class="bank-bar">
+          <label style="font-size:12px">今日目标（题）</label>
+          <input type="number" id="bank_goal" min="0" max="500" value="20" style="width:76px" onchange="bankGoalSave()">
+          <span class="hint" id="bank_goal_prog">今日已练 —</span>
+        </div>
+        <div id="do_recent"></div>
+      </div>
+    </div>
+
+    <!-- 视图 B：复习（SM-2 闪卡，原样保留，仅挪进子标签） -->
+    <div class="studyview" id="sv-review" style="display:none">
     <div class="card" style="margin-top:14px">
       <div class="cardh"><h2>科目</h2><button class="mini-btn" onclick="subjectMgrOpen()">科目管理</button><span class="hint">按科目看题目数与掌握率，点卡片过滤</span></div>
       <div id="study_subjects"><div class="hint"><span class="spin"></span>加载中…</div></div>
@@ -113,6 +165,8 @@ try {
       <div id="rv_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
       <div id="mem_area" style="margin-top:18px"></div>
     </div>
+    </div>
+  </section>
   </section>
 
   <!-- ②b 练习（错题模式核心：导入自备 md 题库 → 应用内刷题 → 判错回流错题本） -->
@@ -133,11 +187,6 @@ try {
         <button class="act gray" onclick="bankCreateOpen()">＋ 新建空题库</button>
         <button class="act gray" onclick="bankRetryStart()">错题重练</button>
         <input type="file" id="bank_file" accept=".md,.markdown,.txt,.json,.csv" style="display:none" onchange="bankImportFile(this)">
-      </div>
-      <div class="bank-bar" style="margin-top:8px">
-        <label style="font-size:12px">今日目标（题）</label>
-        <input type="number" id="bank_goal" min="0" max="500" value="20" style="width:76px" onchange="bankGoalSave()">
-        <span class="hint" id="bank_goal_prog">今日已练 —</span>
       </div>
       <div id="bank_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
     </div>
@@ -168,11 +217,6 @@ try {
       </div>
       <div id="bank_item_form"></div>
       <div id="bank_item_list"></div>
-    </div>
-
-    <div class="card" id="bank_drill_card" style="display:none;margin-top:14px">
-      <div class="cardh"><h2 id="bank_drill_title">练习</h2><span class="hint" id="bank_drill_meta"></span></div>
-      <div id="bank_drill_body"></div>
     </div>
   </section>
 
@@ -819,6 +863,27 @@ try {
     </div>
   </section>
 </main>
+
+<!-- 沉浸式作答层（医考帮式）：不属于任何 tab，从「刷题」/「练习」页均可进入，覆盖全内容区。
+     作答引擎在 bank-drill.js（bank 域，零 LLM）。 -->
+<div id="bank_drill_card" class="drill-ov" style="display:none" role="dialog" aria-modal="true" aria-label="刷题">
+  <div class="drill-top">
+    <button class="mini-btn" onclick="bankDrillExit()" title="退出练习（Esc）">← 退出</button>
+    <span class="drill-title" id="bank_drill_title">练习</span>
+    <span class="hint" id="bank_drill_meta"></span>
+    <span class="drill-grow"></span>
+    <span class="hint drill-prog" id="bank_prog">进度 0/0</span>
+    <span class="bar drill-bar"><i id="bank_prog_i" style="width:0%"></i></span>
+    <span class="hint drill-timer" id="bank_timer">00:00</span>
+    <button class="mini-btn" id="btn_drill_runmode" onclick="bankDrillToggleRunmode()" title="切换练习 / 背题模式">背题模式</button>
+    <button class="mini-btn" id="btn_drill_card" onclick="bankDrillCardTgl()" title="答题卡（快捷键 Tab）">答题卡</button>
+  </div>
+  <div class="drill-wrap">
+    <div class="drill-body" id="bank_drill_body"></div>
+    <aside class="drill-cardpane" id="bank_drill_cardpane" style="display:none"></aside>
+  </div>
+</div>
+
 <div id="toasts" role="status" aria-live="polite"></div>
 <!-- 错题 / 生成 双模式入口：首次进入先选模式。⚠️ 遮罩**不拦截点击**（pointer-events:none），
      且卡片居中于主内容区（padding-left 让开侧栏）——侧栏页签在任何时候都可点，

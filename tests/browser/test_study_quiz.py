@@ -60,9 +60,18 @@ def _queue_all(page, subject: str = "") -> int:
     )
 
 
+def _to_review_view(page):
+    """v0.13.0：「刷题」页默认停在「做题」子视图；复习卡在「复习（卡片）」子视图里。
+
+    每次 tab 就绪（含 reload 后）都要显式切，不能只在首次 goto 时切。
+    """
+    page.click('#studynav button[data-sv="review"]')
+
+
 def _open_study(page, server_url: str):
     page.goto(f"{server_url}/#study")
     page.wait_for_selector("#tab-study.show", timeout=15000)
+    _to_review_view(page)
 
 
 def test_study_card_flip_and_three_buttons(page, server_url):
@@ -77,6 +86,7 @@ def test_study_card_flip_and_three_buttons(page, server_url):
     assert _queue_all(page, subject) >= 1
     page.reload()
     page.wait_for_selector("#tab-study.show", timeout=15000)
+    _to_review_view(page)
 
     card = page.locator("#rv_body .qcard")
     card.wait_for(state="visible", timeout=15000)
@@ -117,6 +127,7 @@ def test_study_keyboard_shortcut_flips_then_grades(page, server_url):
     assert _queue_all(page, subject) >= 1
     page.reload()
     page.wait_for_selector("#tab-study.show", timeout=15000)
+    _to_review_view(page)
 
     card = page.locator("#rv_body .qcard")
     card.wait_for(state="visible", timeout=15000)

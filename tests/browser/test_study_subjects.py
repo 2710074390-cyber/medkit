@@ -50,6 +50,8 @@ def test_study_subject_card_filter(page, server_url):
         page.wait_for_selector("#tab-start.show", timeout=15000)
         page.click('button[data-tab="study"]')
         page.wait_for_selector("#tab-study.show", timeout=15000)
+        # v0.13.0：「刷题」页默认停在「做题」子视图；科目卡在「复习（卡片）」子视图里
+        page.click('#studynav button[data-sv="review"]')
         page.wait_for_selector(".subj-card", timeout=15000)
 
         card = page.locator(".subj-card", has_text=subject)
@@ -77,6 +79,8 @@ def test_delete_subject_through_manager(page, server_url):
         page.wait_for_selector("#tab-start.show", timeout=15000)
         page.click('button[data-tab="study"]')
         page.wait_for_selector("#tab-study.show", timeout=15000)
+        # v0.13.0：「刷题」页默认停在「做题」子视图；科目卡在「复习（卡片）」子视图里
+        page.click('#studynav button[data-sv="review"]')
         page.wait_for_selector(".subj-card", timeout=15000)
 
         page.click('button:has-text("科目管理")')

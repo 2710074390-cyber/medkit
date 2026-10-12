@@ -18,11 +18,12 @@ let _bankState = { banks: [], current: "", stats: null };
 async function loadBankHome(keepDrill) {
   const box = $("bank_list");
   if (!box) return;
-  bankGoalRefresh();   // 每日目标进度随进入页面刷新（统计口径与题库统计同源）
-  // 切回列表时收起练习/导入卡（避免「上一次的卷面」留在屏幕上造成误读）；
-  // keepDrill=true 时保留（练完的总结页要留在屏幕上）。
+  // 「题目管理」卡在切回列表时收起（keepDrill=true 保留）。
+  // ⚠️ 练习层（#bank_drill_card）的显隐**不在这里管**——它由 bank-drill.js 专门管理：
+  // 切页签走 `bankDrillHide`、进入练习走 `bankDrillStart*`。此处若也设 `display:none`，
+  // 会与本函数内 `await api(...)` 的异步返回形成竞态：`bankStartDrill()` 里
+  // `loadBankHome()` 与 `bankDrillStart()` 同时起飞，列表先回来时会把刚打开的作答层又隐藏掉。
   if (!keepDrill) {
-    const dc = $("bank_drill_card"); if (dc) dc.style.display = "none";
     const mc = $("bank_manage_card"); if (mc) mc.style.display = "none";
   }
   try {
@@ -395,3 +396,122 @@ window.bankGoalLoad = bankGoalLoad;
 window.bankGoalSave = bankGoalSave;
 window.bankGoalRefresh = bankGoalRefresh;
 window.bankRetryStart = bankRetryStart;
+
+/* ================================================================ 「刷题」页（tab-study）入口
+ *
+ * v0.13.0：把侧栏「刷题」做成**医考帮式选择题刷题主入口**——两个子视图：
+ *   - `do`（做题，默认）：选题库/错题 + 模式 → 进入沉浸式作答（引擎在 bank-drill.js）；
+ *   - `review`（复习）：原 SM-2 闪卡复习（数据由 EP-01 的 `loadStudy()` 加载，职责不变）。
+ *
+ * 依赖方向：本片（BANK）→ 外壳 `setStudyKeys` / EP-01 `loadStudy`，一律 `typeof` 守卫
+ * （缺失即不挂快捷键/不预加载，不炸）——与既有 `openDrillFor` 同范式。
+ */
+let studyViewCur = "do";
+
+function studyView(name) {
+  name = name === "review" ? "review" : (name === "do" ? "do" : studyViewCur || "do");
+  studyViewCur = name;
+  const nav = $("studynav");
+  if (nav) [...nav.querySelectorAll(".css-pill")].forEach(b => {
+    const on = b.dataset.sv === name;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  const dv = $("sv-do"), rv = $("sv-review");
+  if (dv) dv.style.display = name === "do" ? "" : "none";
+  if (rv) rv.style.display = name === "review" ? "" : "none";
+  // 复习卡的 1/2/3 自评快捷键只在复习视图挂（否则与做题的选项快捷键抢键）
+  if (typeof setStudyKeys === "function") setStudyKeys(name === "review");
+  if (name === "review") { if (typeof loadStudy === "function") loadStudy(); }
+  else loadDoEntry();
+}
+
+/* 做题入口数据：题库下拉 + 快捷开始 + 今日进度（每次进「刷题」页刷新） */
+async function loadDoEntry() {
+  const sel = $("do_bank");
+  try {
+    const r = await api("/api/bank/banks");
+    _bankState.banks = r.banks || [];
+    if (sel) {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">— 选择题库 —</option>'
+        + _bankState.banks.map(b =>
+            `<option value="${esc(b.id)}">${esc(b.name)}（${b.items || 0} 题）</option>`).join("");
+      if (cur && _bankState.banks.some(b => String(b.id) === String(cur))) sel.value = cur;
+      _bankState.current = sel.value;
+    }
+  } catch (e) { /* 列表加载失败不阻断入口（下拉留空，用户仍可去「练习」页导入） */ }
+  _doQuickRender();
+  _doTodayRender();
+  bankGoalRefresh();
+}
+
+function _doQuickRender() {
+  const box = $("do_quick");
+  if (!box) return;
+  const banks = (_bankState.banks || []).filter(b => (b.items || 0) > 0);
+  if (!banks.length) {
+    box.innerHTML = `<div class="hint">还没有题库——去「练习」页「导入题库文件」把你自备的
+      md / txt / json / csv 题库收进来，或先「新建空题库」手动加题。</div>`;
+    return;
+  }
+  const top = banks.slice(0, 6);
+  box.innerHTML = `<div class="hint" style="margin-bottom:6px">快捷开始</div>
+    <div class="do-quick-grid">` + top.map(b => `
+      <button class="do-quick-card" data-id="${esc(b.id)}" onclick="doStartFrom(this)"
+              title="开始刷「${esc(b.name)}」">
+        <b>${esc(b.name)}</b>
+        <span class="hint">${b.items || 0} 题 · 已练 ${b.attempted || 0} · 掌握 ${_pct(b.mastery)}%</span>
+      </button>`).join("") + `</div>`;
+}
+
+/* 卡片头右侧：题库总量（今日进度在下方 `#bank_goal_prog`，避免两处重复同一数字） */
+function _doTodayRender() {
+  const el = $("do_today");
+  if (!el) return;
+  const banks = _bankState.banks || [];
+  const total = banks.reduce((n, b) => n + (b.items || 0), 0);
+  el.textContent = banks.length ? `${banks.length} 个题库 · ${total} 道题` : "";
+}
+
+function doBankChange() {
+  const sel = $("do_bank");
+  _bankState.current = sel ? sel.value : "";
+}
+
+function _doOpts() {
+  return {
+    mode: (($("do_mode") || {}).value) || "all",
+    runmode: (($("do_runmode") || {}).value) || "practice",
+  };
+}
+
+function doStart() {
+  const sel = $("do_bank");
+  const bid = sel ? sel.value : "";
+  if (!bid) { toast("请先选择题库", false); return; }
+  const o = _doOpts();
+  _bankState.current = String(bid);
+  if (typeof bankDrillStart === "function") bankDrillStart(bid, o.mode, { runmode: o.runmode });
+}
+
+function doStartFrom(btn) {
+  const bid = btn && btn.dataset ? (btn.dataset.id || "") : "";
+  if (!bid) return;
+  const sel = $("do_bank"); if (sel) sel.value = String(bid);
+  _bankState.current = String(bid);
+  const o = _doOpts();
+  if (typeof bankDrillStart === "function") bankDrillStart(bid, o.mode, { runmode: o.runmode });
+}
+
+function doStartMistakes() {
+  const o = _doOpts();
+  if (typeof bankDrillStartMistakes === "function") bankDrillStartMistakes("all", "", { runmode: o.runmode });
+}
+
+window.studyView = studyView;
+window.loadDoEntry = loadDoEntry;
+window.doBankChange = doBankChange;
+window.doStart = doStart;
+window.doStartFrom = doStartFrom;
+window.doStartMistakes = doStartMistakes;

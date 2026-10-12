@@ -490,9 +490,12 @@ function showTab(name) {
     ocrRunToken++;
   }
   /* v0.8.1：Tab 分发（开始/练习/刷题/题库/学习中心/我的） */
+  if (typeof bankDrillHide === "function") bankDrillHide();   // 切页签一律收起沉浸式作答层（bank 域）
   if (name === "start") loadStart();
   if (name === "drill" && typeof loadBankHome === "function") loadBankHome();   // 题库刷题域（bank.js）
-  if (name === "study") { loadStudy(); setStudyKeys(true); }   // A-15：进入刷题页挂拼键监听
+  if (name === "study") {   // A-15：进入刷题页（默认「做题」子视图；复习视图的拼键监听由 studyView 管）
+    if (typeof studyView === "function") studyView(); else loadStudy();
+  }
   if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
   if (name === "learn") loadLibrary();
   if (name === "mine") { loadPrompts(); loadDataMgmt(); }
