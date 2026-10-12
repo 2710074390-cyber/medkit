@@ -346,9 +346,10 @@ async function bankGoalRefresh() {
     const r = await api("/api/bank/today");
     const done = r.attempts || 0;
     const okRate = done ? Math.round((r.correct || 0) / done * 100) : 0;
-    if (!goal) { el.textContent = `今日已练 ${done} 题 · 正确率 ${okRate}%`; return; }
+    const okLabel = done ? `${okRate}%` : "—";
+    if (!goal) { el.textContent = `今日已练 ${done} 题 · 正确率 ${okLabel}`; return; }
     const pct = Math.min(100, Math.round(done / goal * 100));
-    el.innerHTML = `今日已练 <b>${done}</b>/${goal} 题（${pct}%）· 正确率 ${okRate}%`
+    el.innerHTML = `今日已练 <b>${done}</b>/${goal} 题（${pct}%）· 正确率 ${okLabel}`
       + (done >= goal ? ' <b style="color:var(--good)">已达标 ✓</b>' : "");
   } catch (e) { el.textContent = "今日进度加载失败"; }
 }

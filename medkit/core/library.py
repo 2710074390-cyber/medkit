@@ -638,11 +638,12 @@ def batch_add(records: list[dict[str, Any]]) -> int:
     return added
 
 
-def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None) -> int:
-    """押题卷判错同步：把判错的（结构化）题目转成错题记录。返回新增条数。
+def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None, source: str = "paper") -> int:
+    """押题卷/题库判错同步：把判错的（结构化）题目转成错题记录。返回新增条数。
 
     questions 元素复用出题结构的题目字段(id, subject, sid, question, options, answer,
     analysis, subtopic, bloom…)，外加 user_answer。已存在的（同 question 前 40 字）视为重复，不重复入库。
+    `source` 默认 `"paper"`；题库练习回流时传入 `"bank"`。
     """
     existing = list_mistakes()
     sigs = {m.get("question", "")[:40] for m in existing if m.get("question")}
@@ -659,7 +660,7 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None) 
         if qtext[:40] in sigs:      # 兜底去重（无 id 的旧卷/手工导入）
             continue
         rows.append({
-            "source": "paper",
+            "source": source,
             "source_ref": {"pid": pid, "question_id": q.get("id"),
                            "sid": q.get("sid")},
             "subject": q.get("subject") or str((q.get("source_ref") or {}).get("subject") or ""),
@@ -1059,7 +1060,8 @@ def parse_question_text(text: str) -> dict[str, Any]:
         r"[【\[(]?(?:答案|答|正确答案)[】\])]?\s*[:：]?\s*"
         r"([A-Ha-h](?:[、,，.．/；;、\- ]*[A-Ha-h])*)")
     # R1：解析标记补 `💡` —— MedKit 自己的产物用 `💡 {解析}`，此前识别不到
-    ana_re = re.compile(r"[【\[(]?(?:解析|💡)[】\])]?\s*[:：]?\s*(.*)$", re.S)
+    # P1-4：允许 `**` 前缀（`**解析：**` 是中文题库常见写法）
+    ana_re = re.compile(r"\*{0,2}[【\[(]?(?:解析|💡)[】\])]?\s*[:：]?\s*(.*)$", re.S)
 
     ans_match = ans_re.search(text)
     ana_match = ana_re.search(text)
@@ -1068,7 +1070,7 @@ def parse_question_text(text: str) -> dict[str, Any]:
     if ans_match:
         answer = re.sub(r"[^A-Ha-h]", "", ans_match.group(1)).upper()
 
-    analysis = ana_match.group(1).strip() if ana_match else ""
+    analysis = ana_match.group(1).strip().strip("*").strip() if ana_match else ""
     body = text
     if ana_match and (not ans_match or ana_match.start() < ans_match.start()):
         # 解析在答案前（少见）：解析内容取到答案标记前，题干只取解析前
@@ -1097,12 +1099,18 @@ def parse_question_text(text: str) -> dict[str, Any]:
             options.append(probe)
             option_begun = True
         elif option_begun and line:
-            if options:
+            # P0-2：选项已经开始，遇到非选项行
+            # 若题干尚未收集到内容 → 这是「选项在前、题干在后」的结构，归题干并结束选项段
+            if not q_lines:
+                q_lines.append(line)
+                option_begun = False
+            elif options:
+                # 题干已有内容 → 多行选项的延续（保留兼容）
                 options[-1] = options[-1] + " " + line
         elif not option_begun:
             q_lines.append(line)
 
-    question = ("\n".join(q_lines) if q_lines else text).strip()
+    question = ("\n".join(q_lines) if q_lines else body).strip()
     return {
         "question": question,
         "options": options,

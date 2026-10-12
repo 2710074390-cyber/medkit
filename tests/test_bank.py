@@ -198,6 +198,8 @@ def test_grade_returns_analysis_and_syncs_wrong_answer_to_mistakes(client):
     # 回流必须带**题库科目**：否则错题与派生知识点落进「未分类」，不便按科目检索，
     # 也会让「铺卡（薄弱点全部入队）」把别处的卡铺进来。
     assert ms[0]["subject"] == "内科学", ms[0]["subject"]
+    # P1-3：题库练习回流的 source 必须是 "bank"，不是 "paper"
+    assert ms[0].get("source") == "bank", f"来源应为 bank，实得 {ms[0].get('source')}"
 
     # 再判错同一题 → 不重复入库（sync_from_paper 按 question_id 去重）
     j2 = client.post("/api/bank/grade", json={

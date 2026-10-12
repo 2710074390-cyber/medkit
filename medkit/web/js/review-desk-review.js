@@ -609,11 +609,15 @@ let wzStep = 0;
 function wzDone() {
   try { localStorage.setItem("medkit-onboarded", "1"); } catch (e) { /* ignore */ }
   $("wizard_mask").style.display = "none";
+  // P0-1：向导结束 → 轮到模式门（串行，不叠加）
+  if (typeof modeGateMaybeShow === "function") modeGateMaybeShow();
 }
 /* 关闭/ESC 不写「已完成」（下次仍会提示），但记本会话内不再重复弹（防反复打扰） */
 function wzClose() {
   try { sessionStorage.setItem("medkit-wz-seen", "1"); } catch (e) { /* ignore */ }
   $("wizard_mask").style.display = "none";
+  // P0-1：关闭（非跳过）向导后同样让模式门接手——两者不得叠加
+  if (typeof modeGateMaybeShow === "function") modeGateMaybeShow();
 }
 function wzSetDots() {
   document.querySelectorAll(".wsteps i").forEach((d, i) => d.classList.toggle("on", i === wzStep));
@@ -696,10 +700,12 @@ function wzRender() {
   }
 }
 function maybeShowWizard() {
+  // P0-1：向导不弹时（已完成/本会话已见）→ 由模式门接手（串行，不叠加）
+  const _gate = () => { if (typeof modeGateMaybeShow === "function") modeGateMaybeShow(); };
   try {
-    if (localStorage.getItem("medkit-onboarded")) return;
-    if (sessionStorage.getItem("medkit-wz-seen")) return;   // 本会话已看过（关闭/ESC 过）→ 不重复弹
-  } catch (e) { return; }
+    if (localStorage.getItem("medkit-onboarded")) { _gate(); return; }
+    if (sessionStorage.getItem("medkit-wz-seen")) { _gate(); return; }   // 本会话已看过（关闭/ESC 过）→ 不重复弹
+  } catch (e) { _gate(); return; }
   // v0.10.5：不再以「有无 Key」为门槛——首次使用（从未完成/跳过引导）均展示；
   // 已有 Key 的用户在第 2 步看到「已连接 ✓」并跳过配置动作，不打扰。
   wzStep = 0; wzRender();
@@ -741,5 +747,9 @@ api("/api/health").then(h => {
 $("side_ver").onclick = () => checkUpdate(false);
 $("side_ver").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); checkUpdate(false); } };
 setTimeout(() => checkUpdate(true), 4000);
-loadConfig().then(maybeShowWizard).catch(e => toast(e.message, false));
+loadConfig().then(maybeShowWizard).catch(e => {
+  toast(e.message, false);
+  // P0-1：配置加载失败也必须让模式门有机会出现（否则首启两张门都不到场）
+  if (typeof modeGateMaybeShow === "function") modeGateMaybeShow();
+});
 probeSampleAvailability();

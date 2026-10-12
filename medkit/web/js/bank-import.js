@@ -80,12 +80,25 @@ function bankRenderPreview(r) {
       图 / 表题只保真不保证；解析不了的题不会进来。
     </div>
     ${warn.length ? `<div class="hint" style="color:var(--warn);margin-bottom:8px">告警 ${(_bankImport.warnings || []).length} 条：${warn.map(esc).join("；")}</div>` : ""}
+    ${items.length ? `<div style="max-height:360px;overflow-y:auto;margin-bottom:8px">
+      <table class="bank-preview-table">
+        <thead><tr><th>#</th><th>题干</th><th>题型</th><th>选项</th><th>答案</th></tr></thead>
+        <tbody>${rows.map((it, i) => `<tr>
+          <td>${i + 1}</td>
+          <td>${esc((it.question || "").slice(0, 90))}</td>
+          <td>${esc(it.type || "")}${it._type_inferred ? '<span class="hint"> 推断</span>' : ""}</td>
+          <td>${(it.options || []).length}</td>
+          <td>${esc(it.answer || "—")}</td>
+        </tr>`).join("")}</tbody>
+      </table>${items.length > rows.length ? `<div class="hint" style="margin-top:6px">…还有 ${items.length - rows.length} 道未展示（全部都会入库）</div>` : ""}
+    </div>` : `<div class="hint">没有识别到题目——请检查格式（是否每题都带「答案」标记）。</div>`}
     <div class="bank-bar">
       <label>入库到</label>
       <select id="bank_target" onchange="bankTargetSync()">
         <option value="">＋ 新建题库</option>${opts}
       </select>
       <input type="text" id="bank_new_name" value="${esc(_bankImport.name || "导入题库")}" placeholder="新题库名称" style="min-width:150px">
+      <input type="text" id="bank_new_subject" value="" placeholder="科目（如：内科学）" style="min-width:120px">
       <label>重复题</label>
       <select id="bank_dedupe">
         <option value="update">更新已有</option>
@@ -94,17 +107,7 @@ function bankRenderPreview(r) {
       </select>
       <button class="act" id="btn_bank_commit" onclick="bankCommitImport()">确认入库（${items.length} 题）</button>
       <button class="act gray" onclick="bankImportCancel()">取消</button>
-    </div>
-    ${items.length ? `<table class="bank-preview-table">
-      <thead><tr><th>#</th><th>题干</th><th>题型</th><th>选项</th><th>答案</th></tr></thead>
-      <tbody>${rows.map((it, i) => `<tr>
-        <td>${i + 1}</td>
-        <td>${esc((it.question || "").slice(0, 90))}</td>
-        <td>${esc(it.type || "")}${it._type_inferred ? '<span class="hint"> 推断</span>' : ""}</td>
-        <td>${(it.options || []).length}</td>
-        <td>${esc(it.answer || "—")}</td>
-      </tr>`).join("")}</tbody>
-    </table>${items.length > rows.length ? `<div class="hint" style="margin-top:6px">…还有 ${items.length - rows.length} 道未展示（全部都会入库）</div>` : ""}` : `<div class="hint">没有识别到题目——请检查格式（是否每题都带「答案」标记）。</div>`}`;
+    </div>`;
   bankTargetSync();
 }
 
@@ -120,9 +123,11 @@ async function bankCommitImport() {
   if (!items.length) { toast("没有可导入的题目", false); return; }
   const sel = $("bank_target");
   const nameInp = $("bank_new_name");
+  const subjInp = $("bank_new_subject");
   const dedupe = ($("bank_dedupe") || {}).value || "update";
   const bid = sel ? sel.value : "";
   const name = nameInp ? (nameInp.value || "").trim() : "";
+  const subject = subjInp ? (subjInp.value || "").trim() : "";
   if (!bid && !name) { toast("请填写新题库名称", false); return; }
   const btn = $("btn_bank_commit");
   const old = btn ? btn.textContent : "";
@@ -130,7 +135,7 @@ async function bankCommitImport() {
   try {
     const r = await api("/api/bank/import/commit", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bank_id: bid, name, subject: "", source: "md_import", items, dedupe }),
+      body: JSON.stringify({ bank_id: bid, name, subject, source: "md_import", items, dedupe }),
     });
     toast(`入库完成：新增 ${r.added || 0} · 更新 ${r.updated || 0} · 跳过 ${r.skipped || 0}`);
     bankImportCancel();

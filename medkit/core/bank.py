@@ -475,7 +475,7 @@ def grade(bid: str, item_id: str, user_answer: str, session_id: str = "",
         # （2026-10-10 浏览器用例实测踩到：`#rv_body` 里多出「未分类 × …」的卡）。
         q["subject"] = str(item.get("subject") or bank.get("subject") or "")
         q["source_ref"] = {"bank_id": bid, "item_id": item_id}
-        synced = lib.sync_from_paper([q], pid=None)
+        synced = lib.sync_from_paper([q], pid=None, source="bank")
     return {
         "correct": correct,
         "answer": str(item.get("answer") or ""),

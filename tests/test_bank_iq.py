@@ -199,3 +199,43 @@ def test_json_and_csv_paths_reuse_library_parser():
     csv = "题干,选项,答案\n题干一,甲|乙,A\n"
     rows2 = bank_iq.parse_bank_text(csv, "csv")
     assert len(rows2) == 1 and rows2[0]["options"] == ["甲", "乙"]
+
+
+# ------------------------------------------------------------------ P0-2：第三方写法（选项在前、题干在后）
+
+@pytest.mark.parametrize("text,expected_q,expected_opts", [
+    # 基本：选项在前、题干在后（带列表符）
+    ("- A. 甲\n- B. 乙\n这道题的题干是什么\n答案：A",
+     "这道题的题干是什么", ["A. 甲", "B. 乙"]),
+    # 无列表符的选项在前
+    ("A. 甲\nB. 乙\n这道题的题干是什么\n答案：A",
+     "这道题的题干是什么", ["A. 甲", "B. 乙"]),
+])
+def test_third_party_options_before_question(text, expected_q, expected_opts):
+    """P0-2 守卫：「选项在前、题干在后」的第三方写法必须正确解析。
+
+    证伪：把 library.py 的 `option_begun = False` 赋值删掉 → 题干被拼进选项 → 本用例必红。
+    """
+    rows = bank_iq.parse_bank_md(text)
+    assert len(rows) == 1, f"应解析出 1 题，实得 {len(rows)}"
+    assert rows[0]["question"] == expected_q, f"题干不符：{rows[0]['question']!r}"
+    assert rows[0]["options"] == expected_opts, f"选项不符：{rows[0]['options']!r}"
+
+
+def test_question_after_options_is_not_swallowed_by_last_option():
+    """P0-2 根因回归：`option_begun` 为真后，若题干尚未收集到内容，
+    后续非选项行必须归题干（而不是拼到最后一个选项上）。"""
+    from medkit.core import library as lib
+    parsed = lib.parse_question_text("- A. 甲\n- B. 乙\n这道题的题干是什么\n答案：A")
+    assert parsed["question"] == "这道题的题干是什么", parsed["question"]
+    assert parsed["options"] == ["A. 甲", "B. 乙"], parsed["options"]
+    assert "答案" not in parsed["question"], "答案标记不得混进题干"
+
+
+def test_bold_analysis_marker_is_stripped():
+    """P1-4：`**解析：**` 的加粗标记必须被剥掉，解析内容不含 `**`。"""
+    text = "题干\n- A. 甲\n- B. 乙\n答案：A\n**解析：**吸烟是 COPD 最重要的环境致病因素"
+    rows = bank_iq.parse_bank_md(text)
+    assert len(rows) == 1
+    assert rows[0]["analysis"] == "吸烟是 COPD 最重要的环境致病因素", f"解析不符：{rows[0]['analysis']!r}"
+    assert "**" not in rows[0]["analysis"]

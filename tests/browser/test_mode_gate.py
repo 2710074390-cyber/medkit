@@ -80,3 +80,26 @@ def test_sidebar_mode_button_reopens_gate(page, server_url):
     page.click('.modecard:has-text("生成")')
     page.wait_for_selector("#tab-bank.show", timeout=15000)
     assert page.evaluate("() => localStorage.getItem('medkit-mode')") == "gen"
+
+
+def test_wizard_and_gate_are_not_shown_together(page, server_url):
+    """P0-1 守卫：真首启时向导与模式门必须串行——向导关闭后才显示模式门，绝不叠加。"""
+    page.add_init_script(
+        "localStorage.removeItem('medkit-onboarded');"
+        "sessionStorage.removeItem('medkit-wz-seen');"
+        "localStorage.removeItem('medkit-mode-seen');"
+        "localStorage.removeItem('medkit-mode');"
+    )
+    page.goto(server_url)
+    # 真首启：向导先出现
+    page.wait_for_selector("#wizard_mask", state="visible", timeout=15000)
+    # 向导在场时模式门绝不可见（P0-1 的核心判据）
+    gate_visible_while_wizard = page.evaluate(
+        "() => { const g = document.getElementById('modegate');"
+        " return !!g && g.style.display !== 'none'; }")
+    assert not gate_visible_while_wizard, "向导显示期间模式门不得同时可见（P0-1）"
+    # 跳过向导后模式门应出现
+    page.click("#wz_skip")
+    page.wait_for_selector("#modegate", state="visible", timeout=15000)
+    page.wait_for_selector("#wizard_mask", state="hidden", timeout=15000)
+    assert page.evaluate("() => localStorage.getItem('medkit-onboarded')") == "1"

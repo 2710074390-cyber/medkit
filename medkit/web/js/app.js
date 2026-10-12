@@ -428,6 +428,16 @@ function applyMode() {
   if (bar) bar.dataset.mode = mode || "";
 }
 function modeGateShow() { const g = $("modegate"); if (g) g.style.display = "flex"; }
+/* P0-1：模式门与首启向导必须**串行**——向导在显示时不弹门，等向导结束再弹。
+ * 由 initTab / maybeShowWizard / wzDone / wzClose 统一调用，避免两弹层叠加。 */
+function modeGateMaybeShow() {
+  const h = (location.hash || "").replace("#", "");
+  if (currentMode || h || _ls(MODE_SEEN_KEY)) return;
+  const wiz = $("wizard_mask");
+  if (wiz && wiz.style.display !== "none") return;   // 向导在显示 → 让位
+  modeGateShow();
+}
+window.modeGateMaybeShow = modeGateMaybeShow;
 function modeGateHide() {
   const g = $("modegate");
   if (g && g.style.display !== "none") g.style.display = "none";
@@ -509,8 +519,9 @@ function initTab() {
   const h = (location.hash || "").replace("#", "");
   if (TABS_ALL.includes(h)) showTab(h);
   else loadStart();   // 无 hash → 默认落地「开始」仪表盘（此时各脚本已就绪）
-  // 首次进入（从未选过/见过模式门）且无 hash → 先选模式
-  if (!currentMode && !h && !_ls(MODE_SEEN_KEY)) modeGateShow();
+  // P0-1：模式门的显示统一交给 modeGateMaybeShow()（在 review-desk-review.js 的
+  // maybeShowWizard / wzDone 收尾处调用）——此处不显示，否则向导（异步出现）会叠在门上面。
+  // 见 modeGateMaybeShow 的「向导在显示 → 让位」判据。
   initDataMgmt();   // U-20：绑定数据管理区按钮（元素为静态 HTML，可安全绑定）
 }
 if (document.readyState === "loading") {

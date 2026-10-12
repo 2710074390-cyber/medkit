@@ -313,7 +313,7 @@ function renderLibraryCurrent() {
   // R4-21：明示「全选可见」实际选中范围（首屏 N/共 M），未加载全部时不再误导
   const btnAll = $("btn_mk_all");
   if (btnAll) btnAll.textContent = list.length > shown.length
-    ? `全选已加载（${shown.length}/${list.length}）` : "全选全部";
+    ? `全选已加载（${shown.length}/${list.length}）` : "全选";
   updateMkToolbar(list);   // WP-5：工具栏随筛选/数据刷新
   $("learn_mk_count").textContent = `${list.length} 道`
     + (onlyUn && list.length !== scoped.length ? `（未掌握 ${list.length} / ${scoped.length}）` : "");
@@ -398,10 +398,11 @@ function mkGroupHTML(list) {
     const parts = key.split("§");
     const subj = parts[0] || "未分类", ch = parts[1] || "未分章", tag = parts[2] || "未分组";
     const allChecked = arr.every(mm => mkSelected.has(mm.id));
+    // P2-10：未填项（未分类/未分章/未分组）不渲染为标签
+    const _lb = [subj, ch, tag].filter(x => x && !["未分类", "未分章", "未分组"].includes(x));
     return `<details class="mk-group" open>
       <summary class="mk-group-head">
-        <span class="mk-group-title">${esc(subj)}<small>${esc(ch)}</small></span>
-        <span class="mk-group-tag">${esc(tag)}</span>
+        <span class="mk-group-title">${esc(_lb.slice(0, 2).join(" · "))}${_lb[2] ? `<small>${esc(_lb[2])}</small>` : ""}</span>
         <span class="mk-group-count">${arr.length} 道</span>
         <label class="chk mk-group-sel" onclick="event.stopPropagation()">
           <input type="checkbox" ${allChecked ? "checked" : ""} onchange="mkToggleGroup(this)"> 本组全选
@@ -505,11 +506,13 @@ function mkRowHTML(mm) {
   const meta = [];
   const loc = [mm.subject, mm.chapter, mm.topic].filter(Boolean).join(" · ");
   if (loc) meta.push(`<span class="mk-tag">${esc(loc)}</span>`);
-  (mm.know_tags || []).forEach(t => meta.push(`<span class="mk-tag">${esc(t)}</span>`));
+  const _seen = new Set([mm.subject, mm.chapter, mm.topic].filter(Boolean));
+  (mm.know_tags || []).forEach(t => { if (!_seen.has(t)) meta.push(`<span class="mk-tag">${esc(t)}</span>`); });
   meta.push(`<span class="mk-tag">答错 ${mm.miss_count || 1} 次</span>`);
   if (mm.error_reason) meta.push(`<span class="mk-tag" style="color:var(--warn);border-color:var(--warn)">${esc(ERR_LABEL[mm.error_reason] || mm.error_reason)}</span>`);
   if (mm.learned) meta.push(`<span class="mk-tag" style="color:var(--good);border-color:var(--good)">已掌握</span>`);
-  if (mm.source === "paper") meta.push(`<span class="mk-tag" style="color:var(--info);border-color:var(--info)">押题卷</span>`);
+  const _SRC_LABEL = {"paper": "押题卷", "bank": "题库练习"};
+  if (_SRC_LABEL[mm.source]) meta.push(`<span class="mk-tag" style="color:var(--info);border-color:var(--info)">${esc(_SRC_LABEL[mm.source])}</span>`);
   if (mm.data_broken) meta.push(`<span class="mk-tag" style="color:var(--bad);border-color:var(--bad)">数据损坏</span>`);
   const detail = `
     ${mm.case_stem ? `<div><b>案例</b>：${esc(mm.case_stem)}</div>` : ""}
