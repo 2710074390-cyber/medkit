@@ -213,6 +213,27 @@ def test_grade_returns_analysis_and_syncs_wrong_answer_to_mistakes(client):
     assert j3["correct"] is True and j3["synced_mistakes"] == 0
 
 
+def test_source_fields_flow_to_grade_and_mistake(client):
+    """A-1 出处：题库题的 `source_type`/`source_year` 必须出现在**判分结果**与**回流错题**里。
+
+    证伪：删掉 `bank.grade()` 返回里的 source_* 两行 / 删掉 `library.add_mistake` 白名单里的
+    source_* 两行 → 本用例必红（后者正是「白名单式固定形状字典静默丢字段」的典型陷阱）。
+    """
+    bid = _make_bank(client, name="出处题库", items=[{
+        "question": "慢阻肺最主要的病因是", "options": ["吸烟", "感染"],
+        "answer": "A", "source_type": "真题", "source_year": "2024",
+    }])
+    it = client.get(f"/api/bank/banks/{bid}/drill").json()["items"][0]
+    j = client.post("/api/bank/grade", json={
+        "bank_id": bid, "item_id": it["id"], "user_answer": "B"}).json()
+    assert j["source_type"] == "真题", j
+    assert j["source_year"] == "2024", j
+    ms = lib.list_mistakes()
+    assert len(ms) == 1, ms
+    assert ms[0]["source_type"] == "真题", ms[0]
+    assert ms[0]["source_year"] == "2024", ms[0]
+
+
 def test_grade_rejects_item_outside_bank(client):
     bid = _make_bank(client)
     other = _make_bank(client, name="别的题库")

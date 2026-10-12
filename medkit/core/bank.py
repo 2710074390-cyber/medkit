@@ -485,6 +485,9 @@ def grade(bid: str, item_id: str, user_answer: str, session_id: str = "",
         "starred": bool(item.get("starred")),
         # 笔记随判分结果回传：练习页在判分前**不展示**笔记（可能写着答案），判完才给
         "note": str(item.get("note") or ""),
+        # A-1：出处（真题/模拟… + 年份）随判分结果回传，练习页在解析下方展示
+        "source_type": str(item.get("source_type") or ""),
+        "source_year": str(item.get("source_year") or ""),
         "synced_mistakes": synced,
     }
 

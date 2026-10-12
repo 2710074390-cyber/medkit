@@ -508,6 +508,9 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
             "bloom": str(data.get("bloom", "") or "").strip(),
             "image_ref": str(data.get("image_ref") or "").strip(),
             "case_stem": str(data.get("case_stem") or "").strip(),   # C-04：案例子题回流共享题干
+            # 出处（A-1）：题库题自带的来源标注（真题/模拟/教材… + 年份），复盘时显示
+            "source_type": str(data.get("source_type") or "").strip(),
+            "source_year": str(data.get("source_year") or "").strip(),
             "miss_count": max(int(data.get("miss_count", 1) or 1), 1),
             "learned": bool(data.get("learned", False)),
             # 出错样本入聚点时的归类快照：按 learned 记 correct/miss（入账当时）。
@@ -676,6 +679,9 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None, 
             "bloom": q.get("bloom") or "",
             "image_ref": str(q.get("image_ref") or "").strip(),
             "case_stem": str(q.get("case_stem") or "").strip(),   # C-04：案例子题共享题干入库
+            # A-1：出处随回流带进错题本（否则复盘时看不到「这题哪来的」）
+            "source_type": str(q.get("source_type") or "").strip(),
+            "source_year": str(q.get("source_year") or "").strip(),
             "error_reason": str(q.get("error_reason") or "").strip() or "unknown",   # U-19：缺省不再伪造「推理断链」
             "correct": False,
         })

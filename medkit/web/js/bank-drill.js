@@ -17,6 +17,11 @@ let _bankDrill = {
 
 const _BANK_LETTERS = "ABCDEFGHIJ";
 
+/* A-1 出处标签：`真题 · 2024`（缺项自动省略；两者都缺返回空串 ⇒ 不渲染该行） */
+function _bankSrcLabel(it) {
+  return [it && it.source_type, it && it.source_year].filter(Boolean).join(" · ");
+}
+
 async function bankDrillStart(bid, mode) {
   const card = $("bank_drill_card");
   if (!card) return;
@@ -251,6 +256,7 @@ function _bankShowResult(r, userAns) {
         </div>
         <div style="margin-top:6px">你的作答：<b>${esc(userAns || "—")}</b> · 正确答案：<b>${esc(r.answer || "—")}</b></div>
         ${r.analysis ? `<div style="margin-top:8px"><b>解析</b>：${window.mdRender ? mdRender(r.analysis) : esc(r.analysis)}</div>` : ""}
+        ${_bankSrcLabel(r) ? `<div style="margin-top:6px"><b>出处</b>：${esc(_bankSrcLabel(r))}</div>` : ""}
         ${r.note ? `<div style="margin-top:8px"><b>我的笔记</b>：${esc(r.note)}</div>` : ""}
         ${!r.correct && r.synced_mistakes ? `<div class="hint" style="margin-top:8px">已自动加入错题本（可在「学习中心 → 错题本」查看与讲解）</div>` : ""}
         ${d.source === "mistakes" && r.correct ? `<div class="hint" style="margin-top:8px">已归档为「已掌握」（错题本里默认被「只看未掌握」隐藏）</div>` : ""}

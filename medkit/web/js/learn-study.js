@@ -506,8 +506,7 @@ function mkRowHTML(mm) {
   const meta = [];
   const loc = [mm.subject, mm.chapter, mm.topic].filter(Boolean).join(" · ");
   if (loc) meta.push(`<span class="mk-tag">${esc(loc)}</span>`);
-  const _seen = new Set([mm.subject, mm.chapter, mm.topic].filter(Boolean));
-  (mm.know_tags || []).forEach(t => { if (!_seen.has(t)) meta.push(`<span class="mk-tag">${esc(t)}</span>`); });
+  (mm.know_tags || []).forEach(t => { if (t && ![mm.subject, mm.chapter, mm.topic].includes(t)) meta.push(`<span class="mk-tag">${esc(t)}</span>`); });
   meta.push(`<span class="mk-tag">答错 ${mm.miss_count || 1} 次</span>`);
   if (mm.error_reason) meta.push(`<span class="mk-tag" style="color:var(--warn);border-color:var(--warn)">${esc(ERR_LABEL[mm.error_reason] || mm.error_reason)}</span>`);
   if (mm.learned) meta.push(`<span class="mk-tag" style="color:var(--good);border-color:var(--good)">已掌握</span>`);
@@ -520,7 +519,8 @@ function mkRowHTML(mm) {
     ${(mm.options || []).length ? `<div><b>选项</b>：${mm.options.map((o, i) => `${"ABCDEF"[i] || i + 1}. ${esc(o)}`).join("　")}</div>` : ""}
     ${mm.answer ? `<div class="ans">✓ 答案：${esc(mm.answer)}</div>` : ""}
     ${mm.user_answer ? `<div><b>我的作答</b>：${esc(mm.user_answer)}</div>` : ""}
-    ${mm.analysis ? `<div><b>解析</b>：${hlKw(mm.analysis)}</div>` : ""}`;
+    ${mm.analysis ? `<div><b>解析</b>：${hlKw(mm.analysis)}</div>` : ""}
+    ${[mm.source_type, mm.source_year].filter(Boolean).length ? `<div><b>出处</b>：${esc([mm.source_type, mm.source_year].filter(Boolean).join(" · "))}</div>` : ""}`;
   const kp = (mm.know_tags || [])[0] || mm.topic || "";
   return `<div class="mk-row">
     <label class="mkck-wrap" title="选择该题">
