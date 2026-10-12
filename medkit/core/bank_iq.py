@@ -55,6 +55,37 @@ _LIST_MARK_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 # 元数据标题里题干与字段的分隔符（`q1 · A1 型 · 单选 · 理解`）
 _META_SEP = " · "
 
+# ---- R13（2026-10-13）：第三方 md 的「标题 / 题干 / 元数据」识别 ----
+# 实测样本：`ALL_questions_FIXED.md`（急诊与灾难医学 batch035）——
+#   `## M1（8题）`                        ← 分节标题，**不是题目**
+#   `### 8. [X型题｜理解] batch035-M1-X-001` ← 题号标题（题型/难度/id），题干在下方
+#   `> 模块：M1｜页码：教材P1`              ← 溯源元数据，**不是题干**
+#   `**我国急救医疗服务体系（EMSS）的组成部分包括**` ← 题干（整行加粗）
+#   `- **A. 院前急救** ✅`                  ← 选项（加粗 + 正确性对勾）
+# 旧实现把前三者全并进题干，并把分节标题当题 ⇒ 231 题里 11 题是空壳、选项错位。
+# 分节标题判据：标题里带「（N题）」计数。
+_SECTION_HEAD_RE = re.compile(r"^.{0,80}?[（(]\s*\d+\s*题\s*[)）]")
+# 第三方题号标题：`8. [X型题｜理解] batch035-M1-X-001`
+_TAG_HEAD_RE = re.compile(
+    r"^\s*\d+\s*[、.．)）]\s*[【\[]\s*(?P<label>[^】\]]{0,30}?)\s*[】\]]\s*(?P<id>\S.*)$")
+# 标签里的题型（`X型题` / `A1型题` / `B1型题`）——⚠️ 必须含 X（多选），
+# 而 `[A-H]` 覆盖不到 X（实测漏判 30 道 X 型题，题型全落成 None）
+_TYPE_IN_LABEL_RE = re.compile(r"([A-Ha-hXx]{1,2}\d?)\s*型")
+# Bloom 层取值（从标题标签里认难度）
+_BLOOM_SET = ("记忆", "理解", "应用", "分析", "评价", "创造")
+# 元数据引用行（`> 模块：M1｜页码：教材P1`）——溯源信息，不是题干。
+# ⚠️ 必须放行 `> 解析：…` / `> 答案：…`：它们是解析/答案。
+# 否定前瞻里要自带 `\s*`——否则外层 `\s*` 回溯到「零空格」就能绕开前瞻，
+# 把 `> 解析：…` 当元数据剥掉（实测：解析整段丢失）。
+_META_QUOTE_RE = re.compile(r"^\s*>\s*(?!\s*(?:解析|答案|💡))[^:：]{1,10}\s*[:：]")
+# 水平分隔线（题目之间的 `---`）
+_HR_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+# 标题本身「像题目」：`1. xxx` / `第3题` / `【题 5】`（用于区分「标题即题干」与「章节标题」）
+_HEAD_LOOKS_LIKE_Q_RE = re.compile(r"^\s*(?:\d+\s*[、.．)）]|第\s*\d+\s*题|【题)")
+# 标题里的**题号**（`### 1. 题干`）——题号是编号，不是题干内容，须剥。
+# `(?!\d)` 是防误伤：`### 2.5 mg/kg 的剂量是` 里的 `2.` 不是题号（小数点后紧跟数字）。
+_NUM_HEAD_RE = re.compile(r"^\s*\d+\s*[、.．)）](?!\d)\s*(?P<q>.+)$")
+
 # 题型标签 → 代码（与 render/qbank_html.py:17 TYPE_LABELS 的取值同源，取首段）
 _TYPE_BY_LABEL = {"A1": "A1", "A2": "A2", "A3": "A3", "A4": "A4",
                   "B1": "B1", "X": "X", "B": "B1"}
@@ -128,21 +159,81 @@ def _split_blocks(text: str) -> list[tuple[Optional[str], str]]:
     return blocks
 
 
-def _split_meta(head: str) -> tuple[Optional[str], Optional[str], str]:
-    """拆元数据标题 → (题目id, 题型, 剩余题干文本)。
+def _split_meta(head: str) -> tuple[Optional[str], Optional[str], str, str]:
+    """拆元数据标题 → (题目id, 题型, bloom, 剩余题干文本)。
 
-    MedKit 导出格式的标题形如 `q1 · A1 型 · 单选 · 理解`（含 ` · ` 分隔）。
-    不含 ` · ` 的标题视为「标题即题干」（如 `### 1. 慢阻肺最主要的病因是`）。
+    支持的标题形态：
+    ① MedKit 导出：`q1 · A1 型 · 单选 · 理解`（题干在标题下方一行）；
+    ② 第三方：`8. [X型题｜理解] batch035-M1-X-001`（题型/bloom/id 都在标题里，题干在下方）；
+    ③ 标题即题干：`### 1. 慢阻肺最主要的病因是`（无元数据分隔符，题干就是标题）。
+    ①② 返回的题干文本为空串（题干在标题下方），③ 返回标题本身。
     """
-    if _META_SEP not in (head or ""):
-        return None, None, (head or "").strip()
-    parts = [p.strip() for p in head.split(_META_SEP)]
+    h = (head or "").strip()
+    m = _TAG_HEAD_RE.match(h)
+    if m:
+        label = m.group("label") or ""
+        tm = _TYPE_IN_LABEL_RE.search(label)
+        qtype = _TYPE_BY_LABEL.get(tm.group(1).upper()) if tm else None
+        bloom = next((p.strip() for p in re.split(r"[｜|·/]", label)
+                      if p.strip() in _BLOOM_SET), "")
+        return (m.group("id").strip() or None), qtype, bloom, ""
+    m = _NUM_HEAD_RE.match(h)
+    if m:
+        # `### 1. 慢阻肺最主要的病因是` —— 题号是编号，不是题干内容
+        return None, None, "", m.group("q").strip()
+    if _META_SEP not in h:
+        return None, None, "", h
+    parts = [p.strip() for p in h.split(_META_SEP)]
     qid = parts[0] or None
     qtype = None
     if len(parts) >= 2 and parts[1]:
         qtype = _TYPE_BY_LABEL.get(parts[1].split()[0])
+    bloom = next((p for p in parts[2:] if p in _BLOOM_SET), "")
     # 元数据标题里不含题干（题干在标题下方一行）
-    return qid, qtype, ""
+    return qid, qtype, bloom, ""
+
+
+def _is_option_line(s: str) -> bool:
+    """该行是不是选项行（剥前导列表符 + 加粗/斜体标记后判 `_OPT_LIKE`）。
+
+    ⚠️ 必须连加粗标记一起剥：`- **A. 院前急救** ✅` 的行首是 `**`，
+    只剥 `- ` 不命中 ⇒ 会被误判成「题干行」。
+    """
+    probe = _LIST_MARK_RE.sub("", (s or "").strip())
+    probe = re.sub(r"^(?:\*{1,2}|_{1,2})\s*", "", probe)
+    return bool(_OPT_LIKE.match(probe))
+
+
+def _has_stem_after(lines: list[str], idx: int) -> bool:
+    """`lines[idx]` 之后、**第一个选项行之前**是否还有真正的题干行。
+
+    题干总在选项之前（两种格式都如此）⇒ 只看选项段之前的内容：
+      · MedKit 导出：`**subtopic**` + 题干行 + 选项 ⇒ True（加粗行是 **subtopic**）；
+      · 第三方：`**题干**` + 选项               ⇒ False（加粗行**就是题干**）。
+
+    ⚠️ 不能只看「后面有没有非选项行」——`**答案：B**` / `> 解析：…` 也不是选项行，
+    但它们是答案/解析，不是题干；按那个判据会把加粗题干误当 subtopic 摘掉，
+    题干随即回退成「选项 + 答案残留」整块（实测踩到）。
+    """
+    for ln in lines[idx + 1:]:
+        s = ln.strip()
+        if not s or s.startswith(">") or _HR_RE.match(s):
+            continue
+        if _is_option_line(s):
+            return False      # 已进入选项段 ⇒ 中间没有题干行
+        return True           # 选项之前有实质文本行 ⇒ 那就是题干
+    return False
+
+
+def _parse_meta_quote(line: str) -> dict[str, str]:
+    """`> 模块：M1｜页码：教材P1` → `{"模块": "M1", "页码": "教材P1"}`。"""
+    s = (line or "").lstrip().lstrip(">").strip()
+    out: dict[str, str] = {}
+    for seg in re.split(r"[｜|]", s):
+        m = re.match(r"^\s*([^:：]{1,10})\s*[:：]\s*(.*)$", seg)
+        if m:
+            out[m.group(1).strip()] = m.group(2).strip()
+    return out
 
 
 def parse_bank_md(text: str) -> list[dict[str, Any]]:
@@ -160,27 +251,40 @@ def parse_bank_md(text: str) -> list[dict[str, Any]]:
     for head, body in _split_blocks(text.lstrip("\ufeff")):
         if head and _GROUP_HEAD_RE.match(head):
             # 组头块：把其中的选项作为「共享选项」顺延给后续子题。
-            # ⚠️ 必须先剥前导列表符再判 `_OPT_LIKE` —— `- A. 甲` 的行首是 `-`，不剥不命中。
+            # ⚠️ 必须先剥前导列表符再判选项 —— `- A. 甲` 的行首是 `-`，不剥不命中。
             opts = [_LIST_MARK_RE.sub("", ln.strip())
                     for ln in body.splitlines()
-                    if _OPT_LIKE.match(_LIST_MARK_RE.sub("", ln.strip()))]
+                    if _is_option_line(ln)]
             if opts:
                 carry_options = opts
             continue
-        qid, qtype, head_q = _split_meta(head or "")
+        if head and _SECTION_HEAD_RE.match(head):
+            # R13：带「（N题）」计数的分节标题（`## M1（8题）`）——章节，不是题目
+            continue
+        qid, qtype, bloom, head_q = _split_meta(head or "")
         lines = body.splitlines()
-        # 独立加粗行 = subtopic（只在标题是元数据时才认，避免误吞用户正文里的加粗行）
+        # R13：元数据引用行（`> 模块：M1｜页码：教材P1`）摘出来做溯源，不混进题干
+        meta: dict[str, str] = {}
+        kept: list[str] = []
+        for ln in lines:
+            if _META_QUOTE_RE.match(ln):
+                meta.update(_parse_meta_quote(ln))
+                continue
+            kept.append(ln)
+        lines = kept
+        if not any(ln.strip() for ln in lines) and not _HEAD_LOOKS_LIKE_Q_RE.match(head or ""):
+            # R13：光秃秃的标题块（无正文、标题也不像题号）——分节 / 装饰，不是题目
+            continue
+        # 独立加粗行 = subtopic —— **仅当其后还有真正的题干行**时才认（`_has_stem_after`）。
+        # 否则该加粗行本身就是题干（第三方写法 `**急诊医学的核心内涵是**` 直接接选项）。
         subtopic = ""
         if head_q == "" and head:
-            for i, ln in enumerate(lines):
-                s = ln.strip()
-                if not s:
-                    continue
-                m = _BOLD_ONLY_RE.match(s)
-                if m and not _OPT_LIKE.match(m.group(1)):
+            first = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+            if first is not None:
+                m = _BOLD_ONLY_RE.match(lines[first].strip())
+                if m and not _is_option_line(m.group(1)) and _has_stem_after(lines, first):
                     subtopic = m.group(1).strip()
-                    lines = lines[:i] + lines[i + 1:]
-                break
+                    lines = lines[:first] + lines[first + 1:]
         payload = "\n".join(lines).strip()
         if head_q:
             payload = (head_q + "\n" + payload).strip()
@@ -201,9 +305,16 @@ def parse_bank_md(text: str) -> list[dict[str, Any]]:
             "subtopic": subtopic,
         }
         if qid:
-            row["origin_ref"] = {"source_id": qid}
+            ref: dict[str, Any] = {"source_id": qid}
+            if meta.get("模块"):
+                ref["module"] = meta["模块"]
+            if meta.get("页码"):
+                ref["page"] = meta["页码"]
+            row["origin_ref"] = ref
         if qtype:
             row["type"] = qtype
+        if bloom:
+            row["bloom"] = bloom
         rows.append(row)
     return rows
 

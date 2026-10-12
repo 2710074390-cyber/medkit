@@ -239,3 +239,175 @@ def test_bold_analysis_marker_is_stripped():
     assert len(rows) == 1
     assert rows[0]["analysis"] == "吸烟是 COPD 最重要的环境致病因素", f"解析不符：{rows[0]['analysis']!r}"
     assert "**" not in rows[0]["analysis"]
+
+
+# ================================================================== R13（2026-10-13）
+# 第三方题库写法：**分节标题 / 题号标签 / 溯源引用 / 加粗选项**。
+# 样本取自实测文件 `ALL_questions_FIXED.md`（急诊与灾难医学 batch035）——用户报「刷题时
+# 标题被当成题目、题目内容识别错误」即由此格式触发：231 题里 11 题是章节空壳，
+# 其余题干混进 `[X型题｜理解] id` / `> 模块：M1｜页码：教材P1` / 选项 / 答案。
+_THIRD_PARTY_MD = """# 急诊与灾难医学 batch035 题库（220题） 题库（220题）
+
+> 来源：最终产物\\batch035\\ALL_questions_FIXED.json | 导出：2026-09-07 10:09
+> 题型分布：A1×100、A2×46、X×30、A3×24、B1×20
+
+---
+
+## M1（8题）
+
+### 1. [A1型题｜理解] batch035-M1-A1-001
+
+> 模块：M1｜页码：教材P1
+
+**急诊医学的核心内涵是**
+
+- A. 院前急救、院内急诊和危重症监护一体化模式
+- **B. 早期判断,迅速救治,保护脏器功能生命安全** ✅
+- C. 急救人员、车辆、通信的调动准备和现场急救
+
+**答案：B**
+
+> 解析：急诊医学是……教材P1。
+
+---
+
+### 8. [X型题｜理解] batch035-M1-X-001
+
+> 模块：M1｜页码：教材P1-2
+
+**我国急救医疗服务体系（EMSS）的组成部分包括**
+
+- **A. 院前急救** ✅
+- **B. 医院急诊** ✅
+- **C. 危重症监护** ✅
+- D. 社区卫生服务中心
+- E. 康复医疗机构
+
+**答案：ABC**
+
+> 解析：我国目前的急救医疗服务体系……教材P1-2。
+
+---
+
+## M2（30题）
+
+本章介绍常见急症的识别与处理。
+
+### 1. [A1型题｜记忆] batch035-M2-A1-001
+
+> 模块：M2｜页码：教材P10
+
+**心跳骤停最可靠且最早的判断依据是**
+
+- **A. 意识丧失伴大动脉搏动消失** ✅
+- B. 瞳孔散大
+- C. 心电图呈直线
+
+**答案：A**
+
+> 解析：意识丧失伴大动脉搏动消失是最可靠且最早的判断依据。教材P10。
+
+---
+"""
+
+
+def test_section_headings_are_not_questions():
+    """分节标题（`## M1（8题）`）不是题目——文档标题 + 2 个分节标题不得产出空壳题。
+
+    实测：231 题里 11 题是「题干=章节名、无选项无答案」的空壳（源文件声明 220 题）。
+    """
+    rows = bank_iq.parse_bank_md(_THIRD_PARTY_MD)
+    assert len(rows) == 3, f"应 3 道题（2 个分节标题都不成题），实得 {len(rows)}"
+    qs = [r["question"] for r in rows]
+    assert not any("（8题）" in q or "（30题）" in q for q in qs), f"分节标题变成了题目：{qs}"
+    assert not any(q.startswith("#") for q in qs), f"文档标题变成了题目：{qs}"
+    # 带正文的分节标题（M2 下有一句说明）也不得成题
+    assert not any("本章介绍" in q for q in qs), f"分节标题正文混进了题干：{qs}"
+
+
+def test_third_party_heading_metadata_goes_to_fields_not_stem():
+    """`### 1. [A1型题｜理解] batch035-M1-A1-001` 的题型/id 进字段，**不进题干**。"""
+    r0 = bank_iq.parse_bank_md(_THIRD_PARTY_MD)[0]
+    assert r0["question"] == "急诊医学的核心内涵是", f"题干不符：{r0['question']!r}"
+    assert r0["type"] == "A1", f"题型未从标题标签识别：{r0.get('type')!r}"
+    assert r0["bloom"] == "理解", f"bloom 未从标题标签识别：{r0.get('bloom')!r}"
+    assert r0["origin_ref"] == {"source_id": "batch035-M1-A1-001",
+                               "module": "M1", "page": "教材P1"}, r0.get("origin_ref")
+    # 题号标签与溯源引用都不得残留在题干里
+    for bad in ("batch035", "A1型题", "模块：", "页码：", "**", "---"):
+        assert bad not in r0["question"], f"题干残留 {bad!r}：{r0['question']!r}"
+
+
+def test_bold_options_are_recognized_with_checkmark():
+    """加粗 + 对勾的选项（`- **B. 早期判断…** ✅`）必须被识别，且剥掉 `**` 与 ✅。
+
+    实测缺陷：旧实现只认行首即字母 ⇒ 只抓到未加粗的 D/E 两行，
+    X 题 5 个选项变 2 个（**选项错位**），其余选项被并进题干。
+    """
+    rows = bank_iq.parse_bank_md(_THIRD_PARTY_MD)
+    a1, x = rows[0], rows[1]
+    assert a1["options"] == [
+        "A. 院前急救、院内急诊和危重症监护一体化模式",
+        "B. 早期判断,迅速救治,保护脏器功能生命安全",
+        "C. 急救人员、车辆、通信的调动准备和现场急救"], a1["options"]
+    assert x["options"] == ["A. 院前急救", "B. 医院急诊", "C. 危重症监护",
+                            "D. 社区卫生服务中心", "E. 康复医疗机构"], x["options"]
+    for opt in x["options"]:
+        assert "**" not in opt and "✅" not in opt, f"选项残留呈现标记：{opt!r}"
+
+
+def test_x_type_label_is_recognized():
+    """`[X型题｜理解]` 必须识别为 X 型（`[A-H]` 覆盖不到 X，实测漏判 30 道多选）。"""
+    x = bank_iq.parse_bank_md(_THIRD_PARTY_MD)[1]
+    assert x["type"] == "X", f"X 型未识别：{x.get('type')!r}"
+    assert x["answer"] == "ABC"
+    assert x["question"] == "我国急救医疗服务体系（EMSS）的组成部分包括", x["question"]
+
+
+def test_bold_stem_is_stem_not_subtopic():
+    """标题下第一行整行加粗：**其后是选项** ⇒ 它就是题干（不是 subtopic）。
+
+    对照（MedKit 导出）：**其后还有题干行** ⇒ 它才是 subtopic。两种写法都必须对。
+    """
+    rows = bank_iq.parse_bank_md(_THIRD_PARTY_MD)
+    assert rows[0]["subtopic"] == "", f"加粗题干被误当 subtopic：{rows[0]['subtopic']!r}"
+    # MedKit 自己的格式（加粗行后还有题干行）仍应把加粗行当 subtopic
+    medkit_md = export_md(_CASES[0], "题库")
+    r = bank_iq.parse_bank_md(medkit_md)[0]
+    assert r["subtopic"] == "慢阻肺的诊断" and r["question"] == "慢阻肺最主要的病因是"
+
+
+def test_inline_emphasis_markers_are_stripped_from_question():
+    """题干里的行内强调（`**错误的**`）是呈现标记，必须剥掉（渲染层不会解释它）。"""
+    rows = bank_iq.parse_bank_md(
+        "### 1. 关于急诊医学专业特点的描述，**错误的**是\n"
+        "- A. 甲\n- B. 乙\n**答案：A**\n💡 解析")
+    assert rows[0]["question"] == "关于急诊医学专业特点的描述，错误的是", rows[0]["question"]
+
+
+def test_horizontal_rule_does_not_leak_into_analysis():
+    """题目之间的 `---` 不得残留在解析尾部（实测 `…教材P1-2。\\n\\n---`）。"""
+    r = bank_iq.parse_bank_md(_THIRD_PARTY_MD)[0]
+    assert r["analysis"] == "急诊医学是……教材P1。", f"解析不符：{r['analysis']!r}"
+    assert "---" not in r["analysis"]
+
+
+def test_mistakes_md_path_strips_md_scaffold():
+    """「错题导入」的 md 分支（`library.parse_import_text`）同样不得把脚手架当题目。
+
+    实测：同一份文件在该路径下多出 1 道「文档标题 + 分节标题」空壳题（221 vs 220），
+    且每道题干残留 `[A1型题｜理解] id` 与 `> 模块：M1｜页码：教材P1`。
+    """
+    from medkit.core import library as lib
+    rows = lib.parse_import_text(_THIRD_PARTY_MD, "md")
+    assert len(rows) == 3, f"应 3 道题，实得 {len(rows)}"
+    for r in rows:
+        q = r["question"]
+        for bad in ("batch035", "型题", "模块：", "页码：", "#"):
+            assert bad not in q, f"题干残留脚手架 {bad!r}：{q!r}"
+    assert rows[0]["options"] == [
+        "A. 院前急救、院内急诊和危重症监护一体化模式",
+        "B. 早期判断,迅速救治,保护脏器功能生命安全",
+        "C. 急救人员、车辆、通信的调动准备和现场急救"], rows[0]["options"]
+    # `> 解析：…` 是解析，**不得**被当成元数据剥掉
+    assert rows[0]["analysis"].startswith("急诊医学是"), rows[0]["analysis"]

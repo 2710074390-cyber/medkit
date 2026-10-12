@@ -1050,6 +1050,61 @@ _OPT_RE = re.compile(r"^[（(]?([A-Ha-h])[)）、.．\s]+(?=\S)")
 _LIST_MARK_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 # 无实义残留行（如 `**✅ **`）：答案/解析段被摘走后剩下的装饰行，不得混进题干或并进选项
 _HAS_CONTENT_RE = re.compile(r"[\w\u4e00-\u9fff]")
+# R13（2026-10-13）：**加粗/斜体标记的选项行**。
+# 第三方题库（实测 `ALL_questions_FIXED.md`）把正确项写成 `- **A. 院前急救** ✅`：
+# 行首是 `**`，剥列表符后仍是 `**A. …` ⇒ 旧实现 `_OPT_RE` 不命中 ⇒ 只有未加粗的
+# `- D. …` / `- E. …` 被当成选项（**选项错位**），其余全被并进题干。
+# 现在判选项前先剥前导强调标记，存库前再剥尾部标记与正确性对勾。
+_EMPH_LEAD_RE = re.compile(r"^(?:\*{1,2}|_{1,2})\s*")
+# 选项尾部装饰：闭合加粗 + 正确性对勾（✅✔√✓☑）——它们是呈现标记，不是选项文本
+_OPT_TAIL_RE = re.compile(r"[\s*_✅✔√✓☑]+$")
+# 题目之间的水平分隔线（`---` / `***` / `___`）：不得混进题干或解析
+_HR_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+# 整行加粗（`**题干**`）：题干可能整体加粗，须拆掉标记（否则题干里带 `**`）
+_BOLD_LINE_RE = re.compile(r"^\*\*(.+?)\*\*$")
+# 行内强调标记（`**错误的**`）：题干里的 markdown 强调是**呈现标记**，
+# 渲染层只做 `esc()` 不会解释它 ⇒ 不剥就会把 `**` 原样显示给用户（实测 11 道题命中）
+_EMPH_ANY_RE = re.compile(r"\*\*|__")
+
+# ---- R13（2026-10-13）：md **脚手架行**——它们不是题干 ----
+# 实测样本 `ALL_questions_FIXED.md`（第三方题库）在「错题导入」的 md 分支下会：
+#   ① 把 `# 文档标题` + `## M1（8题）` 变成一道「无选项无答案」的空壳题（221 vs 220）；
+#   ② 每道题题干里残留 `[A1型题｜理解] batch035-M1-A1-001` 与 `> 模块：M1｜页码：教材P1`。
+# 题库导入（`bank_iq.parse_bank_md`）对同一份文件做**字段级**处理（题型/id/模块进元数据），
+# 这里只做**行级**剥离——两条路径判据一致，产出形状不同（这里只要干净题干）。
+_MD_TITLE_RE = re.compile(r"^#\s+\S")                       # `# 文档标题`
+_MD_SECTION_HEAD_RE = re.compile(r"^#{1,6}\s*.*[（(]\s*\d+\s*题\s*[)）]\s*$")   # `## M1（8题）`
+# `> 模块：M1｜页码：教材P1` —— ⚠️ 必须放行 `> 解析：…` / `> 答案：…`（那是解析/答案）。
+# 否定前瞻里要自带 `\s*`——否则外层 `\s*` 回溯到「零空格」即可绕开前瞻（实测会丢解析）。
+_MD_META_QUOTE_RE = re.compile(r"^\s*>\s*(?!\s*(?:解析|答案|💡))[^:：]{1,10}\s*[:：]")
+# `[A1型题｜理解] batch035-M1-A1-001` —— 题号标签行（题型标签在方括号里）
+_MD_TAG_HEAD_RE = re.compile(
+    r"^\s*[【\[]\s*[^】\]]{1,30}型(?:题)?\s*[｜|]?[^】\]]{0,20}\s*[】\]]\s*\S{0,60}\s*$")
+
+
+def strip_md_scaffold(text: str) -> str:
+    """剥掉 md 脚手架行（文档标题 / 分节标题 / 溯源引用 / 题号标签）——它们不是题干。
+
+    供「错题导入」的 md 分支使用：该分支按题号切块后，块首常残留题号标签与溯源行，
+    首个块还会带上文档标题与分节标题（`bank_iq.parse_bank_md` 有更细的字段级处理）。
+    """
+    out: list[str] = []
+    for ln in (text or "").splitlines():
+        if (_MD_TITLE_RE.match(ln) or _MD_SECTION_HEAD_RE.match(ln)
+                or _MD_META_QUOTE_RE.match(ln) or _MD_TAG_HEAD_RE.match(ln)):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _unwrap_bold(line: str) -> str:
+    """整行加粗（`**题干**`）→ 拆掉标记；非整行加粗原样返回。
+
+    R13：第三方题库把**题干**写成整行加粗（`**急诊医学的核心内涵是**`），
+    不拆就会把 `**` 一起存进题干。
+    """
+    m = _BOLD_LINE_RE.match((line or "").strip())
+    return m.group(1).strip() if m else line
 
 
 def parse_question_text(text: str) -> dict[str, Any]:
@@ -1090,6 +1145,9 @@ def parse_question_text(text: str) -> dict[str, Any]:
     elif ana_match:
         body = text[: ana_match.start()]
     body = re.sub(r"^[\s。；;、，,．.]+|[\s。；;、，,．.]+$", "", body or "").strip()
+    # R13：题目之间的水平分隔线（`---`）不得残留在解析尾部
+    # （实测第三方 md：`解析：…教材P1-2。\n\n---` 会把 `---` 存进解析）
+    analysis = re.sub(r"(?:\s*(?:-{3,}|\*{3,}|_{3,})\s*)+$", "", analysis or "").strip()
 
     lines = body.splitlines()
     options: list[str] = []
@@ -1099,24 +1157,29 @@ def parse_question_text(text: str) -> dict[str, Any]:
         line = raw_line.strip()
         if line and not _HAS_CONTENT_RE.search(line):
             continue     # 纯装饰残留行（`**✅ **` / `**`）——丢弃，不并入选项也不混进题干
+        if _HR_RE.match(line):
+            continue     # R13：题目之间的水平分隔线——既不是题干也不是选项
         probe = _LIST_MARK_RE.sub("", line)     # R1：剥前导列表符（`- ` / `* ` / `1. `）
+        probe = _EMPH_LEAD_RE.sub("", probe)    # R13：剥加粗/斜体标记（`- **A. 甲** ✅`）
         m = _OPT_RE.match(probe)
         if m:
-            options.append(probe)
+            # R13：尾部闭合 `**` 与正确性对勾 ✅ 是**呈现标记**，不是选项文本
+            options.append(_OPT_TAIL_RE.sub("", probe).strip())
             option_begun = True
         elif option_begun and line:
             # P0-2：选项已经开始，遇到非选项行
             # 若题干尚未收集到内容 → 这是「选项在前、题干在后」的结构，归题干并结束选项段
             if not q_lines:
-                q_lines.append(line)
+                q_lines.append(_unwrap_bold(line))
                 option_begun = False
             elif options:
                 # 题干已有内容 → 多行选项的延续（保留兼容）
                 options[-1] = options[-1] + " " + line
         elif not option_begun:
-            q_lines.append(line)
+            q_lines.append(_unwrap_bold(line))
 
-    question = ("\n".join(q_lines) if q_lines else body).strip()
+    # R13：题干里的 markdown 强调标记（`**错误的**`）是呈现标记，渲染层不解释 ⇒ 剥掉
+    question = _EMPH_ANY_RE.sub("", ("\n".join(q_lines) if q_lines else body)).strip()
     return {
         "question": question,
         "options": options,
@@ -1209,7 +1272,8 @@ def parse_import_text(text: str, fmt: str) -> list[dict[str, Any]]:
     if len(blocks) < 2:
         blocks = [text]
     for b in blocks:
-        b = b.strip()
+        # R13：剥 md 脚手架（文档标题 / 分节标题 / 溯源行 / 题号标签）——它们不是题干
+        b = strip_md_scaffold(b).strip()
         if len(b) < 8:
             continue
         parsed = parse_question_text(b)

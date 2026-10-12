@@ -290,8 +290,33 @@ def test_list_banks_reports_mastery_and_accuracy(client):
     bid = _make_bank(client)
     items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
     client.post("/api/bank/grade", json={"bank_id": bid, "item_id": items[0]["id"], "user_answer": "A"})
-    b = client.get("/api/bank/banks").json()["banks"][0]
+    # 按 id 取**本题库**（不用 `banks[0]`：列表顺序不该被本用例假设为「只有一个题库」）
+    b = next(x for x in client.get("/api/bank/banks").json()["banks"] if x["id"] == bid)
     assert b["attempted"] == 1 and b["mastery"] == 0.5 and b["accuracy"] == 1.0
+
+
+def test_new_id_is_lexicographically_monotonic_across_digit_boundary(monkeypatch):
+    """`_new_id` 的序号必须**定宽补零**——`ORDER BY created_at, id` 靠它定序。
+
+    证伪：把 `:06d` 去掉 ⇒ 序号 9 → 10 时 `"…_9" > "…_10"`（字符串比较）⇒ 本用例必红。
+    实测影响：题目顺序会翻（练习第 1 题变第 2 题），且用例结果随「文件执行顺序」变化
+    （`test_bank_iq.py` 先跑会消耗 `_ID_SEQ`，把边界推到 9/10）。
+    """
+    import itertools
+    monkeypatch.setattr(bank, "_ID_SEQ", itertools.count(8))   # 起点 8 ⇒ 覆盖 9 → 10 边界
+    ids = [bank._new_id("qi") for _ in range(5)]
+    assert ids == sorted(ids), f"id 跨位数后不再字典序单调：{ids}"
+
+
+def test_list_items_keeps_insertion_order_across_id_digit_boundary(monkeypatch, client):
+    """入库原序必须稳定：`drill` 的第 1 题就是导入时的第 1 题（跨 id 位数边界也一样）。"""
+    import itertools
+    monkeypatch.setattr(bank, "_ID_SEQ", itertools.count(8))
+    bid = _make_bank(client)
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    assert items[0]["question"] == "慢阻肺最主要的病因是", \
+        f"第 1 题应是导入时的第 1 题，实得 {items[0]['question']!r}"
+    assert items[1]["question"] == "下列属于治疗要点的是"
 
 
 def test_delete_item_removes_attempts(client):

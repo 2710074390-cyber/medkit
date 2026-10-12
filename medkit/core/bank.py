@@ -44,8 +44,14 @@ _ID_SEQ = itertools.count()
 
 
 def _new_id(prefix: str) -> str:
-    """毫秒时间戳 + 进程内单调序号（同毫秒并发也不撞 id）。"""
-    return f"{prefix}_{int(time.time() * 1000)}_{next(_ID_SEQ)}"
+    """毫秒时间戳 + 进程内单调序号（同毫秒并发也不撞 id）。
+
+    ⚠️ 序号**必须定宽补零**：本域的排序是 `ORDER BY <时间>, id`（见 `list_items` /
+    `list_attempts`），而 `id` 是字符串比较——序号跨位数（9 → 10）时
+    `"…_9" > "…_10"`，字典序与数值序不一致 ⇒ **题目顺序会翻**
+    （实测：练习第 1 题变成第 2 题，且用例结果随「文件执行顺序」变化）。
+    """
+    return f"{prefix}_{int(time.time() * 1000)}_{next(_ID_SEQ):06d}"
 
 
 def _now() -> str:
@@ -163,6 +169,7 @@ def delete_bank(bid: str) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 题目
 def list_items(bid: str) -> list[dict[str, Any]]:
+    """题库内题目，**按入库原序**（`created_at` 同秒时用 `id` 定序，id 序号定宽见 `_new_id`）。"""
     ensure_ready()
     conn = dbs.get_conn()
     cur = conn.cursor()
