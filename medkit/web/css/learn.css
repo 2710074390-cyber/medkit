@@ -153,8 +153,17 @@
 .qcard.flipped .qcard-inner{transform:rotateY(180deg)}
 .qcard-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
   background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
-  display:flex;flex-direction:column;overflow:auto}
+  display:flex;flex-direction:column;overflow:auto;
+  transition:visibility 0s linear .3s}   /* 与翻转动画（.3s）同步，配合下方兜底 */
 .qcard-face.qback{transform:rotateY(180deg)}
+/* ⚠️ Safari/WebKit 兜底（2026-10-12 三引擎实测发现）：`.qcard-face` 的 `overflow:auto`
+   会**压平 3D 上下文**，使 `backface-visibility:hidden` 失效 ⇒ 背面盖住正面——
+   表现是「点卡面不翻面」（背面拦截了点击），实测 webkit 上
+   `<details class="rv-hint">…</details> from <div class="qcard-face qback"> subtree intercepts pointer events`。
+   显式隐藏「非当前面」；延迟 0.3s 与翻转动画同步，观感与 Chromium/Firefox 一致。
+   （chromium/firefox 上此规则与 backface-visibility 等效，不会改变行为。） */
+.qcard.flipped .qfront{visibility:hidden}
+.qcard:not(.flipped) .qback{visibility:hidden}
 .qcard.graded{animation:qcardOut .26s ease forwards}
 @keyframes qcardOut{to{transform:scale(.9);opacity:0}}
 .qcard-tip{margin-top:auto;font-size:11.5px;color:var(--dim);text-align:center;padding-top:12px}

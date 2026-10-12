@@ -91,5 +91,10 @@ def test_syllabus_teacher_file_import(page, server_url, tmp_path):
     assert "肺通气" in pv and "肺结核" in pv, f"教师重点草稿缺失: {pv!r}"
     assert "知识点提取" in pv, f"知识点提取摘要缺失: {pv!r}"
 
+    # ⚠️ 必须显式确认入库（2026-10-12 三引擎实测修）：导入是**两段式**（preview=1 只解析不落库，
+    # 用户点「确认全部入库」才落库）。此前本用例只断言预览就直接等章树 ⇒ 它其实**靠同文件前一个
+    # 用例（`test_syllabus_paste_parse_confirm`）已把「呼吸系统」写进同一个 session 级后端**才绿——
+    # 单跑本用例在 chromium / firefox / webkit **三引擎全红**（顺序依赖，不是跨浏览器差异）。
+    page.evaluate("() => sylParseConfirm()")
     _wait_tree(page, "呼吸系统")
     assert "呼吸系统" in page.locator("#syl_body").inner_text()

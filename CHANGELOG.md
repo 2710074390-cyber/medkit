@@ -10,6 +10,23 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+## [0.12.0] - 2026-10-12
+
+> 主题：**跨浏览器 / 窄屏实测** + 体验质检整改 + 题库出处。
+
+### Added（跨浏览器与窄屏实测 · 2026-10-12）
+
+- 浏览器用例支持**引擎选择**：`MEDKIT_TEST_BROWSER=chromium|firefox|webkit`（默认 chromium，
+  既有口径不变）。三引擎各跑全量 **96 项全绿**。
+- 新增 `tests/browser/test_responsive.py` **4 项**：768×1024 平板 + 390×844 手机下，
+  六个主页面与题目管理表格**不得整页横向溢出**（表格自身滚动不算溢出）。
+- **修一个 Safari 上真会挡操作的缺陷**：翻转卡 `.qcard-face` 的 `overflow:auto` 会**压平 3D 上下文**，
+  使 `backface-visibility:hidden` 失效 ⇒ 背面盖住正面、点卡面不翻面（webkit 实测报
+  `details.rv-hint … intercepts pointer events`）。改为显式隐藏「非当前面」作为兜底。
+- **修一个顺序依赖的假绿用例**：`test_syllabus_teacher_file_import` 从不点「确认全部入库」，
+  靠同文件前一个用例写入的 session 级后端残留才绿（**单跑在 chromium/firefox/webkit 三引擎全红**）。
+  现补上确认步骤，单跑即绿。
+
 ### Added（错题 / 生成 双模式 + 题库刷题 + 讲解产物批量删除）
 
 背景：用户诉求「为学习中心新增批量删除讲解产物，并实现 MD 题库的导入、解析与刷题；

@@ -43,26 +43,32 @@ try:
 except Exception:  # pragma: no cover - 缺 playwright 时走这条
     _HAS_PLAYWRIGHT = False
 
-_CHROMIUM_OK: bool | None = None
+_ENGINE_OK: bool | None = None
+
+# 2026-10-12：跨浏览器实测——引擎由环境变量选择（默认 chromium，保持既有口径不变）。
+#   MEDKIT_TEST_BROWSER=firefox|webkit → 同一套用例在别的引擎上跑（窄屏/跨浏览器覆盖）。
+_BROWSER_KIND = os.environ.get("MEDKIT_TEST_BROWSER", "chromium").strip().lower()
+if _BROWSER_KIND not in ("chromium", "firefox", "webkit"):
+    _BROWSER_KIND = "chromium"
 
 
 def _skipped_by_env() -> bool:
     return os.environ.get("SKIP_BROWSER") == "1"
 
 
-def _chromium_available() -> bool:
-    """探测 chromium 是否已安装（只跑一次，缓存结果）。"""
-    global _CHROMIUM_OK
-    if _CHROMIUM_OK is not None:
-        return _CHROMIUM_OK
+def _engine_available() -> bool:
+    """探测当前引擎是否已安装（只跑一次，缓存结果）。"""
+    global _ENGINE_OK
+    if _ENGINE_OK is not None:
+        return _ENGINE_OK
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = getattr(p, _BROWSER_KIND).launch(headless=True)
             browser.close()
-        _CHROMIUM_OK = True
-    except Exception:  # pragma: no cover - 缺 chromium 二进制时走这条
-        _CHROMIUM_OK = False
-    return _CHROMIUM_OK
+        _ENGINE_OK = True
+    except Exception:  # pragma: no cover - 缺该引擎二进制时走这条
+        _ENGINE_OK = False
+    return _ENGINE_OK
 
 
 def _free_port() -> int:
@@ -104,8 +110,9 @@ def server_url(server_home):
         pytest.skip("SKIP_BROWSER=1：浏览器层被显式旁路（verify.cmd 已跳过该步骤）")
     if not _HAS_PLAYWRIGHT:
         pytest.skip("未安装 playwright：pip install -r requirements-dev.txt 后再跑浏览器用例")
-    if not _chromium_available():
-        pytest.skip("未安装 chromium：python -m playwright install chromium 后再跑浏览器用例")
+    if not _engine_available():
+        pytest.skip(
+            f"未安装 {_BROWSER_KIND}：python -m playwright install {_BROWSER_KIND} 后再跑浏览器用例")
 
     home = server_home
     port = _free_port()
@@ -135,9 +142,14 @@ def server_url(server_home):
 
 @pytest.fixture(scope="session")
 def browser(server_url):
-    """会话级 chromium 实例（无头）。"""
+    """会话级浏览器实例（无头）。引擎由 `MEDKIT_TEST_BROWSER` 选择（默认 chromium）。
+
+    `--no-sandbox` 是 chromium 专有参数，firefox/webkit 传了会报错 ⇒ 按引擎分支。
+    """
     with sync_playwright() as p:
-        b = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        kind = getattr(p, _BROWSER_KIND)
+        args = ["--no-sandbox"] if _BROWSER_KIND == "chromium" else []
+        b = kind.launch(headless=True, args=args)
         yield b
         b.close()
 
