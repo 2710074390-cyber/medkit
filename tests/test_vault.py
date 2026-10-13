@@ -236,6 +236,21 @@ def test_migration_preserves_miss_count(vroot):
     assert back["miss_count"] == 4, "miss_count 写进 front matter 后必须读回来"
 
 
+def test_list_items_filters_by_chapter_topic(vroot):
+    """薄弱项表点一行要能筛出该组错题 ⇒ `list_items` 必须支持 chapter/topic 精确过滤。"""
+    vault.write_record(_rec(id="fa", subject="内科学", chapter="呼吸系统", topic="慢阻肺",
+                            question="A", created_at="2026-10-13T08:00:00"), vroot)
+    vault.write_record(_rec(id="fb", subject="内科学", chapter="循环系统", topic="心衰",
+                            question="B", created_at="2026-10-13T09:00:00"), vroot)
+    vault_index.rebuild(vroot)
+    assert len(vault_index.list_items(subject="内科学")) == 2
+    assert [r["question"] for r in vault_index.list_items(chapter="呼吸系统")] == ["A"]
+    assert [r["question"] for r in vault_index.list_items(subject="内科学", chapter="循环系统",
+                                                           topic="心衰")] == ["B"]
+    # 三者都不匹配 ⇒ 空（精确等值，不是模糊命中）
+    assert vault_index.list_items(subject="内科学", chapter="呼吸系统", topic="心衰") == []
+
+
 # ================================================================ 接口红线
 def test_section_endpoint_blocks_traversal_and_answer(vroot):
     _seed(vroot, 1)

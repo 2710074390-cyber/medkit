@@ -157,3 +157,38 @@ def test_vault_search_narrows_and_clears(page, server_url):
         assert page.locator(".vault-row").count() == 2
     finally:
         _cleanup(page, _SUBJ_B)
+
+
+_SUBJ_C = "儿科学_vault筛选"
+
+
+def test_vault_stat_row_filters_list(page, server_url):
+    """薄弱项表点一行 → 错题列表收窄到该组（把「先学什么」接到「看哪些题」）。"""
+    _goto_vault(page, server_url)
+    _seed_library(page, _SUBJ_C)
+    try:
+        _migrate(page)
+        _search(page, _SUBJ_C)
+        assert page.locator(".vault-row").count() == 2
+
+        # 点薄弱项表里本科目那一行 → 列表按该组重筛（先等「筛选」条出现，
+        # 不能只等行数——行数在点之前就已满足，会读到未刷新的旧 DOM）
+        page.locator("#vault_stats .vault-statrow", has_text=_SUBJ_C).first.click()
+        page.wait_for_function(
+            "() => document.getElementById('vault_filter_bar').innerText.includes('筛选')",
+            timeout=15000)
+        page.wait_for_function(
+            """(t) => {
+                 const rows = document.querySelectorAll('.vault-row');
+                 return rows.length === 2 && [...rows].every(r => r.innerText.includes(t));
+               }""", arg=_SUBJ_C, timeout=15000)
+        assert "筛选" in page.locator("#vault_filter_bar").inner_text()
+
+        # 清除筛选 → 筛选条收起
+        page.click("#btn_vault_filter_clear")
+        page.wait_for_function(
+            "() => document.getElementById('vault_filter_row').style.display === 'none'",
+            timeout=15000)
+        assert page.locator("#vault_filter_bar").inner_text() == ""
+    finally:
+        _cleanup(page, _SUBJ_C)

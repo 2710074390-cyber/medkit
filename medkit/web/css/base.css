@@ -425,6 +425,9 @@
   .vault-row:hover{border-color:var(--accent)}
   .vault-q{font-size:13px;line-height:1.5}
   .vault-meta{font-size:11.5px;color:var(--dim)}
+  /* 薄弱项表：点一行 = 把这组错题筛出来（可点行给出视觉提示） */
+  .vault-statrow{cursor:pointer}
+  .vault-statrow:hover{background:var(--card2)}
   /* 侧栏徽章（学习中心：薄弱知识点数） */
   .navbadge{position:absolute;top:6px;right:14px;min-width:16px;height:16px;border-radius:8px;padding:0 4px;
     background:#e5484d;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;

@@ -83,8 +83,10 @@ def rebuild() -> dict[str, Any]:
 
 # ------------------------------------------------------------------ 读
 @router.get("/api/vault/mistakes")
-def mistakes(subject: str = "", status: str = "", q: str = "") -> dict[str, Any]:
-    items = vault_index.list_items(subject=subject, status=status, q=q)
+def mistakes(subject: str = "", status: str = "", q: str = "",
+             chapter: str = "", topic: str = "") -> dict[str, Any]:
+    items = vault_index.list_items(subject=subject, status=status, q=q,
+                                   chapter=chapter, topic=topic)
     return {"count": len(items), "items": items, "subjects": vault_index.subjects()}
 
 

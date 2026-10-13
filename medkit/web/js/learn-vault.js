@@ -1,6 +1,6 @@
 /* exported vaultInit, vaultRebuild, vaultMigrate, vaultSaveDir, vaultSearch,
    vaultSearchClear, vaultAsk, vaultAskGlobal, vaultPersist, vaultClose, vaultEdit, vaultOpen,
-   vaultLoad, vaultView */
+   vaultFilter, vaultFilterClear, vaultLoad, vaultView */
 /* ---- 本地错题（vault）视图：读文件索引 + 薄弱项 + Agent 问答 ----
  *
  * 设计要点（见 docs/错题本地文件化与Agent助手_设计方案_2026-10-13.md）：
@@ -12,6 +12,7 @@
 let _vaultItems = [];
 let _vaultCur = "";      // 当前打开的错题（索引里的相对路径）
 let _vaultListSeq = 0;   // 列表请求序号：晚到的过期响应不许覆盖更新的结果（防闪烁/丢筛选）
+let _vaultFilter = { subject: "", chapter: "", topic: "" };   // 薄弱项表点行 → 按组筛错题列表
 
 function _esc(s) { const d = document.createElement("div"); d.textContent = String(s == null ? "" : s); return d.innerHTML; }
 
@@ -95,10 +96,16 @@ async function vaultLoad() {
     } else {
       box.innerHTML = `<table class="bank-preview-table"><thead><tr>
           <th>科目</th><th>章节</th><th>主题</th><th>错题</th><th>未掌握</th><th>状态</th><th>优先级</th>
-        </tr></thead><tbody>` + g.slice(0, 12).map(x => `<tr>
+        </tr></thead><tbody>` + g.slice(0, 12).map(x => `<tr class="vault-statrow"
+          title="点一行看这组错题"
+          data-sub="${_esc(x.subject)}" data-ch="${_esc(x.chapter)}" data-tp="${_esc(x.topic)}">
           <td>${_esc(x.subject)}</td><td>${_esc(x.chapter)}</td><td>${_esc(x.topic)}</td>
           <td>${x.total}</td><td>${x.unlearned}</td><td>${_stateLabel(x.state)}</td>
           <td>${(x.priority * 100).toFixed(0)}</td></tr>`).join("") + `</tbody></table>`;
+      // 用 dataset + 委托，而不是把值拼进 onclick 字符串——主题里带引号时不会逃逸出 JS。
+      box.querySelectorAll(".vault-statrow").forEach(tr => {
+        tr.onclick = () => vaultFilter(tr.dataset.sub, tr.dataset.ch, tr.dataset.tp);
+      });
     }
     const meta = $("vault_list_meta");
     if (meta) meta.textContent = `共 ${st.total} 条 · 未掌握 ${st.unlearned} 条`;
@@ -108,9 +115,14 @@ async function vaultLoad() {
 
 async function vaultRefreshList() {
   const q = ($("vault_q") && $("vault_q").value.trim()) || "";
+  const f = _vaultFilter;
+  const qs = new URLSearchParams({ q });
+  if (f.subject) qs.set("subject", f.subject);
+  if (f.chapter) qs.set("chapter", f.chapter);
+  if (f.topic) qs.set("topic", f.topic);
   const seq = ++_vaultListSeq;
   try {
-    const r = await api("/api/vault/mistakes?q=" + encodeURIComponent(q));
+    const r = await api("/api/vault/mistakes?" + qs.toString());
     if (seq !== _vaultListSeq) return;   // 期间又发起了更新的请求 → 丢弃本次过期结果
     _vaultItems = r.items || [];
     const box = $("vault_list");
@@ -121,15 +133,29 @@ async function vaultRefreshList() {
           <span class="vault-meta">${_esc([r.subject, r.chapter, r.topic].filter(Boolean).join(" · "))}
             ${r.understanding ? " · 有我的理解" : ""}${r.doubts ? " · 有疑问" : ""}</span>
         </button>`).join("")
-      : `<div class="hint">${q ? "没有命中的错题。" : "还没有错题文件。"}</div>`;
+      : `<div class="hint">${q || f.subject || f.chapter || f.topic ? "没有命中的错题。" : "还没有错题文件。"}</div>`;
     }
     const cl = $("btn_vault_q_clear");
     if (cl) cl.style.display = q ? "" : "none";
+    const parts = [f.subject, f.chapter, f.topic].filter(Boolean);
+    const fb = $("vault_filter_bar"), fr = $("vault_filter_row");
+    if (fb) fb.textContent = parts.length ? `筛选：${parts.join(" / ")}` : "";
+    if (fr) fr.style.display = parts.length ? "" : "none";
   } catch (e) { toast("列表读取失败：" + e.message, false); }
 }
 
 function vaultSearch() { vaultRefreshList(); }
 function vaultSearchClear() { $("vault_q").value = ""; vaultRefreshList(); }
+
+/* 薄弱项表点一行：把该组（科目/章节/主题）的错题筛出来——让「先学什么」直接落到「看哪些题」 */
+function vaultFilter(subject, chapter, topic) {
+  _vaultFilter = { subject: subject || "", chapter: chapter || "", topic: topic || "" };
+  vaultRefreshList();
+}
+function vaultFilterClear() {
+  _vaultFilter = { subject: "", chapter: "", topic: "" };
+  vaultRefreshList();
+}
 
 async function vaultOpen(rel) {
   _vaultCur = rel;

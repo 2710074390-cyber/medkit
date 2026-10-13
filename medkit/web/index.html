@@ -667,6 +667,10 @@ try {
         <div class="cardh"><h2>错题</h2>
           <span class="hint" id="vault_list_meta"></span>
         </div>
+        <div class="row" id="vault_filter_row" style="display:none;gap:8px;margin-bottom:8px;align-items:center">
+          <span class="hint" id="vault_filter_bar"></span>
+          <button class="act gray" id="btn_vault_filter_clear" onclick="vaultFilterClear()">清除筛选</button>
+        </div>
         <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
           <div style="flex:2;min-width:200px">
             <input type="text" id="vault_q" placeholder="在题干 / 解析 / 我的理解 / 我的疑问里搜…"

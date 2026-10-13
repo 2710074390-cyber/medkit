@@ -148,12 +148,22 @@ def _like_pattern(term: str) -> str:
     return f"%{e}%"
 
 
-def list_items(subject: str = "", status: str = "", q: str = "") -> list[dict[str, Any]]:
-    """错题列表。筛选全可选；`q` 命中题干/解析/我的理解/我的疑问（LIKE，通配符转义）。"""
+def list_items(subject: str = "", status: str = "", q: str = "",
+               chapter: str = "", topic: str = "") -> list[dict[str, Any]]:
+    """错题列表。筛选全可选；`q` 命中题干/解析/我的理解/我的疑问（LIKE，通配符转义）。
+
+    `chapter`/`topic` 供「薄弱项表 → 点一行看这组错题」用（精确等值，与统计的分组口径一致）。
+    """
     where, params = [], []
     if subject:
         where.append("subject = ?")
         params.append(subject)
+    if chapter:
+        where.append("chapter = ?")
+        params.append(chapter)
+    if topic:
+        where.append("topic = ?")
+        params.append(topic)
     if status:
         where.append("status = ?")
         params.append(status)
