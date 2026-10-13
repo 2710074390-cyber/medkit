@@ -98,11 +98,13 @@ def test_learn_views_breakpoints_no_overflow(page, server_url):
 
 
 def test_learn_views_shortcut_keys(page, server_url):
-    """IMP-12①：Alt+1..5 直达子导航（v0.8.1 五视图）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
+    """IMP-12①：Alt+1..6 直达子导航（v0.15 精简后为 6 视图：概览/错题本/本地错题/讲解产物/提问学习/大纲管理）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
     _open_learn(page, server_url)
-    page.keyboard.press("Alt+5")
+    page.keyboard.press("Alt+6")
     assert page.locator('#learnnav button[data-lv="syllabus"]').get_attribute("aria-selected") == "true"
     assert page.locator("#lv-syllabus").is_visible()
+    page.keyboard.press("Alt+3")
+    assert page.locator("#lv-vault").is_visible(), "Alt+3 应切到本地错题（vault 插入后重编号）"
     page.keyboard.press("Alt+1")
     assert page.locator("#lv-overview").is_visible()
     # ←/→：聚焦当前 pill（overview）→ 右键 → mistakes

@@ -54,7 +54,8 @@ JS_DIR = ROOT / "medkit" / "web" / "js"
 SHARED = ("md.js",)
 # 2026-10-13（奥卡姆精简 P2）：原 EP-01 归因域的三片（learn-meta / learn-meta-image /
 # learn-search）随功能删除；本域现为「学习中心 + 错题本」，改称 CORE。
-CORE = ("learn.js", "learn-study.js", "learn-live.js", "learn-review.js")
+CORE = ("learn.js", "learn-study.js", "learn-vault.js", "learn-live.js",
+        "learn-review.js")
 SHELL = ("app.js",)
 PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")

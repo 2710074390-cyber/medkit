@@ -14,9 +14,10 @@ from ..core import config as cfg
 router = APIRouter()
 
 PROMPT_ROLES = {"medgen.md": "MedGen · 出题", "medqc.md": "MedQC · 质检",
-                "medfix.md": "MedFix · 修复", "medreview.md": "MedReview · 复习手册",
-                "medtutor.md": "MedTutor · 苏格拉底提问", "medexplain.md": "MedExplain · 教材讲解",
-                "medcards.md": "MedCards · 医学记忆卡", "syllabus_extract.md": "SyllabusExtract · 官方大纲抽取"}
+               "medfix.md": "MedFix · 修复", "medreview.md": "MedReview · 复习手册",
+               "medtutor.md": "MedTutor · 苏格拉底提问", "medexplain.md": "MedExplain · 教材讲解",
+               "medcards.md": "MedCards · 医学记忆卡", "syllabus_extract.md": "SyllabusExtract · 官方大纲抽取",
+               "mistake_agent.md": "MistakeAgent · 错题助手（只引用用户自己的 vault）"}
 
 
 def _prompt_meta() -> dict[str, Any]:

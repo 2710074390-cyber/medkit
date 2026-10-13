@@ -418,6 +418,13 @@
   .rex-tab th{color:var(--dim);font-weight:600;font-size:11.5px}
   .learnview{display:none}
   .learnview.show{display:block}
+  /* 本地错题（vault）：一题一文件，列表行可点开详情 */
+  .vault-row{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;
+    background:var(--card2);border:1px solid var(--line);border-radius:10px;
+    padding:9px 12px;margin-bottom:7px;cursor:pointer;font-family:inherit;color:var(--text)}
+  .vault-row:hover{border-color:var(--accent)}
+  .vault-q{font-size:13px;line-height:1.5}
+  .vault-meta{font-size:11.5px;color:var(--dim)}
   /* 侧栏徽章（学习中心：薄弱知识点数） */
   .navbadge{position:absolute;top:6px;right:14px;min-width:16px;height:16px;border-radius:8px;padding:0 4px;
     background:#e5484d;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;

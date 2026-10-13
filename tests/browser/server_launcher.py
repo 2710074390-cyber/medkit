@@ -12,9 +12,14 @@ OCR_JOB_DIR、PRESETS_DIR 等）。若在同进程先 import medkit 再改 confi
 
 - <port>     ：随机空闲端口（仅监听 127.0.0.1 回环）。
 - <home_dir> ：本测试的隔离配置根目录（CONFIG_DIR / CONFIG_FILE / PROMPTS_DIR_USER /
-              PRESETS_DIR / projects_dir 全部重定向到这里，绝不触碰真实 ~/.medkit）。
+              PRESETS_DIR / projects_dir / vault_dir 全部重定向到这里，绝不触碰真实
+              ~/.medkit，也不写真实 ~/文档/MedKit错题本/）。
 
 启动完成后进入阻塞（uvicorn.Server.run()），由父进程探测 HTTP 200 判定就绪。
+
+⚠️ **vault_dir 必须重定向**（2026-10-13 补）：`core/vault.py` 的 `vault_root()` 在配置
+为空时回落到 `~/文档/MedKit错题本/`——那是**用户真实资产目录**。不重定向的话，浏览器层
+任何碰 vault 的用例都会把数据写进用户真目录（隔离失效，且污染后续真实使用）。
 """
 
 from __future__ import annotations
@@ -42,6 +47,8 @@ def main() -> None:
     cfg.PROMPTS_DIR_USER = home_path / "prompts"
     cfg.PRESETS_DIR = home_path / "presets"
     cfg.DEFAULTS["projects_dir"] = str(home_path / "projects")
+    # vault 真身目录也必须在 import medkit.main **之前**重定向（见模块 docstring 的 ⚠️）。
+    cfg.DEFAULTS["vault_dir"] = str(home_path / "vault")
 
     # 预置一份带 API Key 的配置：让前端「首启欢迎向导」不弹出（它仅在未配置 Key 时出现）。
     # 只写测试隔离目录，绝不触碰真实 ~/.medkit。dummy key 不会用于任何 LLM 调用。
@@ -52,6 +59,7 @@ def main() -> None:
                 "provider": "deepseek",
                 "api_key": "sk-browser-test-dummy-not-a-real-key",
                 "projects_dir": str(home_path / "projects"),
+                "vault_dir": str(home_path / "vault"),
             }, ensure_ascii=False),
             encoding="utf-8",
         )

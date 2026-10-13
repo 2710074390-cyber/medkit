@@ -301,6 +301,25 @@ try {
       </div>
       <div class="hint" id="ws_test_result"></div>
     </div>
+
+    <h2 class="subh"><svg class="ic"><use href="#i-doc"></use></svg>本地错题（vault）</h2>
+    <p class="psub">错题 = 你自己文件夹里的 markdown · 可同步、可手改、可拷走</p>
+    <div class="card">
+      <h2>错题文件夹</h2>
+      <div class="hint" style="margin-bottom:8px">
+        空 = 用默认目录 <code>~/文档/MedKit错题本/</code>（建议，你会同步它）。改成任意路径即可指向已有文件夹。
+      </div>
+      <div class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
+        <div style="flex:2;min-width:240px"><label>vault 目录</label>
+          <input type="text" id="vault_dir" placeholder="（空 = 默认 ~/文档/MedKit错题本/）"></div>
+        <div style="flex:none;align-self:flex-end">
+          <button class="act gray" onclick="vaultSaveDir()">保存目录</button>
+          <button class="act gray" onclick="vaultRebuild()">重建索引</button>
+        </div>
+      </div>
+      <div class="hint" id="vault_dir_status" style="margin-top:8px"></div>
+    </div>
+
     <h2 class="subh"><svg class="ic"><use href="#i-doc"></use></svg>提示词与规则</h2>
     <p class="psub">查看出题管线使用的全部提示词与门禁规则，可编辑影子副本</p>
     <div class="card">
@@ -532,9 +551,10 @@ try {
     <nav class="learnnav" id="learnnav" role="tablist" aria-label="学习中心分栏">
       <button data-lv="overview" class="on" role="tab" aria-selected="true" title="概览（Alt+1）"><svg class="ic"><use href="#i-target"></use></svg>概览<span class="nb" id="nb_overview"></span></button>
       <button data-lv="mistakes" role="tab" aria-selected="false" title="错题本（Alt+2）"><svg class="ic"><use href="#i-paper"></use></svg>错题本<span class="nb" id="nb_mistakes"></span></button>
-      <button data-lv="explain" role="tab" aria-selected="false" title="讲解产物（Alt+3）"><svg class="ic"><use href="#i-book"></use></svg>讲解产物<span class="nb" id="nb_explain"></span></button>
-      <button data-lv="tutor" role="tab" aria-selected="false" title="提问学习（Alt+4）"><svg class="ic"><use href="#i-learn"></use></svg>提问学习<span class="nb" id="nb_tutor"></span></button>
-      <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲管理（Alt+5）"><svg class="ic"><use href="#i-target"></use></svg>大纲管理<span class="nb" id="nb_syllabus"></span></button>
+      <button data-lv="vault" role="tab" aria-selected="false" title="本地错题（Alt+3）"><svg class="ic"><use href="#i-doc"></use></svg>本地错题<span class="nb" id="nb_vault"></span></button>
+      <button data-lv="explain" role="tab" aria-selected="false" title="讲解产物（Alt+4）"><svg class="ic"><use href="#i-book"></use></svg>讲解产物<span class="nb" id="nb_explain"></span></button>
+      <button data-lv="tutor" role="tab" aria-selected="false" title="提问学习（Alt+5）"><svg class="ic"><use href="#i-learn"></use></svg>提问学习<span class="nb" id="nb_tutor"></span></button>
+      <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲管理（Alt+6）"><svg class="ic"><use href="#i-target"></use></svg>大纲管理<span class="nb" id="nb_syllabus"></span></button>
     </nav>
 
     <!-- 视图 1/5：概览（闭环总览 + 薄弱点诊断 + 推荐） -->
@@ -608,6 +628,46 @@ try {
         <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
 
+    </div>
+
+    <!-- 视图 V：本地错题 vault —— 文件是真身，Agent 只是可缺席的增强层 -->
+    <div class="learnview" id="lv-vault">
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>本地错题（vault）</h2><span class="hint" id="vault_root_hint"></span></div>
+        <div class="hint" style="margin-bottom:10px">
+          错题就是<b>你这个文件夹里的 markdown 文件</b>，一道一文件——不装 MedKit 也能读，
+          可以丢进坚果云 / OneDrive / Git。<b>随便改</b>：在任何编辑器里改完，点「重建索引」即刻生效。
+          Agent 只是可选的增强层，没配 API Key 也不影响任何功能。
+        </div>
+        <div class="btns" style="flex-wrap:wrap">
+          <button class="act gray" id="btn_vault_init" onclick="vaultInit()">选择 / 创建文件夹</button>
+          <button class="act gray" id="btn_vault_rebuild" onclick="vaultRebuild()">重建索引</button>
+          <button class="act gray" id="btn_vault_migrate" onclick="vaultMigrate()">从旧错题本一键迁移</button>
+        </div>
+        <div class="hint" id="vault_status" style="margin-top:8px"><span class="spin"></span>读取中…</div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>薄弱项</h2><span class="hint">按优先级排序 · 纯本地计算，不调模型</span></div>
+        <div id="vault_stats"><div class="hint"><span class="spin"></span>计算中…</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>错题</h2>
+          <span class="hint" id="vault_list_meta"></span>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
+          <div style="flex:2;min-width:200px">
+            <input type="text" id="vault_q" placeholder="在题干 / 解析 / 我的理解 / 我的疑问里搜…"
+                   onkeydown="if(event.key==='Enter'){vaultSearch();}">
+          </div>
+          <button class="act" id="btn_vault_q" onclick="vaultSearch()">搜索</button>
+          <button class="act gray" onclick="vaultSearchClear()" style="display:none" id="btn_vault_q_clear">清除</button>
+        </div>
+        <div id="vault_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
+      </div>
+
+      <div class="card" id="vault_detail" style="display:none;margin-top:14px"></div>
     </div>
 
     <!-- 视图 3/5：讲解与学习产物（按科目组织 + 联网补充 + 产物管理） -->
@@ -766,6 +826,7 @@ try {
      并保留「加载期立即调用」的目标与调用点同片（详见 CHANGELOG 0.10.3 / V-15）。 -->
 <script src="/assets/js/learn.js"></script>
 <script src="/assets/js/learn-study.js"></script>
+<script src="/assets/js/learn-vault.js"></script>
 <script src="/assets/js/learn-live.js"></script>
 <script src="/assets/js/learn-review.js"></script>
 <script src="/assets/js/review-desk.js"></script>

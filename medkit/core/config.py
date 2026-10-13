@@ -89,6 +89,7 @@ DEFAULTS: dict[str, Any] = {
                  "trusted_only": False, "trusted_domains": []},
     "mineru": {"api_key": "", "auto_ocr": True},
     "projects_dir": str(CONFIG_DIR / "projects"),
+    "vault_dir": "",       # 错题 vault 根目录（空 = 默认 ~/文档/MedKit错题本/，用户会同步它）
     "provider_keys": {},   # v0.5.1：多服务商 Key 存档 {pid: {api_key, base_url, model_gen, model_qc}}
     "features": {},        # v0.8 (IMP-02)：WP 级 feature flag 节 {name: bool}，缺省 True（state.flag 读取）
     "run_token_limit": 0,  # W10（2026-10-02）：单次运行 token 硬上限（0 = 不限制）；越线中止运行

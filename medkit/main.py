@@ -47,6 +47,7 @@ from .routers import review as r_review
 from .routers import search as r_search
 from .routers import syllabus as r_syllabus
 from .routers import update as r_update
+from .routers import vault as r_vault
 
 APP_VERSION = __version__
 
@@ -271,6 +272,7 @@ app.include_router(r_realexams.router)
 app.include_router(r_syllabus.router)
 app.include_router(r_review.router)
 app.include_router(r_update.router)
+app.include_router(r_vault.router)
 
 
 # ---------------------------------------------------------------- 静态前端

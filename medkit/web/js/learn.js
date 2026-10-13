@@ -32,19 +32,20 @@ function showLearnView(name) {
     v.classList.toggle("show", v.id === "lv-" + name);
   });
   if (name === "syllabus") sylLoad();
+  if (name === "vault" && typeof window.vaultView === "function") window.vaultView();
   try { sessionStorage.setItem("medkit-learn-view", name); } catch (e) { /* ignore */ }
 }
 document.querySelectorAll("#learnnav button").forEach(b => {
   b.onclick = () => showLearnView(b.dataset.lv);
 });
-/* IMP-12①：学习中心子导航 Alt+1..5 直达（v0.8.1：复习计划迁入「刷题」；v0.15 精简 P2 移除元认知 → 5 视图） */
-const LEARN_ALT_KEYS = ["overview", "mistakes", "explain", "tutor", "syllabus"];
+/* IMP-12①：学习中心子导航 Alt+1..6 直达（v0.8.1：复习计划迁入「刷题」；v0.15 精简 P2 移除元认知 → 5 视图；本地错题 vault → 6 视图） */
+const LEARN_ALT_KEYS = ["overview", "mistakes", "vault", "explain", "tutor", "syllabus"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）
   const t = e.target;
   // A-新15：焦点守卫纳入 SELECT（下拉聚焦时不触发子视图快捷键，防误切/吞键）
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "5")) return;
+  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "6")) return;
   const lv = LEARN_ALT_KEYS[+e.key - 1];
   if (!lv) return;
   const pill = document.querySelector('#learnnav button[data-lv="' + lv + '"]');
@@ -73,7 +74,7 @@ window.addEventListener("keydown", e => {
   let v = null;
   try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
   if (v === "review") v = "overview";   // v0.8.1：复习计划已迁入「刷题」tab，旧记忆重定向概览
-  const ok = ["overview", "mistakes", "explain", "tutor", "syllabus"].includes(v);
+  const ok = ["overview", "mistakes", "vault", "explain", "tutor", "syllabus"].includes(v);
   if (ok) showLearnView(v);
 })();
 /* 侧栏待办徽章（v0.8.1 拆分）：刷题 tab = 今日到期复习；学习中心 tab = 进行中提问 */

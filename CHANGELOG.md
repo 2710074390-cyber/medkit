@@ -8,7 +8,64 @@
 
 ## [Unreleased]
 
-> 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
+> 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
+
+### Added（本地错题 vault + 「只引用你的仓库」的 Agent · 2026-10-13）
+
+> 需求：错题记在**本地文件夹**、MedKit 内的 Agent 读这些错题、分析薄弱项，并结合用户
+> 自己写的「我的理解 / 我的疑问」作答；长期积累成**用户自己的资产**。方案与调研见
+> `docs/错题本地文件化与Agent助手_设计方案_2026-10-13.md`（R1–R4 落地，R5 本地
+> embedding 按决策不启用）。
+
+**架构反转（核心动作）**：把「数据库为真身」倒成「**本地 markdown 文件为真身、
+SQLite 降级为可弃索引**」——删掉索引全量重建后逐行相等（删库 0 丢失）；卸掉 Agent、
+或换台机器只拷文件夹，资产都完好。
+
+- **L1 文件层 `core/vault.py`**：一道错题一个 `.md`（`<vault>/mistakes/年/月/`），
+  front matter 管查询、正文管阅读。目录默认 `~/文档/MedKit错题本/`（设置里可改，放
+  用户自己会同步的地方）。**所有字段可空**（只写题干也能入库，无录入闸门）；写入先写
+  临时文件再原子 `os.replace`；解析失败只记 `fwarn` 告警、**绝不自动改写用户文件**。
+- **L2 索引层 `core/vault_index.py`**：按 **sha1 内容寻址**的三态增量重建（NEW /
+  REPARSE / SKIP / REMOVE）；重建对 vault **只读**，单文件坏不阻塞其它。`DELETE FROM
+  vault_items` 后重建与重建前逐行相等（幂等，即「删库 0 丢失」的可断言形式）。
+- **L3 薄弱项（零 LLM）**：复用 `library.compute_state/score/priority`，按 科目/章节/主题
+  聚合出**一张**「先学什么」的优先级表——不 import `llm`/`agents`，没 API Key 也完整可用。
+- **L4 助手层 `agents/mistake_agent.py` + `prompts/mistake_agent.md`**：三个只读工具
+  （`search_my_mistakes` / `get_topic_stats` / `read_file`），模型输出 JSON 协议编排
+  （不依赖各家 function-calling，最多 4 轮）。**四条可证伪硬约束**：① 结论必须带
+  `[来源: 路径#小节]`，编造路径被剔除并如实报告；② **无依据必须说不知道**、禁止用通识
+  补全；③ 必须回应**用户自己写的那个误解/疑问**，不泛泛讲知识点；④ 工具失败必须显性。
+  答复**默认只读**，用户点「存进这个错题」才追加写入 `## Agent 的答复`（可整段删）。
+- **前端 `web/js/learn-vault.js`**：学习中心新增子视图「本地错题」（`lv-vault`）——目录管理 /
+  重建索引 / **从旧错题本一键迁移** / 薄弱项表 / 错题列表（关键词检索）/ 详情（答案默认收起
+  防剧透）/ 独立输入区写「我的理解 / 我的疑问」/ Agent 对话（SSE 流式）。
+- **接口 `routers/vault.py` `/api/vault/*`**：`status` / `init` / `rebuild` / `mistakes` /
+  `stats` / `mistakes/{path}/section`（**唯一写回入口**，只允许 理解/疑问/答复 三小节，
+  答案不许经接口改写）/ `import-from-library` / `ask`（SSE）。`{path}` 一律过
+  `_safe_vault_rel()` 做路径穿越防护（形态 + `resolve()` 两道判据）。
+- **修复**（都由本域守卫先行暴露）：① 检索旧实现把 `_`/`%` 从查询里**剥除**而非**转义**
+  ⇒ 含下划线的原文永远搜不到（LIKE 里 `_` 是单字符通配）；现改 `ESCAPE '\'` 按字面量匹配。
+  ② 列表并发刷新时晚到的过期响应会覆盖更新结果（筛选丢失 / 点击行被 detach）；现按请求
+  序号丢弃过期响应。
+
+新增：`medkit/core/vault.py` / `medkit/core/vault_index.py` / `medkit/routers/vault.py` /
+`medkit/agents/mistake_agent.py` / `medkit/prompts/mistake_agent.md` /
+`medkit/web/js/learn-vault.js`；改：`main.py`（挂路由）/ `core/config.py`（`vault_dir`）/
+`routers/prompts.py`（注册表）/ `web/index.html` + `css/base.css` + `js/learn.js`（接线）。
+
+守卫：`tests/test_vault.py`（17 项：索引可弃·幂等 / 重建只读 / 手改生效 / 统计零 LLM /
+路径穿越与答案不可改写 / 迁移不动旧库 / 搜索通配符转义 / Agent 四条硬约束的桩客户端断言）+
+`tests/browser/test_vault_view.py`（2 项真实链路：迁移→薄弱项表→写理解/疑问→**刷新后仍在**、
+检索收窄与清除）。
+
+### Prompts
+
+- **新增 `medkit/prompts/mistake_agent.md`**：错题助手系统提示词——只能依据用户自己的错题库
+  作答，明文禁止用通识补全、要求逐句带引用、先回应用户自己写的话。进 `routers/prompts.py`
+  的 `PROMPT_ROLES` 注册表（`MistakeAgent · 错题助手`），走既有 `render_prompt` + 影子副本机制。
+- **不新增 `tests/fixtures/llm_cases/` 样本**：NX-06 的样本是给 IMP-03 的 pydantic 契约校验用的，
+  本助手的输出是 JSON **动作协议**（非 schema 契约，`medtutor/medexplain` 等既有提示词同样无样本）；
+  其协议行为由 `tests/test_vault.py` 的桩客户端直接覆盖（含「无依据必须说不知道」的硬约束）。
 
 ## [0.15.0] - 2026-10-13
 
