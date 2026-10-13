@@ -38,7 +38,8 @@ SQLite 降级为可弃索引**」——删掉索引全量重建后逐行相等�
   答复**默认只读**，用户点「存进这个错题」才追加写入 `## Agent 的答复`（可整段删）。
 - **前端 `web/js/learn-vault.js`**：学习中心新增子视图「本地错题」（`lv-vault`）——目录管理 /
   重建索引 / **从旧错题本一键迁移** / 薄弱项表 / 错题列表（关键词检索）/ 详情（答案默认收起
-  防剧透）/ 独立输入区写「我的理解 / 我的疑问」/ Agent 对话（SSE 流式）。
+  防剧透）/ 独立输入区写「我的理解 / 我的疑问」/ Agent 对话（SSE 流式）/ **文件夹全域问**
+  （不绑定单条错题，回答「我哪章最弱」「这些错有什么共性」这类跨条目问题）。
 - **接口 `routers/vault.py` `/api/vault/*`**：`status` / `init` / `rebuild` / `mistakes` /
   `stats` / `mistakes/{path}/section`（**唯一写回入口**，只允许 理解/疑问/答复 三小节，
   答案不许经接口改写）/ `import-from-library` / `ask`（SSE）。`{path}` 一律过
@@ -46,15 +47,19 @@ SQLite 降级为可弃索引**」——删掉索引全量重建后逐行相等�
 - **修复**（都由本域守卫先行暴露）：① 检索旧实现把 `_`/`%` 从查询里**剥除**而非**转义**
   ⇒ 含下划线的原文永远搜不到（LIKE 里 `_` 是单字符通配）；现改 `ESCAPE '\'` 按字面量匹配。
   ② 列表并发刷新时晚到的过期响应会覆盖更新结果（筛选丢失 / 点击行被 detach）；现按请求
-  序号丢弃过期响应。
+  序号丢弃过期响应。③ **薄弱项把「有答案」当「做对」**⇒ 满是未掌握错题的章节反而判
+  「较熟练/已掌握」（与「这是错题本」的语义正相反，而这张表是设计里用户唯一要看的表）；
+  现掌握度分子改用「**已掌握条数**」。④ 序列化漏写 `miss_count` ⇒ 迁移后「反复错次数」
+  恒为 1（错题密度失真）；现 >1 时写入 front matter。
 
 新增：`medkit/core/vault.py` / `medkit/core/vault_index.py` / `medkit/routers/vault.py` /
 `medkit/agents/mistake_agent.py` / `medkit/prompts/mistake_agent.md` /
 `medkit/web/js/learn-vault.js`；改：`main.py`（挂路由）/ `core/config.py`（`vault_dir`）/
 `routers/prompts.py`（注册表）/ `web/index.html` + `css/base.css` + `js/learn.js`（接线）。
 
-守卫：`tests/test_vault.py`（17 项：索引可弃·幂等 / 重建只读 / 手改生效 / 统计零 LLM /
-路径穿越与答案不可改写 / 迁移不动旧库 / 搜索通配符转义 / Agent 四条硬约束的桩客户端断言）+
+守卫：`tests/test_vault.py`（21 项：索引可弃·幂等 / 重建只读 / 手改生效 / 统计零 LLM /
+**掌握度方向性**（未掌握不得判为已掌握）/ `miss_count` 保真 / 搜索通配符转义 /
+路径穿越与答案不可改写 / 迁移不动旧库 / Agent 四条硬约束的桩客户端断言 / **SSE 接线**）+
 `tests/browser/test_vault_view.py`（2 项真实链路：迁移→薄弱项表→写理解/疑问→**刷新后仍在**、
 检索收窄与清除）。
 

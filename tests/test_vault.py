@@ -201,6 +201,41 @@ def test_stats_is_local_only_and_ordered(vroot):
     assert st["total"] == 4 and st["unlearned"] == 4
 
 
+def test_stats_state_reflects_unlearned_not_answer_presence(vroot):
+    """「薄弱项」的状态必须反映**未掌握**，不能用「有答案」冒充「已掌握」。
+
+    实测缺陷：旧实现把「有答案的条数」当 `correct` 喂给 `compute_score` ⇒ 一整章
+    全是未掌握的错题也会算成「较熟练」（score≈0.9），与「这是错题本」的语义正相反——
+    而这张表正是设计文档里用户唯一要看的表（§4）。
+    """
+    vault.write_record(_rec(id="m-301", subject="内科学", chapter="呼吸系统", topic="慢阻肺",
+                            question="错题一", created_at="2026-10-13T08:00:00"), vroot)
+    vault_index.rebuild(vroot)
+    g = vault_index.stats()["groups"][0]
+    assert g["unlearned"] == 1 and g["total"] == 1
+    assert g["state"] in ("weak", "shaky"), f"全未掌握却判为 {g['state']}（应偏弱）"
+
+
+def test_stats_unlearned_scores_lower_than_learned(vroot):
+    """方向性：同等规模下，全未掌握组的分必须严格低于全已掌握组（掌握度不反向）。"""
+    for i in range(3):
+        vault.write_record(_rec(id=f"u{i}", subject="甲科", question=f"未{i}",
+                                created_at="2026-10-13T08:00:00"), vroot)
+        vault.write_record(_rec(id=f"l{i}", subject="乙科", question=f"已{i}", status="learned",
+                                created_at="2026-10-13T08:00:00"), vroot)
+    vault_index.rebuild(vroot)
+    g = {x["subject"]: x for x in vault_index.stats()["groups"]}
+    assert g["甲科"]["score"] < g["乙科"]["score"], g
+    assert g["甲科"]["state"] in ("weak", "shaky") and g["乙科"]["state"] in ("solid", "mastered")
+
+
+def test_migration_preserves_miss_count(vroot):
+    """反复错次数（miss_count）必须在序列化时保住——否则薄弱项密度恒为 1。"""
+    vault.write_record(_rec(id="m-501", question="反复错的题", miss_count=4), vroot)
+    back = vault.read_record(next(iter(vault.iter_mistake_files(vroot))))
+    assert back["miss_count"] == 4, "miss_count 写进 front matter 后必须读回来"
+
+
 # ================================================================ 接口红线
 def test_section_endpoint_blocks_traversal_and_answer(vroot):
     _seed(vroot, 1)
@@ -339,5 +374,33 @@ def test_agent_round_cap_is_reported(vroot, monkeypatch, run_coro):
                                ensure_ascii=False)] * 6)
     ev = run_coro(drain())[-1]
     assert "收敛" in ev["note"] and len(ev["tools"]) == 4
+
+
+# ================================================================ SSE 接线
+def test_ask_endpoint_streams_and_rejects_empty(vroot, monkeypatch):
+    """`/api/vault/ask` 接线：空问题 400；正常问题把 Agent 事件流成 SSE 并以 `[DONE]` 收尾。
+
+    这条不依赖任何 API Key——把 Agent 换成桩，只验证路由层的 SSE 封装与空值拦截。
+    覆盖的正是「文件夹全域问」（`path=""`）走的那条路径。
+    """
+    import medkit.routers.vault as rv
+
+    seen: dict[str, str] = {}
+
+    async def _fake_ask(question, *, scope="", path=""):
+        seen.update(question=question, scope=scope, path=path)
+        yield {"type": "stage", "hint": "思考中"}
+        yield {"type": "result", "answer": f"回答：{question}", "citations": [],
+               "grounded": True, "note": ""}
+
+    monkeypatch.setattr(rv, "_agent_ask", _fake_ask)
+    c = _client()
+    assert c.post("/api/vault/ask", json={"question": "   "}).status_code == 400
+    with c.stream("POST", "/api/vault/ask", json={"question": "我最弱的是哪章？"}) as r:
+        assert r.status_code == 200
+        body = "".join(r.iter_text())
+    assert '"type": "result"' in body and "回答：我最弱的是哪章？" in body
+    assert body.rstrip().endswith("[DONE]") or "[DONE]" in body
+    assert seen == {"question": "我最弱的是哪章？", "scope": "", "path": ""}, seen
 
 

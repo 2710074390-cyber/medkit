@@ -1,5 +1,5 @@
 /* exported vaultInit, vaultRebuild, vaultMigrate, vaultSaveDir, vaultSearch,
-   vaultSearchClear, vaultAsk, vaultPersist, vaultClose, vaultEdit, vaultOpen,
+   vaultSearchClear, vaultAsk, vaultAskGlobal, vaultPersist, vaultClose, vaultEdit, vaultOpen,
    vaultLoad, vaultView */
 /* ---- 本地错题（vault）视图：读文件索引 + 薄弱项 + Agent 问答 ----
  *
@@ -189,6 +189,36 @@ async function vaultEdit() {
 
 let _vaultAnswer = "";
 
+/* 单一流式读取：详情内「问」与文件夹全域「问」两处入口共用，避免两份解析逻辑漂移。 */
+async function _vaultAskStream(question, path, out) {
+  const res = await fetch("/api/vault/ask", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, path }) });
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = "", answer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split("\n"); buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
+      let ev; try { ev = JSON.parse(line.slice(6)); } catch (e) { continue; }
+      if (ev.type === "stage" && out) {
+        out.textContent = ev.tool ? `取证中：${ev.tool}…` : (ev.hint || "思考中…");
+      } else if (ev.type === "error") {
+        if (out) out.textContent = `出错了：${ev.message}`;
+      } else if (ev.type === "result") {
+        answer = ev.answer || "";
+        const cites = (ev.citations || []).map(c => `[来源: ${c.path}${c.section ? "#" + c.section : ""}]`).join("\n");
+        if (out) out.textContent = answer + (cites ? "\n\n" + cites : "")
+          + (ev.grounded === false ? "\n\n（本回答因缺少可验证依据被拦下——它只依据你的错题库作答）" : "");
+      }
+    }
+  }
+  return answer;
+}
+
 async function vaultAsk() {
   const q = ($("vlt_q") && $("vlt_q").value.trim()) || "";
   if (!q) { toast("先写你的问题", false); return; }
@@ -197,33 +227,22 @@ async function vaultAsk() {
   if (btn) btn.disabled = true;
   _vaultAnswer = "";
   try {
-    const res = await fetch("/api/vault/ask", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, path: _vaultCur || "" }) });
-    const reader = res.body.getReader(), dec = new TextDecoder();
-    let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split("\n"); buf = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
-        let ev; try { ev = JSON.parse(line.slice(6)); } catch (e) { continue; }
-        if (ev.type === "stage" && out) {
-          out.textContent = ev.tool ? `取证中：${ev.tool}…` : (ev.hint || "思考中…");
-        } else if (ev.type === "error") {
-          if (out) out.textContent = `出错了：${ev.message}`;
-        } else if (ev.type === "result") {
-          _vaultAnswer = ev.answer || "";
-          const cites = (ev.citations || []).map(c => `[来源: ${c.path}${c.section ? "#" + c.section : ""}]`).join("\n");
-          if (out) out.textContent = ev.answer + (cites ? "\n\n" + cites : "")
-            + (ev.grounded === false ? "\n\n（本回答因缺少可验证依据被拦下——它只依据你的错题库作答）" : "");
-          if (ps && _vaultAnswer) ps.style.display = "";
-        }
-      }
-    }
+    _vaultAnswer = await _vaultAskStream(q, _vaultCur || "", out);
+    if (ps && _vaultAnswer) ps.style.display = "";
   } catch (e) { if (out) out.textContent = "请求失败：" + e.message; }
+  finally { if (btn) btn.disabled = false; }
+}
+
+/* 文件夹全域问：不绑定某一条错题（path 为空 ⇒ Agent 自行 search/stats），
+   用来回答「我哪章最弱」「这些错有什么共性」这类跨条目的问题。 */
+async function vaultAskGlobal() {
+  const q = ($("vault_ask_q") && $("vault_ask_q").value.trim()) || "";
+  if (!q) { toast("先写你的问题", false); return; }
+  const out = $("vault_ask_out"), btn = $("btn_vault_ask_global");
+  if (out) out.textContent = "正在取证…";
+  if (btn) btn.disabled = true;
+  try { await _vaultAskStream(q, "", out); }
+  catch (e) { if (out) out.textContent = "请求失败：" + e.message; }
   finally { if (btn) btn.disabled = false; }
 }
 

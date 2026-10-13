@@ -208,6 +208,14 @@ def serialize(rec: dict[str, Any]) -> str:
     raw["status"] = status
     if rec.get("created_at") or rec.get("created"):
         raw["created"] = str(rec.get("created_at") or rec.get("created"))
+    # 反复错次数：>1 才写（免得每个文件都多一行噪声）。**不进这一条，薄弱项的
+    # 「错题密度」会恒为 1**——旧实现漏写，迁移后强度信息静默丢失（实测缺陷）。
+    try:
+        _mc = int(rec.get("miss_count") or 0)
+    except (TypeError, ValueError):
+        _mc = 0
+    if _mc > 1:
+        raw["miss_count"] = _mc
     for k in ("source", "source_type", "source_year", "bloom"):
         if rec.get(k):
             raw[k] = str(rec.get(k))

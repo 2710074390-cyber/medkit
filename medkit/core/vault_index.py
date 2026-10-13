@@ -220,6 +220,10 @@ def stats(subject: str = "") -> dict[str, Any]:
     """薄弱项：按 科目/章节/主题 聚合，复用 `library.compute_*`（不重写调度口径）。
 
     一张表，不给五张卡——EP-01 的五张统计卡实测 0 使用（见设计文档 §4）。
+
+    **掌握度分子取「已掌握条数」而不是「有答案条数」**：这是错题本，几乎每条都带答案
+    （标准答案本身就在题干里），拿「有答案」当「做对」会把满是未掌握错题的章节算成
+    「较熟练/已掌握」——与语义正相反（实测缺陷，判据见 `test_vault.py`）。
     """
     rows = _rows("subject = ?" if subject else "", (subject,) if subject else ())
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -230,11 +234,11 @@ def stats(subject: str = "") -> dict[str, Any]:
     out: list[dict[str, Any]] = []
     for (sub, ch, tp), items in groups.items():
         total = len(items)
-        unlearned = sum(1 for r in items if r.get("status") != "learned")
+        learned = sum(1 for r in items if r.get("status") == "learned")
+        unlearned = total - learned
         miss = sum(int(r.get("miss_count") or 1) for r in items)
-        answered = sum(1 for r in items if str(r.get("answer") or "").strip())
         latest = max((str(r.get("created") or "") for r in items), default="")
-        score = compute_score(answered, total, latest)
+        score = compute_score(learned, total, latest)
         out.append({
             "subject": sub, "chapter": ch, "topic": tp, "total": total,
             "unlearned": unlearned, "miss_count": miss,

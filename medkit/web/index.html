@@ -653,6 +653,17 @@ try {
       </div>
 
       <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>问错题助手</h2><span class="hint">只依据你这个文件夹作答 · 答不出就说不知道</span></div>
+        <div class="row" style="gap:8px">
+          <input type="text" id="vault_ask_q" style="flex:2"
+                 placeholder="例如：我最近哪个章节最弱？这几道题错得有什么共性？"
+                 onkeydown="if(event.key==='Enter'){vaultAskGlobal();}">
+          <button class="act" id="btn_vault_ask_global" onclick="vaultAskGlobal()">问</button>
+        </div>
+        <div id="vault_ask_out" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>错题</h2>
           <span class="hint" id="vault_list_meta"></span>
         </div>

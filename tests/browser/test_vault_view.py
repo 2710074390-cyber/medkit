@@ -25,6 +25,8 @@ def _goto_vault(page, server_url: str) -> None:
     page.wait_for_selector("#tab-learn.show", timeout=15000)
     page.click('#learnnav button[data-lv="vault"]')
     page.wait_for_selector("#lv-vault.show", timeout=15000)
+    # 文件夹全域问的入口必须在场（不需要 API Key；未配 Key 时点它只会给出错误提示）
+    page.wait_for_selector("#vault_ask_q", timeout=15000)
 
 
 def _seed_library(page, subject: str, n: int = 2) -> None:
