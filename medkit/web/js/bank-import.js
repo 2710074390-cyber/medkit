@@ -13,7 +13,7 @@
  *   - 图 / 表题只保真不保证（md 里没有图）；
  *   - **不内置、不分发任何题库**——数据权利归各自来源方。
  */
-let _bankImport = { items: [], warnings: [], source: "", name: "" };
+let _bankImport = { items: [], warnings: [], source: "", name: "", raw: "", fmt: "md" };
 
 function bankImportPick() { const f = $("bank_file"); if (f) f.click(); }
 
@@ -28,8 +28,14 @@ async function bankImportFile(input) {
     const fd = new FormData();
     fd.append("file", f);
     const r = await api("/api/bank/import/file", { method: "POST", body: fd });
+    // 原文一并留下：入库时提交给后端保存，供解析器改进后「重新解析」。
+    // 浏览器侧读文件文本（≤5MB）比让后端把原文回传再传回去少一次往返。
+    let rawText = "";
+    try { rawText = await f.text(); } catch (e) { rawText = ""; }
+    const ext = (String(f.name || "").split(".").pop() || "md").toLowerCase();
     _bankImport = { items: r.items || [], warnings: r.warnings || [],
-                    source: f.name || "", name: (f.name || "").replace(/\.[^.]+$/, "") };
+                    source: f.name || "", name: (f.name || "").replace(/\.[^.]+$/, ""),
+                    raw: rawText, fmt: (ext === "markdown" ? "md" : ext) };
     bankRenderPreview(r);
     const pc = $("bank_paste_card"); if (pc) pc.style.display = "none";
   } catch (e) { toast("导入解析失败：" + e.message, false); }
@@ -54,7 +60,7 @@ async function bankPreviewPaste() {
       body: JSON.stringify({ text, fmt: "md" }),
     });
     _bankImport = { items: r.items || [], warnings: r.warnings || [],
-                    source: "粘贴文本", name: "导入题库" };
+                    source: "粘贴文本", name: "导入题库", raw: text, fmt: "md" };
     bankRenderPreview(r);
     bankPasteClose();
   } catch (e) { toast(e.message, false); }
@@ -135,7 +141,8 @@ async function bankCommitImport() {
   try {
     const r = await api("/api/bank/import/commit", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bank_id: bid, name, subject, source: "md_import", items, dedupe }),
+      body: JSON.stringify({ bank_id: bid, name, subject, source: "md_import", items, dedupe,
+                             raw: _bankImport.raw || "", fmt: _bankImport.fmt || "md" }),
     });
     toast(`入库完成：新增 ${r.added || 0} · 更新 ${r.updated || 0} · 跳过 ${r.skipped || 0}`);
     bankImportCancel();
@@ -146,7 +153,7 @@ async function bankCommitImport() {
 }
 
 function bankImportCancel() {
-  _bankImport = { items: [], warnings: [], source: "", name: "" };
+  _bankImport = { items: [], warnings: [], source: "", name: "", raw: "", fmt: "md" };
   const card = $("bank_import_card"); if (card) card.style.display = "none";
   const body = $("bank_import_body"); if (body) body.innerHTML = "";
   const pc = $("bank_paste_card"); if (pc) pc.style.display = "none";

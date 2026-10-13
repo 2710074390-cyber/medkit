@@ -233,7 +233,22 @@ _V9_DOWN: list[str] = [
     "DROP TABLE IF EXISTS banks",
 ]
 
-MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9]  # 版本列表（只增不改）
+# v10（题库可重解析）：`bank_sources` 保存**导入原文 + 解析器版本**。
+# 动机（2026-10-13 实测）：解析器修好第三方 md 写法后，**已入库的数据不会自动变干净**——
+# 用户库里那份 231 题（11 个章节空壳 + 题干混进题号标签/选项/答案）只能靠「删库重导」修，
+# 而原文早已不在（`bank_items.data` 只存解析后字段）。存原文后，解析器再改进即可
+# **一键重解析**已有题库，不必让用户重新找源文件。
+_V10_UP: list[str] = [
+    _tbl("bank_sources", "bank_id TEXT, fmt TEXT, parser_version TEXT, imported_at TEXT"),
+    "CREATE INDEX IF NOT EXISTS idx_bsrc_bank ON bank_sources(bank_id)",
+]
+
+# v10 可精确回滚：bank_sources 是新增表，DROP 即回到 v9 结构（丢的是「重解析能力」，不影响题目）。
+_V10_DOWN: list[str] = [
+    "DROP TABLE IF EXISTS bank_sources",
+]
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -284,6 +299,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         for stmt in _V9_UP:
             cur.execute(stmt)
         return
+    if ver == 10:
+        for stmt in _V10_UP:
+            cur.execute(stmt)
+        return
     raise ValueError(f"未知迁移版本 {ver}")
 
 
@@ -323,6 +342,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 9:
         for stmt in _V9_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 10:
+        for stmt in _V10_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

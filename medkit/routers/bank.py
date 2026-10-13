@@ -113,6 +113,8 @@ class ImportCommitBody(BaseModel):
     source: str = ""
     items: list[dict[str, Any]] = []
     dedupe: str = "update"     # update | skip | new
+    raw: str = ""              # 导入原文（存下来供「重新解析」；旧客户端不传则为空）
+    fmt: str = "md"
 
 
 class GradeBody(BaseModel):
@@ -263,7 +265,23 @@ def import_commit(body: ImportCommitBody) -> dict[str, Any]:
         bank = banklib.create_bank(body.name or "导入题库", body.subject, body.source or "md_import")
         bid = str(bank["id"])
     stats = banklib.add_items(bid, body.items, origin="md_import", dedupe=body.dedupe)
+    # 保存原文：解析器将来改进时，可对**已入库的题库**一键重解析（见 db._V10_UP 注释）。
+    # 旧客户端不传 raw ⇒ 该题库只是少了重解析能力，不影响本次导入。
+    if (body.raw or "").strip():
+        banklib.save_source(bid, body.raw, fmt=body.fmt)
     return {"ok": True, "bank_id": bid, **stats}
+
+
+@router.post("/api/bank/banks/{bid}/reparse")
+def reparse(bid: str) -> dict[str, Any]:
+    """用保存的原文**重新解析**该题库（解析器改进后修旧数据）。
+
+    会清空该题库的作答流水（题目 id 全部重发）；返回里 `attempts_cleared` 如实告知清了几条。
+    """
+    try:
+        return {"ok": True, **banklib.reparse_bank(bid)}
+    except KeyError as e:
+        raise HTTPException(404, str(e.args[0] if e.args else "无法重解析"))
 
 
 @router.get("/api/bank/banks/{bid}/drill")

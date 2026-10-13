@@ -1,7 +1,8 @@
 /* exported _bankState, bankCreateOpen, bankDelete, bankExportPaper, bankGoalLoad, bankGoalRefresh,
    bankGoalSave, bankImportPick, bankItemCancel, bankItemDel, bankItemEdit, bankItemNew, bankItemSave,
    bankItemStar, bankManageClose, bankManageOpen, bankManageRender, bankPasteClose, bankPasteOpen,
-   bankPreviewPaste, bankRename, bankRetryStart, bankRowHTML, bankStartDrill, bankStats, loadBankHome */
+   bankPreviewPaste, bankRename, bankReparse, bankRetryStart, bankRowHTML, bankStartDrill, bankStats,
+   loadBankHome */
 /* ---- 题库域（bank）：我的题库列表 / 新建 / 重命名 / 删除 / 进入练习 ----
  *
  * 定位：**管理与练习已有题**（零 LLM）。与「题库」页签（出题工坊，烧 LLM token 生成新题）是两件事，
@@ -66,6 +67,7 @@ function bankRowHTML(b) {
       <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankManageOpen(this)">管理题目</button>
       <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankStats(this)">统计</button>
       <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankExportPaper(this)">导出押题卷</button>
+      ${b.has_source ? `<button class="mini-btn" data-id="${esc(b.id)}" onclick="bankReparse(this)" title="用保存的导入原文重新解析（解析器升级后可修旧数据）">重新解析${b.parser_stale ? " ⟳" : ""}</button>` : ""}
       <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankRename(this)">重命名</button>
       <button class="mini-btn danger" data-id="${esc(b.id)}" onclick="bankDelete(this)">删除</button>
     </div>
@@ -99,6 +101,25 @@ async function bankRename(btn) {
       loadBankHome();
     } catch (e) { toast(e.message, false); }
   }, cur.name || "");
+}
+
+/* ---- 重新解析（解析器改进后修旧数据；需要导入时保存了原文） ---- */
+function bankReparse(btn) {
+  const bid = btn && btn.dataset ? btn.dataset.id : btn;
+  const b = _bankState.banks.find(x => String(x.id) === String(bid)) || {};
+  confirmModal("重新解析题库？",
+    `<p style="margin:0;color:var(--dim)">用保存的<b>导入原文</b>重新解析题库 <b>${esc(b.name || bid)}</b>，
+     替换其中全部 <b>${b.items || 0}</b> 道题。</p>
+     <p style="margin:6px 0 0;color:var(--dim)"><b>该题库的作答进度会被清空</b>（题目会重新编号）；
+     已回流到错题本的错题<b>不受影响</b>。</p>`,
+    "重新解析", async () => {
+      try {
+        const r = await api(`/api/bank/banks/${encodeURIComponent(bid)}/reparse`, { method: "POST" });
+        toast(`已重新解析：${r.items || 0} 题` + (r.attempts_cleared ? `（清空作答 ${r.attempts_cleared} 条）` : ""));
+        if (String(_bankState.current) === String(bid)) _bankState.current = "";
+        await loadBankHome();
+      } catch (e) { toast(e.message, false); }
+    });
 }
 
 function bankDelete(btn) {
@@ -380,6 +401,7 @@ window.loadBankHome = loadBankHome;
 window.bankCreateOpen = bankCreateOpen;
 window.bankRename = bankRename;
 window.bankDelete = bankDelete;
+window.bankReparse = bankReparse;
 window.bankStats = bankStats;
 window.bankStartDrill = bankStartDrill;
 window.bankExportPaper = bankExportPaper;

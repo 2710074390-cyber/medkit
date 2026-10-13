@@ -36,6 +36,7 @@ from .fsutil import write_json_atomic
 _BANK_COLS = ("name", "subject", "source", "created_at", "updated_at")
 _ITEM_COLS = ("bank_id", "qtype", "topic", "answer", "origin", "created_at")
 _ATT_COLS = ("bank_id", "item_id", "session_id", "correct", "mode", "occurred_at")
+_SRC_COLS = ("bank_id", "fmt", "parser_version", "imported_at")
 
 # 单次批量上限（对齐 routers 侧 mistakes 的 500 条口径；题库一次导入千题要分批）
 MAX_BATCH = 500
@@ -79,17 +80,25 @@ def list_banks() -> list[dict[str, Any]]:
         for item in dbs.list_rows(cur, "bank_items"):
             key = str(item.get("bank_id") or "")
             counts[key] = counts.get(key, 0) + 1
+        # 只取 bank_id / parser_version 两列：原文可能几百 KB，列表页不需要正文
+        cur.execute("SELECT bank_id, parser_version FROM bank_sources")
+        srcs = {str(r[0]): str(r[1] or "") for r in cur.fetchall()}
         stats = _stats_by_bank(cur)
     finally:
         cur.close()
+    from . import bank_iq
     out: list[dict[str, Any]] = []
     for bank in banks:
         bid = str(bank.get("id") or "")
         s = stats.get(bid, {})
+        pv = srcs.get(bid, "")
         out.append({**bank, "items": counts.get(bid, 0),
                     "attempted": s.get("attempted", 0),
                     "mastery": s.get("mastery", 0.0),
-                    "accuracy": s.get("accuracy", 0.0)})
+                    "accuracy": s.get("accuracy", 0.0),
+                    # 重解析可用性：有原文才显示按钮；版本落后于当前解析器则提示「可修复」
+                    "has_source": bid in srcs,
+                    "parser_stale": bool(pv) and pv != bank_iq.PARSER_VERSION})
     out.sort(key=lambda r: str(r.get("updated_at") or r.get("created_at") or ""), reverse=True)
     return out
 
@@ -163,8 +172,74 @@ def delete_bank(bid: str) -> dict[str, Any]:
     with dbs.tx(write=True) as cur:
         cur.execute("DELETE FROM bank_items WHERE bank_id=?", (bid,))
         cur.execute("DELETE FROM bank_attempts WHERE bank_id=?", (bid,))
+        cur.execute("DELETE FROM bank_sources WHERE bank_id=?", (bid,))
         cur.execute("DELETE FROM banks WHERE id=?", (bid,))
     return {"deleted": True, "items": len(items), "attempts": len(attempts), "backup": backup}
+
+
+# ---------------------------------------------------------------- 原文与重解析
+def save_source(bid: str, raw_text: str, fmt: str = "md", parser_version: str = "") -> None:
+    """保存导入原文（供解析器改进后重解析）。同一题库再次导入 → 覆盖（以最新一次为准）。"""
+    ensure_ready()
+    from . import bank_iq
+    if not str(raw_text or "").strip():
+        return
+    with dbs.tx(write=True) as cur:
+        rec = {
+            "id": str(bid), "bank_id": str(bid), "fmt": str(fmt or "md"),
+            "parser_version": str(parser_version or bank_iq.PARSER_VERSION),
+            "imported_at": _now(), "raw_text": str(raw_text),
+        }
+        dbs.put_row(cur, "bank_sources", rec, _SRC_COLS)
+
+
+def get_source(bid: str) -> Optional[dict[str, Any]]:
+    """取该题库保存的原文（无则 None）。"""
+    ensure_ready()
+    conn = dbs.get_conn()
+    cur = conn.cursor()
+    try:
+        return dbs.find_row(cur, "bank_sources", "bank_id=?", (bid,))
+    finally:
+        cur.close()
+
+
+def reparse_bank(bid: str) -> dict[str, Any]:
+    """用保存的原文**重新解析**并替换该题库的全部题目。
+
+    这是「解析器改进后修旧数据」的唯一正路（动机见 `db._V10_UP` 注释）：
+    解析器修好了，已入库的数据不会自动变干净——没有它就只能删库重导，而原文往往已不在。
+
+    题库不存在 → KeyError；没有原文（手工建的题库 / 旧版导入）→ KeyError。
+
+    ⚠️ **作答流水会清空**：重解析后题目 id 全部重发，旧流水按 id 关联会全部孤立。
+    如实返回 `attempts_cleared`（不静默）。
+    """
+    ensure_ready()
+    from . import bank_iq
+    if get_bank(bid) is None:
+        raise KeyError("题库不存在")
+    src = get_source(bid)
+    if src is None:
+        raise KeyError("该题库没有保存原文，无法重解析（只有导入的题库会保存原文）")
+    raw = str(src.get("raw_text") or "")
+    fmt = str(src.get("fmt") or "md")
+    if not raw.strip():
+        raise KeyError("保存的原文为空，无法重解析")
+    rows = bank_iq.parse_bank_text(raw, fmt)
+    n_attempts = len(list_attempts(bank_id=bid))
+    with dbs.tx(write=True) as cur:
+        cur.execute("DELETE FROM bank_items WHERE bank_id=?", (bid,))
+        cur.execute("DELETE FROM bank_attempts WHERE bank_id=?", (bid,))
+    stats = add_items(bid, rows, origin="md_import", dedupe="new")
+    save_source(bid, raw, fmt, bank_iq.PARSER_VERSION)   # 记下本次用的解析器版本
+    return {
+        "bank_id": bid, "parsed": len(rows), "items": len(list_items(bid)),
+        "added": stats["added"], "skipped": stats["skipped"],
+        "errors": list(stats["errors"])[:10],
+        "attempts_cleared": n_attempts,
+        "parser_version": bank_iq.PARSER_VERSION,
+    }
 
 
 # ---------------------------------------------------------------- 题目

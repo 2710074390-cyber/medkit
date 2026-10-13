@@ -610,3 +610,110 @@ def test_export_paper_html_is_inline_and_contains_questions(client):
     assert "inline" in r.headers["content-disposition"], "缺省必须 inline（同源渲染）"
     assert "慢阻肺最主要的病因是" in r.text and "吸烟" in r.text
     assert client.get("/api/bank/banks/nope/export/paper").status_code == 404
+
+
+# ---------------------------------------------------------------- 原文保存与重新解析（v10）
+#
+# 动机（2026-10-13 用户实测）：解析器修好第三方 md 写法后，**已入库的数据不会自动变干净**——
+# 库里那份 231 题（11 个章节空壳 + 题干混进题号标签/选项/答案）只能删库重导，而原文早已不在。
+# v10 起导入时保存原文，解析器再改进即可**一键重解析**已有题库。
+_THIRD_PARTY_MD = """# 急诊与灾难医学 batch035 题库
+
+## M1（8题）
+
+### 1. [A1型题｜理解] batch035-M1-A1-001
+
+> 模块：M1｜页码：教材P1
+
+**急诊医学的核心内涵是**
+
+- A. 院前急救、院内急诊和危重症监护一体化模式
+- **B. 早期判断,迅速救治,保护脏器功能生命安全** ✅
+- C. 急救人员、车辆、通信的调动准备和现场急救
+- D. 对灾难的预见、预防和准备及灾后卫生防疫
+- E. 对慢性疾病进行长期随访和康复治疗
+
+**答案：B**
+"""
+
+
+def test_import_commit_saves_source_for_reparse(client):
+    """入库时提交 raw ⇒ 保存原文（`has_source`），供解析器升级后重解析。"""
+    r = client.post("/api/bank/import/commit", json={
+        "name": "第三方库", "subject": "", "items": _parsed(client), "raw": _MD, "fmt": "md"})
+    bid = r.json()["bank_id"]
+    b = next(x for x in client.get("/api/bank/banks").json()["banks"] if x["id"] == bid)
+    assert b["has_source"] is True and b["parser_stale"] is False, b
+    src = bank.get_source(bid)
+    assert src and src["raw_text"] == _MD and src["fmt"] == "md"
+
+
+def test_import_without_raw_has_no_source(client):
+    """不传 raw（旧客户端 / 手工建库）⇒ 没有原文——只是少了重解析能力，不影响导入。"""
+    bid = _make_bank(client, name="无原文")
+    b = next(x for x in client.get("/api/bank/banks").json()["banks"] if x["id"] == bid)
+    assert b["has_source"] is False and b["parser_stale"] is False, b
+    assert bank.get_source(bid) is None
+
+
+def test_reparse_fixes_stale_parsed_items(client):
+    """**核心价值**：解析器改进后，已入库的旧解析产物可一键重解析修好。
+
+    场景复刻 2026-10-13 用户实测：旧解析器把 `## M1（8题）` 章节标题当成一道题（空壳）、
+    题干混进题号标签与溯源行、选项只抓到未加粗的行。这里手工灌入等价脏数据并保存原文，
+    再 reparse ⇒ 题干干净、选项完整、空壳消失。
+    """
+    bid = client.post("/api/bank/banks", json={
+        "name": "旧产物库", "subject": "", "source": "md_import"}).json()["bank"]["id"]
+    bank.add_items(bid, [
+        {"question": "M1（8题）", "options": [], "answer": ""},                      # 章节标题成题（空壳）
+        {"question": "1. [A1型题｜理解] batch035-M1-A1-001\n> 模块：M1｜页码：教材P1\n\n**急诊医学的核心内涵是**",
+         "options": ["院前急救、院内急诊和危重症监护一体化模式"], "answer": "B"},   # 题干混脚手架 + 选项错位
+    ], origin="md_import", dedupe="new")
+    bank.save_source(bid, _THIRD_PARTY_MD, fmt="md")
+    # 前提守卫：脏数据确实是脏的（否则本用例测不到目标缺陷）
+    dirty = bank.list_items(bid)
+    assert len(dirty) == 2 and any(it["question"] == "M1（8题）" for it in dirty), "前提不成立：空壳没造出来"
+    assert any("型题" in it["question"] for it in dirty), "前提不成立：题干没混进标签"
+
+    res = bank.reparse_bank(bid)
+    assert res["items"] == 1, res                    # 章节标题不再成题
+    it = bank.list_items(bid)[0]
+    assert it["question"] == "急诊医学的核心内涵是", it["question"]
+    assert it["options"] == ["院前急救、院内急诊和危重症监护一体化模式",
+                             "早期判断,迅速救治,保护脏器功能生命安全",
+                             "急救人员、车辆、通信的调动准备和现场急救",
+                             "对灾难的预见、预防和准备及灾后卫生防疫",
+                             "对慢性疾病进行长期随访和康复治疗"], it["options"]
+    assert it["answer"] == "B"
+
+
+def test_reparse_clears_attempts_and_reports(client):
+    """重解析重发题目 id ⇒ 清空该题库作答流水，并**如实回报**清了几条。"""
+    bid = _make_bank(client, name="有作答")
+    items = client.get(f"/api/bank/banks/{bid}/drill").json()["items"]
+    client.post("/api/bank/grade", json={"bank_id": bid, "item_id": items[0]["id"], "user_answer": "A"})
+    assert len(bank.list_attempts(bank_id=bid)) == 1
+    client.post("/api/bank/import/commit",
+                json={"bank_id": bid, "items": _parsed(client), "raw": _MD, "fmt": "md"})
+    res = bank.reparse_bank(bid)
+    assert res["attempts_cleared"] == 1, res
+    assert bank.list_attempts(bank_id=bid) == []
+
+
+def test_reparse_without_source_is_404(client):
+    """没有原文 ⇒ 404（不静默返回空）。"""
+    bid = _make_bank(client, name="无原文")
+    r = client.post(f"/api/bank/banks/{bid}/reparse")
+    assert r.status_code == 404
+    assert "原文" in r.json()["detail"]
+
+
+def test_delete_bank_also_removes_source(client):
+    """删题库连带删原文（不留孤儿行）。"""
+    bid = _make_bank(client, name="带原文")
+    client.post("/api/bank/import/commit",
+                json={"bank_id": bid, "items": _parsed(client), "raw": _MD, "fmt": "md"})
+    assert bank.get_source(bid) is not None
+    client.delete(f"/api/bank/banks/{bid}")
+    assert bank.get_source(bid) is None
