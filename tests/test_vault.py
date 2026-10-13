@@ -185,6 +185,31 @@ def test_search_escapes_like_wildcards(vroot):
     assert vault_index.list_items(q="外科学Xvault检索") == []
 
 
+def test_search_multiword_query_hits(vroot):
+    """**多词查询必须命中**：分词 + 组间 AND。
+
+    旧实现把「慢阻肺 病因 感染」整串当成**一个**子串去 LIKE（`%慢阻肺 病因 感染%`），
+    多词必然 0 命中 ⇒ Agent 判「无依据」而拒答（真实 provider 实测踩过）。
+    """
+    vault.write_record(_rec(id="mw1", subject="内科学", chapter="呼吸系统", topic="慢阻肺",
+                            question="慢阻肺最主要的病因是",
+                            analysis="吸烟是 COPD 最重要的环境致病因素；感染是急性加重的诱因，不是病因。",
+                            created_at="2026-10-13T08:00:00"), vroot)
+    vault.write_record(_rec(id="mw2", subject="外科学", chapter="腹外疝", topic="嵌顿疝",
+                            question="嵌顿疝与绞窄疝的鉴别", options=[],
+                            analysis="绞窄疝有血运障碍，嵌顿疝尚无。",
+                            created_at="2026-10-13T09:00:00"), vroot)
+    vault_index.rebuild(vroot)
+    # 多词：三个词都要命中（且只落在同一条上）
+    assert [r["id"] for r in vault_index.list_items(q="慢阻肺 病因 感染")] == ["mw1"]
+    # 词序无关
+    assert [r["id"] for r in vault_index.list_items(q="感染 慢阻肺")] == ["mw1"]
+    # 单词仍正常命中
+    assert [r["id"] for r in vault_index.list_items(q="嵌顿疝")] == ["mw2"]
+    # 无公共命中的多词 ⇒ 空（不是退化成"任一词命中"）
+    assert vault_index.list_items(q="慢阻肺 绞窄疝") == []
+
+
 def test_stats_is_local_only_and_ordered(vroot):
     """薄弱项按优先级降序；且统计模块**不 import llm/agents**（离线可用）。"""
     _seed(vroot, 3)
@@ -249,6 +274,62 @@ def test_list_items_filters_by_chapter_topic(vroot):
                                                            topic="心衰")] == ["B"]
     # 三者都不匹配 ⇒ 空（精确等值，不是模糊命中）
     assert vault_index.list_items(subject="内科学", chapter="呼吸系统", topic="心衰") == []
+
+
+# ================================================================ 复习字段（v2）
+def test_last_tried_round_trip_and_stats_recency(vroot):
+    """`last_tried` 必须能写能读，并驱动薄弱项的「最近一次」（而非入库时间）。"""
+    vault.write_record(_rec(id="lt1", question="Q", last_tried="2026-10-01T10:00:00",
+                            created_at="2026-01-01T00:00:00"), vroot)
+    vault_index.rebuild(vroot)
+    assert vault_index.list_items()[0]["last_tried"] == "2026-10-01T10:00:00"
+    g = vault_index.stats()["groups"][0]
+    assert g["latest"].startswith("2026-10-01"), "最近一次应取 last_tried 而非 created"
+
+
+def test_create_item_endpoint(vroot):
+    """新建错题直达 vault：题干为唯一必填，其余可空；落了文件、进了索引。"""
+    c = _client()
+    assert c.post("/api/vault/mistakes", json={"question": "   "}).status_code == 400
+    r = c.post("/api/vault/mistakes", json={"question": "新题", "subject": "甲科",
+                                            "options": ["A. 甲", "B. 乙"], "answer": "A"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["question"] == "新题" and body["path"]
+    assert (vroot / body["path"]).is_file(), "必须真的落成文件"
+    assert vault_index.list_items(q="新题")[0]["question"] == "新题"
+
+
+def test_grade_item_sm2_and_mastery_convergence(vroot):
+    """复习评分推进 SM-2，并让「复习」真的改变掌握度（错题→复习→掌握闭环）。"""
+    vault.write_record(_rec(id="g1", question="复习题", created_at="2026-10-13T08:00:00"), vroot)
+    vault_index.rebuild(vroot)
+    rel = vault_index.list_items()[0]["path"]
+    r1 = vault_index.grade_item(rel, 5, root=vroot)          # 第一次记得
+    assert r1["reps"] == 1 and r1["status"] == "unlearned"
+    assert r1["due"] > vault_index._today_iso(), "记得后应推到未来"
+    r2 = vault_index.grade_item(rel, 5, root=vroot)          # 连续记住两次 → 掌握
+    assert r2["reps"] == 2 and r2["status"] == "learned"
+    r3 = vault_index.grade_item(rel, 1, root=vroot)          # 忘了 → 回退
+    assert r3["status"] == "unlearned" and r3["state"] == "relearning" and r3["lapses"] == 1
+    assert vault.read_record(vroot / rel)["reps"] == 0, "忘了应重置 reps 并落盘"
+
+
+def test_due_items_and_review_endpoints(vroot):
+    vault.write_record(_rec(id="d1", question="今天到期", created_at="2026-10-13T08:00:00"), vroot)
+    vault.write_record(_rec(id="d2", question="未来到期", due="2999-01-01",
+                            last_tried="2026-10-13T08:00:00",
+                            created_at="2026-10-13T08:00:00"), vroot)
+    vault_index.rebuild(vroot)
+    due = vault_index.due_items()
+    assert [r["question"] for r in due] == ["今天到期"], "未来到期的不得混进今日复习"
+    c = _client()
+    assert c.get("/api/vault/review/due").json()["count"] == 1
+    rel = due[0]["path"]
+    g = c.post(f"/api/vault/review/{rel}/grade", json={"quality": 5})
+    assert g.status_code == 200, g.text
+    assert c.get("/api/vault/review/due").json()["count"] == 0, "评分后应移出今日复习"
+    assert c.post(f"/api/vault/review/{rel}/grade", json={"quality": 9}).status_code == 400
 
 
 # ================================================================ 接口红线
@@ -381,14 +462,29 @@ def test_agent_stats_only_answer_is_allowed(vroot, monkeypatch, run_coro):
 
 
 def test_agent_round_cap_is_reported(vroot, monkeypatch, run_coro):
-    """轮数用尽仍未收敛：如实注明，不许假装给了完整答案。"""
+    """轮数用尽：**再追一轮「只许 final」**收敛，并如实注明未收敛（不许给空答复）。"""
     _seed(vroot, 2)
     vault_index.rebuild(vroot)
-    drain = _agent(monkeypatch,
-                   [json.dumps({"action": "get_topic_stats", "args": {}},
-                               ensure_ascii=False)] * 6)
+    tool = json.dumps({"action": "get_topic_stats", "args": {}}, ensure_ascii=False)
+    final_ok = json.dumps({"action": "final", "answer": "你的薄弱项是慢阻肺。", "citations": []},
+                          ensure_ascii=False)
+    drain = _agent(monkeypatch, [tool] * 5 + [final_ok])
     ev = run_coro(drain())[-1]
-    assert "收敛" in ev["note"] and len(ev["tools"]) == 4
+    assert "收敛" in ev["note"] and len(ev["tools"]) == 5
+    assert ev["answer"].strip(), "轮数用尽也必须给出非空答复"
+    assert ev["grounded"] is True
+
+
+def test_agent_empty_answer_never_blank(vroot, monkeypatch, run_coro):
+    """模型返回空答复时必须有兜底文案——空白不许丢给用户（实测踩过）。"""
+    _seed(vroot, 1)
+    vault_index.rebuild(vroot)
+    tool = json.dumps({"action": "get_topic_stats", "args": {}}, ensure_ascii=False)
+    blank = json.dumps({"action": "final", "answer": ""}, ensure_ascii=False)
+    drain = _agent(monkeypatch, [tool] * 5 + [blank])
+    ev = run_coro(drain())[-1]
+    assert ev["answer"].strip(), "空白答复不许丢给用户"
+    assert "没能形成结论" in ev["answer"]
 
 
 # ================================================================ SSE 接线

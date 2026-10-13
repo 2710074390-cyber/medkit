@@ -130,6 +130,52 @@ async def import_from_library(body: dict[str, Any] = Body(default_factory=dict))
     return {"written": written, "skipped": skipped, "total_in_library": len(recs), **out}
 
 
+# ------------------------------------------------------------------ 新建错题（直接成 md）
+@router.post("/api/vault/mistakes")
+def create_mistake(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """新建一条错题文件（拍题/粘贴都走这里）。**题干为唯一必填**，其余可空。"""
+    q = str(body.get("question") or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="题干不能为空")
+    rec = {
+        "question": q,
+        "options": [str(o).strip() for o in (body.get("options") or []) if str(o).strip()],
+        "answer": str(body.get("answer") or "").strip(),
+        "analysis": str(body.get("analysis") or "").strip(),
+        "my_reasoning": str(body.get("my_reasoning") or "").strip(),
+        "doubts": str(body.get("doubts") or "").strip(),
+        "subject": str(body.get("subject") or "").strip(),
+        "chapter": str(body.get("chapter") or "").strip(),
+        "topic": str(body.get("topic") or "").strip(),
+        "source": "manual",
+    }
+    return {"ok": True, **vault_index.create_item(rec)}
+
+
+# ------------------------------------------------------------------ 复习闭环（SM-2，零 LLM）
+@router.get("/api/vault/review/due")
+def review_due(subject: str = "") -> dict[str, Any]:
+    items = vault_index.due_items(subject=subject)
+    return {"count": len(items), "items": items,
+            "stats": vault_index.review_stats(subject=subject)}
+
+
+@router.post("/api/vault/review/{path:path}/grade")
+def review_grade(path: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """写回一次复习评分（quality 0~5）：推进 SM-2 并原子改写该文件。"""
+    rel = _safe_vault_rel(path)
+    try:
+        quality = int(body.get("quality"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="quality 必须是 0~5 的整数")
+    if not 0 <= quality <= 5:
+        raise HTTPException(status_code=400, detail="quality 越界（应在 0~5）")
+    try:
+        return vault_index.grade_item(rel, quality)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="文件不存在（可能已删）")
+
+
 # ------------------------------------------------------------------ Agent 问答
 @router.post("/api/vault/ask")
 async def ask(body: dict[str, Any] = Body(...)) -> StreamingResponse:

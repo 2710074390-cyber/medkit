@@ -42,8 +42,13 @@ from ..core import vault, vault_index
 from ..core.llm import LLMError
 from . import get_client, render_prompt
 
-MAX_ROUNDS = 4
+MAX_ROUNDS = 5
+MAX_TOKENS = 3000        # 推理模型会把预算烧在 reasoning 上（实测 1200 会被截断成空正文）
 PROMPT_NAME = "mistake_agent.md"
+
+_FINALIZE = {"role": "user", "content":
+             "停止调用任何工具。现在直接输出 final JSON，基于上面已经取到的证据作答"
+             "（证据不足就照实说没有相关记录）。"}
 
 _TOOLS = {
     "search_my_mistakes",
@@ -174,7 +179,7 @@ async def ask(question: str, *, scope: str = "", path: str = "",
                "hint": "思考该调哪个工具" if rnd == 1 else "继续取证"}
         try:
             raw = await asyncio.to_thread(
-                client.chat, convo, temperature=0.2, json_mode=True, max_tokens=1200)
+                client.chat, convo, temperature=0.2, json_mode=True, max_tokens=MAX_TOKENS)
         except LLMError as e:
             yield {"type": "error", "message": f"模型调用失败：{e}", "tools": tool_log}
             return
@@ -200,11 +205,20 @@ async def ask(question: str, *, scope: str = "", path: str = "",
         convo.append({"role": "assistant", "content": raw})
         convo.append({"role": "user", "content":
                       f"工具 {name} 的结果：\n{json.dumps(res, ensure_ascii=False)[:6000]}"})
-    else:
-        # 轮数用尽仍未 final：以已取到的证据直答，并如实注明未收敛
+    if not final:
+        # 轮数用尽仍未 final ⇒ **再追一轮「只许 final」**（实测：推理模型在工具轮里
+        # 常把预算耗在 reasoning 上，不追这一轮就会给用户一个空答复）。
         yield {"type": "stage", "hint": "达到工具轮数上限，基于已取证据作答"}
-        final = {"action": "final", "answer": "", "citations": [],
-                 "note": f"未在 {MAX_ROUNDS} 轮内收敛，以下基于已取到的证据"}
+        note = f"未在 {MAX_ROUNDS} 轮内收敛，以下基于已取到的证据"
+        try:
+            raw = await asyncio.to_thread(
+                client.chat, convo + [_FINALIZE],
+                temperature=0.2, json_mode=True, max_tokens=MAX_TOKENS)
+            obj = _extract_json(raw)
+            final = obj if obj.get("action") == "final" else {"action": "final", "answer": ""}
+        except (LLMError, AgentError):
+            final = {"action": "final", "answer": ""}
+        final["note"] = (str(final.get("note") or "") + " " if final.get("note") else "") + note
 
     answer = str(final.get("answer") or "").strip()
     cites, dropped = _validate_citations(final.get("citations"))
@@ -216,6 +230,12 @@ async def ask(question: str, *, scope: str = "", path: str = "",
         # 这是本 Agent 与通用聊天机器人唯一的分界线——宁少答，不乱答。
         answer = _ungrounded_message(tool_log)
         note = (note + " " if note else "") + "（结论因缺少可验证依据被拦下）"
+    if not answer:
+        # 兜底：即便取到了依据，模型也可能返回空答复（预算截断/未收敛）——
+        # **不许把空白丢给用户**（实测：推理模型 + 轮数用尽即此形）。
+        tools = "、".join(sorted({str(t["tool"]) for t in tool_log})) or "无"
+        answer = (f"我这轮没能形成结论（已调用工具：{tools}）。"
+                  "请换个问法，或直接在文件夹里打开那条错题看原文。")
     if dropped:
         answer += "\n\n（已剔除无效引用：" + "、".join(dropped[:3]) + "）"
     yield {"type": "result", "answer": answer, "citations": cites,

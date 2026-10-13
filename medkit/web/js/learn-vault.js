@@ -1,6 +1,7 @@
 /* exported vaultInit, vaultRebuild, vaultMigrate, vaultSaveDir, vaultSearch,
    vaultSearchClear, vaultAsk, vaultAskGlobal, vaultPersist, vaultClose, vaultEdit, vaultOpen,
-   vaultFilter, vaultFilterClear, vaultLoad, vaultView */
+   vaultFilter, vaultFilterClear, vaultNewToggle, vaultPickPhoto, vaultPhotoPick, vaultCreate,
+   vaultNewClear, vaultGrade, vaultReviewLoad, vaultLoad, vaultView */
 /* ---- 本地错题（vault）视图：读文件索引 + 薄弱项 + Agent 问答 ----
  *
  * 设计要点（见 docs/错题本地文件化与Agent助手_设计方案_2026-10-13.md）：
@@ -284,5 +285,88 @@ async function vaultPersist() {
 }
 
 /* view 钩子：learn.js 的 showLearnView 会在切到本视图时调它 */
-window.vaultView = function () { vaultLoad(); };
+window.vaultView = function () { vaultLoad(); vaultReviewLoad(); };
+
+
+/* ---- 新建错题：粘贴 / 拍题 → 直接成 md ---- */
+function vaultNewToggle() {
+  const f = $("vault_new_form");
+  if (f) f.style.display = f.style.display === "none" ? "" : "none";
+}
+
+function vaultPickPhoto() { const el = $("nt_photo"); if (el) el.click(); }
+
+async function vaultPhotoPick(inp) {
+  const f = inp && inp.files && inp.files[0];
+  if (!f) return;
+  const btn = $("btn_nt_photo");
+  if (btn) btn.disabled = true;
+  try {
+    const fd = new FormData();
+    fd.append("file", f);
+    const r = await api("/api/library/mistakes/import-image", { method: "POST", body: fd });
+    const q = $("nt_q");
+    if (q) q.value = String(r.text || "").slice(0, 4000);
+    toast("已识别，请核对题干/选项后再创建");
+  } catch (e) { toast("识别失败：" + e.message, false); }
+  finally { if (btn) btn.disabled = false; inp.value = ""; }
+}
+
+function vaultNewClear() {
+  ["nt_sub", "nt_ch", "nt_tp", "nt_q", "nt_opts", "nt_ans", "nt_ana", "nt_und", "nt_doub"]
+    .forEach(id => { const el = $(id); if (el) el.value = ""; });
+}
+
+async function vaultCreate() {
+  const q = ($("nt_q") && $("nt_q").value.trim()) || "";
+  if (!q) { toast("先写题干（唯一必填）", false); return; }
+  const val = id => ($(id) && $(id).value) || "";
+  const opts = val("nt_opts").split("\n").map(s => s.trim()).filter(Boolean);
+  try {
+    await api("/api/vault/mistakes", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: q, options: opts, answer: val("nt_ans").trim(), analysis: val("nt_ana"),
+        my_reasoning: val("nt_und"), doubts: val("nt_doub"),
+        subject: val("nt_sub").trim(), chapter: val("nt_ch").trim(), topic: val("nt_tp").trim() }) });
+    toast("已写入错题文件夹（新建即进入今日复习）");
+    vaultNewClear();
+    await vaultLoad();
+    await vaultReviewLoad();
+  } catch (e) { toast("创建失败：" + e.message, false); }
+}
+
+
+/* ---- 今日复习：SM-2 排程 + 评分回写 ---- */
+async function vaultReviewLoad() {
+  const box = $("vault_due");
+  if (!box) return;
+  try {
+    const r = await api("/api/vault/review/due");
+    const meta = $("vault_due_meta");
+    if (meta) meta.textContent = `到期 ${r.stats.due} / 共 ${r.stats.total} · 纯本地，不调模型`;
+    const items = r.items || [];
+    box.innerHTML = items.length ? items.slice(0, 20).map(it => `
+      <div class="vault-duerow">
+        <span class="vault-q">${_esc(it.question) || "（无题干）"}</span>
+        <span class="vault-meta">${_esc([it.subject, it.chapter, it.topic].filter(Boolean).join(" · "))}
+          · 到期 ${_esc(it.due || "—")}</span>
+        <span class="btns" style="margin-top:6px">
+          <button class="act" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',5)">记得</button>
+          <button class="act gray" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',3)">模糊</button>
+          <button class="act gray" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',1)">忘了</button>
+        </span>
+      </div>`).join("") : `<div class="hint">今天没有到期的错题。</div>`;
+  } catch (e) { box.innerHTML = `<div class="hint">读取失败：${_esc(e.message)}</div>`; }
+}
+
+async function vaultGrade(rel, quality) {
+  try {
+    await api(`/api/vault/review/${encodeURI(rel)}/grade`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quality }) });
+    await vaultReviewLoad();
+    await vaultLoad();          // 掌握度/薄弱项会因复习而变
+  } catch (e) { toast("评分失败：" + e.message, false); }
+}
 

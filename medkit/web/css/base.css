@@ -418,10 +418,14 @@
   .rex-tab th{color:var(--dim);font-weight:600;font-size:11.5px}
   .learnview{display:none}
   .learnview.show{display:block}
-  /* 本地错题（vault）：一题一文件，列表行可点开详情 */
-  .vault-row{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;
+  /* 本地错题（vault）：一题一文件，列表行可点开详情。
+     `vault-duerow`（今日复习的条目）与 `vault-row`（错题列表）共用外观，
+     但**必须是不同的类名**——否则 `.vault-row` 这个选择器会同时命中两处，
+     列表计数/首行断言全部被复习条目污染（实测踩过）。 */
+  .vault-row, .vault-duerow{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;
     background:var(--card2);border:1px solid var(--line);border-radius:10px;
     padding:9px 12px;margin-bottom:7px;cursor:pointer;font-family:inherit;color:var(--text)}
+  .vault-duerow{cursor:default}
   .vault-row:hover{border-color:var(--accent)}
   .vault-q{font-size:13px;line-height:1.5}
   .vault-meta{font-size:11.5px;color:var(--dim)}

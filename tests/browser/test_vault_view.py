@@ -27,6 +27,8 @@ def _goto_vault(page, server_url: str) -> None:
     page.wait_for_selector("#lv-vault.show", timeout=15000)
     # 文件夹全域问的入口必须在场（不需要 API Key；未配 Key 时点它只会给出错误提示）
     page.wait_for_selector("#vault_ask_q", timeout=15000)
+    # 今日复习卡片（SM-2）也必须在场
+    page.wait_for_selector("#vault_due", timeout=15000)
 
 
 def _seed_library(page, subject: str, n: int = 2) -> None:
@@ -192,3 +194,47 @@ def test_vault_stat_row_filters_list(page, server_url):
         assert page.locator("#vault_filter_bar").inner_text() == ""
     finally:
         _cleanup(page, _SUBJ_C)
+
+
+_SUBJ_D = "皮肤科_vault新建"
+
+
+def test_vault_create_and_review_roundtrip(page, server_url):
+    """新建错题直达 vault → 进列表 → 复习评分推进 due（错题→复习→掌握闭环，零 API Key）。"""
+    _goto_vault(page, server_url)
+    page.click("#btn_vault_new_toggle")
+    page.wait_for_selector("#vault_new_form", state="visible", timeout=15000)
+    page.fill("#nt_q", "浏览器新建题_vault")
+    page.fill("#nt_sub", _SUBJ_D)
+    page.fill("#nt_opts", "A. 甲\nB. 乙")
+    page.fill("#nt_ans", "A")
+    page.click("button:has-text('创建错题文件')")
+    page.wait_for_function(
+        "() => { const t = document.getElementById('toasts');"
+        " return t && t.innerText.includes('已写入错题文件夹'); }", timeout=15000)
+
+    # 落了文件、进了列表
+    page.fill("#vault_q", "浏览器新建题_vault")
+    page.click("#btn_vault_q")
+    page.wait_for_function(
+        """(t) => {
+             const rows = document.querySelectorAll('.vault-row');
+             return rows.length >= 1 && [...rows].some(r => r.innerText.includes(t));
+           }""", arg="浏览器新建题_vault", timeout=15000)
+
+    # 复习评分：推进 due（直接打端点，等价于点「记得」）
+    res = page.evaluate(
+        """async () => {
+             const ms = await (await fetch('/api/vault/mistakes?q=' +
+               encodeURIComponent('浏览器新建题_vault'))).json();
+             const it = (ms.items || [])[0];
+             if (!it) return { err: 'not found' };
+             const before = it.due || '';
+             const g = await (await fetch('/api/vault/review/' + encodeURI(it.path) + '/grade',
+               { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({ quality: 5 }) })).json();
+             return { before, after: g.due, status: g.status };
+           }""")
+    assert not res.get("err"), res
+    assert res["after"] and res["after"] > res["before"], \
+        f"「记得」后 due 应推到未来：{res}"

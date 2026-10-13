@@ -23,7 +23,9 @@ sha1 比对（mtime/size 只作快路径，不作判据）
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -35,9 +37,12 @@ _ITEM_COLS = (
     "path TEXT PRIMARY KEY, sha1 TEXT NOT NULL, mtime REAL, fwarn TEXT, "
     "id TEXT, subject TEXT, chapter TEXT, topic TEXT, tags TEXT, status TEXT, "
     "created TEXT, source TEXT, source_type TEXT, source_year TEXT, bloom TEXT, "
-    "miss_count INTEGER, question TEXT, options TEXT, answer TEXT, analysis TEXT, "
-    "understanding TEXT, doubts TEXT, reply TEXT"
+    "miss_count INTEGER, last_tried TEXT, due TEXT, question TEXT, options TEXT, "
+    "answer TEXT, analysis TEXT, understanding TEXT, doubts TEXT, reply TEXT"
 )
+
+# v2 新增列（旧库补列用；`CREATE TABLE IF NOT EXISTS` 不会给已存在的表加列）
+_ADD_COLS = (("last_tried", "TEXT"), ("due", "TEXT"))
 
 _ENSURE = (
     "CREATE TABLE IF NOT EXISTS vault_items (\n    " + _ITEM_COLS + "\n)",
@@ -47,11 +52,15 @@ _ENSURE = (
 
 
 def ensure_index() -> None:
-    """建表（幂等）。库未就绪时静默跳过——不阻塞纯文件操作。"""
+    """建表 + 补列（幂等）。库未就绪时静默跳过——不阻塞纯文件操作。"""
     try:
         with dbs.tx(write=True) as cur:
             for sql in _ENSURE:
                 cur.execute(sql)
+            cols = {r[1] for r in cur.execute("PRAGMA table_info(vault_items)").fetchall()}
+            for name, decl in _ADD_COLS:
+                if name not in cols:
+                    cur.execute(f"ALTER TABLE vault_items ADD COLUMN {name} {decl}")
     except sqlite3.Error:
         pass
 
@@ -74,6 +83,7 @@ def _flatten(rec: dict[str, Any]) -> dict[str, Any]:
         "source": rec.get("source", ""), "source_type": rec.get("source_type", ""),
         "source_year": rec.get("source_year", ""), "bloom": rec.get("bloom", ""),
         "miss_count": int(rec.get("miss_count") or 1),
+        "last_tried": rec.get("last_tried", ""), "due": rec.get("due", ""),
         "question": rec.get("question", ""),
         "options": "\n".join(rec.get("options") or []),
         "answer": rec.get("answer", ""), "analysis": rec.get("analysis", ""),
@@ -168,12 +178,42 @@ def list_items(subject: str = "", status: str = "", q: str = "",
         where.append("status = ?")
         params.append(status)
     if q:
-        like = _like_pattern(q)
-        where.append("(question LIKE ? ESCAPE '\\' OR analysis LIKE ? ESCAPE '\\' "
-                     "OR understanding LIKE ? ESCAPE '\\' OR doubts LIKE ? ESCAPE '\\' "
-                     "OR reply LIKE ? ESCAPE '\\')")
-        params.extend([like] * 5)
+        clause, sp = _search_clause(_search_tokens(q))
+        where.append(clause)
+        params.extend(sp)
     return _rows(" AND ".join(where), tuple(params))
+
+
+# 检索命中面：题干/解析/我的理解/我的疑问/答复 + 主题/章节/科目
+_SEARCH_FIELDS = ("question", "analysis", "understanding", "doubts", "reply",
+                  "topic", "chapter", "subject")
+
+
+def _search_tokens(q: str) -> list[str]:
+    """检索分词：jieba 词 + CJK 二元组（复用 `db.fts_tokens`），按序去重、上限 8 个。
+
+    **必须分词**：模型常一次给出「慢阻肺 病因 感染」这样的多词 query——旧实现把整串当
+    **一个**子串去 LIKE，多词必然 0 命中，Agent 于是判「无依据」而拒答（真实 provider 实测踩过）。
+    `db.fts_tokens` 自带兜底（jieba 缺失→仅二元组），不抛错，故此处无需再包一层。
+    """
+    toks: list[str] = []
+    for t in dbs.fts_tokens(str(q or "")):
+        t = str(t).strip()
+        if t and t not in toks:
+            toks.append(t)
+    if not toks:
+        toks = [t for t in re.split(r"\s+", str(q).strip()) if t]
+    return toks[:8]
+
+
+def _search_clause(tokens: list[str]) -> tuple[str, list[str]]:
+    """每个词一个「跨字段 OR」组，组间 AND（词全要命中，字段任中其一）。"""
+    groups, params = [], []
+    for tok in tokens:
+        like = _like_pattern(tok)
+        groups.append("(" + " OR ".join(f"{f} LIKE ? ESCAPE '\\'" for f in _SEARCH_FIELDS) + ")")
+        params.extend([like] * len(_SEARCH_FIELDS))
+    return " AND ".join(groups), params
 
 
 def get_item(rel_path: str) -> Optional[dict[str, Any]]:
@@ -213,6 +253,7 @@ def update_section(rel_path: str, key: str, text: str, root: Optional[Path] = No
 
 
 def _reindex_one(path: Path, base: Path) -> None:
+    ensure_index()          # 单条写入也必须先保证表在（新建/评分可能发生在首次 rebuild 之前）
     rel = relative(path, base)
     rec = vault.read_record(path)
     flat = _flatten(rec)
@@ -247,7 +288,9 @@ def stats(subject: str = "") -> dict[str, Any]:
         learned = sum(1 for r in items if r.get("status") == "learned")
         unlearned = total - learned
         miss = sum(int(r.get("miss_count") or 1) for r in items)
-        latest = max((str(r.get("created") or "") for r in items), default="")
+        # 「最近一次」= 上次复习时间（`last_tried`）；没有就退回入库时间。
+        latest = max((str(r.get("last_tried") or r.get("created") or "") for r in items),
+                     default="")
         score = compute_score(learned, total, latest)
         out.append({
             "subject": sub, "chapter": ch, "topic": tp, "total": total,
@@ -267,3 +310,95 @@ def subjects() -> list[str]:
         return [r[0] for r in cur.execute(
             "SELECT DISTINCT subject FROM vault_items WHERE subject <> '' "
             "ORDER BY subject").fetchall()]
+
+
+# ------------------------------------------------------------------ 新建（直接成 md）
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _today_iso() -> str:
+    return date.today().isoformat()
+
+
+def create_item(rec: dict[str, Any], root: Optional[Path] = None) -> dict[str, Any]:
+    """新建一条错题：补 id/时间/待复习 → 原子写文件 → 增量入索引。返回带 `path` 的记录。"""
+    base = Path(root) if root else vault.vault_root()
+    rec = dict(rec)
+    if not str(rec.get("id") or "").strip():
+        rec["id"] = vault.new_id()
+    if not rec.get("created_at"):
+        rec["created_at"] = _now_iso()
+    if not str(rec.get("status") or "").strip():
+        rec["status"] = "unlearned"
+    rec.setdefault("due", _today_iso())        # 新建即可复习
+    rec.setdefault("state", "new")
+    path = vault.write_record(rec, base)
+    _reindex_one(path, base)
+    out = vault.read_record(path)
+    out["path"] = relative(path, base)
+    return out
+
+
+# ------------------------------------------------------------------ 复习闭环（SM-2，零 LLM）
+def _grade_card_of(rec: dict[str, Any], quality: int) -> dict[str, Any]:
+    """复用 `core/review.grade_card`（不重写 SM-2 口径），只喂它需要的字段。"""
+    from . import review as _rev
+    card = {
+        "ease": float(rec.get("ease") or _rev.INIT_EASE),
+        "interval": int(rec.get("interval") or 0),
+        "reps": int(rec.get("reps") or 0),
+        "lapses": int(rec.get("lapses") or 0),
+        "state": str(rec.get("state") or "new"),
+    }
+    return _rev.grade_card(card, quality)
+
+
+def due_items(subject: str = "") -> list[dict[str, Any]]:
+    """今日到期的错题（没有 due 的视为立即到期，即刚新建/刚迁移的）。"""
+    where = "(due IS NULL OR due = '' OR due <= ?)"
+    params: list[Any] = [_today_iso()]
+    if subject:
+        where += " AND subject = ?"
+        params.append(subject)
+    rows = _rows(where, tuple(params))
+    rows.sort(key=lambda r: (str(r.get("due") or ""), str(r.get("created") or "")))
+    return rows
+
+
+def review_stats(subject: str = "") -> dict[str, int]:
+    rows = _rows("subject = ?" if subject else "", (subject,) if subject else ())
+    today = _today_iso()
+    return {"total": len(rows),
+            "due": sum(1 for r in rows if (r.get("due") or "") <= today)}
+
+
+def grade_item(rel_path: str, quality: int, root: Optional[Path] = None) -> dict[str, Any]:
+    """写回一次复习结果：SM-2 推进 → 原子写文件 → 增量入索引。返回更新后的记录。
+
+    掌握度收敛：答错 → `status=unlearned`；**连续记住两次**（reps≥2）→ `status=learned`，
+    于是「复习」会真的改变薄弱项表（闭环）。
+    """
+    base = Path(root) if root else vault.vault_root()
+    path = base / rel_path
+    if not path.is_file():
+        raise FileNotFoundError(rel_path)
+    rec = vault.read_record(path)
+    q = max(0, min(int(quality), 5))
+    card = _grade_card_of(rec, q)
+    rec["last_tried"] = _now_iso()
+    rec["due"] = card["due"]
+    rec["state"] = card["state"]
+    rec["ease"] = card["ease"]
+    rec["interval"] = card["interval"]
+    rec["reps"] = card["reps"]
+    rec["lapses"] = card["lapses"]
+    if q < 3:
+        rec["status"] = "unlearned"
+    elif int(card["reps"]) >= 2:
+        rec["status"] = "learned"
+    vault._write_atomic(path, vault.serialize(rec))   # 就地改写，保住用户文件名
+    _reindex_one(path, base)
+    out = vault.read_record(path)
+    out["path"] = relative(path, base)
+    return out

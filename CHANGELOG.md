@@ -58,18 +58,46 @@ SQLite 降级为可弃索引**」——删掉索引全量重建后逐行相等�
 `medkit/web/js/learn-vault.js`；改：`main.py`（挂路由）/ `core/config.py`（`vault_dir`）/
 `routers/prompts.py`（注册表）/ `web/index.html` + `css/base.css` + `js/learn.js`（接线）。
 
-守卫：`tests/test_vault.py`（22 项：索引可弃·幂等 / 重建只读 / 手改生效 / 统计零 LLM /
-**掌握度方向性**（未掌握不得判为已掌握）/ `miss_count` 保真 / 搜索通配符转义 /
-chapter·topic 精确过滤 / 路径穿越与答案不可改写 / 迁移不动旧库 /
-Agent 四条硬约束的桩客户端断言 / **SSE 接线**）+
-`tests/browser/test_vault_view.py`（3 项真实链路：迁移→薄弱项表→写理解/疑问→**刷新后仍在**、
-检索收窄与清除、薄弱项表点行→筛出该组）。
+守卫：`tests/test_vault.py`（28 项：索引可弃·幂等 / 重建只读 / 手改生效 / 统计零 LLM /
+**掌握度方向性**（未掌握不得判为已掌握）/ `miss_count` 保真 / **搜索通配符转义 + 多词分词命中** /
+chapter·topic 精确过滤 / `last_tried` 读写与「最近一次」/ **新建错题** / **SM-2 评分与掌握度收敛** /
+逾期筛选 / 路径穿越与答案不可改写 / 迁移不动旧库 / Agent 四条硬约束的桩客户端断言 /
+**轮数用尽追 final·空答复兜底** / **SSE 接线**）+
+`tests/browser/test_vault_view.py`（4 项真实链路：迁移→薄弱项表→写理解/疑问→**刷新后仍在**、
+检索收窄与清除、薄弱项表点行→筛出该组、**新建→进列表→复习评分推进 due**）。
+
+### Added（错题「新建 → 复习 → 掌握」闭环 · 2026-10-14）
+
+- **新建错题直达 vault**：`POST /api/vault/mistakes`（**题干唯一必填**，其余可空）直接写成 md 并入索引；
+  前端「新建错题」表单；拍题复用既有 `POST /api/library/mistakes/import-image`（MinerU OCR）回填题干。
+- **复习闭环（SM-2 · 零 LLM）**：`GET /api/vault/review/due` + `POST /api/vault/review/{path}/grade`
+  复用 `core/review` 的纯函数（`grade_card`，不重写调度口径）推进间隔；**连续记住两次 ⇒
+  `status=learned`**，答错 ⇒ 回退 `unlearned`——于是「复习」会真的改变薄弱项表（闭环）。
+  前端新增「今日复习」卡片（记得 / 模糊 / 忘了）。
+- **文件格式 v2**：`last_tried` + 排程字段（`due/state/ease/interval/reps/lapses`）写进 front matter、
+  随评分回写、可手改；索引补 `last_tried`/`due` 两列（旧库自动 `ALTER` 补列）；薄弱项「最近一次」
+  改用 `last_tried`（无则回退入库时间），语义从「入库时间」变为「上次复习时间」。
+
+### Fixed（错题 Agent · 真实 provider 实测暴露 · 2026-10-14）
+
+> 用真实 DeepSeek 端到端跑 Agent，暴露出三处**只有真模型才现形**的问题（桩客户端测不到）：
+
+- **检索必须分词**：模型常一次给「慢阻肺 病因 感染」这样的**多词 query**；旧实现把整串当
+  **一个**子串去 LIKE ⇒ 多词必然 0 命中 ⇒ Agent 判「无依据」而**误拒答**（实测复现）。
+  现复用 `db.fts_tokens`（jieba 词 + CJK 二元组）分词，**组间 AND、字段内 OR**。
+- **轮数用尽不许给空答复**：推理模型在工具轮里常耗尽预算仍不 final；旧实现直接返回空 `answer`。
+  现**再追一轮「只许 final」**收敛，并加**空答复兜底文案**（绝不把空白丢给用户）。
+- **`max_tokens` 提到 3000**：`1200` 对推理模型会被 reasoning 吃光、正文截断成空；提示词补
+  「先 `get_topic_stats` 再 search / 有结果必须带引用」，降低误拒答。`MAX_ROUNDS` 4→5。
 
 ### Prompts
 
 - **新增 `medkit/prompts/mistake_agent.md`**：错题助手系统提示词——只能依据用户自己的错题库
   作答，明文禁止用通识补全、要求逐句带引用、先回应用户自己写的话。进 `routers/prompts.py`
   的 `PROMPT_ROLES` 注册表（`MistakeAgent · 错题助手`），走既有 `render_prompt` + 影子副本机制。
+- **修订（2026-10-14）**：补「高效取证」小节——跨条目问题**先 `get_topic_stats` 直接作答**、
+  `search` 有结果时 **`citations` 必须带一条**（否则被判"无依据"而拒答）、取证够了**尽早 final**。
+  动机是真实 provider 实测暴露的误拒答与轮数耗尽（见上「Fixed」）。
 - **不新增 `tests/fixtures/llm_cases/` 样本**：NX-06 的样本是给 IMP-03 的 pydantic 契约校验用的，
   本助手的输出是 JSON **动作协议**（非 schema 契约，`medtutor/medexplain` 等既有提示词同样无样本）；
   其协议行为由 `tests/test_vault.py` 的桩客户端直接覆盖（含「无依据必须说不知道」的硬约束）。

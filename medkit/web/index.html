@@ -648,8 +648,49 @@ try {
       </div>
 
       <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>新建错题</h2>
+          <span class="hint">直接写进文件夹 · 也可拍题识别后填入</span>
+          <button class="act gray" id="btn_vault_new_toggle" onclick="vaultNewToggle()">展开 / 收起</button>
+        </div>
+        <div id="vault_new_form" style="display:none">
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <input type="text" id="nt_sub" placeholder="科目（可空）" style="flex:1;min-width:110px">
+            <input type="text" id="nt_ch" placeholder="章节（可空）" style="flex:1;min-width:110px">
+            <input type="text" id="nt_tp" placeholder="主题（可空）" style="flex:1;min-width:110px">
+          </div>
+          <label style="margin-top:8px">题干（唯一必填）</label>
+          <textarea id="nt_q" rows="3" placeholder="例如：慢阻肺最主要的病因是"></textarea>
+          <input type="file" id="nt_photo" accept="image/*" style="display:none" onchange="vaultPhotoPick(this)">
+          <div class="btns" style="margin-top:6px">
+            <button class="act gray" id="btn_nt_photo" onclick="vaultPickPhoto()">拍题（图片 OCR，需 MinerU Key）</button>
+          </div>
+          <label style="margin-top:8px">选项（每行一个，可空）</label>
+          <textarea id="nt_opts" rows="3" placeholder="A. 吸烟&#10;B. 感染"></textarea>
+          <label style="margin-top:8px">答案（可空）</label>
+          <input type="text" id="nt_ans" placeholder="例如：A">
+          <label style="margin-top:8px">解析（可空）</label>
+          <textarea id="nt_ana" rows="3"></textarea>
+          <label style="margin-top:8px">我的理解（可空）</label>
+          <textarea id="nt_und" rows="2"></textarea>
+          <label style="margin-top:8px">我的疑问（可空）</label>
+          <textarea id="nt_doub" rows="2"></textarea>
+          <div class="btns" style="margin-top:8px">
+            <button class="act" onclick="vaultCreate()">创建错题文件</button>
+            <button class="act gray" onclick="vaultNewClear()">清空</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>薄弱项</h2><span class="hint">按优先级排序 · 纯本地计算，不调模型</span></div>
         <div id="vault_stats"><div class="hint"><span class="spin"></span>计算中…</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="cardh"><h2>今日复习</h2>
+          <span class="hint" id="vault_due_meta">SM-2 排程 · 纯本地，不调模型</span>
+        </div>
+        <div id="vault_due"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
 
       <div class="card" style="margin-top:14px">

@@ -32,7 +32,7 @@ import yaml
 from . import config as _cfg
 
 VAULT_MARKER = ".medkit-vault.json"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 # 正文小节标题（`## xxx`）。**顺序即渲染顺序**，解析与序列化共用这一份常量——
 # 两处各写一份字面量必然漂移（R9 教训）。
@@ -49,7 +49,8 @@ SECTION_TITLES: dict[str, str] = {
     SECTION_AGENT_REPLY: "Agent 的答复",
 }
 FM_ORDER = ("id", "subject", "chapter", "topic", "tags", "status", "created",
-            "source", "source_type", "source_year", "bloom", "miss_count")
+            "source", "source_type", "source_year", "bloom", "miss_count",
+            "last_tried", "due", "state", "ease", "interval", "reps", "lapses")
 
 README_TEXT = """# MedKit 错题本
 
@@ -81,6 +82,20 @@ class VaultError(RuntimeError):
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _as_int(v: Any) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(v: Any) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ------------------------------------------------------------------ 路径解析
@@ -156,6 +171,11 @@ def sha1_text(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
 
+def new_id() -> str:
+    """生成一个错题 id（`mk-<yyyyMMdd>-<4hex>`）——仅用于**尚无 id 的新建错题**。"""
+    return f"mk-{datetime.now().strftime('%Y%m%d')}-{os.urandom(2).hex()}"
+
+
 def sha1_file(path: Path) -> str:
     h = hashlib.sha1()
     with open(path, "rb") as f:
@@ -216,6 +236,18 @@ def serialize(rec: dict[str, Any]) -> str:
         _mc = 0
     if _mc > 1:
         raw["miss_count"] = _mc
+    # 复习排程字段（SM-2，v2 新增）：`last_tried` 让薄弱项的「最近一次」= 上次复习时间而非入库时间；
+    # `due/state/ease/interval/reps/lapses` 是「错题→复习→掌握」闭环的状态，评分时写回。
+    for _k in ("last_tried", "due", "state"):
+        if rec.get(_k):
+            raw[_k] = str(rec.get(_k))
+    for _k in ("reps", "interval", "lapses"):
+        _iv = _as_int(rec.get(_k))
+        if _iv:
+            raw[_k] = _iv
+    _ev = _as_float(rec.get("ease"))
+    if _ev:
+        raw["ease"] = _ev
     for k in ("source", "source_type", "source_year", "bloom"):
         if rec.get(k):
             raw[k] = str(rec.get(k))
@@ -316,6 +348,13 @@ def to_record(fm: dict[str, Any], sec: dict[str, str]) -> dict[str, Any]:
         "source_year": str(fm.get("source_year") or ""),
         "bloom": str(fm.get("bloom") or ""),
         "miss_count": fm.get("miss_count") or 1,
+        "last_tried": str(fm.get("last_tried") or ""),
+        "due": str(fm.get("due") or ""),
+        "state": str(fm.get("state") or ""),
+        "ease": _as_float(fm.get("ease")),
+        "interval": _as_int(fm.get("interval")),
+        "reps": _as_int(fm.get("reps")),
+        "lapses": _as_int(fm.get("lapses")),
         "question": title,
         "options": options,
         "answer": answer,
