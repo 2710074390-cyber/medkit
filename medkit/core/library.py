@@ -384,7 +384,7 @@ _META_FIELD_DEFAULTS: dict[str, Any] = {
     "ai_error_tag": "",          # AI 归因
     "tag_match": None,           # 人工 vs AI 是否一致（0/1；None = 无法判定）
     "round": "",                 # 复习轮次（早鸟轮/跟课轮/强化轮/冲刺轮）
-    "kp_id": "",                 # 知识点稳定 ID（kpid 派生）
+    "kp_id": "",                 # 知识点稳定 ID（EP-01 遗留字段，2026-10-13 起恒为空）
     "fix": "",                   # 修正陈述（≤25 字）
     "counterfactual": "",        # 反事实问题
     "knowledge_ref": "",         # 出处（章节/页码/自己的笔记日期）

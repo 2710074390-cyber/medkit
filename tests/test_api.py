@@ -259,15 +259,13 @@ def test_prompts_api_and_shadow_copy():
     on_disk = {p.name for p in prompts_dir.glob("*.md")}
     assert set(PROMPT_ROLES) <= on_disk, (
         f"注册表引用了不存在的提示词文件：{sorted(set(PROMPT_ROLES) - on_disk)}")
-    # 刻意**不在** API 注册表里的提示词——见下方说明，新增豁免要在此显式登记
-    # （error_image_extract.md：EP-01 图像录入用的视觉转录提示词，由 core/vision.py
-    #   直接 render，不经「提示词管理」页，故不进 PROMPT_ROLES。）
-    hidden = {"error_analysis.md", "socratic_review.md", "error_image_extract.md"}
-    assert set(PROMPT_ROLES) | hidden == on_disk, (
+    # v0.15（奥卡姆精简 P2）：EP-01 的三个隐藏提示词（error_analysis / socratic_review /
+    # error_image_extract）随归因域删除，提示词目录与 API 注册表现已**完全一致**。
+    assert set(PROMPT_ROLES) == on_disk, (
         "提示词目录与 API 注册表不一致："
-        f"目录有而两处都无 = {sorted(on_disk - set(PROMPT_ROLES) - hidden)}；"
-        f"登记了但目录没有 = {sorted((set(PROMPT_ROLES) | hidden) - on_disk)}。"
-        "（新增提示词要显式登记：进 PROMPT_ROLES，或进此隐藏集并说明理由。）")
+        f"目录有而注册表无 = {sorted(on_disk - set(PROMPT_ROLES))}；"
+        f"注册表有而目录无 = {sorted(set(PROMPT_ROLES) - on_disk)}。"
+        "（新增提示词必须进 PROMPT_ROLES。）")
 
     c = make_client()
     _install_isolated_cfg()

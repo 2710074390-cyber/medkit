@@ -167,6 +167,10 @@ _V7_DOWN: list[str] = [
 # - `kp_alias`：知识点别名表（kp_id 对齐三轮数据的桥）。
 # - `error_events`：**append-only 流水**，每轮每次作答一条。不复用 mistakes 快照，
 #   因为快照可被用户编辑，会让跨轮次迁移矩阵失真。
+#
+# ⚠️ **2026-10-13（奥卡姆精简 P2）**：EP-01 归因域已整体移除（`core/errorpipe.py` 等），
+# 但**本段 DDL 与 `mistakes` 的 6 个列一律保留不删**——用户数据不可逆，schema 不降级。
+# 保留的代价是几个空表；删掉的代价是升级过的用户库缺列。两害相权取保留。
 _V8_UP: list[str] = [
     "ALTER TABLE mistakes ADD COLUMN confidence INTEGER",
     "ALTER TABLE mistakes ADD COLUMN error_tag TEXT",
@@ -753,11 +757,12 @@ def fts_tokens(text: str) -> list[str]:
     ⚠️ **2026-10-02 补充勘误**：`心衰`/`心力衰竭` 这个例子在**两条路径上都是真边界**，
     不只是 FTS5 的：
     - 本模块（FTS5）：`"心衰"*` 0 命中 —— 因为 FTS5 只有 token 匹配、无子串匹配；
-    - `core/errsearch.py`（子串匹配）：`"心衰" in "心力衰竭"` 实测 **False**
+    - 子串匹配路径（原 `core/errsearch.py`）：`"心衰" in "心力衰竭"` 实测 **False**
       ⇒ 同样 0 命中（`心衰` 不是子串，前两字是「心力」）。
     我一度以为「子串路径能兜住心衰」——**错了**。
-    ⇒ 已落地 **D4 别名表**（`core/kp_aliases.py`），两条路径的心衰问题一并解决。
-    别再拿「心衰」当「前缀/二元组能兜」的例子——它是**别名表**的典型场景。
+    ⇒ 曾以 D4 别名表（原 `core/kp_aliases.py`）解决。**2026-10-13（P2）**：`errsearch` /
+    `kp_aliases` 随 EP-01 归因域移除，本模块的分词只服务教材切片与库域检索。
+    但**结论仍成立**：别再拿「心衰」当「前缀/二元组能兜」的例子。
     """
     toks: list[str] = []
     try:

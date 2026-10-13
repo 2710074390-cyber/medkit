@@ -47,13 +47,14 @@ sys.path.insert(0, str(ROOT))
 JS_DIR = ROOT / "medkit" / "web" / "js"
 
 # 分域（与 index.html 的加载顺序族一致）
-# - `app.js` = **外壳**（tab/仪表盘/数据管理/向导）：它是**宿主**，会主动调用生成链的功能
-# - `learn*.js` = **EP-01 / 学习中心**：剥离生成链后必须能独立工作 ⇒ 对它**零容忍**
+# - `app.js` = **外壳**（tab/数据管理）：它是**宿主**，会主动调用生成链的功能
+# - `learn*.js` = **核心（学习中心 / 错题本）**：剥离生成链后必须能独立工作 ⇒ 对它**零容忍**
 # - `review-desk*.js` = **生成链**（建课/审核台/出题）：待剥离的插件
 # - `md.js` = 共享基础片（渲染器），两边都可用
 SHARED = ("md.js",)
-EP01 = ("learn.js", "learn-study.js", "learn-live.js", "learn-review.js",
-        "learn-meta.js", "learn-meta-image.js", "learn-search.js")
+# 2026-10-13（奥卡姆精简 P2）：原 EP-01 归因域的三片（learn-meta / learn-meta-image /
+# learn-search）随功能删除；本域现为「学习中心 + 错题本」，改称 CORE。
+CORE = ("learn.js", "learn-study.js", "learn-live.js", "learn-review.js")
 SHELL = ("app.js",)
 PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
@@ -78,7 +79,6 @@ SHELL_TO_PLUGIN: dict[tuple[str, str], tuple[str, str]] = {
     ("app.js", "loadPrompts"): ("加 typeof 守卫", "切到「我的」tab 时重拉提示词（提示词管理属生成链）"),
     ("app.js", "stopPoll"): ("加 typeof 守卫", "切 tab / hash 直达时停掉项目轮询"),
     ("app.js", "showProject"): ("摘掉或降级", "「最近项目」卡片点击后打开建课页（生成链功能）"),
-    ("app.js", "wzClose"): ("加 typeof 守卫", "Esc / 遮罩点击时关掉新建向导（向导属生成链）"),
 }
 
 # **插件 → EP-01** 的引用登记：插件依赖核心是**允许**的（插件本就该建在核心上）
@@ -92,8 +92,6 @@ PLUGIN_TO_CORE: dict[tuple[str, str], str] = {
 # **外壳 → 题库刷题域（bank）** 的引用登记（与 SHELL_TO_PLUGIN 同范式）：
 # 外壳是宿主，引用允许，但必须写明「剥离/替换时怎么处理」。
 SHELL_TO_BANK: dict[tuple[str, str], tuple[str, str]] = {
-    ("app.js", "loadBankHome"): ("加 typeof 守卫",
-                                 "切到「练习」tab 时重拉题库列表（已用 typeof 守卫，插件缺失不炸）"),
     ("app.js", "bankDrillStartMistakes"): ("加 typeof 守卫",
                                            "错题本「→ 重练」的直达入口（`openDrillFor` 转发）——"
                                            "把 EP-01 → bank 的跨域调用**收敛到外壳一处**，"
@@ -157,8 +155,8 @@ def _cross_refs(files: tuple[str, ...], other: tuple[str, ...],
     return out
 
 
-def test_ep01_never_references_plugin_symbols():
-    """**硬红线**：EP-01 / 学习中心片不得引用插件（生成链）独有符号。
+def test_core_never_references_plugin_symbols():
+    """**硬红线**：核心（学习中心）片不得引用插件（生成链）独有符号。
 
     理由：剥离生成链后，**学习中心必须能独立工作**。这类调用会在**点击时**炸
     （`ReferenceError`），而加载期闸门 `test_v15_frontend_split.py` 管不到
@@ -168,9 +166,9 @@ def test_ep01_never_references_plugin_symbols():
     `letters()` 原在 `review-desk.js`（插件域），由 `learn-review.js` 调用 ⇒ 已移到
     `app.js`（共享基础片）。**这是本守卫第一次跑就抓到的真违规。**
     """
-    hits = sorted(_cross_refs(EP01, PLUGIN))
+    hits = sorted(_cross_refs(CORE, PLUGIN))
     assert not hits, (
-        "EP-01 / 学习中心引用了**插件独有**的顶层符号——剥离生成链后这些调用会在点击时炸：\n  "
+        "核心（学习中心）引用了**插件独有**的顶层符号——剥离生成链后这些调用会在点击时炸：\n  "
         + "\n  ".join(f"{f} → {s}" for f, s in hits)
         + "\n（修法：把该符号移到共享基础片 `md.js`/`app.js`，或让学习中心自带一份实现。）")
 
@@ -196,7 +194,7 @@ def test_shell_registry_is_not_rotted():
 
 def test_plugin_to_core_refs_are_registered():
     """**插件 → EP-01** 允许（插件本就该建在核心上），但必须登记。"""
-    found = _cross_refs(PLUGIN, EP01)
+    found = _cross_refs(PLUGIN, CORE)
     unregistered = sorted(found - set(PLUGIN_TO_CORE))
     assert not unregistered, (
         "以下「插件 → 核心」引用未登记：\n  "
@@ -205,7 +203,7 @@ def test_plugin_to_core_refs_are_registered():
 
 def test_plugin_registry_is_not_rotted():
     """**登记不得腐烂**：登记了但代码里已不再引用 ⇒ 红。"""
-    found = _cross_refs(PLUGIN, EP01)
+    found = _cross_refs(PLUGIN, CORE)
     rotten = sorted(set(PLUGIN_TO_CORE) - found)
     assert rotten == [], f"以下登记项已不再被引用，请从 PLUGIN_TO_CORE 删掉：{rotten}"
 
@@ -290,13 +288,13 @@ def test_shell_bank_registry_is_not_rotted():
 def test_domain_lists_cover_all_js_files():
     """分域清单必须覆盖全部 JS（新增片忘了归类 ⇒ 它会成为"没人管的域"，耦合检测漏检）。"""
     on_disk = {p.name for p in JS_DIR.glob("*.js")}
-    covered = set(EP01) | set(SHELL) | set(PLUGIN) | set(SHARED) | set(BANK)
+    covered = set(CORE) | set(SHELL) | set(PLUGIN) | set(SHARED) | set(BANK)
     assert on_disk == covered, (
         f"分域清单与磁盘不一致：\n  未归类 = {sorted(on_disk - covered)}\n"
         f"  清单里有而磁盘没有 = {sorted(covered - on_disk)}\n"
-        "（新增 JS 片必须归入 EP01 / BANK / SHELL / PLUGIN / SHARED——否则跨域耦合检测会漏检它。）")
+        "（新增 JS 片必须归入 CORE / BANK / SHELL / PLUGIN / SHARED——否则跨域耦合检测会漏检它。）")
 
 
-@pytest.mark.parametrize("f", EP01 + BANK + SHELL + PLUGIN + SHARED)
+@pytest.mark.parametrize("f", CORE + BANK + SHELL + PLUGIN + SHARED)
 def test_every_domain_file_exists(f: str):
     assert (JS_DIR / f).is_file(), f"{f} 不存在（分域清单过期？）"

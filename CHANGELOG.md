@@ -10,6 +10,83 @@
 
 > 占位：记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Removed（奥卡姆精简 P2「删除错题归因域」· 2026-10-13）
+
+> 用户决策 **D-2 = 删除**（见 `docs/重构设计方案_奥卡姆精简_2026-10-13.md` §9）。
+> 依据：本机真实数据 `error_events`=0 / `kp_alias`=0（该域从未被使用），且录入闸门要求
+> 每题填「把握程度 + 当时的想法」——对普通用户是劝退设计。
+
+- **删除 EP-01 错题归因全域（15 个后端文件）**：`core/{errorpipe,kpid,kp_aliases,metacog,
+  error_events,errsearch,vision,apkg_import}.py`、`agents/{error_analysis,socratic_review}.py`、
+  `render/notebook_md.py`、`routers/errors.py`（**30 个端点**）、`prompts/{error_analysis,
+  error_image_extract,socratic_review}.md`。
+- **视觉能力判定下沉**：`vision.py` 的 `VISION_MODEL_HINTS` / `looks_like_vision()` **并入
+  `core/modelcatalog.py`**（能力判定属共享基础设施）——同时**消除了 `modelcatalog ↔ vision`
+  的循环依赖**（原先靠函数内延迟 import 打破）。行为零变化（实测 7 组名字判定逐项一致）。
+- **前端三片删除**：`learn-meta.js`（元认知视图）/ `learn-meta-image.js`（拍照录入）/
+  `learn-search.js`（错题检索）+ `index.html` 的 `lv-meta` 视图、拍照录入卡片、检索框。
+- **图像录入降级为轻量入口**：新增 `拍题(图片 OCR)` 按钮（复用后端
+  `/api/library/mistakes/import-image`，只认字、不判能力、不过闸门、不跑归因）；
+  删除 Anki `.apkg` 导入入口（`mkApkgPick`/`mkApkgFile`）——它与「批量导入文件」功能重叠且更复杂。
+- **stage0 评测脚手架删除**：`pack/stage0-*.py`（5 个）+ `pack/stage0_cases.json` +
+  `tests/test_stage0_*.py`（3 个）——它们的评测对象就是被删的归因管线。
+- **测试删除 13 个文件**：`test_errorpipe` / `test_errorpipe_image` / `test_socratic` /
+  `test_metacog`(内含) / `test_errsearch` / `test_kp_aliases` / `test_notebook_md` /
+  `test_apkg_import` / `browser/test_meta_view` / `browser/test_photo_intake` /
+  `browser/test_socratic_review` + fixtures `error_analysis.json` / `error_image_extract.json`。
+- **EP-01 文档归档**：5 篇（`错题归因流水线_EP-01_设计与实现` / 3 篇阶段 0 报告 /
+  `考研错题分析专项重构方案_2026-09-27`）移入 **`docs/archive/ep-01/`**（archive/ 不在文档路径守卫扫描面内）。
+- **数据保留（红线）**：`kp_alias` / `error_events` 两张表与 `mistakes` 的 6 个 v8 列
+  **一律不删**（schema 不降级、用户数据不可逆），DDL 保留并在 `core/db.py` 注明来由。
+- **守卫同步**：`test_docs_coverage` 删 `/api/errors/*` 端点数守卫 + EP-01 支柱/提示词清单守卫，
+  为「记载当时事实」的旧路径补 `_PATH_EXEMPT`（含移档的 5 条）；`test_frontend_domain_coupling`
+  的 `EP01` 分域改名 **`CORE`** 并去掉三片；`test_model_catalog` 的视觉判据改走 `modelcatalog`。
+
+### Changed（奥卡姆精简 P4「生成链降级为可选插件」· 2026-10-13）
+
+> 用户决策 **D-1 = 做成插件**（不删代码，保开源价值与 7,500 行工程投入）。
+
+- **出题工坊默认关闭**（`localStorage medkit-gen-enabled`，默认 `0`）：
+  侧栏不出现「题库」页签、学习中心不出现「大纲管理」、「我的」不出现「网络检索」、
+  「开始」页不出现「最近项目」与「用教材生成新题」引导、「一键刷薄弱组卷」按钮隐藏。
+- **「我的 → 出题工坊」新增开关**（`#t_gen` / `genToggle()`）——一个勾选即恢复完整生成链。
+- **`#bank` hash 直达被拒**（落回「开始」并 toast 提示），避免「默认关」只是视觉隐藏。
+- **P3（考试锚定 / 网络检索）改为「随插件隐藏」而非删除**：`core/{syllabus,realexams,gap,
+  websearch}.py` 与 `routers/{syllabus,realexams,gap,search}.py` **保留**——`core/orchestrator.py`
+  （生成链）依赖它们做「大纲锚定注入 / 网络检索 / 真题考频」，而生成链按 D-1 保留为插件。
+  删掉它们要动 1562 行的生成链核心，收益与风险不成比例。
+- **测试夹具**：`tests/browser/conftest.py` 的 `page` fixture 预置 `medkit-gen-enabled=1`
+  （生成链自己的用例需要它）；`test_first_run.py` 显式清键后验证「默认关 + 开关生效」。
+
+### Changed（奥卡姆精简 P1「关灯」· 2026-10-13）
+
+> 主题：**首启不再有门槛，两个刷题页签合并**。方案见 `docs/重构设计方案_奥卡姆精简_2026-10-13.md` §6 P1。
+
+- **移除首启「错题 / 生成」双模式门**（2026-10-10 引入）：`#modegate`、侧栏模式条（`.modebar`）、
+  `applyMode()` / `TAB_MODE` / `MODE_META` / `modeGate*` 系列，以及 `medkit-mode` / `medkit-mode-seen`
+  两个 localStorage 键**整体删除**；页签不再按模式过滤，全部常显。
+  动机：体验质检（`docs/体验质检_医学生视角_2026-10-10.md` §二 P0-1）实测真首启时**向导盖住模式门、
+  模式门点不动**——新用户第一屏就卡住（onboarding anti-pattern）。
+- **移除 3 步新手向导**：`#wizard_mask` / `wz*` 系列（`review-desk-review.js` 内 112 行）删除，
+  `medkit/web/css/wizard.css` 整文件删除（不再被引用）。首启直接落在「开始」页，无任何遮罩；
+  不再依赖 `medkit-onboarded` / `medkit-wz-seen` 前置键。
+- **合并「练习」与「刷题」为单页签**（6 → 5 个一级页签）：`tab-drill`（导入自备题库）整体并入
+  `tab-study` 的「做题」子视图——首屏即「我的题库（导入 / 管理）」+「开始刷题」+「今日进度」，
+  导入与开练不再跨页签。快捷键改为 `Ctrl/⌘+1..5`；`#drill` 路由并入 `#study`。
+- **「开始」页改为刷题向落地页**：空状态引导从「三步出题」改为「① 导入题库马上刷题 /
+  ②（可选）用教材生成新题」，主按钮改「去刷题 →」。
+- **前端分域耦合登记收敛**：外壳 → 插件 8 → **7** 处（`wzClose` 随向导移除）、
+  外壳 → bank 1 → **0** 处（`loadBankHome` 改由 bank 域内部在 `studyView('do')` 时自调，
+  外壳不再引用）——登记表随代码同步，不腐烂。
+- **守卫**：`tests/browser/test_mode_gate.py`（守「模式门会出现」）**随职责反向改名为
+  `tests/browser/test_first_run.py`**（守「首启无门」：无遮罩 / 5 页签可见可点 / 不依赖旧前置键）；
+  `test_bank_drill` / `test_responsive` 的页签 id 与预置键同步；`test_v15_frontend_split` 的
+  「真实文件裸标识符引用」探针由 `review-desk-review.js::wzDone` 改为 `bank.js::loadBankHome`。
+  `test_docs_coverage` 为两处「记载当时事实」的路径引用（`test_mode_gate.py` / `wizard.css`）
+  补 `_PATH_EXEMPT`。
+- 真身：单元 1535 → **1536**（+1 活跃文档参数化用例）/ 浏览器层 100 → **98**
+  （-5 模式门用例 +3 首启用例）/ 总 **1634**。`pack/qa-experience-walkthrough.py` 同步到新流程。
+
 ## [0.14.0] - 2026-10-13
 
 > 主题：**题库可重新解析**——解析器改进后不必删库重导。用户二次反馈「还是有问题」：

@@ -24,13 +24,10 @@ INDEX = ROOT / "medkit/web/index.html"
 MAX_LINES = 800
 
 # 分片族（按**加载顺序**）——与 index.html 的 <script> 顺序、与拆分时的行区间顺序一致
-# EP-01：learn 族增 learn-meta.js（元认知视图），接在 learn-review.js 之后
-# EP-01 图像录入：learn 族再增 learn-meta-image.js（拍照录入），接在 learn-meta.js 之后
-# EP-01 阶段 4：learn 族再增 learn-search.js（错题检索）——learn-study.js 加检索后达 871 行
-#   超 800 判据，故把检索块**纯搬迁**成独立片
+# EP-01：learn 族曾增 learn-meta.js / learn-meta-image.js / learn-search.js；
+#   2026-10-13（奥卡姆精简 P2）随 EP-01 归因域整体移除，learn 族回到 4 片。
 FAMILIES: dict[str, list[str]] = {
-    "learn": ["learn.js", "learn-study.js", "learn-live.js", "learn-review.js",
-              "learn-meta.js", "learn-meta-image.js", "learn-search.js"],
+    "learn": ["learn.js", "learn-study.js", "learn-live.js", "learn-review.js"],
     "review-desk": ["review-desk.js", "review-desk-materials.js",
                     "review-desk-project.js", "review-desk-review.js"],
     # 2026-10-10 题库刷题族（bank）：核心侧（错题模式）——导入自备题库 + 应用内作答。
@@ -41,8 +38,8 @@ FAMILIES: dict[str, list[str]] = {
 DECL_RE = re.compile(r"(?:^|[;}])\s*(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)")
 # R9（2026-09-27）：**裸标识符引用**也要算 —— 函数名当值传递同样在加载期求值。
 # 旧实现用 `CALL_RE = ...\s*\(` 只认「带括号的调用」，于是这些真实形态全部漏检：
-#   `$("wz_skip").onclick = wzDone;`            （review-desk-review.js:708）
-#   `loadConfig().then(maybeShowWizard);`       （review-desk-review.js:744）
+#   `window.loadBankHome = loadBankHome;`       （bank.js:400，赋值右侧裸标识符）
+#   `loadConfig().catch(e => { ... });`         （review-desk-review.js，回调）
 #   `const x = mtSetMeta;`                      （声明右侧同样是加载期求值）
 # 反向验证：4 种形态注入后旧扫描器全绿，新扫描器 4/4 红、对照组不假红。
 IDENT_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)")
@@ -266,13 +263,13 @@ def test_forward_reference_scan_is_not_vacuous():
         "正则/解析可能已失效，上一条用例会因此恒绿。请人工确认 _immediate_calls()。")
 
     # 直接自检：_referenced_idents 必须同时能抓到「调用」与「裸引用」
-    sample = '$("wz_skip").onclick = wzDone; loadConfig().then(maybeShowWizard);'
+    sample = '$("btn_x").onclick = someHandler; loadConfig().then(otherHandler);'
     got = _referenced_idents(sample)
     assert "loadConfig" in got, "带括号调用形态漏检"
-    assert "maybeShowWizard" in got, "回调（裸标识符）形态漏检 —— R9 的修复点"
-    assert "wzDone" in got, "赋值右侧裸标识符漏检"
+    assert "otherHandler" in got, "回调（裸标识符）形态漏检 —— R9 的修复点"
+    assert "someHandler" in got, "赋值右侧裸标识符漏检"
     total_bare = len([1 for _l, r in _immediate_calls(
-        (JS_DIR / "review-desk-review.js").read_text(encoding="utf-8")) if "wzDone" in r])
+        (JS_DIR / "bank.js").read_text(encoding="utf-8")) if "loadBankHome" in r])
     assert total_bare >= 1, "真实文件里的裸标识符引用未被扫到（回归）"
 
 

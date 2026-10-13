@@ -1,4 +1,4 @@
-/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkApkgFile, mkApkgPick, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, mkRetry, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
+/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPhotoFile, mkPhotoPick, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, mkRetry, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
 const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
 const LEARN_ORDER = ["weak", "shaky", "solid", "mastered"];
@@ -534,7 +534,7 @@ function mkRowHTML(mm) {
     <div class="mk-actions">
       ${kp ? `<button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 讲解</button>
       <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 提问</button>` : ""}
-      ${(mm.options || []).length ? `<button class="mini-btn" data-id="${esc(mm.id)}" onclick="mkRetry(this)" title="到「练习」页把这道错题再做一遍（判对即归档已掌握）">→ 重练</button>` : ""}
+      ${(mm.options || []).length ? `<button class="mini-btn" data-id="${esc(mm.id)}" onclick="mkRetry(this)" title="到「刷题」页把这道错题再做一遍（判对即归档已掌握）">→ 重练</button>` : ""}
       ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" data-id="${esc(mm.id)}" onclick="mkLearn(this,true)">已掌握</button>`}
       ${mm.learned && kp ? `<button class="act gray" style="padding:5px 11px;font-size:12px" data-subject="${esc(mm.subject || "")}" data-kp="${esc(kp)}" onclick="mkPurgeSameCards(this)">清同名卡</button>` : ""}
       <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" data-id="${esc(mm.id)}" onclick="mkDel(this)">删除</button>
@@ -671,68 +671,30 @@ async function addMistakeRaw() {
     loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
-/* EP-01 图像录入：原来的「拍题(图片 OCR)」入口已删除。
+/* 拍题(图片 OCR)：MinerU 把图转文本 → 回填 `#mk_text`，用户核对后走「入库错题」。
  *
- * 它只做 MinerU OCR 并把识别文本回填 `mk_text` 文本框——不做能力判定
- * （模型支持原生视觉也不会用）、不过闸门、不跑归因。升级后的
- * 「拍照录入（自动归因）」卡片把三件事都做了，两套实现并存只会各自漂移，
- * 故入口统一为 `miFocus()`（见 learn-meta-image.js），本文件不再保留图片通道。
- * 后端 `/api/library/mistakes/import-image` 仍在（有独立守卫 tests/test_r4_batch3.py），
- * 只是不再有前端入口。
+ * 定位（v0.15 奥卡姆精简 P2）：这是**轻量**入口——只认字，不判模型能力、不过闸门、不跑归因。
+ * EP-01 的「拍照录入（自动归因）」卡片随归因域移除（它依赖 `vision` 能力判定 + `errorpipe`
+ * 归因）。需要 OCR 的用户在「我的 → 连接服务商」配 MinerU Token 即可。
+ * 后端 `/api/library/mistakes/import-image` 未变（独立守卫 tests/test_r4_batch3.py）。
  */
-/* EP-01 录入层：Anki `.apkg` 导入。
- *
- * 与「批量导入(文件)」的分工：那条吃 json/csv/md/txt（本地解析），本入口吃 Anki 牌组包
- * （ZIP 包着 SQLite，见 `core/apkg_import.py`）。落库走 `/api/errors/import/apkg`，
- * 与 JSONL 导入**共用同一套归一/闸门通道**。
- *
- * 两条 UX 约束：
- * ① **先 dry_run 体检**——Anki 牌组动辄上千条，先看清包里是什么（牌组名、模型、字段映射、
- *    多少条不是题目）再决定要不要真导；确认弹窗里把统计与警告原文摆出来。
- * ② **闸门如实告知**：Anki 里没有「把握程度 / 当时的想法」这两个字段，导入的条目一律
- *    未过闸门、只入库不归因——这句话必须让用户看到，否则他会以为归因没跑是 bug。
- */
-function mkApkgPick() { $("mk_apkg").click(); }
-async function mkApkgFile(input) {
+function mkPhotoPick() { $("mk_photo").click(); }
+async function mkPhotoFile(input) {
   const f = input.files && input.files[0];
-  input.value = "";                       // 允许连续选同一个文件
+  input.value = "";                       // 允许连续选同一张图
   if (!f) return;
-  const btn = $("btn_mk_apkg"); const old = btn ? btn.textContent : "";
-  if (btn) { btn.disabled = true; btn.textContent = "体检中…"; }
+  const btn = $("btn_mk_photo"); const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "识别中…"; }
   try {
     const fd = new FormData();
     fd.append("file", f);
-    fd.append("dry_run", "true");
-    const pre = await api("/api/errors/import/apkg", { method: "POST", body: fd });
-    const lines = [
-      `包内共 <b>${pre.total}</b> 条笔记：可导入 <b>${pre.total - pre.skipped}</b> 条`,
-      `字段映射：${(pre.meta && pre.meta.models)
-        ? Object.entries(pre.meta.models).map(([k, v]) => `${esc(k)} → ${esc(v.join(" / "))}`).join("；")
-        : "—"}`,
-    ];
-    if (pre.warnings && pre.warnings.length) {
-      lines.push("<br>" + pre.warnings.slice(0, 5).map(w => "· " + esc(w)).join("<br>"));
-    }
-    if (pre.total - pre.skipped <= 0) {
-      toast("包里没有可导入的题目——详见体检结果", false);
-      alert("Anki 导入体检\n\n" + lines.join("\n").replace(/<[^>]+>/g, ""));
-      return;
-    }
-    lines.push("<br><b>确认导入？</b>导入的条目<b>不会</b>参与 AI 归因"
-      + "（Anki 里没有「把握程度 / 当时的想法」，闸门不可事后补填）。");
-    confirmModal("导入 Anki 牌组", lines.join("<br>"), "确认导入", async () => {
-      const fd2 = new FormData();
-      fd2.append("file", f);
-      const r = await api("/api/errors/import/apkg", { method: "POST", body: fd2 });
-      toast(`已导入 ${r.created} 条（未过闸门 ${r.ungated} 条，不参与归因）`);
-      loadLibrary();
-      invalidateLearnCache();
-    }, false);
-  } catch (e) {
-    toast("Anki 导入失败：" + (e.message || e), false);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = old; }
-  }
+    const r = await api("/api/library/mistakes/import-image", { method: "POST", body: fd });
+    const text = String(r.text || "").trim();
+    if (!text) { toast("OCR 未识别出文字（图片可能过暗/过小/非题目）", false); return; }
+    $("mk_text").value = text;
+    toast("已识别，请核对文本后点「入库错题」");
+  } catch (e) { toast("识别失败：" + (e.message || e), false); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
 }
 
 async function _siteImportItems(items) {
@@ -796,4 +758,4 @@ async function mkBatchFile(input) {
   finally { input.value = ""; btn.disabled = false; btn.textContent = old; }
 }
 window.mkLearn = mkLearn; window.mkDel = mkDel;
-window.mkBatchPick = mkBatchPick; window.mkApkgPick = mkApkgPick;
+window.mkBatchPick = mkBatchPick; window.mkPhotoPick = mkPhotoPick;

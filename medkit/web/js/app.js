@@ -1,4 +1,4 @@
-/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openDrillFor, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, letters, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyGenFlag, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, genEnabled, genToggle, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openDrillFor, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, letters, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 const $ = id => document.getElementById(id);
 let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [], extra: [] },
@@ -17,11 +17,13 @@ function applyFeatures(cfg) {
     if (FEATURES[k] === undefined) FEATURES[k] = true;
   }
   const pill = document.querySelector('#learnnav button[data-lv="syllabus"]');
-  if (pill) pill.style.display = FEATURES.syllabus ? "" : "none";
+  // 2026-10-13（P4）：大纲管理属出题工坊——开关关闭时一并隐藏（后端 features.syllabus 仍生效）
+  if (pill) pill.style.display = (FEATURES.syllabus && genEnabled()) ? "" : "none";
   const rexCard = $("rex_card");
   if (rexCard) rexCard.style.display = FEATURES.realexams ? "" : "none";
   const gapBtn = $("btn_gap_paper");
-  if (gapBtn) gapBtn.style.display = FEATURES.gap ? "" : "none";
+  // 2026-10-13（P4）：「一键刷薄弱组卷」会创建生成链课题（依赖大纲/真题权重），随工坊一起隐藏
+  if (gapBtn) gapBtn.style.display = (FEATURES.gap && genEnabled()) ? "" : "none";
   const assetBox = $("pd_assets_box");
   if (assetBox) assetBox.style.display = FEATURES.image_q ? "" : "none";
   if (!FEATURES.syllabus) {
@@ -135,7 +137,7 @@ document.addEventListener("keydown", e => {
       // A-新14（含 D-22）：ESC 关闭必须触发 onCancel 回调（无 onCancel 时才直接关闭）
       const cb = modalOnCancel; modalOnCancel = null;
       if (typeof cb === "function") cb();
-    } else if ($("wizard_mask").style.display === "flex") wzClose();
+    }
   }
 });
 $("md_cancel").onclick = () => { $("modal_mask").style.display = "none"; };
@@ -390,74 +392,42 @@ function initDataMgmt() {
   bind("btn_dm_clear", () => dmClear());
 }
 
-/* ---- 错题 / 生成 双模式（2026-10-10） ----
-   首次进入先选模式；模式决定**落地页签**与**页签可见性**（`data-mode`）。
+/* 主导航页签清单（hash 路由与 showTab 共用；顺序即侧栏顺序）。 */
+const TABS_ALL = ["start", "study", "bank", "learn", "mine"];
 
-   ⚠️ 三条与既有行为/用例共存的硬约束（改动前先读）：
-   ① 页签**默认全可见**（`currentMode` 为空）——只有用户**显式选过**模式才过滤。
-      浏览器用例都是「新 context → 无模式」或「hash 直达」，因此不受影响。
-   ② 模式门遮罩 `pointer-events:none` 且让开侧栏（`padding-left`）⇒ 侧栏页签任何时候都可点，
-      点页签即视为「我自己探索」（关闭本层、不过滤）。
-   ③ 模式门只在「无 hash 且从未见过」时出现；已选模式后 `showTab` 跟随跨模式导航自动切换。 */
-const MODE_KEY = "medkit-mode";
-const MODE_SEEN_KEY = "medkit-mode-seen";
-// 页签 → 模式（`开始` / `我的` 不在表内 = 中立页签，两种模式都显示）
-const TAB_MODE = { drill: "wrong", study: "wrong", learn: "wrong", bank: "gen" };
-const MODE_META = {
-  wrong: { label: "错题", land: "drill" },
-  gen: { label: "生成", land: "bank" },
-};
-const TABS_ALL = ["start", "drill", "study", "bank", "learn", "mine"];
-let currentMode = null;
-
-function _ls(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
-function _lsSet(key, v) {
-  try { if (v == null) localStorage.removeItem(key); else localStorage.setItem(key, v); }
-  catch (e) { /* 隐私模式：仅本次会话生效 */ }
+/* ---- 出题工坊（生成链）开关 · 2026-10-13 奥卡姆精简 P4 ----
+ *
+ * 生成链（教材 → LLM 出题 → 题库 / 押题卷 / 复习手册）**默认关闭**：对普通用户它是
+ * 「另一条产品线」——要上传教材、配 API Key、理解题型配比与门禁规则；而刷题与错题复盘
+ * **不需要**它。开启后侧栏出现「题库」页签、学习中心出现「大纲管理」、本页出现「网络检索」。
+ *
+ * 存储：localStorage `medkit-gen-enabled`（纯本地偏好，不上后端、不进 ~/.medkit）。
+ * ⚠️ 代码仍在仓库里（不是物理剥离）——「降级为可选插件」是**信息架构**层面的：
+ * 普通用户的主路径上看不到它，进阶用户一个开关就能拿回完整能力。
+ */
+const GEN_KEY = "medkit-gen-enabled";
+function genEnabled() {
+  try { return localStorage.getItem(GEN_KEY) === "1"; } catch (e) { return false; }
 }
-
-function applyMode() {
-  const mode = currentMode;
-  document.querySelectorAll("nav button[data-tab]").forEach(b => {
-    const m = TAB_MODE[b.dataset.tab];
-    b.style.display = (!mode || !m || m === mode) ? "" : "none";
-  });
-  const el = $("mode_name");
-  if (el) el.textContent = mode ? MODE_META[mode].label : "未选择";
-  const bar = $("modebar");
-  if (bar) bar.dataset.mode = mode || "";
+function applyGenFlag() {
+  const on = genEnabled();
+  const tab = document.querySelector('button[data-tab="bank"]');
+  if (tab) tab.style.display = on ? "" : "none";
+  const syl = document.querySelector('#learnnav button[data-lv="syllabus"]');
+  if (syl) syl.style.display = on ? "" : "none";
+  const ws = $("ws_card");
+  if (ws) ws.style.display = on ? "" : "none";
+  const tg = $("t_gen");
+  if (tg) tg.checked = on;
 }
-function modeGateShow() { const g = $("modegate"); if (g) g.style.display = "flex"; }
-/* P0-1：模式门与首启向导必须**串行**——向导在显示时不弹门，等向导结束再弹。
- * 由 initTab / maybeShowWizard / wzDone / wzClose 统一调用，避免两弹层叠加。 */
-function modeGateMaybeShow() {
+function genToggle(on) {
+  try { localStorage.setItem(GEN_KEY, on ? "1" : "0"); } catch (e) { /* 隐私模式：仅本次会话生效 */ }
+  applyGenFlag();
+  toast(on ? "已启用出题工坊——侧栏出现「题库」页签" : "已关闭出题工坊（日常刷题不受影响）");
   const h = (location.hash || "").replace("#", "");
-  if (currentMode || h || _ls(MODE_SEEN_KEY)) return;
-  const wiz = $("wizard_mask");
-  if (wiz && wiz.style.display !== "none") return;   // 向导在显示 → 让位
-  modeGateShow();
+  if (!on && h === "bank") { location.hash = "start"; showTab("start"); }
 }
-window.modeGateMaybeShow = modeGateMaybeShow;
-function modeGateHide() {
-  const g = $("modegate");
-  if (g && g.style.display !== "none") g.style.display = "none";
-  _lsSet(MODE_SEEN_KEY, "1");
-}
-function modeGateOpen() { modeGateShow(); }
-function setMode(mode) {
-  currentMode = MODE_META[mode] ? mode : null;
-  _lsSet(MODE_KEY, currentMode);
-  _lsSet(MODE_SEEN_KEY, "1");
-  applyMode();
-  modeGateHide();
-}
-function modeGatePick(mode) {
-  setMode(mode);
-  const land = MODE_META[mode] && MODE_META[mode].land;
-  if (land) { location.hash = land; showTab(land); }
-}
-function modeGateSkip() { modeGateHide(); applyMode(); }
-window.modeGateOpen = modeGateOpen; window.modeGatePick = modeGatePick; window.modeGateSkip = modeGateSkip;
+window.genToggle = genToggle;
 
 /* ---- 导航 + hash 路由 */
 let shownTab = null;   // A-新7：记录当前已展示 tab——hashchange 与 showTab 双入口去重（防双倍请求）
@@ -468,12 +438,12 @@ function showTab(name) {
     if (cur && cur !== name) history.replaceState(null, "", "#" + cur);
     return;
   }
-  // 模式：**已选模式**时跨模式导航自动跟随（未选模式则不过滤，页签保持全可见）
-  const tm = TAB_MODE[name];
-  if (currentMode && tm && tm !== currentMode) {
-    currentMode = tm; _lsSet(MODE_KEY, tm); applyMode();
+  // 出题工坊未启用：拒绝进入「题库」（含 hash 直达）——引导到「我的」开启
+  if (name === "bank" && !genEnabled()) {
+    toast("出题工坊未启用——可在「我的 → 出题工坊」开启", false);
+    if ((location.hash || "").replace("#", "") === "bank") { location.hash = "start"; return; }
+    name = "start";
   }
-  modeGateHide();   // 任何页签导航都关掉模式门（含「我自己探索」）
   /* 只作用于主导航（data-tab）：学习中心子导航 #learnnav 也是 <nav>，
      若用裸 "nav button" 会误重置子导航的 aria-selected/active 状态。 */
   document.querySelectorAll("nav button[data-tab]").forEach(x => {
@@ -492,8 +462,7 @@ function showTab(name) {
   /* v0.8.1：Tab 分发（开始/练习/刷题/题库/学习中心/我的） */
   if (typeof bankDrillHide === "function") bankDrillHide();   // 切页签一律收起沉浸式作答层（bank 域）
   if (name === "start") loadStart();
-  if (name === "drill" && typeof loadBankHome === "function") loadBankHome();   // 题库刷题域（bank.js）
-  if (name === "study") {   // A-15：进入刷题页（默认「做题」子视图；复习视图的拼键监听由 studyView 管）
+  if (name === "study") {   // 刷题页（默认「做题」子视图：我的题库 + 开始刷题；复习视图由 studyView 管）
     if (typeof studyView === "function") studyView(); else loadStudy();
   }
   if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
@@ -515,16 +484,10 @@ document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () =>
    这些函数定义在 app.js 之后加载的 review-desk.js / learn.js 中。初始化须推迟到全部
    脚本执行完毕（DOMContentLoaded），否则 ReferenceError → tab 面板已切但内容空屏。 */
 function initTab() {
-  // 模式：先恢复上次选择（无则不过滤 = 全部页签可见）
-  const saved = _ls(MODE_KEY);
-  currentMode = MODE_META[saved] ? saved : null;
-  applyMode();
+  applyGenFlag();   // 出题工坊开关（默认关 → 隐藏「题库」tab / 「大纲管理」/「网络检索」）
   const h = (location.hash || "").replace("#", "");
   if (TABS_ALL.includes(h)) showTab(h);
   else loadStart();   // 无 hash → 默认落地「开始」仪表盘（此时各脚本已就绪）
-  // P0-1：模式门的显示统一交给 modeGateMaybeShow()（在 review-desk-review.js 的
-  // maybeShowWizard / wzDone 收尾处调用）——此处不显示，否则向导（异步出现）会叠在门上面。
-  // 见 modeGateMaybeShow 的「向导在显示 → 让位」判据。
   initDataMgmt();   // U-20：绑定数据管理区按钮（元素为静态 HTML，可安全绑定）
 }
 if (document.readyState === "loading") {
@@ -538,15 +501,15 @@ window.addEventListener("hashchange", () => {
   if (TABS_ALL.includes(h) && h !== shownTab) showTab(h);
 });
 
-/* 错题 → 练习的**直达入口**（外壳层转发）。
+/* 错题 → 刷题的**直达入口**（外壳层转发）。
  *
  * 为什么放在 app.js 而不是直接让学习中心调 `bankDrillStartMistakes`：
- * EP-01（学习中心）与 bank（练习）是两个**核心域**，让前者直接依赖后者的符号会在
+ * EP-01（学习中心）与 bank（刷题）是两个**核心域**，让前者直接依赖后者的符号会在
  * 域清单里多一条「核心 → 核心」的隐式耦合；而外壳本就是宿主，转发一处即可，
  * 依赖方向收敛为 EP-01 → 外壳 → bank（登记见 tests/test_frontend_domain_coupling.py）。
  */
 function openDrillFor(focusId) {
-  showTab("drill");
+  showTab("study");
   if (typeof bankDrillStartMistakes !== "function") return;   // bank 族未加载（剥离构建）
   bankDrillStartMistakes("all", focusId);
 }
@@ -564,35 +527,33 @@ async function loadStart() {
     const rv = d.review || {};
     const my = d.mastery || {};
     const recent = (projs.projects || []).slice(0, 3);
-    /* v0.10.5：新手三步上手卡——尚无任何课题时展示（checklist 式空状态引导）；
-       本会话内点过「先逛逛」则不再显示；有课题后自然消失 */
+    const genOn = genEnabled();   // 出题工坊开关（P4）：关闭时不展示生成向内容
+    /* v0.10.5：新手上手卡——尚无任何课题时展示（checklist 式空状态引导）；
+       本会话内点过「先逛逛」则不再显示；有课题后自然消失。
+       v0.15：两条路——① 导入题库刷题（默认路径）②（可选）用教材生成新题（仅在出题工坊开启时）。 */
     let ob = "";
     try {
       if (!sessionStorage.getItem("medkit-ob-dismiss")) {
         const projCount = (projs.projects || []).length;
         if (projCount === 0) {
-          const hasKey = !!(state.cfg && state.cfg.api_key_masked);
           ob = `<div class="onboard" id="onboard_card">
             <div class="ob-head">
-              <div><b>三步上手 Med<b>Kit</b></b><span>还没生成过课题——照着走一遍，约 5 分钟出第一套题</span></div>
+              <div><b>开始用 Med<b>Kit</b></b><span>${genOn
+                ? "两条路：导入你自己的题库刷题，或用教材让 AI 出新题"
+                : "导入你自己的题库，马上开始刷题"}</span></div>
               <button class="mini-btn" onclick="obDismiss()">先逛逛</button>
             </div>
             <div class="ob-steps">
-              <div class="ob-step${hasKey ? " done" : ""}">
-                <span class="ob-n">${hasKey ? "✓" : "1"}</span>
-                <div class="ob-t"><b>连接 AI</b><span>${hasKey ? "已配置 API Key" : "注册 DeepSeek 获取 API Key（充值 ¥10 可出多套题）"}</span></div>
-                ${hasKey ? "" : `<button class="ob-btn" onclick="showTab('mine')">去配置</button>`}
-              </div>
               <div class="ob-step">
+                <span class="ob-n">1</span>
+                <div class="ob-t"><b>导入题库，马上刷题</b><span>md / txt / json / csv 都行——本地解析，不联网、不需要 API Key</span></div>
+                <button class="ob-btn" onclick="showTab('study')">去导入</button>
+              </div>
+              ${genOn ? `<div class="ob-step">
                 <span class="ob-n">2</span>
-                <div class="ob-t"><b>上传教材与教师重点</b><span>PDF / Word / MD / 图片都行，一次一个章节最稳</span></div>
-                <button class="ob-btn" onclick="showTab('bank');document.getElementById('dz_textbook').scrollIntoView({behavior:'smooth'})">去上传</button>
-              </div>
-              <div class="ob-step">
-                <span class="ob-n">3</span>
-                <div class="ob-t"><b>生成第一套题</b><span>先「试出一题」看效果，再正式生成题库</span></div>
-                <button class="ob-btn" onclick="loadSample()">载入示例体验</button>
-              </div>
+                <div class="ob-t"><b>（可选）用教材生成新题</b><span>上传教材 + 老师重点 → AI 出全新题库 / 押题卷 / 复习手册</span></div>
+                <button class="ob-btn" onclick="showTab('bank')">去生成</button>
+              </div>` : ""}
             </div>
           </div>`;
         }
@@ -605,13 +566,13 @@ async function loadStart() {
         <div class="start-stat"><b>${rv.done || 0}</b><span>已完成（总卡 ${rv.total || 0}）</span></div>
         <div class="start-stat"><b>${my.mastered_rate || 0}%</b><span>掌握率（${my.total_knowledge || 0} 知识点）</span></div>
       </div>
-      <button class="big-start" onclick="showTab('study')">开始学习 →</button>
-      <p class="hint" style="text-align:center;margin:8px 0 4px">先清掉今日到期，再去「题库」生成新题</p>
+      <button class="big-start" onclick="showTab('study')">去刷题 →</button>
+      <p class="hint" style="text-align:center;margin:8px 0 4px">导入你的题库开始刷题${genOn ? "；需要新题时再去「题库」生成" : ""}</p>
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>考试计划</h2><span class="hint">支持多场：期末 / 考研 / 执业</span></div>
         <div id="exam_box"></div>
       </div>
-      <div class="card" style="margin-top:14px">
+      ${genOn ? `<div class="card" style="margin-top:14px">
         <div class="cardh"><h2>最近项目</h2><span class="hint">点击进入项目详情</span></div>
         ${recent.length ? recent.map(p => `
           <button class="start-proj" data-pid="${esc(p.pid)}" onclick="openRecentProject(this)">
@@ -620,7 +581,7 @@ async function loadStart() {
             ${p.running ? '<span class="spin"></span>' : ""}
           </button>`).join("")
         : `<div class="hint">还没有课题——去「题库」上传教材，AI 帮你生成题库</div>`}
-      </div>`;
+      </div>` : ""}`;
     renderExamPlans();
     /* 侧栏待办徽章：今日到期复习 → 刷题；进行中提问 → 学习中心（learn.js 实现） */
     if (typeof setLearnNavBadge === "function") {

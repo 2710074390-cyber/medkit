@@ -5,8 +5,8 @@
    loadBankHome */
 /* ---- 题库域（bank）：我的题库列表 / 新建 / 重命名 / 删除 / 进入练习 ----
  *
- * 定位：**管理与练习已有题**（零 LLM）。与「题库」页签（出题工坊，烧 LLM token 生成新题）是两件事，
- * 故两者在侧栏分属不同模式（本域属「错题」模式）。
+ * 定位：**管理与练习已有题**（零 LLM）。与「题库」页签（出题工坊，烧 LLM token 生成新题）是两件事。
+ * 侧栏「刷题」页签即本域主入口（导入 + 开始刷题 + 今日进度）。
  *
  * 数据来源：`/api/bank/*`（`routers/bank.py` → `core/bank.py`）。题目**不内置、不分发**——
  * 用户导入自备 md/json/csv/txt，数据权利归各自来源方。
@@ -422,8 +422,10 @@ window.bankRetryStart = bankRetryStart;
 /* ================================================================ 「刷题」页（tab-study）入口
  *
  * v0.13.0：把侧栏「刷题」做成**医考帮式选择题刷题主入口**——两个子视图：
- *   - `do`（做题，默认）：选题库/错题 + 模式 → 进入沉浸式作答（引擎在 bank-drill.js）；
+ *   - `do`（做题，默认）：我的题库（导入/管理）+ 选题库/错题 + 模式 → 进入沉浸式作答（引擎在 bank-drill.js）；
  *   - `review`（复习）：原 SM-2 闪卡复习（数据由 EP-01 的 `loadStudy()` 加载，职责不变）。
+ *
+ * v0.15（奥卡姆精简 P1）：原独立「练习」页签（导入自备题库）已并入本页签的 `do` 子视图。
  *
  * 依赖方向：本片（BANK）→ 外壳 `setStudyKeys` / EP-01 `loadStudy`，一律 `typeof` 守卫
  * （缺失即不挂快捷键/不预加载，不炸）——与既有 `openDrillFor` 同范式。
@@ -445,7 +447,7 @@ function studyView(name) {
   // 复习卡的 1/2/3 自评快捷键只在复习视图挂（否则与做题的选项快捷键抢键）
   if (typeof setStudyKeys === "function") setStudyKeys(name === "review");
   if (name === "review") { if (typeof loadStudy === "function") loadStudy(); }
-  else loadDoEntry();
+  else { loadBankHome(); loadDoEntry(); }
 }
 
 /* 做题入口数据：题库下拉 + 快捷开始 + 今日进度（每次进「刷题」页刷新） */
@@ -462,7 +464,7 @@ async function loadDoEntry() {
       if (cur && _bankState.banks.some(b => String(b.id) === String(cur))) sel.value = cur;
       _bankState.current = sel.value;
     }
-  } catch (e) { /* 列表加载失败不阻断入口（下拉留空，用户仍可去「练习」页导入） */ }
+  } catch (e) { /* 列表加载失败不阻断入口（下拉留空，用户仍可去「我的题库」卡导入） */ }
   _doQuickRender();
   _doTodayRender();
   bankGoalRefresh();
@@ -473,7 +475,7 @@ function _doQuickRender() {
   if (!box) return;
   const banks = (_bankState.banks || []).filter(b => (b.items || 0) > 0);
   if (!banks.length) {
-    box.innerHTML = `<div class="hint">还没有题库——去「练习」页「导入题库文件」把你自备的
+    box.innerHTML = `<div class="hint">还没有题库——点上方「导入题库文件」把你自备的
       md / txt / json / csv 题库收进来，或先「新建空题库」手动加题。</div>`;
     return;
   }

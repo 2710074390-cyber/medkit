@@ -60,8 +60,8 @@ def _cleanup(page) -> None:
 
 
 def _open_drill(page, server_url: str) -> None:
-    page.goto(f"{server_url}/#drill")
-    page.wait_for_selector("#tab-drill.show", timeout=15000)
+    page.goto(f"{server_url}/#study")
+    page.wait_for_selector("#tab-study.show", timeout=15000)
 
 
 def _start_first_bank(page) -> None:
@@ -75,7 +75,7 @@ def test_bank_import_list_and_correct_answer(page, server_url):
     _seed_bank(page)
     try:
         page.reload()
-        page.wait_for_selector("#tab-drill.show", timeout=15000)
+        page.wait_for_selector("#tab-study.show", timeout=15000)
         page.wait_for_selector(".bank-item", timeout=15000)
         assert _BANK_NAME in page.locator("#bank_list").inner_text()
 
@@ -223,7 +223,9 @@ def test_study_page_do_view_starts_drill(page, server_url):
     _open_drill(page, server_url)
     _seed_bank(page)
     try:
-        page.goto(f"{server_url}/#study")
+        # v0.15：_open_drill 已落在「刷题」页（#study），再 goto 同址不会触发 hashchange；
+        # 用 reload 重跑 initTab → showTab("study") → studyView('do') → 重拉题库渲染快捷卡片。
+        page.reload()
         page.wait_for_selector("#tab-study.show", timeout=15000)
         assert page.locator("#sv-do").is_visible(), "默认应停在「做题」子视图"
         assert not page.locator("#sv-review").is_visible()
@@ -320,8 +322,8 @@ def _drop_retry(page) -> None:
 
 def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_url):
     """F7：错题本「→ 重练」直达 → 判对归档「已掌握」（落库）；B7：今日目标把重练算进进度。"""
-    page.goto(f"{server_url}/#drill")
-    page.wait_for_selector("#tab-drill.show", timeout=15000)
+    page.goto(f"{server_url}/#study")
+    page.wait_for_selector("#tab-study.show", timeout=15000)
     try:
         st = page.evaluate(
             """async ([subj, tag, q]) => {
@@ -340,7 +342,7 @@ def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_u
         page.click('#learnnav button[data-lv="mistakes"]')
         page.wait_for_selector("#learn_mk .mk-row", timeout=15000)
         page.locator(".mk-row", has_text=_RETRY_TAG).locator('button:has-text("→ 重练")').click()
-        page.wait_for_selector("#tab-drill.show", timeout=15000)
+        page.wait_for_selector("#tab-study.show", timeout=15000)
         page.wait_for_selector(".bank-q", timeout=15000)
         assert _RETRY_Q in page.locator(".bank-q").inner_text(), "应直达被点的那道题"
 
@@ -386,8 +388,8 @@ def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_u
 def test_import_from_project_and_export_paper(page, server_url, server_home):
     """F11：从出题项目导入题库（弹层 → 命名 → 入库）；F10：题库导出为交互押题卷 HTML。"""
     _seed_project(server_home)
-    page.goto(f"{server_url}/#drill")
-    page.wait_for_selector("#tab-drill.show", timeout=15000)
+    page.goto(f"{server_url}/#study")
+    page.wait_for_selector("#tab-study.show", timeout=15000)
     try:
         page.click('button:has-text("从出题项目导入")')
         page.wait_for_selector("#modal_mask", state="visible", timeout=15000)

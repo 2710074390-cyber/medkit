@@ -41,7 +41,6 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
-ERRORS_ROUTER = ROOT / "medkit" / "routers" / "errors.py"
 
 
 def _readme_text() -> str:
@@ -65,113 +64,18 @@ def _current_feature_section() -> str:
     return rest[: nxt.start()] if nxt else rest
 
 
-def _router_endpoint_count() -> int:
-    """数 `/api/errors/*` 的端点数（真身：routers/errors.py 的装饰器）。"""
-    src = ERRORS_ROUTER.read_text(encoding="utf-8")
-    return len(re.findall(r"^@router\.(get|post|put|delete)\(", src, re.MULTILINE))
-
-
 # --------------------------------------------------------------------------
-# 1. 端点数：README 声称的数字必须等于真身
+# 1.（已移除）`/api/errors/*` 端点数守卫
+# 2026-10-13（奥卡姆精简 P2）：`routers/errors.py` 随 EP-01 归因域删除，
+# 「README 声称 N 个端点 == 真身」这条判据失去靶子，一并移除。
+# 端点计数现由目录树的「单元/浏览器层」与文件级 `test_xxx N` 两处守卫覆盖（见下）。
 # --------------------------------------------------------------------------
 
 
-def test_readme_endpoint_count_matches_router():
-    """README 里「N 个端点 /api/errors/*」的 N 必须等于 routers/errors.py 的真实端点数。
-
-    这是**最容易被忽略**的一类过期：加了端点没人去改 README 的数字。
-    """
-    section = _current_feature_section()
-    m = re.search(r"(\d+)\s*个端点", section)
-    assert m, "README「已实现功能」中应声明 `/api/errors/*` 的端点数（形如「22 个端点」）"
-
-    claimed = int(m.group(1))
-    actual = _router_endpoint_count()
-    assert claimed == actual, (
-        f"README 声称 {claimed} 个端点，实际 {actual} 个。"
-        f"新增/删除端点后请同步 README 的数字（真身：medkit/routers/errors.py）。"
-    )
-
-
-# --------------------------------------------------------------------------
-# 2. EP-01 关键模块：README 必须提到（正向）
-# --------------------------------------------------------------------------
-
-# 这些是 EP-01 的**架构支柱**——少了任何一个，读者都无法理解这个功能怎么运作。
-# 清单变化时（新增/删除支柱模块）必须同步这里，否则守卫本身失效。
-EP01_PILLARS = (
-    "core/errorpipe.py",
-    "core/kpid.py",
-    "core/metacog.py",
-    "core/error_events.py",
-    "core/vision.py",
-    "core/apkg_import.py",
-    "core/errsearch.py",
-    "agents/error_analysis.py",
-    "agents/socratic_review.py",
-    "render/notebook_md.py",
-    "routers/errors.py",
-)
-
-
-def test_ep01_lists_are_not_empty():
-    """**元守卫（必须非参数化）**：两个手写清单都不能为空。
-
-    `test_ep01_pillar_*` / `test_ep01_prompts_*` 是 `@pytest.mark.parametrize` 用例，
-    pytest 对**空** parametrize 的处理是「收集一个 `[NOTSET]` 用例并 **SKIP**」——
-    输出 `N passed, 1 skipped` 看着完全正常，实则是**用例消失**。
-    而 parametrize 里**没法断言非空**（空集合根本不进函数体）。
-    本文件已有的 `test_active_docs_scan_face_is_not_empty` 只管 `_active_docs()`，
-    管不到这两个手写清单 ⇒ 补上。
-
-    判据两条腿（互不依赖，删任一条另一条仍能在塌缩时拦住）：
-    ① 数量下限；② 关键成员在场。
-    """
-    assert len(EP01_PILLARS) >= 5, f"EP01_PILLARS 只剩 {len(EP01_PILLARS)} 项"
-    assert len(EP01_PROMPTS) >= 3, f"EP01_PROMPTS 只剩 {len(EP01_PROMPTS)} 项"
-    for must in ("core/errorpipe.py", "core/vision.py", "routers/errors.py"):
-        assert must in EP01_PILLARS, f"EP01_PILLARS 缺关键支柱 {must}"
-    for must in ("error_analysis.md", "error_image_extract.md"):
-        assert must in EP01_PROMPTS, f"EP01_PROMPTS 缺关键提示词 {must}"
-
-
-@pytest.mark.parametrize("rel", EP01_PILLARS)
-def test_ep01_pillar_mentioned_in_readme(rel: str):
-    """每个 EP-01 支柱模块都必须在 README 的当前功能章节里被提及。"""
-    section = _current_feature_section()
-    name = pathlib.Path(rel).name
-    assert name in section or rel in section, (
-        f"README「已实现功能」未提及 EP-01 支柱模块 {rel}。"
-        f"新功能落地后必须补文档——否则用户/接手者无从知晓。"
-    )
-
-
-@pytest.mark.parametrize("rel", EP01_PILLARS)
-def test_ep01_pillar_really_exists(rel: str):
-    """反向：README 提到的支柱模块必须真实存在（防「文档写了代码没有」）。"""
-    assert (ROOT / "medkit" / rel).exists(), (
-        f"{rel} 不存在，README 却在描述它——文档与代码脱节。"
-    )
-
-
-# --------------------------------------------------------------------------
-# 3. 提示词文件：README 必须提到（EP-01 的两个新 prompt）
-# --------------------------------------------------------------------------
-
-
-EP01_PROMPTS = ("error_analysis.md", "socratic_review.md", "error_image_extract.md")
-
-
-@pytest.mark.parametrize("name", EP01_PROMPTS)
-def test_ep01_prompts_mentioned(name: str):
-    """EP-01 的提示词必须在 README 提及（提示词是行为契约的一部分）。"""
-    section = _current_feature_section()
-    assert name in section, f"README「已实现功能」未提及提示词 {name}"
-
-
-@pytest.mark.parametrize("name", EP01_PROMPTS)
-def test_ep01_prompts_really_exist(name: str):
-    assert (ROOT / "medkit" / "prompts" / name).exists(), f"prompts/{name} 不存在"
+# 2.（已移除）EP-01 错题归因的支柱模块 / 提示词清单守卫
+# 2026-10-13（奥卡姆精简 P2）：EP-01 归因域整体删除（core/errorpipe.py 等 15 个文件 +
+# prompts/error_analysis.md 等 3 个提示词）。这些清单守卫的目标已不存在，随功能一并移除。
+# 教材/生成链的文档守卫见本文件其余小节。
 
 
 # --------------------------------------------------------------------------
@@ -292,6 +196,34 @@ _PATH_EXEMPT = {
     "docs/design": "已删除的空目录，引用出现在'已删除'的记录里",
     # 报告记录的是"当时的计划文件名"，实际实现换了落点（已在原文加更正说明）
     "tests/_asyncio_util.py": "计划名，实际落在 tests/conftest.py（原文已更正）",
+    # v0.15 奥卡姆精简 P1：首启模式门与 3 步向导已移除，该守卫随职责反向改名为
+    # tests/browser/test_first_run.py（守「首启无门」）；2026-10-10/11 的质检与验收报告
+    # 记录的是当时事实，保留原名引用。
+    "tests/browser/test_mode_gate.py": "v0.15 已改名为 tests/browser/test_first_run.py（守卫对象「模式门」已被移除）",
+    # 2026-10-10 体验质检报告在记载 P0-1（向导 z-index 200 盖住模式门 z-index 70）时
+    # 引用了该样式文件的 `:2` 行；v0.15 精简把向导与模式门一并移除，该文件已删除。
+    "medkit/web/css/wizard.css": "v0.15 已删除（首启向导移除）；质检报告记载的是当时事实",
+    # ---- 2026-10-13（奥卡姆精简 P2）：EP-01 错题归因域整体删除 ----
+    # 下列路径都被**活跃的历史文档**引用（事故留档 / 待办总结 / 交接文档 / 调研方案）。
+    # 这些文档记载的是「当时确实存在这些文件」，路径已不存在是正常的历史事实。
+    # 说明：纯 EP-01 的 5 篇文档已移入 `docs/archive/ep-01/`（archive/ 本就不在本守卫扫描面内）。
+    "tests/test_socratic.py": "EP-01 测试，随归因域删除（2026-10-13 P2）",
+    "tests/test_errorpipe.py": "EP-01 测试，随归因域删除（2026-10-13 P2）",
+    "tests/test_stage0_eval_preflight.py": "EP-01 阶段 0 评测脚手架测试，随归因域删除（2026-10-13 P2）",
+    "medkit/agents/socratic_review.py": "EP-01 苏格拉底复习，随归因域删除（2026-10-13 P2）",
+    "medkit/core/errorpipe.py": "EP-01 五阶段归因管线，随归因域删除（2026-10-13 P2）",
+    "medkit/core/vision.py": "EP-01 图像录入管线，随归因域删除（视觉能力判定已并入 core/modelcatalog.py）",
+    "medkit/routers/errors.py": "EP-01 的 /api/errors/*（30 端点），随归因域删除（2026-10-13 P2）",
+    "medkit/prompts/error_analysis.md": "EP-01 归因提示词，随归因域删除（2026-10-13 P2）",
+    "pack/stage0-export-cases.py": "EP-01 阶段 0 题样导出器，随归因域删除（2026-10-13 P2）",
+    # 下面 5 条是**被移走**的 EP-01 文档（移入 `docs/archive/ep-01/`）。
+    # 活跃文档（交接 / 事故留档 / 待办 / D2 评估）在正文里按**当时的路径**引用它们，
+    # 路径已不存在是移档的正常结果——不是文档写错。
+    "docs/错题归因流水线_EP-01_设计与实现.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
+    "docs/考研错题分析专项重构方案_2026-09-27.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
+    "docs/EP-01_阶段0_归因报告_Agent替身模式_20260928.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
+    "docs/EP-01_阶段0_归因报告_Agent替身模式_30题_20260928.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
+    "docs/EP-01_阶段0_归因质量验证报告.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
 }
 
 
@@ -798,15 +730,13 @@ def test_no_silent_skip_in_doc_guards():
 # README「仓库结构」代码块里的数字声明
 #
 # 2026-10-02 发现的**扫描面盲区**：README 有两处写「同一组数字」——
-#   ①「已实现功能」章节：`**N 项 pytest**` / `N 个端点`  ← 一直被守卫扫
-#   ② 目录树代码块注释：`└── tests/  # N 项（单元 N / 浏览器层 M）`
-#                       `│   ├── routers/  # …（/api/errors/* · N 端点）`
-#                       ← **完全在扫描面外**
-# 出 0.10.6 时实测：② 的两个数字分别陈旧到 1052（实际 1228）与 22（实际 30），
-# 而**任何守卫都不报警**。这与 2026-10-05 事故（README 数字陈旧 4 倍无人发现）
-# 同源，只是换了个位置——**守卫的扫描面写窄了**。
+#   ①「已实现功能」章节：`**N 项 pytest**`                            ← 一直被守卫扫
+#   ② 目录树代码块注释：`└── tests/  # N 项（单元 N / 浏览器层 M）`     ← **完全在扫描面外**
+# 出 0.10.6 时实测：② 的数字陈旧到 1052（实际 1228）而**任何守卫都不报警**。
+# 这与 2026-10-05 事故（README 数字陈旧 4 倍无人发现）同源，只是换了个位置。
 #
 # 判据与①完全一致（都取自真身），只是把扫描面扩到目录树。
+# （2026-10-13 P2：原先同处还有「`/api/errors/* · N 端点`」一行，随 EP-01 删除。）
 # ---------------------------------------------------------------------------
 
 # 目录树代码块的起点标记（README 里唯一的 `medkit/` 顶格行）
@@ -886,22 +816,6 @@ def test_readme_tree_test_counts_match_reality():
     assert not bad, (
         "README 目录树的计数与真身不符：\n  " + "\n  ".join(bad)
         + "\n新增/删除测试后请同步 README 目录树那行（真身：pytest --collect-only）。"
-    )
-
-
-def test_readme_tree_endpoint_count_matches_router():
-    """目录树注释里的「/api/errors/* · N 端点」必须等于真身（与功能段同源判据）。"""
-    tree = _readme_tree_block()
-    m = re.search(r"/api/errors/\*\s*·\s*(\d+)\s*端点", tree)
-    assert m, (
-        "README 目录树里找不到「/api/errors/* · N 端点」声明。"
-        "它与「已实现功能」段那处是同一件事的两处写法，不许只改一处或删掉。"
-    )
-    claimed = int(m.group(1))
-    actual = _router_endpoint_count()
-    assert claimed == actual, (
-        f"README 目录树声称 {claimed} 个端点，实际 {actual} 个。"
-        f"真身：medkit/routers/errors.py 的装饰器数。"
     )
 
 
@@ -993,6 +907,5 @@ def test_readme_tree_block_scan_face_is_not_empty():
         f"README 目录树只剩 {len(tree.splitlines())} 行（预期 ≥10）——"
         "扫描面疑似被写窄。"
     )
-    # 关键成员：两条守卫各自依赖的形态，必须真的在场（独立于上面的 re.search）
+    # 关键成员：守卫各自依赖的形态，必须真的在场（独立于上面的 re.search）
     assert re.search(r"\d+\s*项（单元", tree), "目录树里没有测试计数行"
-    assert re.search(r"/api/errors/\*\s*·", tree), "目录树里没有端点计数行"

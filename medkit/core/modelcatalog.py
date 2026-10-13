@@ -40,17 +40,19 @@ return {"ok": True, "models": [m.id for m in ...]}   # 只有裸 ID
 
 - 只有 ① ⇒ 自定义端点、老服务商**全裸**；
 - 只有 ② ⇒ 服务商上了新模型要**等发版**才认识；
-- 只有 ③ ⇒ 退化成「猜名字」，正是 `vision.py` 一直想摆脱的状态。
+- 只有 ③ ⇒ 退化成「猜名字」，正是最弱的那一层。
 
 **关键约定：上游字段缺失时行为与改造前完全一致**（回落到②③），故**零回归**。
 
-## 与 `vision.py` 的关系（**不另起一套判据**）
+## 视觉能力判据（**单一事实来源**）
 
-`vision.py` 的 `VISION_MODEL_HINTS` 是**名字启发式**（保守正面判据）。
-本模块的 `caps_of()` 复用它作为第 ③ 层，**不重写一份标记表**——
-两份表迟早会漂移（新增一家服务商只改了一处）。`vision.py` 的
-`capability()`/`looks_like_vision()` 反过来也吃本模块的①层，
-形成**单一事实来源**（与 `vision.py` 既有约定「前后端不各判一套」同精神）。
+`VISION_MODEL_HINTS` 是**名字启发式**（保守正面判据），本模块 `caps_of()` 用它作第 ③ 层。
+`looks_like_vision()` 反向也吃本模块的①层（上游 `input_modalities` 拉取时已并入目录条目）。
+
+> 2026-10-13（奥卡姆精简 P2）：这两个符号原先在 `core/vision.py`，与 `vision` 的
+> **EP-01 图像录入管线**混在一起，且形成 `modelcatalog ↔ vision` 循环依赖（靠函数内延迟
+> import 打破）。EP-01 移除后，能力判定属**共享基础设施**，随之下沉到本模块——
+> 循环依赖消失，且与既有约定「前后端不各判一套」同精神。
 
 ## 无 IO / 无 LLM / 无状态
 
@@ -61,9 +63,27 @@ return {"ok": True, "models": [m.id for m in ...]}   # 只有裸 ID
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
-from .vision import looks_like_vision
+# --------------------------------------------------------------------- 视觉能力（名字启发式）
+#
+# 维护约定：新增一家服务商时**只加不删**；这里不是"排除名单"，认不出只是退回
+# 「不确定」，不会造成功能不可用，所以宁可保守也不要为了"猜得准"塞进 `o1`
+# 这类会误伤的短串（`o1` 作为子串会命中任意含 "o1" 的名字）。
+VISION_MODEL_HINTS: tuple[str, ...] = (
+    "vision",        # deepseek-v4-flash-vision-exp / doubao-vision / abab6.5-vision
+    "claude",        # claude-3.5-sonnet / claude-sonnet-4
+    "gemini",        # gemini-1.5-pro / gemini-2.0-flash
+    "gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-5",
+    "glm-4v", "glm-4.5v", "glm-5v",
+    "step-1v",
+    "internvl",
+    "minicpm-v",
+)
+# `vl` 单独用**词边界**匹配：qwen-vl-plus / qwen3-vl / qwen2.5-vl 命中，
+# 而 `eval` / `vlsi` 这类误伤被挡住。
+_VL_RE = re.compile(r"(?:^|[-_.])vl(?:$|[-_.])")
 
 # --------------------------------------------------------------------- 内置目录
 #
@@ -180,13 +200,35 @@ def _modalities_caps(mods: Any) -> Optional[bool]:
     return "image" in {str(x).strip().lower() for x in mods}
 
 
+def looks_like_vision(model: str) -> bool:
+    """模型是否支持图像输入。**权威优先**：
+
+    1. **内置目录**（本模块 `CATALOG`）——我们维护的清单，最准；
+    2. 回落到**名字启发式**（`VISION_MODEL_HINTS` 正面清单 + `vl` 词边界）。
+
+    目录里没有 + 名字认不出 ⇒ `False`。**保守方向是刻意的**：
+    反了（认不出就当支持）的代价是用户传一张图吃到 400 报错，且无从知道该换模型
+    还是该去配 OCR。
+    """
+    m = str(model or "").strip().lower()
+    if not m:
+        return False
+    entry = _catalog_entry(m, "")
+    caps = (entry or {}).get("caps") or {}
+    v = caps.get("vision")
+    if isinstance(v, bool):
+        return v
+    if any(h in m for h in VISION_MODEL_HINTS):
+        return True
+    return bool(_VL_RE.search(m))
+
+
 def caps_of(model_id: str, provider: str = "",
             upstream: Optional[dict[str, Any]] = None) -> dict[str, bool]:
     """三层合并出能力表（`vision` / `reasoning`）。
 
     优先级：① 上游字段 → ② 内置目录 → ③ 名字启发式。
-    **未知就是未知**：拿不到任何线索时不编（`vision` 回落保守 False，
-    与 `vision.py` 的正面判据方向一致）。
+    **未知就是未知**：拿不到任何线索时不编（`vision` 回落保守 False）。
     """
     out: dict[str, bool] = {}
     up = upstream or {}
@@ -209,7 +251,7 @@ def caps_of(model_id: str, provider: str = "",
             # 目录已明确标注定位但没有 caps 键时，不再补——避免把展示标签当能力断言
             pass
 
-    # ③ 名字启发式（复用 vision.py，不重写一份标记表）
+    # ③ 名字启发式（本模块自持的正面清单，不重写一份标记表）
     if "vision" not in out:
         out["vision"] = bool(looks_like_vision(model_id))
 

@@ -20,20 +20,16 @@ _MD = ("# 题库\n\n### q1 · A1 型 · 单选 · 理解\n**慢阻肺的诊断**
 _BANK_NAME = "响应式用例库"
 _SUBJECT = "内科学_响应式A"
 
-_TABS = ["start", "drill", "study", "bank", "learn", "mine"]
+_TABS = ["start", "study", "bank", "learn", "mine"]
 _SIZES = [(768, 1024), (390, 844)]
 
 
 def _new_page(browser, width, height):
-    """独立 context（自带窄屏视口）+ 预置首启引导前置状态（与 conftest 的 page 同口径）。"""
+    """独立 context（自带窄屏视口）+ 预置「出题工坊已启用」（与 conftest 的 page 同口径）。"""
     ctx = browser.new_context(viewport={"width": width, "height": height})
     pg = ctx.new_page()
     pg.set_default_timeout(15000)
-    pg.add_init_script(
-        "localStorage.setItem('medkit-onboarded','1');"
-        "sessionStorage.setItem('medkit-wz-seen','1');"
-        "localStorage.setItem('medkit-mode-seen','1');"
-    )
+    pg.add_init_script("localStorage.setItem('medkit-gen-enabled','1');")
     return ctx, pg
 
 
@@ -63,8 +59,8 @@ def test_bank_manage_table_does_not_overflow(browser, server_url, size):
     """
     ctx, pg = _new_page(browser, *size)
     try:
-        pg.goto(f"{server_url}/#drill")
-        pg.wait_for_selector("#tab-drill.show", timeout=15000)
+        pg.goto(f"{server_url}/#study")
+        pg.wait_for_selector("#tab-study.show", timeout=15000)
         pg.evaluate(
             """async ([md, name, subject]) => {
               const p = await (await fetch('/api/bank/import/preview', {
@@ -75,7 +71,7 @@ def test_bank_manage_table_does_not_overflow(browser, server_url, size):
                 body: JSON.stringify({name: name, subject: subject, items: p.items})});
             }""", [_MD, _BANK_NAME, _SUBJECT])
         pg.reload()
-        pg.wait_for_selector("#tab-drill.show", timeout=15000)
+        pg.wait_for_selector("#tab-study.show", timeout=15000)
         pg.wait_for_selector(".bank-item", timeout=15000)
         pg.click('button:has-text("管理题目")')
         pg.wait_for_selector("#bank_item_list .bank-preview-table", timeout=15000)

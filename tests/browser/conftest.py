@@ -160,17 +160,13 @@ def page(browser):
     ctx = browser.new_context(viewport={"width": 1280, "height": 800})
     pg = ctx.new_page()
     pg.set_default_timeout(15000)
-    # 首启向导（review-desk-review.js 的 wizard_mask）是用户首次使用的引导层，
-    # 在隔离测试环境（无 API Key）下必然弹出并拦截全部点击——对被测功能是无关噪声。
-    # 预置「已跳过引导」前置状态：localStorage 完成标记 + sessionStorage 本会话已见，
-    # 向导遮罩不再出现（v0.10.5 起向导不再以有无 Key 为门槛，更需显式注入此前置状态）。
-    pg.add_init_script(
-        "localStorage.setItem('medkit-onboarded','1');"
-        "sessionStorage.setItem('medkit-wz-seen','1');"
-        # 2026-10-10：错题/生成「模式门」也是首启引导层——预置「已见过」前置状态，
-        # 使既有用例（都靠 hash 或点侧栏页签导航）不出现模式门、也不触发页签过滤。
-        # 模式门本身由 tests/browser/test_mode_gate.py 显式清掉该键后验证。
-        "localStorage.setItem('medkit-mode-seen','1');"
-    )
+    # v0.15（奥卡姆精简 P1）：首启向导（#wizard_mask）与错题/生成「模式门」（#modegate）
+    # 均已移除——首启直接落在「开始」页、无任何遮罩，故不再需要预置「已见过」前置状态。
+    # 「首启无弹层」由 tests/browser/test_first_run.py 把守（重新加回遮罩即红）。
+    #
+    # v0.15（P4）：出题工坊（生成链）**默认关闭**（localStorage `medkit-gen-enabled`）。
+    # 生成链自己的浏览器用例（项目详情 / 产物下载 / 审核台…）需要它**开启**才能导航到
+    # 「题库」页签，故此处预置为开；「默认关」这一事实由 test_first_run.py 显式清键后验证。
+    pg.add_init_script("localStorage.setItem('medkit-gen-enabled','1');")
     yield pg
     ctx.close()

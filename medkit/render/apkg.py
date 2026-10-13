@@ -50,8 +50,9 @@ def _fields(q: dict[str, Any]) -> dict[str, str]:
     stem = str(q.get("case_stem") or "")
     question = str(q.get("question") or "")
     # ⚠️ 顺序很关键：**先各自转义、再拼 `<br>`**。反过来（先拼再转义）会把刚插进去的
-    # `<br>` 一起转成 `&lt;br&gt;` ⇒ Anki 里显示成字面量文本 `<br>`（真实缺陷，
-    # 守卫 `tests/test_apkg_import.py::test_roundtrip_case_stem` 往返能照出来）。
+    # `<br>` 一起转成 `&lt;br&gt;` ⇒ Anki 里显示成字面量文本 `<br>`（真实缺陷；
+    # 2026-10-13 前由 `tests/test_apkg_import.py::test_roundtrip_case_stem` 往返照出，
+    # 该文件随 EP-01 归因域移除；导出侧结构现由 `tests/test_s3_apkg.py` 覆盖）。
     front_question = (f"【案例】{_esc_anki(stem)}<br>{_esc_anki(question)}"
                       if stem else _esc_anki(question))
     # B1 组题共享选项在 group.options（自身 options 恒空）——与 anki_export.txt 同口径。

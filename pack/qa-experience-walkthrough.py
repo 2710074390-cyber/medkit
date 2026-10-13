@@ -204,47 +204,28 @@ def main() -> None:
                     break
                 except Exception:
                     time.sleep(0.5)
-            page.wait_for_selector("#modegate", state="visible", timeout=15000)
+            page.wait_for_selector("#tab-start.show", timeout=15000)
 
-            # ===== S0 真·首启：向导 + 模式门**同时出现**（截图取证）=====
-            w.shot("s00_first_run_overlap", "真首启：新手向导 + 模式门两层叠加")
-            stack = page.evaluate(
-                """() => {
-                     const c = document.querySelector('.modecard');
-                     const r = c.getBoundingClientRect();
-                     const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-                     return {
-                       wizard: getComputedStyle(document.getElementById('wizard_mask')).display,
-                       gate: getComputedStyle(document.getElementById('modegate')).display,
-                       wizardZ: getComputedStyle(document.getElementById('wizard_mask')).zIndex,
-                       gateZ: getComputedStyle(document.getElementById('modegate')).zIndex,
-                       hit: top ? (top.id || top.className) : '(null)',
-                     };
-                   }"""
+            # ===== S0 首启：直接落在「开始」页，无任何遮罩（v0.15 已移除向导 + 模式门）=====
+            w.shot("s00_first_run", "真首启：无遮罩，直接可用")
+            overlays = page.evaluate(
+                """() => ['#modegate', '#wizard_mask', '#modebar']
+                     .filter(s => document.querySelector(s))"""
             )
-            print("S0 首启叠层：", stack)
-            # 向导挡住模式门 → 先跳过向导
-            page.click("#wz_skip")
-            page.wait_for_timeout(600)
-            w.shot("s00b_after_wizard", "跳过向导后：模式门仍在")
-            print("S0 跳过向导后模式门可见：", page.locator("#modegate").is_visible())
-
-            # ===== S1 首次进入：模式门 =====
-            w.shot("s01_modegate", "首启模式门（无 hash、无已选模式）")
-            print("S1 模式门文案：", w.txt("#modegate").replace("\n", " | "))
-
-            # ===== S2 选「错题」→ 落练习页（空态） =====
-            page.click('.modecard:has-text("错题")')
-            page.wait_for_selector("#tab-drill.show", timeout=15000)
-            page.wait_for_timeout(900)
-            w.shot("s02_drill_empty", "错题模式落地的练习页（无题库）")
+            print("S0 残留首启遮罩：", overlays or "(无)")
             print(
-                "S2 侧栏可见页签：",
+                "S0 侧栏页签：",
                 page.evaluate(
                     """() => [...document.querySelectorAll('nav button[data-tab]')]
                      .filter(b => b.style.display !== 'none').map(b => b.innerText.trim())"""
                 ),
             )
+
+            # ===== S2 进入「刷题」页（无题库空态） =====
+            page.click('button[data-tab="study"]')
+            page.wait_for_selector("#tab-study.show", timeout=15000)
+            page.wait_for_timeout(900)
+            w.shot("s02_drill_empty", "刷题页（无题库）")
             print("S2 题库空态：", w.txt("#bank_list").replace("\n", " | ")[:200])
 
             # ===== S3 粘贴导入 → 预览 =====
@@ -324,32 +305,21 @@ def main() -> None:
             # ===== S7 错题 → 重练 直达 =====
             if page.locator("#learn_mk .mk-row").count():
                 page.locator("#learn_mk .mk-row").first.locator('button:has-text("→ 重练")').click()
-                page.wait_for_selector("#tab-drill.show", timeout=15000)
+                page.wait_for_selector("#tab-study.show", timeout=15000)
                 page.wait_for_selector(".bank-q", timeout=15000)
-                w.shot("s10_retry", "错题本「→ 重练」直达练习页")
+                w.shot("s10_retry", "错题本「→ 重练」直达刷题页")
                 print("S7 重练页标题：", w.txt("#bank_drill_title"))
                 print("S7 模式条：", w.txt("#bank_drill_body .bank-bar").replace("\n", " | ")[:160])
 
-            # ===== S8 生成模式 =====
-            page.click("#btn_mode")
-            page.wait_for_selector("#modegate", state="visible", timeout=15000)
-            page.click('.modecard:has-text("生成")')
+            # ===== S8 题库（出题工坊） =====
+            page.click('button[data-tab="bank"]')
             page.wait_for_selector("#tab-bank.show", timeout=15000)
             page.wait_for_timeout(1200)
-            w.shot("s11_gen_mode", "生成模式 → 题库（出题工坊）")
-            print(
-                "S8 侧栏可见页签：",
-                page.evaluate(
-                    """() => [...document.querySelectorAll('nav button[data-tab]')]
-                     .filter(b => b.style.display !== 'none').map(b => b.innerText.trim())"""
-                ),
-            )
+            w.shot("s11_gen_mode", "题库（出题工坊）")
 
-            # ===== S9 从项目导入（先切回错题模式，因为练习页在生成模式下是隐藏页签）=====
-            page.click("#btn_mode")
-            page.wait_for_selector("#modegate", state="visible", timeout=15000)
-            page.click('.modecard:has-text("错题")')
-            page.wait_for_selector("#tab-drill.show", timeout=15000)
+            # ===== S9 从项目导入 =====
+            page.click('button[data-tab="study"]')
+            page.wait_for_selector("#tab-study.show", timeout=15000)
             page.wait_for_timeout(600)
             page.click('button:has-text("从出题项目导入")')
             page.wait_for_selector("#modal_mask", state="visible", timeout=15000)
@@ -382,9 +352,9 @@ def main() -> None:
 
             # ===== S12 窄屏（手机，390×844） =====
             page.set_viewport_size({"width": 390, "height": 844})
-            page.goto(f"{base}/#drill")
+            page.goto(f"{base}/#study")
             page.wait_for_timeout(1200)
-            w.shot("s16_mobile_drill", "窄屏 390×844 练习页")
+            w.shot("s16_mobile_drill", "窄屏 390×844 刷题页")
             sw, iw = w.overflow()
             print(
                 f"S12 窄屏溢出：scrollWidth={sw} innerWidth={iw} → {'溢出!' if sw > iw + 1 else 'OK'}"
@@ -393,7 +363,7 @@ def main() -> None:
                 bad = page.evaluate(
                     """() => {
                          const vw = document.documentElement.clientWidth, out = [];
-                         document.querySelectorAll('#tab-drill *').forEach(el => {
+                         document.querySelectorAll('#tab-study *').forEach(el => {
                            const r = el.getBoundingClientRect();
                            if (r.right > vw + 1) out.push({tag: el.tagName.toLowerCase(),
                              id: el.id, cls: (el.className||'').toString().slice(0,36),

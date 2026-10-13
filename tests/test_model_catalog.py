@@ -32,7 +32,6 @@ import pathlib
 import pytest
 
 from medkit.core import modelcatalog as mc
-from medkit.core import vision
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -240,22 +239,20 @@ def test_vision_authoritative_source_closes_deepseek_flash_misjudgment():
     """**本批最重要的一条**（2026-10-02 实测的真漏判）。
 
     `deepseek-flash` 官方 `input_modalities` 含 `"image"`，但名字里
-    既没有 `vision` 也没有 `vl` ⇒ 旧实现判 False ⇒ **白跑一次 OCR**。
+    既没有 `vision` 也没有 `vl` ⇒ 只靠名字会判 False ⇒ **白跑一次 OCR**。
     现在目录提供权威判据，必须判 True。
+
+    2026-10-13（奥卡姆精简 P2）：判据由 `core/vision.py` 下沉到本模块
+    （`looks_like_vision`），**口径不变**——目录优先、名字兜底。
     """
-    assert vision.looks_like_vision("deepseek-flash") is True
-    cap = vision.capability({"model_gen": "deepseek-flash", "mineru": {}})
-    assert cap["vision"] is True
-    assert cap["preferred"] == "vision"
-    assert cap["vision_source"] == "catalog", "判定来源必须如实标注（catalog vs name）"
+    assert mc.looks_like_vision("deepseek-flash") is True
+    assert mc.caps_of("deepseek-flash", "deepseek", None)["vision"] is True
 
 
 def test_vision_negative_from_catalog_is_trusted():
     """目录明确写 `vision: False` 的（deepseek-v4-pro）不许被名字启发式翻盘。"""
-    assert vision.looks_like_vision("deepseek-v4-pro") is False
-    cap = vision.capability({"model_gen": "deepseek-v4-pro", "mineru": {}})
-    assert cap["vision_source"] == "catalog"
-    assert cap["preferred"] == "ocr"
+    assert mc.looks_like_vision("deepseek-v4-pro") is False
+    assert mc.caps_of("deepseek-v4-pro", "deepseek", None)["vision"] is False
 
 
 def test_vision_name_heuristic_still_works_for_unknown_models():
@@ -263,20 +260,19 @@ def test_vision_name_heuristic_still_works_for_unknown_models():
     for name, expect in (("qwen-vl-max", True), ("gpt-4o", True),
                          ("my-vision-model", True),
                          ("eval-model", False), ("vlsi-parser", False)):
-        assert vision.looks_like_vision(name) is expect, name
-        assert vision.capability({"model_gen": name, "mineru": {}})["vision_source"] == (
-            "name" if expect else "none")
+        assert mc.looks_like_vision(name) is expect, name
+        assert mc.caps_of(name, "custom", None)["vision"] is expect, name
 
 
-def test_vision_catalog_lookup_does_not_break_circular_import():
-    """`modelcatalog` ↔ `vision` 是**循环依赖**，靠延迟 import 打破。
+def test_vision_catalog_lookup_has_no_circular_import():
+    """`modelcatalog` ↔ 视觉判据曾是**循环依赖**（靠函数内延迟 import 打破）。
 
-    判据：两个模块都能独立 import，且 `vision` 的权威查表真的能命中
-    （若延迟 import 写错成模块级，这里会因 ImportError 直接炸）。
+    2026-10-13（P2）把判据并入本模块后循环消失。判据：本模块可独立 import，
+    且目录查表真的能命中。
     """
-    assert vision._authoritative_vision("deepseek-flash") is True
-    assert vision._authoritative_vision("deepseek-v4-pro") is False
-    assert vision._authoritative_vision("never-heard-of-it") is None   # 目录没有 → 不知道
+    assert mc._catalog_entry("deepseek-flash", "")["caps"]["vision"] is True
+    assert mc._catalog_entry("deepseek-v4-pro", "")["caps"]["vision"] is False
+    assert mc._catalog_entry("never-heard-of-it", "") is None   # 目录没有 → 不知道
 
 
 def test_catalog_entry_matches_across_providers():

@@ -1,4 +1,4 @@
-/* exported BLOOMS, L, TAB_KEYS, a, answerIssue, any, applyReviewFilter, b, b2, bad, bar, body, box, box_append, btn, c, card, checkAns, cid, clean, cnt, cur, d, diffPrompt, dropBtn, dropped, e, ed, edits, el, err, f, filtered, first, gg, gix, goDemo, goOwn, groups, hd, html, id, ids, k, keep, kept, la, list, loadPrompts, lts, mark, maybeShowWizard, missing, n, nowDropped, o, okB, okQ, okT, okY, opList, openPromptEdit, openReview, optSrc, opts, optsSrc, ph, pre, prevDrop, prevEdits, promptCache, promptContainer, promptEditCancel, promptStatusBadge, provs, q, qid, qs, r, renderPrompt, renderReview, restorePrompt, revFilterText, revHideKey, revSaving, reviewDirtyGuard, reviewState, rr, sa, savePrompt, segResizeT, setDrop, show, sib, t, ta, tags, target, text, tk, updBatch, updateRevCount, v, visChecks, visIds, visible, wzClose, wzDone, wzRender, wzSetDots, wzStep */
+/* exported BLOOMS, L, TAB_KEYS, a, answerIssue, any, applyReviewFilter, b, b2, bad, bar, body, box, box_append, btn, c, card, checkAns, cid, clean, cnt, cur, d, diffPrompt, dropBtn, dropped, e, ed, edits, el, err, f, filtered, first, gg, gix, groups, hd, html, id, ids, k, keep, kept, la, list, loadPrompts, lts, mark, missing, n, nowDropped, o, okB, okQ, okT, okY, opList, openPromptEdit, openReview, optSrc, opts, optsSrc, ph, pre, prevDrop, prevEdits, promptCache, promptContainer, promptEditCancel, promptStatusBadge, provs, q, qid, qs, r, renderPrompt, renderReview, restorePrompt, revFilterText, revHideKey, revSaving, reviewDirtyGuard, reviewState, rr, sa, savePrompt, segResizeT, setDrop, show, sib, t, ta, tags, target, text, tk, updBatch, updateRevCount, v, visChecks, visIds, visible */
 /* ---- 迭代4：逐题审核台 */
 $("btn_review").onclick = () => openReview();
 let reviewState = { questions: [], keep: null, drop: new Set(), edits: {}, dirty: false,
@@ -602,128 +602,16 @@ async function diffPrompt(nameOrEl) {
   el.innerHTML = `<div class="diffwrap"><pre>【内置】\n${la}</pre><pre>【自定义】\n${lb}</pre></div>`;
 }
 
-/* ---- 首启欢迎向导（医学生视角，3 步）----
-   触发：从未完成引导；完成或「跳过」写 localStorage，关闭/ESC 不写（下次再提示）
-   v0.10.5：不再以「有无 Key」为门槛——首次使用均展示；第 2 步按是否已配 Key 动态渲染。 */
-let wzStep = 0;
-function wzDone() {
-  try { localStorage.setItem("medkit-onboarded", "1"); } catch (e) { /* ignore */ }
-  $("wizard_mask").style.display = "none";
-  // P0-1：向导结束 → 轮到模式门（串行，不叠加）
-  if (typeof modeGateMaybeShow === "function") modeGateMaybeShow();
-}
-/* 关闭/ESC 不写「已完成」（下次仍会提示），但记本会话内不再重复弹（防反复打扰） */
-function wzClose() {
-  try { sessionStorage.setItem("medkit-wz-seen", "1"); } catch (e) { /* ignore */ }
-  $("wizard_mask").style.display = "none";
-  // P0-1：关闭（非跳过）向导后同样让模式门接手——两者不得叠加
-  if (typeof modeGateMaybeShow === "function") modeGateMaybeShow();
-}
-function wzSetDots() {
-  document.querySelectorAll(".wsteps i").forEach((d, i) => d.classList.toggle("on", i === wzStep));
-}
-function wzRender() {
-  wzSetDots();
-  const body = $("wz_body"), btns = $("wz_btns");
-  if (wzStep === 0) {
-    body.innerHTML = `
-      <div class="hint" style="line-height:1.9">把你的<b>教材 + 老师划的重点</b>交给 AI，本地生成一套全新的复习资料。
-      所有素材只保存在你自己的电脑上，AI 调用使用你自己的 API Key（约 ¥1~5/套，费用透明可见）。</div>
-      <div class="wgrid">
-        <div class="wcard"><svg class="ic"><use href="#i-bank"></use></svg><b>全新题库</b><span>按你的教材章节出题<br>A1/A2/X 型 + 图表题</span></div>
-        <div class="wcard"><svg class="ic"><use href="#i-paper"></use></svg><b>交互押题卷</b><span>计时答题 · 自动判分<br>错题重练 · 可打印</span></div>
-        <div class="wcard"><svg class="ic"><use href="#i-learn"></use></svg><b>复习手册</b><span>考点速记 / 易混淆<br>临床路径 / 数值速查</span></div>
-        <div class="wcard"><svg class="ic"><use href="#i-target"></use></svg><b>学习中心</b><span>错题沉淀 · 掌握度诊断<br>教材讲解 · 提问式复习</span></div>
-      </div>
-      <div class="hint">还可以导出 <b>Anki 卡片包</b>，直接导入 Anki 背题。</div>`;
-    btns.innerHTML = `<button class="act" id="wz_next">下一步：连接 AI（2 分钟）</button>`;
-    $("wz_next").onclick = () => { wzStep = 1; wzRender(); };
-  } else if (wzStep === 1) {
-    // v0.10.5：已配置 Key 的首次用户不重复引导配置——直接显示「已连接 ✓」并前进
-    const hasKey = !!(state.cfg && state.cfg.api_key_masked);
-    if (hasKey) {
-      const prName = (state.providers || []).find(p => p.id === (state.cfg && state.cfg.provider));
-      body.innerHTML = `
-        <div class="hint" style="line-height:1.9">你已经连接了 <b>${esc(prName ? prName.name : "AI 服务商")}</b> ✓ ——出题能力已就绪，无需重复配置。</div>
-        <div class="hint" style="margin-top:10px">下一步：上传你的教材与老师划的重点，就能生成第一套题。也可以先「载入示例」，30 秒看懂效果。</div>`;
-      btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
-        <button class="act" id="wz_next">下一步：选择开始方式</button>`;
-      $("wz_back").onclick = () => { wzStep = 0; wzRender(); };
-      $("wz_next").onclick = () => { wzStep = 2; wzRender(); };
-    } else {
-      const provs = (state.providers || []).filter(p => p.register_url);
-      body.innerHTML = `
-        <div class="hint" style="line-height:1.9">出题需要一个大模型「API Key」——相当于你和 AI 服务商之间的<b>充值卡</b>。
-        推荐注册 <b>DeepSeek</b>（便宜，充值 ¥10 可出多套题）：点官网注册 → 充值 → 复制 Key，回到本软件「我的 → 连接服务商」粘贴保存即可。</div>
-        ${provs.map(p => `<div class="wprov"><svg class="ic" style="width:20px;height:20px;color:var(--accent);flex:none"><use href="#i-key"></use></svg>
-          <b>${esc(p.name)}</b><span>${esc(p.note || "")}</span>
-          <a class="provlink" href="${esc(p.register_url)}" target="_blank" rel="noopener">官网注册 ↗</a></div>`).join("")}
-        <div class="hint" style="margin-top:10px">不知道选哪个？先用 DeepSeek 就够了。稍后再配置也不影响了解软件。</div>`;
-      btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
-        <button class="act" id="wz_next">我已拿到 Key（去配置）</button>
-        <button class="act gray" id="wz_later">稍后配置，先看看</button>`;
-      $("wz_back").onclick = () => { wzStep = 0; wzRender(); };
-      $("wz_next").onclick = () => { wzDone(); showTab("mine"); $("api_key").focus(); };
-      $("wz_later").onclick = () => { wzStep = 2; wzRender(); };
-    }
-  } else {
-    body.innerHTML = `
-      <div class="hint" style="line-height:1.9">准备好了？两种开始方式任选：</div>
-      <div class="wentry" id="wz_demo" role="button" tabindex="0">
-        <svg class="ic"><use href="#i-paper"></use></svg>
-        <div><b>载入示例，立即体验</b><span>不用上传任何文件，30 秒看懂出题效果（点「试出一题」）</span></div>
-      </div>
-      <div class="wentry" id="wz_own" role="button" tabindex="0">
-        <svg class="ic"><use href="#i-proj"></use></svg>
-        <div><b>用我自己的教材开始</b><span>上传 PDF/Word 教材 + 老师重点 → 创建课题 → 生成</span></div>
-      </div>`;
-    btns.innerHTML = `<button class="act gray" id="wz_back">上一步</button>
-      <button class="act" id="wz_fin">完成，开始使用</button>`;
-    $("wz_back").onclick = () => { wzStep = 1; wzRender(); };
-    $("wz_fin").onclick = () => wzDone();
-    const goDemo = () => {
-      // ME-1/A1：无 Key 时「载入示例」= 流程必然失败——先定向到连接页；
-      // R3-05/A-新1：先关遮罩再跳（否则盖板压在连接页上，表单点不到）
-      if (!(state.cfg && state.cfg.api_key_masked)) {
-        toast("试出一题需要用 API Key——请先完成「我的 → 连接服务商」配置（充值 ¥10 可出多套题）", false);
-        wzClose();
-        showTab("mine"); $("api_key").focus();
-        return;
-      }
-      wzDone(); showTab("bank"); $("btn_sample").click();
-    };
-    const goOwn = () => { wzDone(); showTab("bank"); };
-    $("wz_demo").onclick = goDemo;
-    $("wz_demo").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goDemo(); } };
-    $("wz_own").onclick = goOwn;
-    $("wz_own").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goOwn(); } };
-  }
-}
-function maybeShowWizard() {
-  // P0-1：向导不弹时（已完成/本会话已见）→ 由模式门接手（串行，不叠加）
-  const _gate = () => { if (typeof modeGateMaybeShow === "function") modeGateMaybeShow(); };
-  try {
-    if (localStorage.getItem("medkit-onboarded")) { _gate(); return; }
-    if (sessionStorage.getItem("medkit-wz-seen")) { _gate(); return; }   // 本会话已看过（关闭/ESC 过）→ 不重复弹
-  } catch (e) { _gate(); return; }
-  // v0.10.5：不再以「有无 Key」为门槛——首次使用（从未完成/跳过引导）均展示；
-  // 已有 Key 的用户在第 2 步看到「已连接 ✓」并跳过配置动作，不打扰。
-  wzStep = 0; wzRender();
-  $("wizard_mask").style.display = "flex";
-}
-$("wz_skip").onclick = wzDone;
-$("wizard_mask").addEventListener("click", e => { if (e.target.id === "wizard_mask") wzClose(); });
-
 /* ---- init */
 ratioSum(); bloomSum();
-/* Ctrl/⌘+1..6 快速切换页签（v0.8.1：开始/刷题/题库/学习中心/我的；2026-10-10 增「练习」= Ctrl+6） */
-const TAB_KEYS = ["", "start", "study", "bank", "learn", "mine", "drill"];
+/* Ctrl/⌘+1..5 快速切换页签（开始/刷题/题库/学习中心/我的） */
+const TAB_KEYS = ["", "start", "study", "bank", "learn", "mine"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发页签快捷键（防打字时被切走/吞键）
   const t = e.target;
   // A-新15：焦点守卫纳入 SELECT（下拉聚焦时不触发页签快捷键，防误切/吞键）
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-  if (!(e.ctrlKey || e.metaKey) || !(e.key >= "1" && e.key <= "6")) return;
+  if (!(e.ctrlKey || e.metaKey) || !(e.key >= "1" && e.key <= "5")) return;
   const tk = TAB_KEYS[+e.key];
   if (!tk) return;
   e.preventDefault();
@@ -747,9 +635,7 @@ api("/api/health").then(h => {
 $("side_ver").onclick = () => checkUpdate(false);
 $("side_ver").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); checkUpdate(false); } };
 setTimeout(() => checkUpdate(true), 4000);
-loadConfig().then(maybeShowWizard).catch(e => {
+loadConfig().catch(e => {
   toast(e.message, false);
-  // P0-1：配置加载失败也必须让模式门有机会出现（否则首启两张门都不到场）
-  if (typeof modeGateMaybeShow === "function") modeGateMaybeShow();
 });
 probeSampleAvailability();
