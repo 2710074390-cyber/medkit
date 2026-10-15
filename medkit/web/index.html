@@ -527,7 +527,6 @@ try {
     <nav class="learnnav" id="learnnav" role="tablist" aria-label="学习中心分栏">
       <button data-lv="overview" class="on" role="tab" aria-selected="true" title="概览（Alt+1）"><svg class="ic"><use href="#i-target"></use></svg>概览<span class="nb" id="nb_overview"></span></button>
       <button data-lv="mistakes" role="tab" aria-selected="false" title="错题本（Alt+2）"><svg class="ic"><use href="#i-paper"></use></svg>错题本<span class="nb" id="nb_mistakes"></span></button>
-      <button data-lv="vault" role="tab" aria-selected="false" title="本地错题（Alt+3）"><svg class="ic"><use href="#i-doc"></use></svg>本地错题<span class="nb" id="nb_vault"></span></button>
       <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲管理（Alt+4）"><svg class="ic"><use href="#i-target"></use></svg>大纲管理<span class="nb" id="nb_syllabus"></span></button>
     </nav>
 
@@ -563,50 +562,14 @@ try {
 
   <!-- 视图 2/4：错题本（新增/导入 + 列表） -->
   <div class="learnview" id="lv-mistakes">
-    <div class="card" style="margin-top:14px">
-      <div class="cardh"><h2>新增错题</h2></div>
-        <div class="hint" style="margin-bottom:8px">拍题 / 粘贴题干选项答案，自动拆成结构化错题并计入掌握度。</div>
-        <textarea id="mk_text" rows="4" placeholder="粘贴错题文本…&#10;例：题干&#10;A. …&#10;B. …&#10;答案：B&#10;解析：…"></textarea>
-        <div class="row" style="margin-top:10px">
-          <div style="flex:1.4"><label>知识点标签</label><input type="text" id="mk_tag" placeholder="如：支气管肺炎首选治疗（留空则用章节）"></div>
-          <div style="flex:1"><label>章节 / 主题（可选）</label><input type="text" id="mk_chapter" placeholder="如：儿科·呼吸系统"></div>
-        </div>
-        <div class="btns" style="margin-top:12px">
-          <button class="act" id="btn_mk_add" onclick="addMistakeRaw()">入库错题</button>
-          <button class="act gray" id="btn_mk_photo" onclick="mkPhotoPick()">拍题(图片 OCR)</button>
-          <button class="act gray" id="btn_mk_batch" onclick="mkBatchPick()">批量导入(文件)</button>
-          <button class="act gray" id="btn_mk_site" onclick="mkSiteImport()">站点数据(JSON)</button>
-          <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
-          <input type="file" id="mk_photo" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp" style="display:none" onchange="mkPhotoFile(this)">
-          <input type="file" id="mk_site_file" accept=".json,.csv" style="display:none" onchange="mkSiteFile(this)">
-        </div>
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:20px">
-          <h2 style="margin:0">错题本<span class="hint" id="learn_mk_scope" style="margin-left:8px"></span></h2>
-          <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
-            <label style="font-size:12px">科目</label>
-            <select id="mk_subject" onchange="mkScopeChange(this.value)"><option value="">全部科目</option></select>
-            <button class="mini-btn" onclick="subjectMgrOpen()" title="按科目查看/删除本地数据（先备份再删）">科目管理</button>
-            <span class="hint" id="learn_mk_count"></span>
-          </span>
-        </div>
-        <label class="chk" style="margin:4px 0 8px"><input type="checkbox" id="mk_filter_unlearned" onchange="renderLibraryCurrent()"> 只看未掌握（隐藏已归档「已掌握」错题）</label>
-        <div class="mk-bar" id="mk_bar" style="display:none">
-          <button class="mini-btn" id="btn_mk_all" onclick="mkToggleAllVisible()">全选可见</button>
-          <button class="mini-btn" onclick="mkInvert()">反选</button>
-          <button class="mini-btn" onclick="mkClearSel()">清空</button>
-          <span class="hint" id="mk_sel_count">已选 0</span>
-          <button class="mini-btn danger" id="btn_mk_batch_del" onclick="mkBatchDel()">批量删除</button>
-          <button class="mini-btn" onclick="mkBatchLearn(true)">标记已掌握</button>
-          <button class="mini-btn" onclick="mkBatchExport('json')">导出 JSON</button>
-          <button class="mini-btn" onclick="mkBatchExport('md')">导出 MD</button>
-        </div>
-        <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
+      <!-- P-E（奥卡姆精简第二轮）：错题入口合并 —— 「本地错题」并入「错题本」，
+           同一概念只有一个家：本地文件为真身，旧库（DB）是它的一个视图。 -->
+      <div class="mv-tabs" id="mv_tabs" role="tablist" aria-label="错题来源">
+        <button class="mv-tab on" data-mv="vault" role="tab" aria-selected="true" onclick="mistakeView('vault')">
+          本地文件（真身）</button>
+        <button class="mv-tab" data-mv="lib" role="tab" aria-selected="false" onclick="mistakeView('lib')">旧库（导入/扫描）</button>
       </div>
-
-    </div>
-
-    <!-- 视图 V：本地错题 vault —— 文件是真身，Agent 只是可缺席的增强层 -->
-    <div class="learnview" id="lv-vault">
+      <div class="mvpane" id="mv-vault">
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>本地错题（vault）</h2><span class="hint" id="vault_root_hint"></span></div>
         <div class="hint" style="margin-bottom:10px">
@@ -699,7 +662,51 @@ try {
       </div>
 
       <div class="card" id="vault_detail" style="display:none;margin-top:14px"></div>
+      </div>
+      <div class="mvpane" id="mv-lib" style="display:none">
+    <div class="card" style="margin-top:14px">
+      <div class="cardh"><h2>新增错题</h2></div>
+        <div class="hint" style="margin-bottom:8px">拍题 / 粘贴题干选项答案，自动拆成结构化错题并计入掌握度。</div>
+        <textarea id="mk_text" rows="4" placeholder="粘贴错题文本…&#10;例：题干&#10;A. …&#10;B. …&#10;答案：B&#10;解析：…"></textarea>
+        <div class="row" style="margin-top:10px">
+          <div style="flex:1.4"><label>知识点标签</label><input type="text" id="mk_tag" placeholder="如：支气管肺炎首选治疗（留空则用章节）"></div>
+          <div style="flex:1"><label>章节 / 主题（可选）</label><input type="text" id="mk_chapter" placeholder="如：儿科·呼吸系统"></div>
+        </div>
+        <div class="btns" style="margin-top:12px">
+          <button class="act" id="btn_mk_add" onclick="addMistakeRaw()">入库错题</button>
+          <button class="act gray" id="btn_mk_photo" onclick="mkPhotoPick()">拍题(图片 OCR)</button>
+          <button class="act gray" id="btn_mk_batch" onclick="mkBatchPick()">批量导入(文件)</button>
+          <button class="act gray" id="btn_mk_site" onclick="mkSiteImport()">站点数据(JSON)</button>
+          <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
+          <input type="file" id="mk_photo" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp" style="display:none" onchange="mkPhotoFile(this)">
+          <input type="file" id="mk_site_file" accept=".json,.csv" style="display:none" onchange="mkSiteFile(this)">
+        </div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:20px">
+          <h2 style="margin:0">错题本<span class="hint" id="learn_mk_scope" style="margin-left:8px"></span></h2>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
+            <label style="font-size:12px">科目</label>
+            <select id="mk_subject" onchange="mkScopeChange(this.value)"><option value="">全部科目</option></select>
+            <button class="mini-btn" onclick="subjectMgrOpen()" title="按科目查看/删除本地数据（先备份再删）">科目管理</button>
+            <span class="hint" id="learn_mk_count"></span>
+          </span>
+        </div>
+        <label class="chk" style="margin:4px 0 8px"><input type="checkbox" id="mk_filter_unlearned" onchange="renderLibraryCurrent()"> 只看未掌握（隐藏已归档「已掌握」错题）</label>
+        <div class="mk-bar" id="mk_bar" style="display:none">
+          <button class="mini-btn" id="btn_mk_all" onclick="mkToggleAllVisible()">全选可见</button>
+          <button class="mini-btn" onclick="mkInvert()">反选</button>
+          <button class="mini-btn" onclick="mkClearSel()">清空</button>
+          <span class="hint" id="mk_sel_count">已选 0</span>
+          <button class="mini-btn danger" id="btn_mk_batch_del" onclick="mkBatchDel()">批量删除</button>
+          <button class="mini-btn" onclick="mkBatchLearn(true)">标记已掌握</button>
+          <button class="mini-btn" onclick="mkBatchExport('json')">导出 JSON</button>
+          <button class="mini-btn" onclick="mkBatchExport('md')">导出 MD</button>
+        </div>
+        <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
+      </div>
+      </div>
+
     </div>
+
 
     <!-- 视图 3/4：大纲管理（WP-01/WP-10 考试锚定：教师重点为主 · 官方306补充） -->
     <div class="learnview" id="lv-syllabus">

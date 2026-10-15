@@ -32,6 +32,38 @@
   浏览器 `test_tutor_immersive`/`test_study_quiz`）+ 1 个 fixture + 6 处局部用例。
 - **真身**：单元 1220→**1085** / 浏览器 60→**55** / 总 1280→**1140**；mypy 源文件 81→**73**；API 端点 136→**110**。
 
+### Changed（奥卡姆精简第二轮 · P-E：错题入口合并 · 2026-10-15）
+
+同一个概念原本有两个家：学习中心里「错题本」（DB 里的 `mistakes`）与「本地错题」（文件夹 vault）
+并列两个 pill，用户得先想清楚「哪个才是我的错题」。按用户拍板合并为**一个入口**：
+
+- **侧栏「本地错题」pill 删除**，能力并入「错题本」；视图内加**来源二级切换**
+  （`#mv_tabs`：`本地文件（真身）` / `旧库（导入/扫描）`，默认前者）。
+- **`vault` 仍是合法视图名**（旧书签 / 历史 hash / `sessionStorage` 记忆都还能落对地方）——
+  合并只改入口，不制造断链；`LEARN_ALT_KEYS` 收敛到 `["overview","mistakes","syllabus"]`。
+- **回到错题本时保留上次的 pane**（`mistakeView()` 无参调用 = 恢复），不重置成默认。
+- 顺带清掉 `updateLearnBadges` 里对已删域的引用：学习中心**不再有待办型红点**
+  （原两个来源「今日到期复习」「进行中提问会话」都随域删除），显式传 0 而非删除调用。
+- 守卫同步：`test_learn_views` 的 `VIEWS` 4→3 且 Alt 编号重排；4 个旧库用例
+  （`test_mistakes_batch` / `test_site_import` / `test_study_subjects` / `test_bank_drill`）
+  进入后显式切到「旧库」pane；`test_vault_view` 改走「错题本 → 本地文件」路径。
+
+### Changed（奥卡姆精简第二轮 · P-E：错题入口合并 · 2026-10-15）
+
+同一个概念原本有两个家：学习中心里「错题本」（DB 里的 `mistakes`）与「本地错题」（文件夹 vault）
+并列两个 pill，用户得先想清楚「哪个才是我的错题」。按用户拍板合并为**一个入口**：
+
+- **侧栏「本地错题」pill 删除**，能力并入「错题本」；视图内加**来源二级切换**
+  （`#mv_tabs`：`本地文件（真身）` / `旧库（导入/扫描）`，默认前者）。
+- **`vault` 仍是合法视图名**（旧书签 / 历史 hash / `sessionStorage` 记忆都还能落对地方）——
+  合并只改入口，不制造断链；`LEARN_ALT_KEYS` 收敛到 `["overview","mistakes","syllabus"]`。
+- **回到错题本时保留上次的 pane**（`mistakeView()` 无参调用 = 恢复），不重置成默认。
+- 顺带清掉 `updateLearnBadges` 里对已删域的引用：学习中心**不再有待办型红点**
+  （原两个来源「今日到期复习」「进行中提问会话」都随域删除），显式传 0 而非删除调用。
+- 守卫同步：`test_learn_views` 的 `VIEWS` 4→3 且 Alt 编号重排；4 个旧库用例
+  （`test_mistakes_batch` / `test_site_import` / `test_study_subjects` / `test_bank_drill`）
+  进入后显式切到「旧库」pane；`test_vault_view` 改走「错题本 → 本地文件」路径。
+
 ### Added（奥卡姆精简第二轮 · T1：CSS 残渣清理 + 新守卫 · 2026-10-15）
 
 - `tests/test_css_no_orphans.py`（4 项）：CSS 里每个 class 选择器都必须在

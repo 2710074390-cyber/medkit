@@ -43,21 +43,30 @@ function showLearnView(name) {
     v.classList.toggle("show", v.id === "lv-" + name);
   });
   if (name === "syllabus") sylLoad();
-  if (name === "vault" && typeof window.vaultView === "function") window.vaultView();
+  // P-E（奥卡姆精简第二轮）：「本地错题」并入「错题本」一个 pill。`vault` 名字仍被接受
+  // （旧书签 / 历史 hash / sessionStorage 记忆），落到同一视图的「本地文件」pane。
+  if (name === "vault") {
+    if (typeof mistakeView === "function") mistakeView("vault");
+    if (typeof window.vaultView === "function") window.vaultView();
+  } else if (name === "mistakes") {
+    // 回到错题本：无参调用 → mistakeView 内部读 `_mvCur`（默认本地文件），不重置成旧库
+    if (typeof mistakeView === "function") mistakeView();
+  }
   try { sessionStorage.setItem("medkit-learn-view", name); } catch (e) { /* ignore */ }
 }
 document.querySelectorAll("#learnnav button").forEach(b => {
   b.onclick = () => showLearnView(b.dataset.lv);
 });
-/* IMP-12①：学习中心子导航 Alt+1..4 直达（v0.8.1：复习计划迁入「刷题」；v0.15 精简 P2 移除元认知；
-   2026-10-15 奥卡姆精简 T2 移除讲解产物与提问学习 → 4 视图） */
-const LEARN_ALT_KEYS = ["overview", "mistakes", "vault", "syllabus"];
+/* IMP-12①：学习中心子导航 Alt+1..3 直达。
+   2026-10-15 奥卡姆精简第二轮：T2 移除讲解产物与提问学习；P-E 把「本地错题」并入
+   「错题本」（视图内二级切换，见 mistakeView）→ 3 个 pill。 */
+const LEARN_ALT_KEYS = ["overview", "mistakes", "syllabus"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）
   const t = e.target;
   // A-新15：焦点守卫纳入 SELECT（下拉聚焦时不触发子视图快捷键，防误切/吞键）
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "6")) return;
+  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "3")) return;
   const lv = LEARN_ALT_KEYS[+e.key - 1];
   if (!lv) return;
   const pill = document.querySelector('#learnnav button[data-lv="' + lv + '"]');
@@ -86,6 +95,7 @@ window.addEventListener("keydown", e => {
   let v = null;
   try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
   if (v === "review") v = "overview";   // v0.8.1：复习计划已迁入「刷题」tab，旧记忆重定向概览
+  // `vault` 保留为**别名**（并入 mistakes 视图），但不在 Alt 清单里出现
   const ok = ["overview", "mistakes", "vault", "syllabus"].includes(v);
   if (ok) showLearnView(v);
 })();
@@ -114,21 +124,16 @@ function updateLearnBadges(d) {
   const nb = (id, v, hot) => { const el = $(id); if (!el) return;
     el.textContent = v > 0 ? v : "";
     el.classList.toggle("hot", !!hot && v > 0);
-    const label = { nb_overview: "概览", nb_mistakes: "错题本", nb_explain: "讲解产物",
-                    nb_tutor: "提问学习", nb_review: "复习计划" }[id] || id;
+    const label = { nb_overview: "概览", nb_mistakes: "错题本" }[id] || id;
     el.title = v > 0 ? `${label}：${v} 项（点击进入对应视图）` : "";
     el.setAttribute("aria-label", el.title || label);
   };
   nb("nb_overview", 0);
   nb("nb_mistakes", loop.mistakes || 0);                              // 资料库规模，非待办 → 不标红
-  nb("nb_explain", loop.explains || 0);
-  nb("nb_tutor", loop.tutor || 0);
-  nb("nb_review", loop.review || 0, (d && d.review && d.review.due) > 0);
-  const r = (d && d.review) || {};
-  const t = (d && d.tutor) || {};
-  // 真实待办（可立即执行）：今日到期复习 + 进行中提问会话；无待办 → 无红点
-  setLearnNavBadge((r.due || 0) + (t.in_progress || 0),
-                   { due: r.due || 0, tutor: t.in_progress || 0 });
+  // 2026-10-15（奥卡姆精简第二轮 T2）：复习卡与提问两域删除后，学习中心**不再有待办型红点**
+  // （原来的两个来源「今日到期复习」「进行中提问会话」都没了）。显式传 0 而不是删掉调用：
+  // 让「没有待办」是一个明确的判定，而不是靠调用缺失来暗示。
+  setLearnNavBadge(0, { due: 0, tutor: 0 });
 }
 /* ---- ⑥ 大纲管理（WP-01/WP-10 考试锚定 · 教师重点为主 · 官方306补充） ---- */
 let SYL_DRAFTS = [];

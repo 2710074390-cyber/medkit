@@ -341,6 +341,10 @@ def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_u
         page.click('button[data-tab="learn"]')
         page.wait_for_selector("#tab-learn.show", timeout=15000)
         page.click('#learnnav button[data-lv="mistakes"]')
+        # P-E（奥卡姆精简第二轮）：旧错题本（DB）已并入「错题本」的第二个 pane，
+        # 进入后必须显式切到「旧库」——默认 pane 是「本地文件（真身）」。
+        page.click('#mv_tabs .mv-tab[data-mv="lib"]')
+        page.wait_for_selector('#mv-lib', state='visible', timeout=15000)
         page.wait_for_selector("#learn_mk .mk-row", timeout=15000)
         page.locator(".mk-row", has_text=_RETRY_TAG).locator('button:has-text("→ 重练")').click()
         page.wait_for_selector("#tab-study.show", timeout=15000)

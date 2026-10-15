@@ -416,6 +416,13 @@
   .rex-tab th{color:var(--dim);font-weight:600;font-size:11.5px}
   .learnview{display:none}
   .learnview.show{display:block}
+  /* P-E（奥卡姆精简第二轮）：错题来源二级切换（本地文件 / 旧库）。
+     合并前是两个并列 pill，现在是一个 pill + 视图内切换——同一概念只有一个家。 */
+  .mv-tabs{display:flex;gap:6px;margin:14px 0 2px;flex-wrap:wrap}
+  .mv-tab{background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:20px;padding:5px 14px;font-size:12.5px;font-family:inherit;cursor:pointer}
+  .mv-tab:hover{border-color:var(--accent)}
+  .mv-tab.on{border-color:var(--accent);color:var(--accent2);background:var(--infobg)}
   /* 本地错题（vault）：一题一文件，列表行可点开详情。
      `vault-duerow`（今日复习的条目）与 `vault-row`（错题列表）共用外观，
      但**必须是不同的类名**——否则 `.vault-row` 这个选择器会同时命中两处，

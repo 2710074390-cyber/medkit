@@ -18,6 +18,10 @@ def test_site_import_button_and_flow(page, server_url):
     page.wait_for_selector("#tab-learn.show", timeout=15000)
     page.click('button[data-lv="mistakes"]')
     page.wait_for_selector("#lv-mistakes.show", timeout=15000)
+    # P-E（奥卡姆精简第二轮）：旧错题本（DB）已并入「错题本」的第二个 pane，
+    # 进入后必须显式切到「旧库」——默认 pane 是「本地文件（真身）」。
+    page.click('#mv_tabs .mv-tab[data-mv="lib"]')
+    page.wait_for_selector('#mv-lib', state='visible', timeout=15000)
     assert page.locator("#btn_mk_site").is_visible()
 
     payload = json.dumps({"items": [{"subject": "儿科学", "chapter": "呼吸",

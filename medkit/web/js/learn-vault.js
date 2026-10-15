@@ -1,7 +1,29 @@
 /* exported vaultInit, vaultRebuild, vaultMigrate, vaultSaveDir, vaultSearch,
    vaultSearchClear, vaultAsk, vaultAskGlobal, vaultPersist, vaultClose, vaultEdit, vaultOpen,
    vaultFilter, vaultFilterClear, vaultNewToggle, vaultPickPhoto, vaultPhotoPick, vaultCreate,
-   vaultNewClear, vaultGrade, vaultReviewLoad, vaultLoad, vaultView */
+   vaultNewClear, vaultGrade, vaultReviewLoad, vaultLoad, vaultView, mistakeView */
+/* P-E（奥卡姆精简第二轮）：错题来源二级切换 —— 「本地文件（真身）」与「旧库」。
+ * 旧 pill「本地错题」并入「错题本」；本函数是合并后唯一的 pane 切换点。
+ * `_mvCur` 记住当前 pane：从别的子视图回到错题本时不重置成默认。 */
+let _mvCur = "vault";
+function mistakeView(name) {
+  // 无参调用 = 「恢复当前 pane」（从别的子视图切回错题本时用），此时才读 `_mvCur`；
+  // 有参则按参数切。这样 `_mvCur` 有真实读取点（不是只写不读的死变量）。
+  if (name === undefined) name = _mvCur;
+  name = name === "lib" ? "lib" : "vault";
+  _mvCur = name;
+  const tabs = document.querySelectorAll("#mv_tabs .mv-tab");
+  for (const b of tabs) {
+    const on = b.dataset.mv === name;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  const v = document.getElementById("mv-vault"), l = document.getElementById("mv-lib");
+  if (v) v.style.display = name === "vault" ? "" : "none";
+  if (l) l.style.display = name === "lib" ? "" : "none";
+}
+window.mistakeView = mistakeView;
+
 /* ---- 本地错题（vault）视图：读文件索引 + 薄弱项 + Agent 问答 ----
  *
  * 设计要点（见 docs/错题本地文件化与Agent助手_设计方案_2026-10-13.md）：

@@ -14,9 +14,10 @@ commit 7555b77 修复；本文件同时断言 aria-selected 与可见性双重�
 
 from __future__ import annotations
 
-# 2026-10-15（奥卡姆精简 T2）：explain（讲解产物）与 tutor（提问学习）两视图随其域删除，
-# learn 族收敛到 4 视图。函数名 six_views 是历史遗留（更早一版只有 5 个），改为按本清单驱动。
-VIEWS = ["overview", "mistakes", "vault", "syllabus"]
+# 2026-10-15（奥卡姆精简第二轮）：T2 删掉讲解产物与提问学习两视图；P-E 把「本地错题」
+# 并入「错题本」（视图内 `#mv_tabs` 二级切换）⇒ learn 族只剩 3 个 pill。
+# 函数名 six_views 是历史遗留（更早一版只有 5 个），清单才是判据来源。
+VIEWS = ["overview", "mistakes", "syllabus"]
 
 
 def _open_learn(page, server_url: str):
@@ -100,14 +101,15 @@ def test_learn_views_breakpoints_no_overflow(page, server_url):
 
 
 def test_learn_views_shortcut_keys(page, server_url):
-    """IMP-12①：Alt+1..4 直达子导航（2026-10-15 精简 T2 后为 4 视图：概览/错题本/
-    本地错题/大纲管理）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
+    """IMP-12①：Alt+1..3 直达子导航（2026-10-15 精简第二轮后为 3 视图：概览/错题本/
+    大纲管理）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
     _open_learn(page, server_url)
-    page.keyboard.press("Alt+4")
+    page.keyboard.press("Alt+3")
     assert page.locator('#learnnav button[data-lv="syllabus"]').get_attribute("aria-selected") == "true"
     assert page.locator("#lv-syllabus").is_visible()
-    page.keyboard.press("Alt+3")
-    assert page.locator("#lv-vault").is_visible(), "Alt+3 应切到本地错题（vault 插入后重编号）"
+    page.keyboard.press("Alt+2")
+    assert page.locator("#lv-mistakes").is_visible(), "Alt+2 应切到错题本"
+    assert page.locator("#mv_tabs").is_visible(), "错题本内应有来源切换（P-E 合并入口）"
     page.keyboard.press("Alt+1")
     assert page.locator("#lv-overview").is_visible()
     # ←/→：聚焦当前 pill（overview）→ 右键 → mistakes
