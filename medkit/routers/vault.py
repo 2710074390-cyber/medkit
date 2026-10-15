@@ -164,9 +164,13 @@ def review_due(subject: str = "") -> dict[str, Any]:
 def review_grade(path: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """写回一次复习评分（quality 0~5）：推进 SM-2 并原子改写该文件。"""
     rel = _safe_vault_rel(path)
+    # 用 `body["quality"]` 而非 `.get()`：`.get()` 的静态类型是 `Any | None`，
+    # mypy 2.4 起会直接拒 `int(Any | None)`（本地 mypy 2.3.1 放行 ⇒ 曾假绿一次，
+    # CI 两平台同时红：routers/vault.py:168 arg-type）。缺键走 KeyError，行为与原来一致
+    # （原来 `.get()` 得 None → int(None) 抛 TypeError，同样落到 400）。
     try:
-        quality = int(body.get("quality"))
-    except (TypeError, ValueError):
+        quality = int(body["quality"])
+    except (KeyError, TypeError, ValueError):
         raise HTTPException(status_code=400, detail="quality 必须是 0~5 的整数")
     if not 0 <= quality <= 5:
         raise HTTPException(status_code=400, detail="quality 越界（应在 0~5）")

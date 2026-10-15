@@ -330,6 +330,13 @@ def test_due_items_and_review_endpoints(vroot):
     assert g.status_code == 200, g.text
     assert c.get("/api/vault/review/due").json()["count"] == 0, "评分后应移出今日复习"
     assert c.post(f"/api/vault/review/{rel}/grade", json={"quality": 9}).status_code == 400
+    # 非法入参三条路径都必须落 400（不是 500）：
+    #   缺键（KeyError）/ 显式 null（TypeError）/ 非数字串（ValueError）。
+    # 前两条正是 2026-10-14 修 mypy 时改过的分支（`.get()` → `[]`），必须有守卫钉住，
+    # 否则「类型修好了、行为悄悄变了」不会被任何用例发现。
+    assert c.post(f"/api/vault/review/{rel}/grade", json={}).status_code == 400
+    assert c.post(f"/api/vault/review/{rel}/grade", json={"quality": None}).status_code == 400
+    assert c.post(f"/api/vault/review/{rel}/grade", json={"quality": "abc"}).status_code == 400
 
 
 # ================================================================ 接口红线
