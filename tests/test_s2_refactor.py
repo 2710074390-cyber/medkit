@@ -264,13 +264,15 @@ def test_cost_formula_matches_hand_computed_document():
 
 def test_render_prompt_single_pass_no_double_injection():
     """占位符单源替换：一次遍历，替换值中的字面量不再被二次扫描。"""
-    out = render_prompt("medtutor.md", subject="{kp_name}", kp_name="ABCD")
+    # 2026-10-15（奥卡姆精简 T2）：medtutor.md 随提问域删除，改用 medgen.md ——
+    # 本用例测的是 `render_prompt` 的**通用语义**（单遍替换），与具体提示词无关。
+    out = render_prompt("medgen.md", subject="{exam}", exam="ABCD")
     assert "{subject}" not in out, "subject 占位符应被替换"
-    assert "ABCD" in out, "真正的 {kp_name} 应被替换成 ABCD"
-    assert "{kp_name}" in out, "subject 注入的字面量 {kp_name} 不应被二次替换成 ABCD"
+    assert "ABCD" in out, "真正的 {exam} 应被替换成 ABCD"
+    assert "{exam}" in out, "subject 注入的字面量 {exam} 不应被二次替换成 ABCD"
 
 
 def test_render_prompt_leaves_unknown_placeholder():
     """未提供的占位符原样保留（便于调试），不静默置空。"""
-    out = render_prompt("medtutor.md", subject="儿科学")
-    assert out.count("{kp_name}") >= 1, "缺失占位符应原样保留以便发现"
+    out = render_prompt("medgen.md", subject="儿科学")
+    assert out.count("{exam}") >= 1, "缺失占位符应原样保留以便发现"

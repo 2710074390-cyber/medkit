@@ -148,19 +148,6 @@ def test_delete_mistake_decrements_correct_sample(isolated):
     assert (kp["attempts"], kp["correct"], kp["miss"]) == (0, 0, 0)
 
 
-def test_record_review_flows_back_to_mastery(isolated):
-    lib.add_mistake({"question": "q", "know_tags": ["回流点"], "learned": False})
-    # 复习通过（quality=4≥3）→ 记一次 correct，刷新 last_reviewed/last_tried
-    lib.record_review("回流点", 4)
-    kp = next(k for k in lib.list_knowledge() if k["name"] == "回流点")
-    assert (kp["attempts"], kp["correct"], kp["miss"]) == (2, 1, 1)
-    assert kp.get("last_reviewed") and kp.get("last_tried")
-    # 复习失败（quality=1<3）→ 记一次 miss；不影响 prior correct
-    lib.record_review("回流点", 1)
-    kp = next(k for k in lib.list_knowledge() if k["name"] == "回流点")
-    assert (kp["attempts"], kp["correct"], kp["miss"]) == (3, 1, 2)
-
-
 # ---------------------------------------------------------------- 文本结构化
 def test_parse_question_text_options_answer_analysis():
     txt = """某患儿 5 岁，阵发性喘憋。

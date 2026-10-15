@@ -88,17 +88,6 @@ def data_summary() -> dict[str, Any]:
     knowledge = lib.list_knowledge() if (root / "library").exists() else []
     counts["mistakes"] = len(mistakes)
     counts["knowledge"] = len(knowledge)
-    counts["review_cards"], counts["sessions"], counts["explains"] = 0, 0, 0
-    # 复习卡/会话/讲解与 mistakes 同库；DB 存在时从同源计数（与 list_mistakes 同口径）
-    try:
-        from ..core import review as rev
-        from ..core import tutor as tut
-
-        counts["review_cards"] = len(rev.list_cards())
-        counts["sessions"] = len(tut.list_sessions())
-    except Exception as e:  # noqa: BLE001  U-15 留痕：只读统计失败不 500
-        _errs.record("data.summary.counts", "会话/复习卡统计失败（跳过）", e=e)
-
     by_subject: dict[str, int] = {}
     for m in mistakes:
         s = (m.get("subject") or "未分类").strip() or "未分类"

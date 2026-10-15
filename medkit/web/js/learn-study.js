@@ -1,4 +1,4 @@
-/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allCard, allChecked, appliedSubject, arcs, arr, badgeNote, bar, blob, body, box, btn, btnAll, byName, c, card, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kind, kp, kps, learnRecAction, list, loadDashboard, loadLibrary, loadOverview, loadStudy, loadStudySubjects, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPhotoFile, mkPhotoPick, mkPurgeSameCards, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, mkRetry, n, name, o, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
+/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allChecked, appliedSubject, arcs, arr, bar, blob, body, btn, btnAll, c, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kps, list, loadDashboard, loadLibrary, loadOverview, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPhotoFile, mkPhotoPick, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, mkRetry, n, name, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
 const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
 const LEARN_ORDER = ["weak", "shaky", "solid", "mastered"];
@@ -47,15 +47,10 @@ function dashWeakRows(kps) {
         <span style="flex:1;color:var(--text);font-size:12.5px;min-width:0">${esc(k.name)}</span>
         ${learnChip(k.state)}
         <span class="hint" style="font-size:11px;white-space:nowrap">优先 ${Math.round((k.priority || 0) * 100)}</span>
-        <span style="display:flex;gap:4px;flex:none">
-          <button class="mini-btn primary" style="padding:2px 8px" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(k.subject || "")}" data-name="${esc(k.name)}">讲解</button>
-          <button class="mini-btn" style="padding:2px 8px" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(k.subject || "")}" data-name="${esc(k.name)}">提问</button>
-        </span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:5px">
         <div class="stack-bar"><i class="ok" style="width:${cs}%"></i><i class="miss" style="width:${ms}%"></i></div>
         <span class="hint" style="font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums">对 ${c}/${tot}</span>
-        <button class="mini-btn" style="padding:2px 8px;margin-left:auto" onclick="learnRecAction(this)" data-kind="queue" data-subject="${esc(k.subject || "")}" data-name="${esc(k.name)}">铺卡</button>
       </div>
     </div>`;
   }).join("");
@@ -126,14 +121,12 @@ async function loadDashboard(keepSubject) {
   }
 }
 function renderDashboard(d) {
-  const m = d.mastery || {}, r = d.review || {}, t = d.tutor || {}, loop = d.loop || {};
+  const m = d.mastery || {}, loop = d.loop || {};
   $("dash_scope").textContent = `${d.subject_label} · 闭环 ${loop.mastered || 0}/${m.total_knowledge || 0} 已掌握`;
   updateLearnBadges(d);
-  // 闭环流转：错题沉淀 → 讲解产物 → 提问会话 → 复习在册 → 已掌握
+  // 闭环流转：错题沉淀 → 已掌握（2026-10-15 奥卡姆精简 T2：讲解/提问/复习卡三环随其域删除）
   const stages = [
-    ["错题沉淀", loop.mistakes || 0, ""], ["讲解产物", loop.explains || 0, ""],
-    ["提问会话", loop.tutor || 0, ""], ["复习在册", loop.review || 0, ""],
-    ["已掌握", loop.mastered || 0, "mastered"],
+    ["错题沉淀", loop.mistakes || 0, ""], ["已掌握", loop.mastered || 0, "mastered"],
   ];
   const dBanner = (d.corrupted || 0) > 0
     ? `<div class="databanner"><span>⚠ 检测到 <b>${d.corrupted}</b> 条历史记录存在编码损坏（显示为 ????，多为早期导入所致）</span>
@@ -147,10 +140,7 @@ function renderDashboard(d) {
       + `（${Object.entries(cw.by_subject || {}).map(([k, v]) => `${esc(k)} ${v}`).join("、") || "未分类"}）`
       + `——不影响最终门禁兜底，详见项目「质检报告」与「人工复核清单」</span></div>`
     : "";
-  const badgeNote = ((r.due || 0) || (t.in_progress || 0))
-    ? `<div class="databanner" style="border-color:var(--accent2)"><span>🔴 侧栏红点来源：<b>刷题</b>＝今日到期复习 ${r.due || 0} 张；<b>学习中心</b>＝进行中提问 ${t.in_progress || 0} 场。悬停红点可看明细，点击直达对应视图。</span></div>`
-    : "";
-  $("dash_loop").innerHTML = badgeNote + dBanner + cwBanner + '<div class="loop-flow">' + stages.map(([k, v, cls], i) =>
+  $("dash_loop").innerHTML = dBanner + cwBanner + '<div class="loop-flow">' + stages.map(([k, v, cls], i) =>
       (i ? '<div class="loop-arrow">→</div>' : "") +
       `<div class="loop-node ${cls}"><b>${v}</b><span>${k}</span></div>`).join("") +
     '</div>' +
@@ -158,12 +148,8 @@ function renderDashboard(d) {
       `<div class="dmr good"><div class="dm-top"><b>${m.mastered_rate || 0}%</b><em>掌握率</em></div>` +
       `<div class="dm-sub">${m.total_knowledge || 0} 个知识点 · ${m.weak || 0} 薄弱 / ${m.shaky || 0} 需复习` +
       `<span class="bar"><i style="width:${m.mastered_rate || 0}%"></i></span></div></div>` +
-      `<div class="dmr warn"><div class="dm-top"><b>${r.due || 0}</b><em>今日到期复习</em></div>` +
-      `<div class="dm-sub">${r.total || 0} 张在册 · ${r.new || 0} 新 / ${r.review || 0} 复习中</div></div>` +
-      `<div class="dmr acc"><div class="dm-top"><b>${t.in_progress || 0}</b><em>进行中提问会话</em></div>` +
-      `<div class="dm-sub">共 ${t.total || 0} 场 · 已答 ${t.answered_rounds || 0} 轮</div></div>` +
     '</div>';
-  // C22：近期活动时间线（讲解/复习打卡/提问作答；来自知识点 history 聚合）
+  // C22：近期活动时间线（来自知识点 history 聚合）
   const acts = d.recent || [];
   $("dash_loop").innerHTML += acts.length
     ? `<div class="dash-act"><h3>近期活动</h3>` + acts.map(a => {
@@ -178,51 +164,10 @@ async function loadLibrary() {
   invalidateLearnCache();   // 学习中心刷新 = 全量刷新（子视图内交互走 30s 缓存）
   try {
     loadOverview($("dash_subject") ? $("dash_subject").value : "");   // C1：顶部与闭环同口径
-    loadExplainCtx(appliedSubject());          // M3：同步刷新科目 / 知识点 / 讲解产物
-    loadTutorCtx();                            // M4：同步刷新提问式学习的科目 / 知识点 / 会话
-    // v0.8.1：复习计划（loadReviewCtx）已迁入「刷题」tab，由 loadStudy 触发
   } catch (e) {
     $("learn_kp").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
 }
-/* ---- ② 刷题 tab（v0.8.1）：科目卡片 + 今日到期复习（SM-2 复习卡 + FSRS 记忆卡） ---- */
-function loadStudy() {
-  loadReviewCtx(rvSubject || "");
-  loadStudySubjects();
-}
-async function loadStudySubjects() {
-  const box = $("study_subjects");
-  if (!box) return;
-  try {
-    const r = await api("/api/library/subjects");
-    const subs = r.subjects || [];
-    const byName = {};
-    (r.stats || []).forEach(s => { byName[s.subject] = s; });
-    const card = (s, st) => `
-      <button class="subj-card${rvSubject === s ? " on" : ""}" data-subject="${esc(s)}" onclick="loadReviewCtx(this)" title="只看「${esc(s)}」的到期复习">
-        <div class="subj-avatar">${esc((s || "未分类").slice(0, 1))}</div>
-        <div class="subj-main">
-          <div class="subj-name">${esc(s)}</div>
-          <div class="subj-row"><span>今日到期 <b>${st.review_due || 0}</b></span><span>总卡 <b>${st.review_total || 0}</b></span></div>
-          <div class="subj-row"><span>错题 <b>${st.mistakes || 0}</b></span><span>掌握率 <b>${st.mastered_rate || 0}%</b></span></div>
-        </div>
-      </button>`;
-    const allCard = `
-      <button class="subj-card${rvSubject === "" ? " on" : ""}" onclick="loadReviewCtx('')" title="查看全部科目的到期复习">
-        <div class="subj-avatar all">📚</div>
-        <div class="subj-main">
-          <div class="subj-name">全部科目</div>
-          <div class="subj-row"><span>共 <b>${subs.length}</b> 个科目</span><span>点卡片按科过滤</span></div>
-        </div>
-      </button>`;
-    box.innerHTML = subs.length
-      ? `<div class="subj-grid">` + allCard + subs.map(s => card(s, byName[s] || {})).join("") + `</div>`
-      : `<div class="hint">暂无科目——先在错题本导入错题，或去「题库」生成题目</div>`;
-  } catch (e) {
-    box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
-  }
-}
-/* WP-4：科目管理弹层（列表 + 各科统计 + 删除，删除前自动备份） */
 let _subjMgrBusy = false;
 async function subjectMgrOpen() {
   if (_subjMgrBusy) return;
@@ -241,7 +186,7 @@ async function subjectMgrOpen() {
           <button class="mini-btn danger" data-subj="${esc(s.subject)}" onclick="subjectDelete(this)">删除</button>
         </div>`).join("") + `</div>
         <div class="hint" style="margin-top:8px">删除前会自动导出完整备份 JSON；删除后该科错题、知识点、复习卡、记忆卡、讲解与提问会话一并移除。</div>`;
-    confirmModal("科目管理", body, "关闭", () => loadStudy(), false);
+    confirmModal("科目管理", body, "关闭", () => loadLibrary(), false);
   } catch (e) {
     toast(e.message, false);
   } finally { _subjMgrBusy = false; }
@@ -250,17 +195,15 @@ async function subjectDelete(btn) {
   const subject = (btn && btn.dataset.subj) || "";
   if (!subject) return;
   confirmModal("删除科目？",
-    `<p>将删除科目 <b>${esc(subject)}</b> 的：错题、知识点掌握度、复习卡、记忆卡、讲解产物、提问会话。<br>
+    `<p>将删除科目 <b>${esc(subject)}</b> 的：错题、知识点掌握度（以及该科的大纲条目 / 真题考频）。<br>
      删除前会自动导出完整备份到本地 exports 目录，删除后需手动恢复。</p>`,
     "导出并删除", async () => {
       try {
         const r = await api("/api/library/subjects/delete",
           { method: "POST", body: JSON.stringify({ subject }) });
         const d = r.deleted || {};
-        toast(`已删除「${subject}」：错题 ${d.mistakes || 0} · 知识点 ${d.knowledge || 0} · 复习卡 ${d.review_cards || 0} · 记忆卡 ${d.memory_cards || 0} · 会话 ${d.sessions || 0} · 讲解 ${d.explains || 0}`);
-        if (typeof rvSubject !== "undefined" && rvSubject === subject) rvSubject = "";
-        loadStudy();       // 刷题 tab：科目卡片 + 复习计划刷新
-        loadLibrary();     // 学习中心：概览/dashboard/badge 刷新
+        toast(`已删除「${subject}」：错题 ${d.mistakes || 0} · 知识点 ${d.knowledge || 0}`);
+        loadLibrary();     // 学习中心：概览/dashboard/badge/科目卡片刷新
         subjectMgrOpen();  // 弹出已刷新的科目管理列表
       } catch (e) { toast(e.message, false); }
     });
@@ -301,14 +244,9 @@ function renderLibraryCurrent() {
       <span style="flex:1;min-width:150px;color:var(--text);font-size:13px">${esc(r.name)}</span>
       ${learnChip(r.state)}
       <span class="hint" style="font-size:11.5px;white-space:nowrap">优先度 ${Math.round((r.priority || 0) * 100)}</span>
-      <span style="display:flex;gap:5px">
-        <button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(r.subject || "")}" data-name="${esc(r.name)}">→ 讲解</button>
-        <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(r.subject || "")}" data-name="${esc(r.name)}">→ 提问</button>
-        <button class="mini-btn" onclick="learnRecAction(this)" data-kind="queue" data-subject="${esc(r.subject || "")}" data-name="${esc(r.name)}">铺卡</button>
-      </span>
     </div>`).join("") : `<div class="hint">暂无薄弱点，先把错题收进来。</div>`;
 
-  // 错题本（增强版：→讲解 / →提问 / 详情展开 / 已掌握 / 删除）
+  // 错题本（增强版：详情展开 / 重练 / 已掌握 / 删除）
   const shown = mkShowAll ? list : list.slice(0, 100);   // D-14：首屏约 100 条
   // R4-21：明示「全选可见」实际选中范围（首屏 N/共 M），未加载全部时不再误导
   const btnAll = $("btn_mk_all");
@@ -521,7 +459,6 @@ function mkRowHTML(mm) {
     ${mm.user_answer ? `<div><b>我的作答</b>：${esc(mm.user_answer)}</div>` : ""}
     ${mm.analysis ? `<div><b>解析</b>：${hlKw(mm.analysis)}</div>` : ""}
     ${[mm.source_type, mm.source_year].filter(Boolean).length ? `<div><b>出处</b>：${esc([mm.source_type, mm.source_year].filter(Boolean).join(" · "))}</div>` : ""}`;
-  const kp = (mm.know_tags || [])[0] || mm.topic || "";
   return `<div class="mk-row">
     <label class="mkck-wrap" title="选择该题">
       <input type="checkbox" class="mkck" data-id="${esc(mm.id)}" ${mkSelected.has(mm.id) ? "checked" : ""} onchange="mkToggleRow(this)">
@@ -532,11 +469,8 @@ function mkRowHTML(mm) {
       <div class="mk-detail" id="mkd_${esc(mm.id)}">${detail || '<div class="hint">（无更多详情）</div>'}</div>
     </div>
     <div class="mk-actions">
-      ${kp ? `<button class="mini-btn primary" onclick="learnRecAction(this)" data-kind="explain" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 讲解</button>
-      <button class="mini-btn" onclick="learnRecAction(this)" data-kind="tutor" data-subject="${esc(mm.subject || "")}" data-name="${esc(kp)}">→ 提问</button>` : ""}
       ${(mm.options || []).length ? `<button class="mini-btn" data-id="${esc(mm.id)}" onclick="mkRetry(this)" title="到「刷题」页把这道错题再做一遍（判对即归档已掌握）">→ 重练</button>` : ""}
       ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" data-id="${esc(mm.id)}" onclick="mkLearn(this,true)">已掌握</button>`}
-      ${mm.learned && kp ? `<button class="act gray" style="padding:5px 11px;font-size:12px" data-subject="${esc(mm.subject || "")}" data-kp="${esc(kp)}" onclick="mkPurgeSameCards(this)">清同名卡</button>` : ""}
       <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" data-id="${esc(mm.id)}" onclick="mkDel(this)">删除</button>
     </div>
   </div>`;
@@ -546,51 +480,6 @@ function mkDetailTgl(idOrEl) {
   const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   const d = $("mkd_" + id);
   if (d) d.classList.toggle("open");
-}
-/* 学习中心推荐/错题行动作：讲解 / 提问 / 铺卡（复用既有流程，先定位到对应视图）
-   R3-02：按钮经 onclick="learnRecAction(this)" + data-kind/data-subject/data-name 传参——
-   知识点名含英文撇号（Hodgkin's 等）不再击穿行内 JS；程序化调用仍可用旧签名。 */
-async function learnRecAction(btnOrKind, subject, kpName) {
-  if (btnOrKind && typeof btnOrKind === "object" && btnOrKind.dataset) {
-    const d = btnOrKind.dataset;
-    subject = d.subject || "";
-    kpName = d.name || "";
-    btnOrKind = d.kind || "";
-  }
-  const kind = btnOrKind;
-  if (!kpName) { toast("该记录缺少知识点，无法定位", false); return; }
-  try {
-    if (kind === "explain") {
-      showLearnView("explain");
-      if (subject && $("exp_subject")) $("exp_subject").value = subject;
-      await loadExplainCtx(subject);
-      if (![...$("exp_kp").options].some(o => o.value === kpName)) {
-        const o = document.createElement("option");
-        o.value = o.textContent = kpName; o.dataset.subject = subject || "";
-        $("exp_kp").appendChild(o);
-      }
-      $("exp_kp").value = kpName;
-      await expGenerate();
-    } else if (kind === "tutor") {
-      showLearnView("tutor");
-      if (subject && $("tu_subject")) $("tu_subject").value = subject;
-      await loadTutorCtx(subject);   // R3-23：重建下拉后保留原科目
-      if (![...$("tu_kp").options].some(o => o.value === kpName)) {
-        const o = document.createElement("option");
-        o.value = o.textContent = kpName; o.dataset.subject = subject || "";
-        $("tu_kp").appendChild(o);
-      }
-      $("tu_kp").value = kpName;
-      await tutorStart();
-    } else if (kind === "queue") {
-      await api("/api/library/review/queue", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: subject || "", kp_name: kpName }) });
-      toast(`「${kpName}」已排入复习队列`);
-      loadReviewCtx(subject);
-      updateByQueue();
-    }
-  } catch (e) { toast(e.message, false); }
 }
 async function updateByQueue() {
   try { const d = await api("/api/library/dashboard"); updateLearnBadges(d); } catch (e) { /* ignore */ }
@@ -603,7 +492,7 @@ async function healLibrary() {
     await loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
-window.mkDetailTgl = mkDetailTgl; window.learnRecAction = learnRecAction; window.healLibrary = healLibrary;
+window.mkDetailTgl = mkDetailTgl; window.healLibrary = healLibrary;
 /* 错题 → 练习 直达（跨域调用收敛在**外壳** app.js 的 `openDrillFor`，
    学习中心不直接引用 bank 域符号——依赖方向 EP-01 → 外壳 → bank）。 */
 function mkRetry(btn) {
@@ -619,38 +508,15 @@ async function mkLearn(idOrEl, learned) {
     await api(`/api/library/mistakes/${id}/learn`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ learned: learned }) });
-    // R3-27：明确告知「仅归档标记」——同名复习卡/记忆卡仍在到期队列（R4-24：可用「清同名卡」移出）
-    toast(learned ? "已标记为已掌握：仅归档标记。同名卡可点「清同名卡」移出队列"
+    toast(learned ? "已标记为已掌握（仅归档标记，错题默认被「只看未掌握」隐藏）"
                   : "已取消已掌握标记"); loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
-/* R4-24：标记「已掌握」后的显式清理——移出同名复习卡/记忆卡（带确认，不静默删）
-   RV1：双签名——内联传 this（data-subject/data-kp），程序化调用传 (subject, kpName) */
-async function mkPurgeSameCards(subjectOrEl, kpName) {
-  let subject = subjectOrEl;
-  if (subjectOrEl && typeof subjectOrEl === "object" && subjectOrEl.dataset) {
-    subject = subjectOrEl.dataset.subject || "";
-    kpName = subjectOrEl.dataset.kp || "";
-  }
-  confirmModal("移出同名卡？",
-    `<p style="margin:0;color:var(--dim)">将移出 <b>${esc(kpName)}</b> 的同名复习卡 / 记忆卡（${esc(subject || "未分类")}）。<br>
-     <span class="hint">删除后该卡的 SM-2/FSRS 排期数据一并清除；确认知识点已掌握时再操作。</span></p>`,
-    "移出同名卡", async () => {
-      try {
-        const r = await api("/api/library/review/purge-same", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subject: subject || "", kp_name: kpName }) });
-        toast(`已移出复习卡 ${r.review_removed || 0} · 记忆卡 ${r.memory_removed || 0}`);
-        await Promise.all([loadReviewCtx(rvSubject), loadLibrary()]);
-      } catch (e) { toast(e.message, false); }
-    }, false);
-}
-window.mkPurgeSameCards = mkPurgeSameCards;
 async function mkDel(idOrEl) {
   // RV1：双签名——内联传 this（data-id），程序化调用传 id
   const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
   confirmModal("删除错题", `<p style="margin:0;color:var(--dim)">确定删除这道错题吗？对应知识点掌握度会随之刷新。<br>
-    <span class="hint">已生成的讲解 / 提问会话 / 复习卡 / 记忆卡会<b>保留</b>；如不再需要请到对应视图删除。</span></p>`,
+    <span class="hint">该错题对应的知识点掌握度会随之刷新。</span></p>`,
     "删除", async () => {
       try { await api("/api/library/mistakes/" + id, { method: "DELETE" }); toast("已删除"); loadLibrary(); }
       catch (e) { toast(e.message, false); }

@@ -1,29 +1,16 @@
-"""学习闭环驾驶舱聚合：掌握度 + 复习(SM-2) + 提问式学习(MedTutor) 三闭环总览。
+"""学习闭环驾驶舱聚合：掌握度 + 错题沉淀 总览。
 
 纯本地聚合，只读不写；按科目可选过滤。供 GET /api/library/dashboard 返回。
+
+2026-10-15（奥卡姆精简 T2）：复习(SM-2 复习卡) 与 提问式学习(MedTutor) 两路随其域删除。
+掌握度的**口径不变**（`library.compute_*`），只是不再把零使用的两域计数塞进同一个响应。
 """
 
+from pathlib import Path
 from typing import Any
 
-from . import explain as expl
+from . import config as cfg
 from . import library as lib
-from . import review as rev
-from . import tutor as tut
-
-_TUTOR_IDLE_DAYS = 7  # 提问会话「进行中」判定：无活动超过该天数视为弃会话（不污染徽章）
-
-
-def _active_within(session: dict[str, Any], days: int) -> bool:
-    """会话最近活动是否在 days 天内（无 updated_at/异常 → 保守按进行中）。"""
-    try:
-        from datetime import datetime, timedelta
-        updated = session.get("updated_at") or session.get("created_at") or ""
-        if not updated:
-            return True
-        t = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
-        return datetime.now(t.tzinfo) - t <= timedelta(days=days)
-    except Exception:  # noqa: BLE001
-        return True
 
 
 def _subject_kps(subject: str) -> list[dict[str, Any]]:
@@ -43,7 +30,7 @@ def _contract_warnings(subject: str = "") -> dict[str, Any]:
 
     total = 0
     by_subject: dict[str, int] = {}
-    root = expl._proj_root()
+    root = Path(cfg.load()["projects_dir"])
     if root.is_dir():
         for proj in root.iterdir():
             mp = proj / "meta.json"
@@ -83,34 +70,9 @@ def summary(subject: str = "") -> dict[str, Any]:
     # 掌握率口径 = (较熟练 + 已掌握) / 全部（与前端 dashDonut 中心文字一致）
     mastery["mastered_rate"] = round(100 * (mastery["solid"] + mastery["mastered"]) / total) if total else 0
 
-    # 复习（SM-2）
-    review = dict(rev.stats(subject))
-    review["done"] = review["total"] - review["due"]
-
-    # 提问式学习（MedTutor）
-    sessions = tut.list_sessions(subject)
-    by_state = {s: 0 for s in state_names}
-    answered_rounds = 0
-    for s in sessions:
-        st = str(s.get("state") or "")
-        by_state[st] = by_state.get(st, 0) + 1
-        answered_rounds += len(s.get("rounds") or [])
-    tutor = {
-        "total": len(sessions),
-        # 进行中 = 未掌握 且 7 天内有活动（弃会话不再永久污染「进行中」徽章）
-        "in_progress": sum(1 for s in sessions
-                           if s.get("state") != "mastered"
-                           and _active_within(s, 7)),
-        "answered_rounds": answered_rounds,
-        "by_state": by_state,
-    }
-
-    # 闭环流转各环节在册数量（错题沉淀 → 讲解 → 提问 → 复习 → 掌握）
+    # 闭环流转在册数量（错题沉淀 → 掌握）
     loop = {
         "mistakes": mastery["total_mistakes"],
-        "explains": len(expl.list_explains(subject)),
-        "tutor": len(sessions),
-        "review": review["total"],
         "mastered": mastery["mastered"],
     }
 
@@ -118,10 +80,8 @@ def summary(subject: str = "") -> dict[str, Any]:
         "subject": subject,
         "subject_label": subject or "全部科目",
         "mastery": mastery,
-        "review": review,
-        "tutor": tutor,
         "loop": loop,
-        # C22：近期活动时间线（讲解/复习/提问，倒序；前端概览卡直接消费）
+        # C22：近期活动时间线（知识点 history，倒序；前端概览卡直接消费）
         # V-02：复用上面已加载并过滤好的 kps，不再整表读第二遍 knowledge
         "recent": lib.recent_activity(8, subject, kps=kps),
         # NX-03（R-2）：契约告警计数（生成输出软校验；0 表示最近一轮无告警或未生成过）

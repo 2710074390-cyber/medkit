@@ -1,6 +1,6 @@
 """IMP-03 契约层（core/schema.py）单元测试。
 
-覆盖：QuestionItem 字段/类型/多余键/X 型答案升序；QcVerdict 浮点容错；TutorTurn / FixPatch /
+覆盖：QuestionItem 字段/类型/多余键/X 型答案升序；QcVerdict 浮点容错；FixPatch /
 RealexamNorm 契约；validate_or_repair 的「修复重发 1 次成功」与「仍失败 → None」两条路径。
 全部纯本地、零真实网络调用（不 import LLMClient，不依赖 LLM）。
 """
@@ -21,7 +21,6 @@ from medkit.core.schema import (
     QuestionItem,
     RealexamNorm,
     SyllabusOutline,
-    TutorTurn,
     validate_or_repair,
 )
 
@@ -120,23 +119,6 @@ def test_qc_verdict_severity_lowercased_ok():
     v = QcVerdict.model_validate({"score": 80, "gate_decision": "PASS",
                                   "issues": [{"q_id": "Q1", "code": "F2", "severity": "fail"}]})
     assert v.issues[0].severity == "fail"
-
-
-# ------------------------------------------------------------------ TutorTurn
-def test_tutor_turn_valid():
-    t = TutorTurn.model_validate({"score": 2, "gap": "机制要补", "next_question": "试解释",
-                                  "next_type": "apply"})
-    assert t.score == 2 and t.next_type == "apply"
-
-
-def test_tutor_turn_bad_next_type_defaults():
-    t = TutorTurn.model_validate({"score": 1, "gap": "", "next_question": "q", "next_type": "zzz"})
-    assert t.next_type == "explain"
-
-
-def test_tutor_turn_score_clamp():
-    with pytest.raises(ValidationError):
-        TutorTurn.model_validate({"score": 9, "gap": "", "next_question": "q", "next_type": "apply"})
 
 
 # ------------------------------------------------------------------ RealexamNorm

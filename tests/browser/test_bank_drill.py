@@ -228,7 +228,8 @@ def test_study_page_do_view_starts_drill(page, server_url):
         page.reload()
         page.wait_for_selector("#tab-study.show", timeout=15000)
         assert page.locator("#sv-do").is_visible(), "默认应停在「做题」子视图"
-        assert not page.locator("#sv-review").is_visible()
+        # 2026-10-15（奥卡姆精简 T2）：「复习（卡片）」子视图随其域删除 → 节点不再存在
+        assert page.locator("#sv-review").count() == 0
         page.wait_for_selector(".do-quick-card", timeout=15000)
         page.locator(".do-quick-card").first.click()
         page.wait_for_selector("#bank_drill_card .bank-q", timeout=15000)

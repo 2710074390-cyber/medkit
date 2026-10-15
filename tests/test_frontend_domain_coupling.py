@@ -54,8 +54,7 @@ JS_DIR = ROOT / "medkit" / "web" / "js"
 SHARED = ("md.js",)
 # 2026-10-13（奥卡姆精简 P2）：原 EP-01 归因域的三片（learn-meta / learn-meta-image /
 # learn-search）随功能删除；本域现为「学习中心 + 错题本」，改称 CORE。
-CORE = ("learn.js", "learn-study.js", "learn-vault.js", "learn-live.js",
-        "learn-review.js")
+CORE = ("learn.js", "learn-study.js", "learn-vault.js")
 SHELL = ("app.js",)
 PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
@@ -83,12 +82,9 @@ SHELL_TO_PLUGIN: dict[tuple[str, str], tuple[str, str]] = {
 }
 
 # **插件 → EP-01** 的引用登记：插件依赖核心是**允许**的（插件本就该建在核心上）
-PLUGIN_TO_CORE: dict[tuple[str, str], str] = {
-    ("review-desk-project.js", "ankiPreview"):
-        "项目页的「预览 Anki 卡样」按钮——卡样渲染复用学习中心的实现，避免两套渲染器漂移",
-    ("review-desk-project.js", "ankiHelp"):
-        "项目页的「Anki 导入指引」按钮——弹层文案与学习中心共用一份（同一份指引不该写两遍）",
-}
+# 2026-10-15（奥卡姆精简 T2）：原两条登记（ankiPreview / ankiHelp）随复习卡域删除而消除——
+# 两个函数**搬回了唯一调用方** `review-desk-project.js`，插件不再跨域引用核心符号。
+PLUGIN_TO_CORE: dict[tuple[str, str], str] = {}
 
 # **外壳 → 题库刷题域（bank）** 的引用登记（与 SHELL_TO_PLUGIN 同范式）：
 # 外壳是宿主，引用允许，但必须写明「剥离/替换时怎么处理」。

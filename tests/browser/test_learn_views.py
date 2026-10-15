@@ -14,7 +14,9 @@ commit 7555b77 修复；本文件同时断言 aria-selected 与可见性双重�
 
 from __future__ import annotations
 
-VIEWS = ["overview", "mistakes", "explain", "tutor", "syllabus"]
+# 2026-10-15（奥卡姆精简 T2）：explain（讲解产物）与 tutor（提问学习）两视图随其域删除，
+# learn 族收敛到 4 视图。函数名 six_views 是历史遗留（更早一版只有 5 个），改为按本清单驱动。
+VIEWS = ["overview", "mistakes", "vault", "syllabus"]
 
 
 def _open_learn(page, server_url: str):
@@ -98,9 +100,10 @@ def test_learn_views_breakpoints_no_overflow(page, server_url):
 
 
 def test_learn_views_shortcut_keys(page, server_url):
-    """IMP-12①：Alt+1..6 直达子导航（v0.15 精简后为 6 视图：概览/错题本/本地错题/讲解产物/提问学习/大纲管理）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
+    """IMP-12①：Alt+1..4 直达子导航（2026-10-15 精简 T2 后为 4 视图：概览/错题本/
+    本地错题/大纲管理）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
     _open_learn(page, server_url)
-    page.keyboard.press("Alt+6")
+    page.keyboard.press("Alt+4")
     assert page.locator('#learnnav button[data-lv="syllabus"]').get_attribute("aria-selected") == "true"
     assert page.locator("#lv-syllabus").is_visible()
     page.keyboard.press("Alt+3")
@@ -138,7 +141,7 @@ def test_hash_direct_navigation_initializes_tab(page, server_url):
     """
     cases = (
         ("start", "#start_body", "加载中"),
-        ("study", "#rv_body", "加载中"),
+        ("study", "#bank_list", "加载中"),
         ("bank", "#proj_list", "加载中"),
         ("learn", "#dash_loop", "汇总中"),
         ("mine", "#prompt_list", "加载中"),
@@ -146,9 +149,6 @@ def test_hash_direct_navigation_initializes_tab(page, server_url):
     for tab, container, placeholder in cases:
         page.goto(f"{server_url}/#{tab}")
         page.wait_for_selector(f"#tab-{tab}.show", timeout=15000)
-        if tab == "study":
-            # v0.13.0：「刷题」页默认停在「做题」子视图；复习内容在「复习（卡片）」子视图里
-            page.click('#studynav button[data-sv="review"]')
         page.wait_for_function(
             "args => !document.querySelector(args[0]).innerText.includes(args[1])",
             arg=(container, placeholder), timeout=15000,

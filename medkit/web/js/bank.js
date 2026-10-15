@@ -427,27 +427,23 @@ window.bankRetryStart = bankRetryStart;
  *
  * v0.15（奥卡姆精简 P1）：原独立「练习」页签（导入自备题库）已并入本页签的 `do` 子视图。
  *
- * 依赖方向：本片（BANK）→ 外壳 `setStudyKeys` / EP-01 `loadStudy`，一律 `typeof` 守卫
- * （缺失即不挂快捷键/不预加载，不炸）——与既有 `openDrillFor` 同范式。
+ * 依赖方向：本片（BANK）→ 外壳 `openDrillFor`，一律 `typeof` 守卫（缺失即不炸）——
+ * 与既有 `openDrillFor` 同范式。2026-10-15 精简 T2 后不再依赖复习卡快捷键与 loadStudy。
  */
-let studyViewCur = "do";
-
 function studyView(name) {
-  name = name === "review" ? "review" : (name === "do" ? "do" : studyViewCur || "do");
-  studyViewCur = name;
+  // 2026-10-15（奥卡姆精简 T2）：复习（卡片）子视图随其域删除，「刷题」页只剩「做题」。
+  // 保留本函数是为了兼容既有调用点与 hash 路由（未知值一律落回 do）。
+  name = "do";
   const nav = $("studynav");
   if (nav) [...nav.querySelectorAll(".css-pill")].forEach(b => {
     const on = b.dataset.sv === name;
     b.classList.toggle("on", on);
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
-  const dv = $("sv-do"), rv = $("sv-review");
-  if (dv) dv.style.display = name === "do" ? "" : "none";
-  if (rv) rv.style.display = name === "review" ? "" : "none";
-  // 复习卡的 1/2/3 自评快捷键只在复习视图挂（否则与做题的选项快捷键抢键）
-  if (typeof setStudyKeys === "function") setStudyKeys(name === "review");
-  if (name === "review") { if (typeof loadStudy === "function") loadStudy(); }
-  else { loadBankHome(); loadDoEntry(); }
+  const dv = $("sv-do");
+  if (dv) dv.style.display = "";
+  loadBankHome();
+  loadDoEntry();
 }
 
 /* 做题入口数据：题库下拉 + 快捷开始 + 今日进度（每次进「刷题」页刷新） */

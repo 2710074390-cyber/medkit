@@ -3,13 +3,11 @@
 背景：medkit.db 建立（SQL 模式）后，若测试只 monkeypatch 各模块的文件常量而
 未隔离 `DB_FILE`，`_store_is_sql()` 会判定 SQL 模式并写真实用户库（本会话曾踩坑：
 一次失败回归把真实库从 1/4/1/1 条污染到 16/11/3/6 条，已用 `.pre-db-import-*.bak` 恢复）。
-本 autouse fixture 统一把 db 底座与四域模块全部重定向到本测试的 tmp_path：
+本 autouse fixture 统一把 db 底座与各域模块全部重定向到本测试的 tmp_path：
 DB 不存在 → 各模块自动回落 JSON 路径（既有 174+ 测试行为零变化）。
 
 R5-01（2026-09-01）：此前本 fixture 只隔离 `DB_PATH`/`DB_FILE`，未隔离各模块的 **JSON
-文件常量**（`lib.MISTAKES_FILE`/`KNOWLEDGE_FILE`、`rev.REVIEW_QUEUE_FILE`、
-`expl.EXPLAINS_FILE`/`SLICE_INDEX_FILE`、`tut.TUTOR_SESSIONS_FILE`、
-`cards.CARDS_FILE`）——tmp db 不存在 → 各模块回落 JSON 路径 → 直接原子写真实
+文件常量**（`lib.MISTAKES_FILE`/`KNOWLEDGE_FILE`）——tmp db 不存在 → 各模块回落 JSON 路径 → 直接原子写真实
 `~/.medkit/library/*.json`（R5 实机两轮复现：mistakes.json 4→8 条、knowledge.json 被整体
 替换）。现把全部文件常量一并重定向到同一 store_dir，并加 session 级「家目录哈希哨兵」
 （`_sentinel_no_home_touch`，套件结束断言真实 ~/.medkit 未被测试触碰）。
@@ -23,24 +21,15 @@ from typing import Any
 
 import pytest
 
-from medkit.core import cards as cards_mod
 from medkit.core import config as cfg
 from medkit.core import db as dbs
-from medkit.core import explain as expl
 from medkit.core import library as lib
-from medkit.core import review as rev
-from medkit.core import tutor as tut
 
 # R5-01：模块级「文件常量 → 相对库内文件名」清单（与各 core 模块定义保持一致）。
 # 只 patch 文件常量，不 patch CONFIG_DIR 本身（config 相关测试各自隔离，行为零变化）。
 _FILE_CONSTANTS: list[tuple[Any, str, str]] = [
     (lib, "MISTAKES_FILE", "mistakes.json"),
     (lib, "KNOWLEDGE_FILE", "knowledge.json"),
-    (rev, "REVIEW_QUEUE_FILE", "review_queue.json"),
-    (expl, "EXPLAINS_FILE", "explains.json"),
-    (expl, "SLICE_INDEX_FILE", "slice_index.json"),
-    (tut, "TUTOR_SESSIONS_FILE", "tutor_sessions.json"),
-    (cards_mod, "CARDS_FILE", "memory_cards.json"),
 ]
 
 
@@ -50,7 +39,7 @@ def _isolate_medkit_store(tmp_path, monkeypatch):
     db_file = store_dir / "medkit.db"
     monkeypatch.setattr(dbs, "LIBRARY_DIR", store_dir)
     monkeypatch.setattr(dbs, "DB_PATH", db_file)
-    for mod in (lib, rev, expl, tut):
+    for mod in (lib,):
         monkeypatch.setattr(mod, "DB_FILE", db_file)
     # R5-01：JSON 文件常量同样重定向（此前缺失 → 测试回落 JSON 时写真实 ~/.medkit）
     for mod, attr, fname in _FILE_CONSTANTS:

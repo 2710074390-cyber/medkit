@@ -224,6 +224,32 @@ _PATH_EXEMPT = {
     "docs/EP-01_阶段0_归因报告_Agent替身模式_20260928.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
     "docs/EP-01_阶段0_归因报告_Agent替身模式_30题_20260928.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
     "docs/EP-01_阶段0_归因质量验证报告.md": "已移入 docs/archive/ep-01/（2026-10-13 P2）",
+    # ---- 2026-10-15（奥卡姆精简第二轮 T2）：删除讲解/提问/记忆卡·复习卡三域 ----
+    # 依据：docs/重构设计方案_奥卡姆精简_第二轮_2026-10-15.md（用户已拍板「T2 全删」）。
+    # 实测三域零使用：explains=0 / tutor_sessions=0 / cards=0 / review_cards=0，
+    # 且功能与新落的「本地错题 vault」重叠（vault Agent 已能问答、vault 自带 SM-2 复习）。
+    "medkit/core/explain.py": "讲解域，随 T2 删除（explains 0 条实测）",
+    "medkit/core/tutor.py": "提问式学习域，随 T2 删除（tutor_sessions 0 场实测）",
+    "medkit/core/cards.py": "医学记忆卡域，随 T2 删除（cards 0 张实测）",
+    "medkit/core/review.py": "复习卡（SM-2）域，随 T2 删除（review_cards 0 张实测；SM-2 纯函数已搬进 vault_index）",
+    "medkit/core/scheduler.py": "旧复习计划调度器，随 T2 删除（被 vault 的 SM-2 取代）",
+    "medkit/prompts/medexplain.md": "讲解提示词，随 T2 删除",
+    "medkit/prompts/medtutor.md": "提问提示词，随 T2 删除",
+    "medkit/prompts/medcards.md": "记忆卡提示词，随 T2 删除",
+    "medkit/web/js/learn-live.js": "讲解/提问前端片，随 T2 删除",
+    "medkit/web/js/learn-review.js": "复习卡前端片，随 T2 删除",
+    "tests/test_explain.py": "讲解域测试，随 T2 删除",
+    "tests/test_explain_batch_delete.py": "讲解域测试，随 T2 删除",
+    "tests/test_explain_guard_no_selflock.py": "讲解域测试，随 T2 删除",
+    "tests/test_explain_stream.py": "讲解域测试，随 T2 删除",
+    "tests/test_tutor.py": "提问域测试，随 T2 删除",
+    "tests/test_tutor_stream.py": "提问域测试，随 T2 删除（流式缝合守卫亦随之作废）",
+    "tests/test_cards.py": "记忆卡域测试，随 T2 删除",
+    "tests/test_review.py": "复习卡域测试，随 T2 删除",
+    "tests/test_domain_sql.py": "跨域双轨一致性测试，其覆盖的四域中三域已随 T2 删除",
+    "tests/browser/test_study_quiz.py": "复习卡浏览器测试，随 T2 删除",
+    "tests/browser/test_tutor_immersive.py": "提问域浏览器测试，随 T2 删除",
+    "tests/test_stream_wiring.py": "流式缝合守卫，其守护的 explain/tutor 两个流式端点随 T2 删除",
 }
 
 

@@ -10,7 +10,35 @@
 
 > 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
-### Removed（奥卡姆精简第二轮 · T1：CSS 残渣 + 新守卫 · 2026-10-15）
+### Removed（奥卡姆精简第二轮 · T2：删除讲解/提问/记忆卡·复习卡三域 · 2026-10-15）
+
+依据 `docs/重构设计方案_奥卡姆精简_第二轮_2026-10-15.md`（用户拍板「T2 全删」）。
+**实测三域零使用**：`explains=0` / `tutor_sessions=0` / `cards=0` / `review_cards=0`，
+且功能与新落的「本地错题 vault」重叠（vault Agent 已能问答、vault 自带 SM-2）。
+
+- **后端**：删 `core/{explain,tutor,cards,review,scheduler}.py`、`agents/{medexplain,medtutor,medcards}.py`、
+  `prompts/{medexplain,medtutor,medcards}.md`；
+  `routers/library.py` 1207→400 行（删 `/api/library/explain/*`、`/tutor/*`、`/cards/*`、`/review/*` 端点）；
+  `core/library.py` 删 `record_review()` 与四路备份清理；`core/dashboard.py` 只保留掌握度 + 闭环两段；
+  `core/schema.py` 删 `ExplainDoc/ExplainSource/TutorTurn/CardDraft/CardDrafts/TUTOR_NEXT_TYPES` 契约；
+  `core/db.py` 删 `_fts_quote/fts_match_expr/reindex_slices/slices_fts`（只服务教材切片 FTS，全仓零调用）。
+- **前端**：删 `learn-live.js`（讲解/提问）与 `learn-review.js`（复习卡，651 行）、`lv-explain`/`lv-tutor` 两个视图、
+  「复习（卡片）」子标签 + `sv-review` 视图、错题行「→ 讲解 / → 提问 / 清同名卡」按钮、闭环仪表盘三张卡。
+- **SM-2 不是删能力**：`grade_card` 的纯函数部分（初始 ease / 四档间隔推进 / lapses）搬进
+  `core/vault_index.py` —— vault 的复习闭环（`/api/vault/review/due` + `/grade`）继续可用，且更短。
+- **能力不降级的两处补偿**：① Anki 卡样预览/导入指引搬回唯一调用方 `review-desk-project.js`
+  （`PLUGIN_TO_CORE` 两条登记随之清空，插件不再跨域引用核心）；② 「科目管理」入口接回错题本科目行。
+- **测试**：删 12 个测试文件（`test_{explain*3,tutor*2,cards,review,scheduler,domain_sql,stream_wiring}` +
+  浏览器 `test_tutor_immersive`/`test_study_quiz`）+ 1 个 fixture + 6 处局部用例。
+- **真身**：单元 1220→**1085** / 浏览器 60→**55** / 总 1280→**1140**；mypy 源文件 81→**73**；API 端点 136→**110**。
+
+### Added（奥卡姆精简第二轮 · T1：CSS 残渣清理 + 新守卫 · 2026-10-15）
+
+- `tests/test_css_no_orphans.py`（4 项）：CSS 里每个 class 选择器都必须在
+  「`web/**/*.js` + `web/**/*.html` + **`medkit/**/*.py`**（`render/*.py` 会拼 HTML）」里出现过。
+  含元守卫（扫描面未写窄 / 检测器自证能命中 / 登记不得腐烂）。
+  **真实缺陷驱动**：删 EP-01 时漏了 CSS —— `learn.css` 311 行里 **105 行（33.8%）**在给已不存在的 DOM 化妆。
+- 清理 **−121 行** CSS 残渣（EP-01 的 `.mi-*` / `.mt-*` 整块 + `.rv-*` / `.tu-legend .s-*` 等）。
 
 > 依据与完整清单见 `docs/重构设计方案_奥卡姆精简_第二轮_2026-10-15.md`。
 > 本轮先做 **T1（无争议、零产品决策）**；T2/T3 需产品拍板，暂未执行。

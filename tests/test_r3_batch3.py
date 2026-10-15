@@ -174,10 +174,13 @@ def test_c12_safe_filename():
 
 
 # C-12：subject 拼文件名的**落点**（这些模块必须把用户可控的 subject 过 safe_filename）
+# 2026-10-15（奥卡姆精简 T2）：`routers/library.py` 从此清单移除——它原先唯一的
+# `safe_filename(subject)` 落点是讲解产物（explain）的 markdown 导出，该域已整体删除
+# （零使用实测），本 router 已不再把 subject 拼进任何文件名。守卫跟随**真实风险面**，
+# 而不是为通过而保留一个不存在的落点。
 _SAFE_FILENAME_SITES = (
     "medkit/routers/review.py",
     "medkit/routers/projects.py",
-    "medkit/routers/library.py",
     "medkit/core/orchestrator.py",
 )
 
@@ -472,14 +475,16 @@ def contextmanager_patch():
 
 # ---------------------------------------------------------------- R3-19 subjects 聚合口径
 def test_r3_19_subjects_aggregation_matches_old(monkeypatch, tmp_path):
-    import medkit.core.explain as expl
+    """R3-19：一次扫描按 subject 聚合，结果必须与「逐科目 get_mastery_view」逐项一致。
+
+    2026-10-15（奥卡姆精简 T2）：复习卡 / 讲解产物两路聚合随其域删除，
+    本用例只保留**仍存在的那两路**（错题 + 知识点）——判据从「三路全等」收敛为
+    「仍存在的口径必须与逐科目参考实现逐项相等」，参考实现也换成仍存在的口径。
+    """
     import medkit.core.library as lib
-    import medkit.core.review as rev
 
     for mod, attr, fname in ((lib, "MISTAKES_FILE", "mistakes.json"),
-                             (lib, "KNOWLEDGE_FILE", "knowledge.json"),
-                             (rev, "REVIEW_QUEUE_FILE", "review_queue.json"),
-                             (expl, "EXPLAINS_FILE", "explains.json")):
+                             (lib, "KNOWLEDGE_FILE", "knowledge.json")):
         p = tmp_path / fname
         monkeypatch.setattr(mod, attr, p)
         monkeypatch.setattr(mod, "DB_FILE", tmp_path / "no.db")
@@ -488,27 +493,18 @@ def test_r3_19_subjects_aggregation_matches_old(monkeypatch, tmp_path):
                      "learned": True})
     lib.add_mistake({"question": "q2", "subject": "内科学", "know_tags": ["心力衰竭"]})
     lib.add_mistake({"question": "q3", "subject": "外科学", "know_tags": ["骨折"]})
-    rev.enqueue("肺通气", "内科学", "kp1")
-    rev.enqueue("骨折", "外科学", "kp2")
-    rev.enqueue("空科目卡", "", "kp3")          # 未分类卡：R4-16 分区互斥——不再计入任何单科
-    expl.save_explain({"id": "e1", "subject": "内科学", "kp_name": "肺通气",
-                       "content": "x", "created_at": "2026-08-29T00:00:00"})
 
     got = lib_router.subjects()["stats"]
-    # 旧口径：逐科目 get_mastery_view + rev.stats
+    # 参考口径：逐科目 get_mastery_view（与聚合实现独立）
     expected = []
     for s in sorted({"内科学", "外科学"}):
         mv = lib.get_mastery_view(s)["stats"]
-        rs = rev.stats(s)
         total = mv["total_knowledge"] or 0
         expected.append({
             "subject": s,
             "mistakes": mv["total_mistakes"],
             "knowledge": mv["total_knowledge"],
             "mastered_rate": round(100 * (mv["solid"] + mv["mastered"]) / total) if total else 0,
-            "review_total": rs["total"],
-            "review_due": rs["due"],
-            "review_new": rs["new"],
         })
     assert got == expected, f"聚合结果应与旧口径一致：{got} vs {expected}"
 

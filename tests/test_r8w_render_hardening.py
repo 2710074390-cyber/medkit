@@ -1,9 +1,10 @@
 """B6 回归（R8+W 修复批次）：渲染层与内容安全加固。
 
 覆盖：
-- **S2-1**：`render_media` 的「图过大未嵌入」分支与 `export_md` 的 image_ref 必须转义/清洗
-  （原实现直接插值，image_ref 来自上传文件名，可注入 HTML / 破坏 Markdown 结构）。
 - **S2-4**：产物页自带 CSP（默认全禁、只放行内联与 data:），应用侧响应头带 CSP/nosniff/no-referrer。
+
+  注：S3-6 三条（`db._fts_quote` / `fts_match_expr` 的 SQL MATCH 注入转义）已于
+  2026-10-15 奥卡姆精简 T2 移除——这两个函数只服务于教材切片 FTS 表，随讲解域删除。
 - **S2-10 / S2-11**：产物页有医学免责声明；复习手册 prompt 要求「数字与标准速查」表下标注以教材为准。
 - **S2-12**：冲突网络素材必须与可信素材**分节隔离**，而不是只靠一句文本提示。
 """
@@ -215,54 +216,3 @@ def test_qc_unverified_reaches_product_page(isolated_cfg):
     orch.run_project(pid, overrides={"gen": _Gen(), "qc": _Boom(), "fix": _Gen()})
     qbank = (base / "最终产物" / "qbank.html").read_text(encoding="utf-8")
     assert "未经事实校验" in qbank, "质检未完成必须在产物页可见（S1-1b 接线回归）"
-
-
-# ---------------------------------------------------------------- S3-6
-
-def test_fts_quote_escapes_double_quote():
-    """S3-6：FTS5 字面量转义——内部双引号必须翻倍（否则提前闭合字面量）。"""
-    from medkit.core.db import _fts_quote
-
-    assert _fts_quote('a"b') == '"a""b"*'
-    assert _fts_quote("plain") == '"plain"*'
-
-
-def test_fts_match_expr_escapes_token_with_quote(monkeypatch):
-    """S3-6 接线级：token 含双引号时，生成的 MATCH 表达式必须已转义。
-
-    用 monkeypatch 直接喂 token，避免依赖 jieba 的分词行为（实测裸 `"` 会被
-    `len(t) >= 2` 过滤掉，所以靠真实分词构造不出该路径）。
-    """
-    from medkit.core import db as _db
-
-    monkeypatch.setattr(_db, "fts_tokens", lambda q: ['a"b'])
-    assert _db.fts_match_expr("x") == '"a""b"*'
-
-
-def test_fts_match_expr_executes_on_quote_query():
-    """真跑一次 FTS5：含引号的查询串不得让 MATCH 报语法错。
-
-    ## `assert n >= 0` 是死谓词（2026-09-29 R21 修）
-
-    `count(*)` 永不返回负数 ⇒ `n >= 0` 恒真。本条**实际**能拦下错误查询，
-    靠的是「MATCH 语法错会在 `conn.execute(...)` 抛 `sqlite3.OperationalError`」
-    —— `assert` 根本执行不到。这个隐式机制不可读、且**区分不出**
-    「查询合法但 0 命中」与「查询合法且命中」。⇒ 改成断**期望命中数**：
-    建表插了一行『甲状腺功能减退』，表达式含 `"甲状腺"*` 等前缀项，应当命中 1 行。
-    """
-    import sqlite3
-
-    from medkit.core import db as _db
-
-    expr = _db.fts_match_expr('甲状腺"功能"减退')
-    conn = sqlite3.connect(":memory:")
-    try:
-        conn.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
-        conn.execute("INSERT INTO t VALUES ('甲状腺功能减退')")
-        # 若 expr 语法非法，这一行会抛 sqlite3.OperationalError（用例 error = 红）
-        n = conn.execute("SELECT count(*) FROM t WHERE t MATCH ?", (expr,)).fetchone()[0]
-        assert n == 1, (
-            f"含引号查询应命中那 1 行（expr={expr!r}，实得 {n}）——"
-            "n==0 说明前缀项没生效，n>1 说明 token 去重坏了")
-    finally:
-        conn.close()

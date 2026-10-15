@@ -27,12 +27,6 @@
       .mk-group-count{font-size:11.5px;color:var(--dim);margin-left:auto}
       .mk-group-sel{font-size:11.5px;white-space:nowrap}
       .mk-group-body{padding:0 8px 8px}
-      .exp-live{background:var(--codebg);border:1px solid var(--line);border-radius:10px;padding:10px 14px;
-        margin:6px 0;max-height:320px;overflow:auto;font-size:13px;line-height:1.8;white-space:normal}
-      .tu-live{background:var(--infobg);border:1px solid var(--info);border-radius:10px;padding:10px 14px;
-        margin:6px 0;font-size:13.5px;line-height:1.8;white-space:pre-wrap}
-      .caret{display:inline-block;width:2px;height:14px;background:var(--accent2);vertical-align:-2px;
-        margin-left:2px;animation:caretBlink 0.9s steps(1) infinite}
       @keyframes caretBlink{50%{opacity:0}}
       /* ---- M2 掌握度驾驶舱（含状态分布环图 / 指标卡 / 弱项清单） ---- */
       .dash-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
@@ -65,68 +59,10 @@
       @media(max-width:640px){.dashmr{grid-template-columns:1fr}.loop-arrow{display:none}.loop-node{min-width:48%}}
       @media(max-width:640px){.dash-metrics{grid-template-columns:repeat(3,1fr)}.dash{grid-template-columns:1fr}.dash-legend{grid-template-columns:1fr}}
       .exp-bar{display:flex;gap:10px;align-items:flex-end}
-      .exp-article{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-top:8px;font-size:13.5px;line-height:1.7;max-height:480px;overflow-y:auto}
-      .exp-article h2,.exp-article h3,.exp-article h4{margin:12px 0 6px;color:var(--text)}
-      .exp-article h2:first-child,.exp-article h3:first-child,.exp-article h4:first-child{margin-top:0}
-      .exp-article p{margin:6px 0}
-      .exp-article ul{margin:4px 0;padding-left:18px}
-      .exp-article li{margin:3px 0}
-      .exp-article code{background:var(--card3);padding:1px 5px;border-radius:4px;font-size:13px}
-      .exp-article blockquote{border-left:3px solid var(--good);padding:4px 12px;margin:8px 0;color:var(--dim);background:var(--card3);border-radius:0 6px 6px 0}
-      .exp-article table,.tu-q table,.tu-gap table{width:100%;border-collapse:collapse;margin:8px 0;font-size:12.5px}
-      .exp-article th,.exp-article td,.tu-q th,.tu-q td,.tu-gap th,.tu-gap td{border:1px solid var(--line);padding:4px 8px;text-align:left}
-      .exp-article th,.tu-q th,.tu-gap th{background:var(--card3);color:var(--text)}
-      .exp-article hr,.tu-gap hr{border:none;border-top:1px solid var(--line);margin:10px 0}
-      /* ---- M4 提问式学习（Socratic MedTutor）---- */
-      .tu-wrap{display:grid;grid-template-columns:250px 1fr;gap:16px;margin-top:10px}
-      .tu-side{display:flex;flex-direction:column;gap:8px;max-height:520px;overflow-y:auto;border-right:1px solid var(--line);padding-right:12px}
-      .tu-item{padding:9px 11px;border:1px solid var(--line);border-radius:9px;cursor:pointer;background:var(--card2);transition:border-color .15s}
-      .tu-item:hover{border-color:var(--info)}
-      .tu-item.active{border-color:var(--good)}
-      .tu-item .ti-name{font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .tu-item .ti-meta{font-size:11px;color:var(--dim);margin-top:2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-      .tu-item .ti-x{margin-left:auto;color:var(--bad);background:none;border:none;cursor:pointer;font-size:14px;padding:0 2px}
-      .tu-state{display:flex;gap:6px;margin:8px 0 4px}
-      .tu-state i{flex:1;height:7px;border-radius:4px;background:var(--card2);transition:background .2s}
-      .tu-state i.on{background:currentColor}
-      .tu-legend{display:flex;gap:12px;font-size:11.5px;color:var(--dim);flex-wrap:wrap}
-      .tu-legend b{font-weight:600}
-      .tu-bubbles{max-height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:2px 4px 6px 0}
-      .tu-q,.tu-a,.tu-gap,.tu-next{max-width:88%;padding:9px 12px;border-radius:12px;font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
-      .tu-q{background:var(--card2);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
-      .tu-a{background:var(--infobg);border:1px solid var(--info);align-self:flex-end;border-bottom-right-radius:4px;color:var(--text)}
-      .tu-a small{display:block;font-size:11px;color:var(--info);margin-bottom:3px}
-      .tu-gap{align-self:center;text-align:center;font-size:12.5px;color:var(--dim);background:var(--card2);border-radius:999px;padding:4px 12px;max-width:96%}
-      .tu-badge{font-size:11px;color:var(--dim);margin-bottom:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-      .tu-badge b{color:var(--info)}
-      .tu-inputbar{display:flex;gap:8px;margin-top:12px;align-items:flex-end}
-      .tu-inputbar textarea{flex:1;min-height:56px}
-      .tu-inputbar button{flex:none}
-      .tu-next{align-self:flex-start;font-weight:600;color:var(--text)}
-      .tu-score{font-weight:700;font-variant-numeric:tabular-nums}
-      @media(max-width:860px){.tu-wrap{grid-template-columns:1fr}.tu-side{border-right:none;max-height:none}}
-      /* ---- M5 复习计划（SM-2 间隔重复）---- */
-      .rv-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
-      .rv-stat{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:9px 10px;text-align:center}
-      .rv-stat b{font-size:20px;display:block;font-variant-numeric:tabular-nums}
-      .rv-stat span{font-size:11.5px;color:var(--dim)}
-      .rv-top{display:flex;align-items:center;gap:8px}
       .rv-x{margin-left:auto;color:var(--bad);background:none;border:none;cursor:pointer;font-size:16px;padding:0 2px}
-      .rv-q{font-size:14px;color:var(--text);font-weight:600;margin-top:6px}
-      .rv-meta{font-size:11.5px;color:var(--dim);margin-top:3px}
-      .rv-grades{display:flex;gap:5px;align-items:center;margin-top:9px;flex-wrap:wrap}
-      .rv-grades button{flex:1;min-width:30px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--card3);color:var(--dim);font-size:12px;cursor:pointer;font-variant-numeric:tabular-nums}
-      .rv-grades button:hover{border-color:var(--info);color:var(--info);background:var(--infobg)}
-      .rv-legend{font-size:11px;margin-top:5px}
-      .rv-hint{margin-top:9px;border:1px solid var(--line);border-radius:9px;padding:7px 11px;background:var(--reqbg)}
-      .rv-hint summary{font-size:12.5px;color:var(--info)}
       details.rex-fold{margin-top:8px;border:1px solid var(--line);border-radius:9px;
         padding:8px 12px;background:var(--reqbg)}
       details.rex-fold summary{font-size:12.5px;color:var(--info);cursor:pointer}
-      .rv-hintbody{margin-top:8px}
-      .rv-slice{margin:6px 0;padding:8px 11px;background:var(--card3);border-radius:8px;font-size:12.5px;line-height:1.75}
-      .rv-slice b{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px}
-      @media(max-width:480px){.rv-stats{grid-template-columns:1fr 1fr}}
       /* ---- C22 近期活动时间线 ---- */
       .dash-act{margin-top:14px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
       .dash-act h3{font-size:12.5px;color:var(--dim);margin:0 0 6px;font-weight:600}
@@ -136,57 +72,7 @@
       .act-row b{font-weight:600;white-space:nowrap}
       .act-row .act-note{flex:1;min-width:120px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       @media(max-width:480px){.act-row{font-size:12px}}
-
-/* v0.8.1：卡片翻转刷题（PRD 6.4：翻面看答案 + 三按钮 + 进度条 + 科目卡片） */
-.qcard{perspective:1200px;margin-top:10px;cursor:pointer}
-.qcard-inner{position:relative;width:100%;min-height:200px;transition:transform .3s ease;transform-style:preserve-3d}
-.qcard.flipped .qcard-inner{transform:rotateY(180deg)}
-.qcard-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
-  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
-  display:flex;flex-direction:column;overflow:auto;
-  transition:visibility 0s linear .3s}   /* 与翻转动画（.3s）同步，配合下方兜底 */
-.qcard-face.qback{transform:rotateY(180deg)}
-/* ⚠️ Safari/WebKit 兜底（2026-10-12 三引擎实测发现）：`.qcard-face` 的 `overflow:auto`
-   会**压平 3D 上下文**，使 `backface-visibility:hidden` 失效 ⇒ 背面盖住正面——
-   表现是「点卡面不翻面」（背面拦截了点击），实测 webkit 上
-   `<details class="rv-hint">…</details> from <div class="qcard-face qback"> subtree intercepts pointer events`。
-   显式隐藏「非当前面」；延迟 0.3s 与翻转动画同步，观感与 Chromium/Firefox 一致。
-   （chromium/firefox 上此规则与 backface-visibility 等效，不会改变行为。） */
-.qcard.flipped .qfront{visibility:hidden}
-.qcard:not(.flipped) .qback{visibility:hidden}
-.qcard.graded{animation:qcardOut .26s ease forwards}
-@keyframes qcardOut{to{transform:scale(.9);opacity:0}}
-.qcard-tip{margin-top:auto;font-size:11.5px;color:var(--dim);text-align:center;padding-top:12px}
-.grades3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px}
-.g3{border:none;border-radius:10px;padding:12px 6px;font-size:14px;font-weight:700;font-family:inherit;
-  cursor:pointer;color:#fff;transition:transform .1s,filter .1s}
-.g3:active{transform:scale(.94)}
-.g3.forget{background:#ef4444}
-.g3.fuzzy{background:#f59e0b}
-.g3.got{background:#10b981}
-.g3:hover{filter:brightness(1.08)}
-.rv-grades-detail{margin-top:8px}
-.rv-grades-detail summary{font-size:11.5px;color:var(--dim);cursor:pointer}
 .kw{color:var(--bad);font-weight:700}
-.sprog{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
-.sprog-label{font-size:12.5px;color:var(--dim)}
-.sprog-label b{color:var(--text)}
-.sprog-bar{flex:1;min-width:140px;height:8px;background:var(--card2);border-radius:6px;overflow:hidden}
-.sprog-bar i{display:block;height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:6px;transition:width .3s}
-.subj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
-.subj-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;
-  text-align:left;cursor:pointer;font-family:inherit;transition:border-color .12s}
-.subj-card:hover{border-color:var(--accent2)}
-.subj-card.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
-.subj-name{font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.subj-row{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--dim);margin-top:3px}
-.subj-row b{color:var(--text)}
-.subj-card{display:flex;gap:10px;align-items:center}
-.subj-avatar{flex:none;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-  font-size:16px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--accent2),var(--accent))}
-.subj-avatar.all{background:linear-gradient(135deg,var(--dim),var(--accent));font-size:15px}
-.subj-main{flex:1;min-width:0}
 .subj-mgr{display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto}
 .subj-mgr-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card2)}
 .subj-mgr-avatar{flex:none;width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;

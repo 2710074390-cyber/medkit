@@ -9,7 +9,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g,
 
 /* IMP-02：WP 级 feature flag（后端 /api/config `features` 节；缺省全开 = 现状兼容）。
    关闭后：学习中心「大纲覆盖」pill / 「⚡一键刷薄弱」/ 项目详情「图片素材」卡 / 真题考频卡 整体隐藏。 */
-const FEATURES = { syllabus: true, realexams: true, gap: true, image_q: true, cards: true };
+const FEATURES = { syllabus: true, realexams: true, gap: true, image_q: true };
 function applyFeatures(cfg) {
   Object.assign(FEATURES, (cfg && cfg.features) || {});
   // 防御：后端未下发某键（如旧 config 无 features 节）时保持默认开，避免「缺键=关闭」的隐性门禁
@@ -463,18 +463,11 @@ function showTab(name) {
   if (typeof bankDrillHide === "function") bankDrillHide();   // 切页签一律收起沉浸式作答层（bank 域）
   if (name === "start") loadStart();
   if (name === "study") {   // 刷题页（默认「做题」子视图：我的题库 + 开始刷题；复习视图由 studyView 管）
-    if (typeof studyView === "function") studyView(); else loadStudy();
+    studyView();   // 「刷题」页只剩「做题」子视图（2026-10-15 精简 T2 删复习卡）
   }
   if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
   if (name === "learn") loadLibrary();
   if (name === "mine") { loadPrompts(); loadDataMgmt(); }
-  if (name !== "study") setStudyKeys(false);   // A-15：离开刷题页移除（配对卸载，防残留监听）
-}
-/* A-15：复习卡快捷键 1/2/3 的 window 监听——只在刷题页存在（showTab 配对挂/卸） */
-function setStudyKeys(on) {
-  if (typeof rvStudyKeys !== "function") return;   // learn.js 尚未求值（初始化期）→ 跳过
-  if (on) window.addEventListener("keydown", rvStudyKeys);
-  else window.removeEventListener("keydown", rvStudyKeys);
 }
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   location.hash = b.dataset.tab;

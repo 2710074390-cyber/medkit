@@ -79,7 +79,9 @@ def test_scan_face_is_not_empty_and_not_narrow():
     assert files, "没有扫到任何 CSS 文件——扫描面塌缩"
     assert set(files) >= {"base.css", "learn.css"}, f"CSS 文件清单异常：{files}"
     classes = _css_classes()
-    assert len(classes) >= 300, f"只扫到 {len(classes)} 个类，扫描面疑似写窄"
+    # 下限随**合法收缩**调整（不是为通过而调低）：2026-10-15 奥卡姆精简 T2 删掉讲解/提问/
+    # 复习卡三域的视图与样式后，类总数 385 → 291；若再跌到 250 以下，说明扫描面被写窄了。
+    assert len(classes) >= 250, f"只扫到 {len(classes)} 个类，扫描面疑似写窄"
     consumers = _consumer_text()
     assert len(consumers) >= 200_000, f"消费者文本只有 {len(consumers)} 字符，疑似漏读"
 

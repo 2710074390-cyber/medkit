@@ -295,7 +295,6 @@
   .modal p{font-size:13.5px;color:var(--dim);line-height:1.8}
   .modal .btns{margin-top:16px}
   .modal{max-width:520px}
-  /* Anki 卡样预览 */
   .ankifaces{display:flex;flex-direction:column;gap:10px;max-height:56vh;overflow:auto;padding-right:4px}
   .ankiface{border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:12.5px}
   .af-front{background:var(--card);padding:10px 13px;line-height:1.7;color:var(--text)}
@@ -455,11 +454,6 @@
   .mk-detail b{color:var(--accent2)}
   .mk-detail .ans{color:var(--good)}
   @media (max-width:640px){.mk-row{flex-wrap:wrap}.mk-actions{width:100%}}
-  /* 讲解产物卡：默认折叠全文 */
-  .exp-card{border:1px solid var(--line);border-radius:11px;background:var(--card2);padding:12px 14px;margin-top:10px}
-  .exp-card.open .exp-article{display:block}
-  .exp-article{display:none}
-  .exp-fold{cursor:pointer}
   /* 产物卡片网格（项目详情） */
   .artgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-top:10px}
   .artchip{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;
@@ -499,7 +493,6 @@
   .dash,.dash-metrics,.dashmr{min-width:0}
   @media (max-width:480px){
     .dash-metrics{grid-template-columns:repeat(2,1fr)}
-    .rv-grades button{min-width:26px}
   }
   /* v0.8.1：开始仪表盘 + 我的/题库 tab 分区标题 */
   h2.subh{display:flex;align-items:center;gap:8px;margin:22px 0 6px;font-size:16px;font-weight:600;color:var(--text)}

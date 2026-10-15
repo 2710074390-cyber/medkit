@@ -1,20 +1,17 @@
 """R4 批次 3：打磨项后端侧（R4-09/13/14/15/16/17/18/24）。
 
-覆盖（与 docs/reviews/ux-audit-r4-2026-08-31.md §6 批次 3 对应）：
+覆盖（与 docs/reviews/ux-audit-r4-2026-08-31.md §6 批次 3 对应）。
+2026-10-15（奥卡姆精简 T2）：R4-16/17/24 三条随复习卡·记忆卡·讲解三域删除而移除。
 - R4-09  取消出口给在飞子步骤补 cancelled 终态（`_cancel_out` 路径）
 - R4-13  import-image 超限读后即判 400（不落盘/不进 OCR）
 - R4-14  meta.json 内容非 dict（[]/字符串）→ 422 而非 500
 - R4-15  llm_models 异常归一化（不回显原始异常串）
-- R4-16  未分类复习卡不再重复计入每科（分区互斥口径）
-- R4-17  cards_generate 在飞去重 409（连点不再重复调用 LLM）
 - R4-18  短 Key 掩码只露前 2 后 2
-- R4-24  purge-same 显式清同名复习卡/记忆卡（计数正确、分区口径）
 """
 
 from __future__ import annotations
 
 import json
-import threading
 
 import pytest
 from fastapi import HTTPException
@@ -144,123 +141,6 @@ def test_import_image_rejects_bad_suffix(monkeypatch, tmp_path, run_coro):
     assert ei.value.status_code == 400
 
 
-# ---------------------------------------------------------------- R4-16 分区互斥
-def _monkeypatch_lib_files(monkeypatch, tmp_path):
-    import medkit.core.cards as cardlib
-    import medkit.core.explain as expl
-    import medkit.core.library as lib
-    import medkit.core.review as rev
-
-    for mod, attr, fname in (
-            (lib, "MISTAKES_FILE", "mistakes.json"),
-            (lib, "KNOWLEDGE_FILE", "knowledge.json"),
-            (rev, "REVIEW_QUEUE_FILE", "review_queue.json"),
-            (expl, "EXPLAINS_FILE", "explains.json"),
-            (cardlib, "CARDS_FILE", "memory_cards.json")):
-        p = tmp_path / fname
-        monkeypatch.setattr(mod, attr, p)
-        monkeypatch.setattr(mod, "DB_FILE", tmp_path / "no.db")
-    return lib, rev, cardlib
-
-
-def test_subjects_unclassified_not_counted(monkeypatch, tmp_path):
-    import medkit.core.library as lib
-
-    _monkeypatch_lib_files(monkeypatch, tmp_path)
-    lib.add_mistake({"question": "q1", "subject": "内科学", "know_tags": ["肺通气"]})
-    lib.add_mistake({"question": "q2", "subject": "外科学", "know_tags": ["骨折"]})
-    rev = lib_router.rev
-    rev.enqueue("肺通气", "内科学", "kp1")
-    rev.enqueue("骨折", "外科学", "kp2")
-    rev.enqueue("空科目卡", "", "kp0")          # 未分类卡：不再计入任何科目
-
-    stats = lib_router.subjects()["stats"]
-    by = {s["subject"]: s for s in stats}
-    assert by["内科学"]["review_total"] == 1      # 只含本科目卡
-    assert by["外科学"]["review_total"] == 1
-    # partition 不变量：单科总数不含未分类
-    assert by["内科学"]["review_due"] <= by["内科学"]["review_total"]
-
-
-# ---------------------------------------------------------------- R4-17 cards_generate 去重
-def test_cards_generate_dedupe_409(monkeypatch, tmp_path):
-    """R4-17：在飞期间的重复提交 → 409（防连点双扣费）。
-
-    **2026-09-29 消除时序赌注**（原写法 `t.start(); time.sleep(0.15)`）：
-
-    原写法有两个 sleep 赌注，且余量都很小——
-      · `_slow_gen` 睡 0.4s：保证首单**还没结束**
-      · 主线程睡 0.15s：保证首单**已经开始**
-    ⇒ 只在「线程启动开销 < 0.15s」时成立。实测把线程启动延迟人为放大：
-        延迟 0.00~0.14s → 409 ✓
-        延迟 ≥ 0.16s    → **判据崩塌**（开火时在飞锁尚未持有）
-    正常机器上余量够用，但高负载 / CI 冷启动 / 慢文件系统会突破它
-    ——与 `test_explain_stream.py::test_concurrent_duplicate_stream_409`
-    曾出现的 flaky 是同一类问题（那个余量更小，已实际翻车）。
-
-    **新写法**：用 **Event 握手**——被测函数进入后**主动通知**，
-    主线程收到信号才开火；并用另一个 Event 把首单**卡住**，
-    从而**精确控制「在飞」窗口**，全程无 sleep 赌注。
-    被验证的语义不变：在飞期间的重复提交必须 409；结束后不得永久锁死。
-    """
-    import medkit.state as state
-    from medkit.routers.library import CardsGenerateBody
-
-    monkeypatch.setattr(state, "FLAGS", {"cards": True})
-    _monkeypatch_lib_files(monkeypatch, tmp_path)
-    monkeypatch.setattr(lib_router.expl, "get_explain",
-                        lambda eid: {"id": eid, "subject": "内科学", "kp_name": "肺通气"})
-
-    entered = threading.Event()   # 首单已进入 generate_cards（= 锁已持有）
-    release = threading.Event()   # 主线程放行首单
-    calls = {"n": 0}
-
-    def _blocking_gen(client, rec):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            # 只让**首单**阻塞：它占住「在飞」窗口，主线程才有机会验证 409。
-            # 后续调用（去重失效时会走到这里）直接返回——否则两个调用会一起
-            # 卡在同一个 release 上，症状从「没 409」变成「用例自己超时」，
-            # 让失败原因变得难读。（写这条时踩过：注入验证时症状不直观。）
-            entered.set()
-            assert release.wait(10), "首单未被放行——用例自身超时"
-        return []                 # 无 drafts → 502 契约失败
-
-    monkeypatch.setattr(lib_router.medcards, "generate_cards", _blocking_gen)
-    body = CardsGenerateBody(explain_id="e1")
-    first: dict[str, int] = {}
-
-    def _call():
-        try:
-            lib_router.cards_generate(body)
-            first["r"] = 200
-        except HTTPException as e:
-            first["r"] = e.status_code
-
-    t = threading.Thread(target=_call)
-    t.start()
-
-    # 等**状态**（首单确实已持锁），而不是等一个时长
-    assert entered.wait(10), "首单未能在超时内进入 generate_cards"
-
-    try:
-        with pytest.raises(HTTPException) as ei:
-            lib_router.cards_generate(body)         # 重复提交 → 409
-        assert ei.value.status_code == 409, (
-            "在飞期间的重复提交必须 409（实为 %d）" % ei.value.status_code
-        )
-    finally:
-        release.set()
-        t.join(10)
-
-    assert first["r"] == 502                        # 首单正常走完（无 drafts → 502 契约失败）
-    # 在飞结束 → 可再次提交（不永久锁死；本次同样 502）
-    with pytest.raises(HTTPException) as ei:
-        lib_router.cards_generate(body)
-    assert ei.value.status_code == 502
-
-
-# ---------------------------------------------------------------- R4-09 取消补终态
 def test_cancel_out_terminates_inflight_substeps(tmp_path):
     from medkit.core import orchestrator as och
 
@@ -318,30 +198,3 @@ class _FakeUsage:
 
     def snapshot(self):
         return {"prompt_tokens": 0, "completion_tokens": 0}
-
-
-# ---------------------------------------------------------------- R4-24 purge-same
-def test_review_purge_same(monkeypatch, tmp_path):
-    import medkit.core.library as lib
-    from medkit.routers.library import PurgeSameBody
-
-    _, rev, cardlib = _monkeypatch_lib_files(monkeypatch, tmp_path)
-    lib.add_mistake({"question": "q", "subject": "内科学", "know_tags": ["肺通气"]})
-    rev.enqueue("肺通气", "内科学", "kp1")
-    rev.enqueue("骨折", "外科学", "kp2")
-    cardlib.create_from_drafts(
-        [{"front": "铁缺乏+贫血第一步", "back": "查血清铁蛋白", "kind": "concept"}],
-        "内科学", "肺通气", "e1")
-    cardlib.create_from_drafts(
-        [{"front": "骨折第一步", "back": "固定", "kind": "concept"}],
-        "外科学", "骨折", "e2")
-
-    r = lib_router.review_purge_same(PurgeSameBody(subject="内科学", kp_name="肺通气"))
-    assert r == {"ok": True, "review_removed": 1, "memory_removed": 1}
-    # 别的科目不受影响
-    assert len(rev.list_cards("外科学")) == 1
-    assert len(cardlib.list_cards("外科学")) == 1
-    # 空 kp 拒绝
-    with pytest.raises(HTTPException) as ei:
-        lib_router.review_purge_same(PurgeSameBody(subject="内科学", kp_name=""))
-    assert ei.value.status_code == 400

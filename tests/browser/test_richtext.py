@@ -12,4 +12,6 @@ def test_md_render_rich_and_xss(page, server_url):
         "() => mdRender('<img src=x onerror=alert(1)><script>alert(1)</script>**ok**')"
     )
     assert "<script>" not in xss and "<img" not in xss and "<b>ok</b>" in xss
-    assert page.evaluate("() => typeof expMd") == "function"
+    # 2026-10-15（奥卡姆精简 T2）：`expMd`（讲解产物专用渲染）随讲解域删除，
+    # 全仓零引用——mdRender 已是唯一渲染入口，探针改为断言「它没被删掉」。
+    assert page.evaluate("() => typeof mdRender") == "function"

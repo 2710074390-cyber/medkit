@@ -34,11 +34,6 @@ def _cleanup(page, subject: str, tag: str) -> None:
               await fetch('/api/library/mistakes/' + encodeURIComponent(m.id), {method: 'DELETE'});
             }
           }
-          const cs = await (await fetch('/api/library/review/cards?subject='
-            + encodeURIComponent(subject))).json();
-          for (const c of (cs.cards || [])) {
-            await fetch('/api/library/review/' + encodeURIComponent(c.id), {method: 'DELETE'});
-          }
           return true;
         }""",
         [subject, tag],

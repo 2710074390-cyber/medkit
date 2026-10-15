@@ -572,7 +572,6 @@ function bankDrillExit() {
   bankDrillHide();
   if (answered) toast(`已退出练习（本组答了 ${answered} 题）`);
   // 回到入口页时刷新（列表统计/每日进度随作答变化）
-  if (typeof loadStudy === "function") loadStudy();
   if (typeof loadBankHome === "function") loadBankHome(true);
 }
 

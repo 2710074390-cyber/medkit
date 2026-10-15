@@ -8,6 +8,17 @@
    ReferenceError，中断整个学习中心脚本）——Map 为 const，无 TDZ 问题 */
 const sseAborts = new Map();   // anchorId → AbortController（在途流式）
 const LEARN_STATE = { weak: "待加强", shaky: "需复习", solid: "较熟练", mastered: "已掌握" };
+/* 触发浏览器下载一段文本（原在 learn-live.js，随讲解域删除后迁到本片——
+   `sylReport` / `rexReport` 两处「导出 .md」仍需要它）。 */
+function downloadText(name, content) {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function learnChip(state) {
   const txt = LEARN_STATE[state] || state || "未知";
   // S3-1（R8+W）：`txt` 在未知 state 时等于入参本身，原实现未转义 → 标签体注入面。
@@ -38,8 +49,9 @@ function showLearnView(name) {
 document.querySelectorAll("#learnnav button").forEach(b => {
   b.onclick = () => showLearnView(b.dataset.lv);
 });
-/* IMP-12①：学习中心子导航 Alt+1..6 直达（v0.8.1：复习计划迁入「刷题」；v0.15 精简 P2 移除元认知 → 5 视图；本地错题 vault → 6 视图） */
-const LEARN_ALT_KEYS = ["overview", "mistakes", "vault", "explain", "tutor", "syllabus"];
+/* IMP-12①：学习中心子导航 Alt+1..4 直达（v0.8.1：复习计划迁入「刷题」；v0.15 精简 P2 移除元认知；
+   2026-10-15 奥卡姆精简 T2 移除讲解产物与提问学习 → 4 视图） */
+const LEARN_ALT_KEYS = ["overview", "mistakes", "vault", "syllabus"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）
   const t = e.target;
@@ -74,7 +86,7 @@ window.addEventListener("keydown", e => {
   let v = null;
   try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
   if (v === "review") v = "overview";   // v0.8.1：复习计划已迁入「刷题」tab，旧记忆重定向概览
-  const ok = ["overview", "mistakes", "vault", "explain", "tutor", "syllabus"].includes(v);
+  const ok = ["overview", "mistakes", "vault", "syllabus"].includes(v);
   if (ok) showLearnView(v);
 })();
 /* 侧栏待办徽章（v0.8.1 拆分）：刷题 tab = 今日到期复习；学习中心 tab = 进行中提问 */

@@ -22,9 +22,6 @@ def _seed_data(tmp_path: Path) -> Path:
         json.dumps([{"id": "m1", "subject": "儿科学", "chapter": "ch1",
                      "question": "q?", "answer": "a", "miss_count": 1}]),
         encoding="utf-8")
-    (store / "review_queue.json").write_text(
-        json.dumps([{"id": "c1", "subject": "儿科学", "kp_name": "k1", "state": "new"}]),
-        encoding="utf-8")
     return store
 
 
@@ -54,7 +51,8 @@ def test_data_summary_readonly(tmp_path, monkeypatch):
     assert body["projects_dir"] == str(_proj)
     assert set(body["size"]) >= {"config", "library", "projects", "total"}
     assert body["counts"]["mistakes"] == 1
-    assert body["counts"]["review_cards"] == 1
+    # 2026-10-15（奥卡姆精简 T2）：review_cards 计数随复习卡域删除
+    assert "review_cards" not in body["counts"], body["counts"]
     assert body["counts"]["projects"] == 1
     assert body["by_subject"].get("儿科学") == 1
     assert body["backups"] == []

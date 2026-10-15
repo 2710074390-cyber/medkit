@@ -27,7 +27,9 @@ MAX_LINES = 800
 # EP-01：learn 族曾增 learn-meta.js / learn-meta-image.js / learn-search.js；
 #   2026-10-13（奥卡姆精简 P2）随 EP-01 归因域整体移除，learn 族回到 4 片。
 FAMILIES: dict[str, list[str]] = {
-    "learn": ["learn.js", "learn-study.js", "learn-vault.js", "learn-live.js", "learn-review.js"],
+    # 2026-10-15（奥卡姆精简 T2）：learn-live.js（讲解/提问）与 learn-review.js（复习卡）
+    # 随其域删除 —— learn 族从 5 片收敛到 3 片。
+    "learn": ["learn.js", "learn-study.js", "learn-vault.js"],
     "review-desk": ["review-desk.js", "review-desk-materials.js",
                     "review-desk-project.js", "review-desk-review.js"],
     # 2026-10-10 题库刷题族（bank）：核心侧（错题模式）——导入自备题库 + 应用内作答。

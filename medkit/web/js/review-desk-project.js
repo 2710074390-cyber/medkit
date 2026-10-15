@@ -525,3 +525,63 @@ $("btn_delete").onclick = () => {
       } catch (e) { toast(e.message, false); }
     });
 };
+
+/* ---- Anki 卡样预览 / 导入指引（2026-10-15 奥卡姆精简 T2 搬迁）----
+   这两个函数原本住在 `learn-review.js`（复习卡前端片），但它们**只服务生成链的项目页**
+   （`review-desk-project.js` 的「预览 Anki 卡样」「Anki 导入指引」两个按钮）。
+   复习卡域删除后，把它们**搬回唯一调用方**——插件从此不再跨域引用核心符号
+   （`test_frontend_domain_coupling` 的两条 PLUGIN_TO_CORE 登记随之删除）。 */
+async function ankiPreview(pidOrBtn) {
+  // RV1：双签名——内联按钮传 this（data-pid），程序化调用传 pid
+  const pid = pidOrBtn && typeof pidOrBtn === "object" && pidOrBtn.dataset
+    ? (pidOrBtn.dataset.pid || "") : pidOrBtn;
+  try {
+    const r = await api("/api/projects/" + encodeURIComponent(pid) + "/questions");
+    const qs = (r.questions || []).slice(0, 3);
+    if (!qs.length) { toast("项目中没有题目，先完成生成", false); return; }
+    const cards = qs.map(q => {
+      const stem = q.case_stem ? `【案例】${esc(q.case_stem)}<br>` : "";
+      // V-15 附带修复：原为**局部硬编码的 6 位字母表**（"ABCDEF"）——最多只显示 6 个选项，
+      // 而题库支持 A~J（10 个）。R3-16 立过「不应再存在 6 位硬编码字母表」的规矩，
+      // 但该规矩的守卫只扫了 `review-desk.js`（本函数当时在 `learn.js`）→ 长期漏检。
+      // 现改走全局 `letters()`（review-desk.js 定义，10 档）。
+      const L = letters((q.options || []).length);
+      const opts = (q.options || []).map((o, i) => `${L[i]}. ${esc(o)}`).join("<br>");
+      return `<div class="ankiface"><div class="af-front">
+        <div class="af-tags"><span class="tag">${esc(q.type)}</span><span class="tag">${esc(q.bloom)}</span>${q.case_id ? `<span class="tag">案例 ${esc(q.case_id)}</span>` : ""}${q.subtopic ? `<span class="tag">${esc(q.subtopic)}</span>` : ""}</div>
+        ${stem}${esc(q.question)}${opts ? `<div class="af-opts">${opts}</div>` : ""}</div>
+        <div class="af-back"><b>✅ 答案：${esc(q.answer)}</b><br>${esc(q.analysis)}</div></div>`;
+    }).join("");
+    $("md_title").textContent = "Anki 卡样预览（前 3 张）";
+    $("md_body").innerHTML = `
+      <div class="hint" style="margin:0 0 10px;line-height:1.8">导出后卡面如上：<b>正面 = 题型/Bloom 标签 + 题干 + 选项</b>，<b>反面 = 答案 + 解析</b>；Anki 标签 = 题型 / Bloom / 章节。共 ${r.questions.length} 题（此处展示前 3 张）。</div>
+      <div class="ankifaces">${cards}</div>`;
+    $("md_ok").textContent = "知道了";
+    $("md_ok").className = "act";
+    modalOnCancel = null;   // A-新14：信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
+    $("modal_mask").style.display = "flex";
+    $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
+  } catch (e) { toast(e.message, false); }
+}
+window.ankiPreview = ankiPreview;
+/* Anki 导入指引（.txt 文本导入 / .apkg 桌面导入，含手机端说明） */
+function ankiHelp() {
+  $("md_title").textContent = "Anki 导入指引";
+  $("md_body").innerHTML = `
+    <div class="hint" style="line-height:1.9">
+      <b>.</b> <b>.apkg 卡包</b>（推荐，电脑端）：<br>
+      ① 下载 .apkg 文件 → ② 双击打开（或 Anki「文件 → 导入」）→ ③ 自动建「MedKit 医学题库」牌组 ✓<br><br>
+      <b>.</b> <b>.txt 文本</b>（Anki 桌面版）：<br>
+      ① 打开 Anki → ② 「文件 → 导入」→ ③ 选择 .txt → ④ 字段分隔符选「Tab」，前 4 行不要跳过 → 导入 ✓<br><br>
+      <b>.</b> <b>手机端（AnkiDroid / AnkiMobile）</b>：<br>
+      把 .apkg 文件传到手机（微信/QQ/网盘均可）→ 点开文件选择「用 Anki 打开」即可导入；.txt 需先在电脑版导入。<br><br>
+      <b>.</b> 标签（题型 / Bloom / 章节）导入后自动带出；「x 型自评卡」正面为判断题干关键词，反面给出正确答案，适合多选自测。
+    </div>`;
+  $("md_ok").textContent = "知道了";
+  $("md_ok").className = "act";
+  modalOnCancel = null;   // A-新14：信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
+  $("modal_mask").style.display = "flex";
+  $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
+}
+window.ankiHelp = ankiHelp;
+window.ankiPreview = ankiPreview; window.ankiHelp = ankiHelp;

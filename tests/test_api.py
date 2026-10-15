@@ -276,7 +276,9 @@ def test_prompts_api_and_shadow_copy():
     assert len(ps) == len(PROMPT_ROLES), (
         f"/api/prompts 返回 {len(ps)} 条，注册表有 {len(PROMPT_ROLES)} 条")
     assert {p["name"] for p in ps} == set(PROMPT_ROLES), "返回的 name 集合必须与注册表一致"
-    assert {"medtutor.md", "medexplain.md", "medcards.md",
+    # 2026-10-15（奥卡姆精简 T2）：medtutor/medexplain/medcards 随其域删除，
+    # 换成仍存在的关键角色来钉「注册表含生成链与 vault 助手」这条不变式。
+    assert {"medgen.md", "medreview.md", "mistake_agent.md",
             "syllabus_extract.md"} <= set(PROMPT_ROLES)
     med = next(p for p in ps if p["name"] == "medgen.md")
     assert "{slice_text}" in med["placeholders"], "主要占位符应被动态提取"

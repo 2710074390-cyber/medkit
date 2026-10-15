@@ -19,7 +19,7 @@
 #                                 delete_mistake / batch_mark_learned / batch_reset /
 #                                 parse_import_text / import_mistakes_file / export_* / backup
 #   知识点掌握度 .................. log_knowledge_event / log_knowledge_events / record_quiz /
-#                                 record_review / get_mastery_view / recommend /
+#                                 get_mastery_view / recommend /
 #                                 delete_subject_with_backup
 #   近期活动时间线 ................ ACTIVITY_EVENTS / recent_activity
 # ─────────────────────────────────────────────────────────────────────────────
@@ -812,28 +812,21 @@ def export_mistakes(ids: list[str], fmt: str = "json") -> dict[str, Any]:
 def delete_subject_with_backup(subject: str) -> dict[str, Any]:
     """WP-4：删除某科目全部本地数据（先导出 JSON 备份到 ~/.medkit/exports/）。
 
-    影响范围：错题、知识点掌握度、复习卡（SM-2）、记忆卡（FSRS/讲解产物）、
-    提问会话；「未分类」（subject 为空）不受影响。
+    影响范围：错题、知识点掌握度、大纲条目、真题考频；「未分类」（subject 为空）不受影响。
     SQL 模式单事务逐表删除；JSON 模式逐模块原子写。
-    返回 {"deleted": {mistakes, knowledge, review_cards, memory_cards, sessions, explains},
+    返回 {"deleted": {mistakes, knowledge, syllabus_items, realexam_freq},
           "backup": <备份文件绝对路径>}。
+
+    2026-10-15（奥卡姆精简 T2）：复习卡 / 记忆卡 / 提问会话 / 讲解产物四路随其域删除而移除。
     """
     subject = str(subject or "").strip()
     if not subject:
         raise ValueError("科目不能为空")
-    from . import cards as cardlib  # noqa: PLC0415  函数内导入避免循环依赖
-    from . import explain as expl  # noqa: PLC0415
-    from . import review as rev  # noqa: PLC0415
-    from . import tutor as tut  # noqa: PLC0415
     from .fsutil import safe_filename  # noqa: PLC0415
 
     # 1) 删除前导出快照（备份路径返回给前端展示）
     mistakes = [m for m in list_mistakes() if m.get("subject") == subject]
     knowledge = [k for k in list_knowledge() if k.get("subject") == subject]
-    explains = [e for e in expl.list_explains() if e.get("subject") == subject]
-    review_cards = [c for c in rev.list_cards() if c.get("subject") == subject]
-    memory_cards = [c for c in cardlib.list_cards() if c.get("subject") == subject]
-    sessions = [s for s in tut.list_sessions() if s.get("subject") == subject]
     exports = cfg.CONFIG_DIR / "exports"
     exports.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -842,8 +835,6 @@ def delete_subject_with_backup(subject: str) -> dict[str, Any]:
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "subject": subject,
         "mistakes": mistakes, "knowledge": knowledge,
-        "explains": explains, "review_cards": review_cards,
-        "memory_cards": memory_cards, "tutor_sessions": sessions,
     })
 
     # 2) 删除（SQL 模式单事务；JSON 模式逐模块）
@@ -852,8 +843,7 @@ def delete_subject_with_backup(subject: str) -> dict[str, Any]:
             counts: dict[str, int] = {}
             # S3-11（R8+W）：原漏了 syllabus_items / realexam_freq——两表都带 subject 列，
             # 删科目后残留孤儿行，同名重建时旧条目会「复活」并污染覆盖度/考频权重。
-            for table in ("mistakes", "knowledge", "explains",
-                          "review_cards", "tutor_sessions", "cards",
+            for table in ("mistakes", "knowledge",
                           "syllabus_items", "realexam_freq"):
                 try:
                     cur.execute(f"DELETE FROM {table} WHERE subject = ?", (subject,))
@@ -863,10 +853,6 @@ def delete_subject_with_backup(subject: str) -> dict[str, Any]:
         return {"deleted": {
             "mistakes": counts.get("mistakes", 0),
             "knowledge": counts.get("knowledge", 0),
-            "review_cards": counts.get("review_cards", 0),
-            "memory_cards": counts.get("cards", 0),
-            "sessions": counts.get("tutor_sessions", 0),
-            "explains": counts.get("explains", 0),
             "syllabus_items": counts.get("syllabus_items", 0),
             "realexam_freq": counts.get("realexam_freq", 0),
         }, "backup": str(backup)}
@@ -881,13 +867,7 @@ def delete_subject_with_backup(subject: str) -> dict[str, Any]:
         n_k = before_k - len(st["knowledge"])
         st["dirty"]["mistakes"] = bool(n_m)
         st["dirty"]["knowledge"] = bool(n_k)
-    return {"deleted": {
-        "mistakes": n_m, "knowledge": n_k,
-        "review_cards": rev.delete_by_subject(subject),
-        "memory_cards": cardlib.delete_by_subject(subject),
-        "sessions": tut.delete_by_subject(subject),
-        "explains": expl.delete_by_subject(subject),
-    }, "backup": str(backup)}
+    return {"deleted": {"mistakes": n_m, "knowledge": n_k}, "backup": str(backup)}
 
 
 def mark_learned(mid: str, learned: bool = True) -> Optional[dict[str, Any]]:
@@ -1002,39 +982,6 @@ def record_quiz(kp_name: str, score: int) -> str | None:
         hit["priority"] = compute_priority(hit["score"], hit.get("miss", 0), hit["last_tried"])
         hist = hit.get("history") or []
         hist.append({"t": _now(), "event": "quiz", "note": f"score={int(score or 0)}"})
-        hit["history"] = hist[-50:]
-        st["dirty"]["knowledge"] = True
-        _mark_kp_row(st, hit)   # V-03：单行增量写
-    return hit.get("id")
-
-
-REVIEW_PASS_SCORE = 3   # 与 core.review.GRADE_PASS 同口径：quality≥3 记「成功提取」
-
-
-def record_review(kp_name: str, quality: int) -> str | None:
-    """复习判分回写：quality≥3 记「成功提取」，否则记 miss；刷新 last_tried/last_reviewed。
-
-    这是「复习→掌握度」回路的最后一环：按 SM-2 认真做完一张到期卡后，
-    掌握分随这次既真实又及时的提取而抬升，而不是分数只随时间阴跌、推荐永不更新。
-    """
-    with _store() as st:
-        hit = _find_kp(st, kp_name)       # V-09：定向取行
-        if hit is None:
-            return None
-        passed = int(quality or 0) >= REVIEW_PASS_SCORE
-        hit["attempts"] = int(hit.get("attempts", 0)) + 1
-        if passed:
-            hit["correct"] = int(hit.get("correct", 0)) + 1
-        else:
-            hit["miss"] = int(hit.get("miss", 0)) + 1
-        hit["last_tried"] = _now()
-        hit["last_reviewed"] = _now()
-        hit["score"] = compute_score(hit["correct"], hit["attempts"], hit["last_tried"])
-        hit["state"] = compute_state(hit["score"])
-        hit["priority"] = compute_priority(hit["score"], hit.get("miss", 0), hit["last_tried"])
-        hist = hit.get("history") or []
-        hist.append({"t": _now(), "event": "review",
-                     "note": f"quality={int(quality or 0)} / {'pass' if passed else 'fail'}"})
         hit["history"] = hist[-50:]
         st["dirty"]["knowledge"] = True
         _mark_kp_row(st, hit)   # V-03：单行增量写

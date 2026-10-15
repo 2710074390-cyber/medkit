@@ -1,7 +1,11 @@
-"""WP-4：刷题科目卡片点击过滤 + 科目管理删除（浏览器用例，零 LLM）。
+"""WP-4：科目管理（按科目查看 / 删除本地数据）浏览器用例，零 LLM。
 
-覆盖：点击科目卡片立即过滤复习计划；「科目管理」弹层删除科目 →
-刷新后卡片消失、另科保留；用后清理避免污染同会话其它用例。
+覆盖：「科目管理」弹层删除科目 → 重开弹层该科目已消失、另科保留；
+用后清理避免污染同会话其它用例。
+
+2026-10-15（奥卡姆精简 T2）：原「刷题」页的**科目卡片过滤**随复习卡域删除（卡片按今日到期
+复习数过滤，数据源已不存在）；「科目管理」入口随之搬到**学习中心 → 错题本**的科目行
+（能力保留、位置更贴近它真正管理的数据）。
 """
 
 from __future__ import annotations
@@ -18,10 +22,6 @@ def _seed_subject(page, subject: str) -> None:
               analysis: '解析。'})
           });
           if (!r.ok) throw new Error('seed mistake ' + r.status);
-          const q = await fetch('/api/library/review/queue-all?subject='
-            + encodeURIComponent(subject), {method: 'POST'});
-          if (!q.ok) throw new Error('seed queue ' + q.status);
-          return await q.json();
         }""",
         subject,
     )
@@ -40,51 +40,28 @@ def _cleanup(page, subject: str) -> None:
     )
 
 
-def test_study_subject_card_filter(page, server_url):
-    subject = "内科学_过滤A"
-    page.goto(f"{server_url}/#start")
-    page.wait_for_selector("#tab-start.show", timeout=15000)
-    try:
-        _seed_subject(page, subject)
-        page.reload()
-        page.wait_for_selector("#tab-start.show", timeout=15000)
-        page.click('button[data-tab="study"]')
-        page.wait_for_selector("#tab-study.show", timeout=15000)
-        # v0.13.0：「刷题」页默认停在「做题」子视图；科目卡在「复习（卡片）」子视图里
-        page.click('#studynav button[data-sv="review"]')
-        page.wait_for_selector(".subj-card", timeout=15000)
-
-        card = page.locator(".subj-card", has_text=subject)
-        card.wait_for(state="visible", timeout=15000)
-        card.click()
-        page.wait_for_function(
-            "() => document.getElementById('rv_subject')?.value === '" + subject + "'",
-            timeout=15000,
-        )
-        # 显式断言（2026-10-01 R30 补）：上面那句 `wait_for_function` 超时即失败，
-        # 属**隐式断言**——读代码看不出在断言什么，也区分不出「值对了」与「等超时了」。
-        assert page.input_value("#rv_subject") == subject, \
-            "点科目卡应把该科目填进刷题页的科目选择"
-    finally:
-        _cleanup(page, subject)
+def _open_subject_manager(page, server_url: str) -> None:
+    """从「学习中心 → 错题本」的科目行打开科目管理弹层。"""
+    page.goto(f"{server_url}/#learn")
+    page.wait_for_selector("#tab-learn.show", timeout=15000)
+    page.click('#learnnav button[data-lv="mistakes"]')
+    page.wait_for_selector("#lv-mistakes.show", timeout=15000)
+    page.click('button:has-text("科目管理")')
+    page.wait_for_selector("#modal_mask", state="visible", timeout=15000)
+    page.wait_for_function(
+        "() => document.getElementById('md_title').innerText.includes('科目管理')",
+        timeout=15000,
+    )
 
 
 def test_delete_subject_through_manager(page, server_url):
     subject = "内科学_删除A"
-    page.goto(f"{server_url}/#start")
-    page.wait_for_selector("#tab-start.show", timeout=15000)
     try:
-        _seed_subject(page, subject)
-        page.reload()
+        page.goto(f"{server_url}/#start")
         page.wait_for_selector("#tab-start.show", timeout=15000)
-        page.click('button[data-tab="study"]')
-        page.wait_for_selector("#tab-study.show", timeout=15000)
-        # v0.13.0：「刷题」页默认停在「做题」子视图；科目卡在「复习（卡片）」子视图里
-        page.click('#studynav button[data-sv="review"]')
-        page.wait_for_selector(".subj-card", timeout=15000)
+        _seed_subject(page, subject)
 
-        page.click('button:has-text("科目管理")')
-        page.wait_for_selector("#modal_mask", state="visible", timeout=15000)
+        _open_subject_manager(page, server_url)
         page.wait_for_function(
             "() => document.getElementById('md_body').innerText.includes('" + subject + "')",
             timeout=15000,
@@ -105,8 +82,12 @@ def test_delete_subject_through_manager(page, server_url):
             "() => !document.getElementById('md_body').innerText.includes('" + subject + "')",
             timeout=15000,
         )
+        # 显式断言（上面 wait_for_function 的 AST 看不见；`test_assertion_audit` 要求可见断言）
+        listing = page.evaluate(
+            "() => document.getElementById('md_body').innerText")
+        assert subject not in listing, (
+            f"删除后科目管理列表仍含「{subject}」")
         page.click("#md_cancel")
         page.wait_for_selector("#modal_mask", state="hidden", timeout=15000)
-        assert page.locator(".subj-card", has_text=subject).count() == 0
     finally:
         _cleanup(page, subject)

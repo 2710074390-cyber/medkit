@@ -2,7 +2,7 @@
 
 **背景（实测）**：`_store()` 退出时对脏表走 `dbs.replace_all`（`DELETE` 全表 + 逐行重插），
 成本是 O(表内总行数)。3000 行库上单次 `add_mistake` 实测 103ms（≈34µs/行），
-是「单行定向 UPDATE」的千倍量级；`record_quiz` / `record_review` / `log_knowledge_event`
+是「单行定向 UPDATE」的千倍量级；`record_quiz` / `log_knowledge_event`
 是提问判分、复习打卡、讲解留痕的热路径，每次都要把整张 knowledge 表重写一遍。
 
 **本文件守什么**：
@@ -83,7 +83,7 @@ def test_rowwise_write_is_equivalent_to_full_replace(sql_iso, monkeypatch):
     monkeypatch.setattr(lib, "_now", lambda: "2026-09-16T10:00:00")
     _seed_knowledge()
     lib.record_quiz("知识点7", 3)
-    lib.record_review("知识点7", 4)
+    lib.record_quiz("知识点7", 4)
     lib.log_knowledge_event("知识点7", "explain", note="x")
     lib.log_knowledge_event("知识点199", "review", note="y")
     row_wise = _raw_rows("knowledge")
@@ -107,7 +107,7 @@ def test_rowwise_write_is_equivalent_to_full_replace(sql_iso, monkeypatch):
 
     monkeypatch.setattr(lib, "_write_back", full_write_back)
     lib.record_quiz("知识点7", 3)
-    lib.record_review("知识点7", 4)
+    lib.record_quiz("知识点7", 4)
     lib.log_knowledge_event("知识点7", "explain", note="x")
     lib.log_knowledge_event("知识点199", "review", note="y")
     full = _raw_rows("knowledge")
@@ -269,12 +269,12 @@ def test_incremental_wiring_is_present():
     assert hasattr(dbs, "find_row"), "db 层缺少 find_row（V-09 定向读）"
     src = inspect.getsource(lib._write_back)
     assert "upsert_rows" in src, "_write_back 未接增量路径"
-    for fn in (lib.record_quiz, lib.record_review, lib.log_knowledge_events):
+    for fn in (lib.record_quiz, lib.log_knowledge_events):
         assert "_mark_kp_row(" in inspect.getsource(fn), f"{fn.__name__} 未登记单行增量"
     for fn in (lib.add_mistake, lib.update_mistake, lib.mark_learned):
         assert "_mark_m_row(" in inspect.getsource(fn), f"{fn.__name__} 未登记单行增量"
     # V-09：单行路径不得再整表读（`st["mistakes"]` / `st["knowledge"]` 是整表加载的唯一入口）
-    for fn in (lib.record_quiz, lib.record_review, lib.log_knowledge_events,
+    for fn in (lib.record_quiz, lib.log_knowledge_events,
                lib.add_mistake, lib.update_mistake, lib.mark_learned):
         src = inspect.getsource(fn)
         assert 'st["knowledge"]' not in src and 'st["mistakes"]' not in src, \

@@ -1,53 +1,20 @@
-"""IMP-06 FTS5+jieba 检索接线测试（G-04 收口 · 决策 (a) 接线）。
+"""中文分词共享基建（`db.fts_tokens`）的守卫。
 
-覆盖：reindex_slices（SQL/JSON 两态）、分词命中「心衰」→「心力衰竭」、
-BM25 排序、科目过滤、JSON 模式回退 bigram、路由 explain/slices 关键词路径。
+`fts_tokens` 是**跨域共享**的分词口径：vault 的错题检索（`vault_index`）复用同一份实现
+（jieba 词 + CJK 二元组兜底），所以它随讲解域删除后**仍然必须留下**。
+
+2026-10-15（奥卡姆精简 T2）：本文件原来还覆盖 `explain.fts_search` / `reindex_slices` /
+`fts_match_expr` / 路由 `explain/slices`——这些**只服务于教材切片 FTS 表**，
+随讲解域删除（实测全仓零调用）。留下的只有「分词」这一层共享能力。
+
 全部本地零 LLM；存储经 conftest 隔离到 tmp。
 """
+
 from __future__ import annotations
 
-import json
-
-import pytest
-from fastapi.testclient import TestClient
-
-import medkit.main as m
-from medkit.core import config as cfgmod
 from medkit.core import db as dbs
-from medkit.core import explain as expl
 
 
-@pytest.fixture
-def fts_env(tmp_path, monkeypatch):
-    """SQL 模式 + 一个内科学项目（两个教材切片）+ 索引与 FTS 重建。"""
-    proj = tmp_path / "projects" / "p1"
-    proj.mkdir(parents=True)
-    (proj / "meta.json").write_text(json.dumps({"subject": "内科学"}, ensure_ascii=False),
-                                    encoding="utf-8")
-    slices = [
-        {"sid": "S001", "title": "心衰概述", "role": "textbook",
-         "text": "急性心力衰竭是临床急危重症，以左心衰竭为主，表现为肺淤血、呼吸困难。"
-                 "治疗以利尿、扩血管为主。",
-         "source": "内科学教材", "page": "p120"},
-        {"sid": "S002", "title": "慢阻肺", "role": "textbook",
-         "text": "慢性阻塞性肺疾病以持续气流受限为特征，与吸烟关系密切。",
-         "source": "内科学教材", "page": "p231"},
-    ]
-    (proj / "slices.json").write_text(json.dumps(slices, ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(expl, "_PROJ_ROOT", tmp_path / "projects")
-    monkeypatch.setattr(cfgmod, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(cfgmod, "CONFIG_FILE", tmp_path / "config.json")
-    cfgmod.CONFIG_FILE.write_text(json.dumps({}, ensure_ascii=False), encoding="utf-8")
-    dbs.migrate()
-    expl.index_slices()
-    return tmp_path
-
-
-def _cand(subject: str = "内科学") -> list[dict]:
-    return expl._load_index().get("subjects", {}).get(subject, [])
-
-
-# ---------------------------------------------------------------- 单元：分词与 MATCH 表达式
 def test_fts_tokens_bigram_and_jieba():
     toks = dbs.fts_tokens("急性心力衰竭治疗")
     assert "心力衰竭" in toks   # jieba 整词
@@ -55,96 +22,15 @@ def test_fts_tokens_bigram_and_jieba():
     assert toks == [t.lower() for t in toks]
 
 
-def test_fts_match_expr_singleton_filtered():
-    """契约（`db.fts_match_expr`）：前缀式 OR 召回；单字过滤；多 token 用 ` OR ` 连接。
-
-    ## `expr.count(" OR ") >= 0` 是死谓词（2026-09-29 R21 修）
-
-    `count()` 永不返回负数，`>= 0` **恒真** —— 这句断言当时什么也没断。
-    它想守的是「多 token 之间用 ` OR ` 连接」（前缀式 OR 召回），
-    所以要断**具体形态**，而不是拿恒真不等式凑数。
-    """
-    assert dbs.fts_match_expr("心") == ""          # 单字前缀噪声大 → 空表达式（回退）
-    expr = dbs.fts_match_expr("心衰")
-    assert '"心衰"*' in expr                       # 前缀式（`*` 才能命中「心力衰竭」）
-    # 「心衰」只切出 1 个 token（≥2 字）⇒ 无 OR 连接
-    assert " OR " not in expr, f"单 token 不应出现 OR 连接：{expr!r}"
-    # 多 token：必须用 ` OR ` 连接（这是前缀式 OR 召回的核心形态）
-    multi = dbs.fts_match_expr("心力衰竭")
-    assert " OR " in multi and multi.count(" OR ") >= 1, (
-        f"多 token 查询应以前缀式 OR 连接：{multi!r}")
-    assert all(part.strip().endswith('"*') for part in multi.split(" OR ")), (
-        f"每个 OR 项都应是前缀式 `\"token\"*`：{multi!r}")
-
-
-def test_reindex_slices_json_mode_noop(tmp_path, monkeypatch):
-    # 未建库（JSON 模式）→ 返回 0，不写 FTS
-    monkeypatch.setattr(dbs, "DB_PATH", tmp_path / "nope" / "medkit.db")
-    assert dbs.reindex_slices([{"subject": "内科学", "text": "x", "title": "t"}]) == 0
-
-
-# ---------------------------------------------------------------- 检索：FTS 优先
-def test_fts_search_token_recall(fts_env):
-    """分词命中：「心衰」能匹配「心力衰竭」切片（jieba + bigram 兜底）。"""
-    hits = expl.fts_search("内科学", "心衰", 5, _cand())
-    assert hits and hits[0]["title"] == "心衰概述"
-
-
-def test_fts_search_ranking_and_subject_filter(fts_env):
-    hits = expl.fts_search("内科学", "急性心力衰竭", 5, _cand())
-    assert hits and hits[0]["title"] == "心衰概述"
-    assert all(h["title"] != "慢阻肺" for h in hits)     # 不相关切片不召回
-    # 科目不匹配（FTS 有该科目数据但查询科目无）→ None（调用方回退）
-    assert expl.fts_search("外科学", "心衰", 5, _cand()) is None
-
-
-def test_fts_search_no_hit_returns_none(fts_env):
-    assert expl.fts_search("内科学", "失语症", 5, _cand()) is None
-
-
-# ---------------------------------------------------------------- 回退：JSON 模式 bigram
-def test_retrieve_fallback_when_db_absent(fts_env, monkeypatch):
-    monkeypatch.setattr(dbs, "DB_PATH", fts_env / "gone" / "medkit.db")
-    hits = expl.retrieve(subject="内科学", query="心力衰竭")
-    assert any(h["title"] == "心衰概述" for h in hits)
-
-
-def test_retrieve_subject_mismatch_still_falls_back(fts_env):
-    hits = expl.retrieve(subject="外科学", query="心衰")
-    assert any(h["title"] == "心衰概述" for h in hits)
-
-
-# ---------------------------------------------------------------- 路由：explain/slices 关键词
-def test_router_explain_slices_uses_fts(fts_env):
-    client = TestClient(m.app, base_url="http://127.0.0.1")
-    r = client.get("/api/library/explain/slices",
-                   params={"subject": "内科学", "query": "心衰"})
-    assert r.status_code == 200
-    j = r.json()
-    assert j["slices"] and j["slices"][0]["title"] == "心衰概述"
-    # 无命中 → 空列表（FTS 无命中回退 bigram 后仍空）
-    r2 = client.get("/api/library/explain/slices",
-                    params={"subject": "内科学", "query": "不存在的关键词xyz"})
-    assert r2.json()["slices"] == []
-
-
-# ---------------------------------------------------------------- NX-02（R-3）：jieba 缺失兜底（打包缺词典模拟）
 def test_fts_tokens_jieba_unavailable_falls_back(monkeypatch):
-    # 模拟打包环境 jieba 不可用 → 仅 bigram 兜底，绝不抛错
+    """NX-02（R-3）：打包环境 jieba 缺失/词典损坏 → 仅 bigram 兜底，绝不抛错。
+
+    打包后的 exe 里 jieba 词典可能缺失；分词是 vault 检索的入口，
+    抛错会让「搜错题」整条链路 500，所以兜底必须存在且**被断言到**。
+    """
     import sys
 
     monkeypatch.setitem(sys.modules, "jieba", None)  # import jieba → ImportError
     toks = dbs.fts_tokens("急性心力衰竭治疗")
     assert "心力衰竭" not in toks
     assert "心力" in toks and "力衰" in toks and "衰竭" in toks
-    expr = dbs.fts_match_expr("心衰")
-    assert expr and '"心衰"*' in expr  # 查询侧同样不抛错
-
-
-def test_retrieve_without_jieba_still_hits(fts_env, monkeypatch):
-    # 查询侧 jieba 缺失 → FTS 退回 bigram 命中，仍召回「心衰概述」
-    import sys
-
-    monkeypatch.setitem(sys.modules, "jieba", None)
-    hits = expl.retrieve(subject="内科学", query="心力衰竭")
-    assert any(h["title"] == "心衰概述" for h in hits)

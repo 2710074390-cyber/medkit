@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -340,18 +340,57 @@ def create_item(rec: dict[str, Any], root: Optional[Path] = None) -> dict[str, A
     return out
 
 
-# ------------------------------------------------------------------ 复习闭环（SM-2，零 LLM）
+# ------------------------------------------------------------------ SM-2（本域唯一实现）
+# 2026-10-15（奥卡姆精简 T2）：此前复用 `core/review.py` 的 `grade_card`。
+# 复习卡域（`cards` / `review` / `scheduler`）零使用被删后，**vault 是唯一还在用 SM-2 的地方**，
+# 于是把口径搬进本模块——「一个算法一份实现」，不留一个只为被 import 而存在的模块。
+# 常量与 `core/review.py` **逐值一致**，保证历史复习记录（ease/interval/reps）语义不变。
+INIT_EASE = 2.5
+MIN_EASE = 1.3
+GRADE_PASS = 3          # quality ≥ 3 记「记得」
+INTERVAL_FIRST = 1      # 第一次记住 → 1 天
+INTERVAL_SECOND = 6     # 第二次记住 → 6 天
+
+
+def sm2_next_intervals(ease: float, reps: int, interval: int) -> tuple[int, int]:
+    """SM-2 间隔推进：返回 (new_interval, new_reps)。连记两次后按前隔 × ease 增长。"""
+    reps += 1
+    if reps == 1:
+        return INTERVAL_FIRST, reps
+    if reps == 2:
+        return INTERVAL_SECOND, reps
+    return max(int(round(interval * ease)), interval + 1), reps
+
+
+def sm2_update_ease(ease: float, quality: int, passed: bool) -> float:
+    """SM-2 记忆难度更新。passed → 小幅增减；failed → 固定 −0.2。"""
+    if passed:
+        e = ease + (0.1 - (5 - max(0, min(quality, 5))) * (0.08 + (5 - quality) * 0.02))
+    else:
+        e = ease - 0.2
+    return max(MIN_EASE, round(e, 2))
+
+
 def _grade_card_of(rec: dict[str, Any], quality: int) -> dict[str, Any]:
-    """复用 `core/review.grade_card`（不重写 SM-2 口径），只喂它需要的字段。"""
-    from . import review as _rev
-    card = {
-        "ease": float(rec.get("ease") or _rev.INIT_EASE),
-        "interval": int(rec.get("interval") or 0),
-        "reps": int(rec.get("reps") or 0),
-        "lapses": int(rec.get("lapses") or 0),
-        "state": str(rec.get("state") or "new"),
-    }
-    return _rev.grade_card(card, quality)
+    """按 quality(0~5) 推进一条错题的 SM-2 状态，返回要写回文件的字段。
+
+    纯函数（不改入参）——便于用「黄金值」把口径钉死（`tests/test_vault.py`）。
+    """
+    q = max(0, min(int(quality), 5))
+    passed = q >= GRADE_PASS
+    ease = sm2_update_ease(float(rec.get("ease") or INIT_EASE), q, passed)
+    interval, reps = sm2_next_intervals(ease, int(rec.get("reps") or 0),
+                                        int(rec.get("interval") or 0))
+    lapses = int(rec.get("lapses") or 0)
+    if passed:
+        state = "review" if reps >= 2 else "learning"
+    else:
+        interval, reps = 0, 0
+        state = "relearning"
+        lapses += 1
+    due = (date.fromisoformat(_today_iso()) + timedelta(days=interval)).isoformat()
+    return {"ease": ease, "interval": interval, "reps": reps,
+            "lapses": lapses, "state": state, "due": due}
 
 
 def due_items(subject: str = "") -> list[dict[str, Any]]:
