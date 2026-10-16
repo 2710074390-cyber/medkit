@@ -10,6 +10,36 @@
 
 > 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+## [0.18.1] - 2026-10-17
+
+> 主题：**全量代码审查修复批**（报告：`docs/reviews/全量审查报告_2026-10-16.md`）。
+> 无新功能——这一版把审查抓出的 2 高 / 5 中缺陷全部修掉，并补可证伪的回归守卫。
+
+### Fixed
+
+- **全量代码审查修复批（2026-10-16，报告：`docs/reviews/全量审查报告_2026-10-16.md`）**：
+  - **保存配置不再丢 vault 目录与 token 上限（H-1）**：`PUT /api/config` 此前从零重建配置对象，
+    静默丢弃 `vault_dir` / `run_token_limit`——保存一次服务商配置，错题本在界面上「消失」。
+    现以已保存配置为底、仅覆盖本端点负责的键（回归测试 `test_put_config_preserves_vault_dir_and_token_limit`）。
+  - **判分口径跨层统一（H-2）**：答案大小写归一职责收进契约层（`QuestionItem` / `FixPatch`
+    validator 统一 `.upper()`），导出押题卷内联 JS `answersEqual` 同步补 `toUpperCase()`
+    （回归测试 `test_answer_normalized_to_uppercase`）。此前小写答案 App 判对、导出卷判错并污染错题回流。
+  - **题库重解析原子化（M-1）**：`bank.reparse_bank` 删除与重建收进同一事务（抽出 `_prepare_items`
+    纯计算层），解析器失败不再留下空题库。
+  - **外部站点导入批内去重（M-3）**：`library.import_site_items` 命中后立即回写 `by_key`，
+    同一批次内的重复键改走更新分支，不再重复新增。
+  - **错题删除联动 vault（M-4）**：`delete_mistake` / `batch_delete` 后把对应 vault md
+    **软删**进 `.trash/<时间戳>/`（`vault.archive_mistake`，保留用户手写笔记）并从索引摘除
+    （`vault_index.paths_of` / `drop_paths`，沿用「不凭空建库翻轨」护栏）。
+  - **题干编辑不再留孤儿文件（M-2）**：`_mirror_to_vault` 在补写新文件后，把索引中同 id 的
+    旧 slug 文件归档进 `.trash/`。
+  - **组卷随机性作用域收口（M-5）**：管线起点不再 `random.seed()` 污染进程全局 PRNG，
+    抽样改走局部 `random.Random(seed)` 实例（`_sample_paper*` / `select_paper_stable` 透传）。
+  - **错题列表路径转义（L-7）**：`learn-vault.js` 列表行改 `data-path` + 事件绑定，
+    消除 HTML 属性/JS 双上下文转义失效（路径含引号时旧写法 JS 字符串断裂）。
+  - **人工复核清单追加口径统一（L-3）**：网络冲突段不再整文件覆盖写，与 `_append_*` 系列一致。
+  - **图题门禁 id 净化（L-4）**：`_gate_image_refs` 的剔除清单不再混入 `None`。
+
 ## [0.18.0] - 2026-10-16
 
 > 主题：**刷题闭环补完 + 错题助手聊天化 + 错题本收敛为「一个大聊天界面」**。
