@@ -116,6 +116,18 @@ class QuestionItem(BaseModel):
     def _word_str(cls, v: Any) -> str:
         return str(v or "")
 
+    @field_validator("answer", mode="before")
+    @classmethod
+    def _word_answer(cls, v: Any) -> str:
+        """答案归一：去首尾空白 + 统一大写（2026-10-16 修复判分口径分叉）。
+
+        LLM 偶发产出小写答案（"b"/"bde"）：各门禁只校验不改写，能入库入卷；
+        而应用内判分（bank.answers_equal）会 .upper()，导出试卷的内联 JS
+        此前不做大写归一 → 同一张卷 App 判对、导出页判错，错题回流被污染。
+        归一职责收进契约层，下游（门禁/渲染/判分）一律面对大写答案。
+        """
+        return str(v or "").strip().upper()
+
     @model_validator(mode="after")
     def _answer_invariants(self) -> "QuestionItem":
         """答案不变式：X 型字母升序且 2~4 个；非 X 型单选单字母。"""
@@ -186,6 +198,12 @@ class FixPatch(BaseModel):
     options: list[str] = Field(default_factory=list)
     answer: str = ""
     analysis: str = ""
+
+    @field_validator("answer", mode="before")
+    @classmethod
+    def _word_answer(cls, v: Any) -> str:
+        """与 QuestionItem 同口径：答案去首尾空白 + 统一大写。"""
+        return str(v or "").strip().upper()
 
 
 # --------------------------------------------------------------------------- RealexamNorm

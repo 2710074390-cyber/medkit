@@ -494,6 +494,18 @@ def _mirror_to_vault(record: dict[str, Any] | None) -> None:
         path = _vault.mirror_record(record)
         if path is not None:
             _vi.reindex_file(path)
+            # 2026-10-16 修复（M-2）：文件名含题干 slug，题干被编辑后 mistake_path 改变，
+            # 旧文件残留成孤儿（同 id 两个 md）。把索引里同 id 的旧路径归档进 .trash/，
+            # 新文件（刚写入的规范路径）保留。
+            new_rel = _vi.relative(path)
+            stale = [_vault.vault_root() / rel
+                     for rel in _vi.paths_of(str(record.get("id") or ""))
+                     if rel != new_rel]
+            if stale:
+                moved = _vault.archive_mistake(record, extra_paths=stale,
+                                               include_canonical=False)
+                if moved:
+                    _vi.drop_paths([_vi.relative(p) for p in moved])
 
 
 def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
@@ -636,11 +648,15 @@ def import_site_items(items: list[dict[str, Any]]) -> dict[str, Any]:
                                   "user_answer", "analysis", "know_tags", "correct")}
                 if update_mistake(hit["id"], patch) is not None:
                     stats["updated"] += 1
+                    # 2026-10-16 修复：批内去重——命中后立即把合并结果登记回 by_key，
+                    # 否则同一批次里的重复键互相不可见（by_key 只在循环前建一次）。
+                    by_key[key] = {**hit, **patch}
                 else:
                     stats["skipped"] += 1
             else:
-                add_mistake(rec)
+                stored = add_mistake(rec)
                 stats["added"] += 1
+                by_key[key] = stored   # 同上：批内后续同键条目改走更新分支
         except Exception as e:  # noqa: BLE001  单条失败不阻断整体
             stats["skipped"] += 1
             stats["errors"].append(f"#{i}: {e}")
@@ -728,6 +744,28 @@ def update_mistake(mid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
     return cur
 
 
+def _unmirror_from_vault(records: list[dict[str, Any]]) -> None:
+    """错题删除联动：把对应 vault md **归档**到 vault/.trash/（软删，保留用户手写笔记），
+    并从索引摘除。best-effort：文件层任何异常都不上抛——库记录已删除。
+
+    2026-10-16 修复：此前只删 SQL 行不动 vault 文件——已删错题仍出现在错题本检索与
+    错题助手的回答里（vault 是「文件即真相」域），两域漂移。
+    """
+    recs = [r for r in (records or []) if isinstance(r, dict) and r.get("id")]
+    if not recs:
+        return
+    with errs.swallow("VAULT_UNMIRROR", "错题删除后归档 vault 文件失败（不影响库内删除）"):
+        from . import vault as _vault
+        from . import vault_index as _vi
+        for rec in recs:
+            mid = str(rec.get("id"))
+            extra = [_vault.vault_root() / rel for rel in _vi.paths_of(mid)]
+            moved = _vault.archive_mistake(rec, extra_paths=extra)
+            if moved:
+                _vi.drop_paths([_vi.relative(p) for p in moved] +
+                               [str(r) for r in _vi.paths_of(mid)])
+
+
 def delete_mistake(mid: str) -> bool:
     with _store() as st:
         records = st["mistakes"]
@@ -737,6 +775,7 @@ def delete_mistake(mid: str) -> bool:
         records[:] = [r for r in records if r.get("id") != mid]
         st["dirty"]["mistakes"] = True
         _drop_knowledge_of_in(st, cur)
+    _unmirror_from_vault([cur])   # 库内删除成功后联动归档 vault 文件
     return True
 
 
@@ -757,6 +796,7 @@ def batch_delete(ids: list[str]) -> int:
         st["dirty"]["mistakes"] = True
         for m in removed:
             _drop_knowledge_of_in(st, m)
+    _unmirror_from_vault(removed)   # 库内删除成功后联动归档 vault 文件
     return len(removed)
 
 

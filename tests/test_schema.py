@@ -35,6 +35,29 @@ def test_question_item_valid_a1():
     assert q.type == "A1" and q.answer == "A" and len(q.options) == 5
 
 
+def test_answer_normalized_to_uppercase():
+    """2026-10-16 回归（审查 H-2）：契约层统一答案大小写。
+
+    LLM 偶发产出小写答案（"b"/"bde"）：门禁只校验不改写，此前能入库入卷——
+    应用内判分（bank.answers_equal 会 .upper()）判对，而导出试卷内联 JS 判错，
+    错题回流被污染。归一职责收进契约层后，下游一律面对大写答案。
+    """
+    from medkit.core.schema import FixPatch
+
+    q = QuestionItem.model_validate({
+        "question": "首选治疗是？", "type": "A1",
+        "options": ["甲", "乙"], "answer": "b", "analysis": "解析",
+    })
+    assert q.answer == "B"
+    x = QuestionItem.model_validate({
+        "question": "下列哪些正确？", "type": "X",
+        "options": ["a", "b", "c"], "answer": " ac ", "analysis": "解析",
+    })
+    assert x.answer == "AC"
+    p = FixPatch.model_validate({"id": "q1", "answer": " d "})
+    assert p.answer == "D"
+
+
 def test_question_item_valid_x_ascending():
     q = QuestionItem.model_validate({
         "question": "下列哪些正确？", "type": "X", "bloom": "理解",

@@ -97,14 +97,21 @@ async function vaultRefreshList() {
     _vaultItems = r.items || [];
     const box = $("vault_list");
     if (box) {
+      // 2026-10-16 修复（L-7）：路径改走 data-* + 事件绑定，不再拼进 onclick 字符串。
+      // 旧写法 `_esc(r.path).replace(/'/g,"\\'")` 无效——_esc 已把 ' 转成 &#39;，
+      // HTML 属性实体解码后 JS 字符串即断裂（路径含引号时语法错误/注入面）。
       box.innerHTML = _vaultItems.length ? _vaultItems.map(r => `
-        <div class="vault-row" role="button" tabindex="0"
-             onclick="vaultOpen('${_esc(r.path).replace(/'/g, "\\'")}')">
+        <div class="vault-row" role="button" tabindex="0" data-path="${_esc(r.path)}">
           <span class="vault-q">${_esc(r.question) || "（无题干）"}</span>
           <span class="vault-meta">${_esc([r.subject, r.chapter, r.topic].filter(Boolean).join(" · "))}
             ${r.understanding ? " · 有我的理解" : ""}${r.doubts ? " · 有疑问" : ""}</span>
         </div>`).join("")
       : `<div class="hint">${q || f.subject || f.chapter || f.topic ? "没有命中的错题。" : "还没有错题文件。"}</div>`;
+      box.querySelectorAll(".vault-row").forEach(el => {
+        const open = () => vaultOpen(el.dataset.path || "");
+        el.onclick = open;
+        el.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } };
+      });
     }
     const cl = $("btn_vault_q_clear");
     if (cl) cl.style.display = q ? "" : "none";

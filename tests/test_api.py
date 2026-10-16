@@ -111,6 +111,27 @@ def test_config_roundtrip_dpapi():
     assert resolve_key(saved["mineru"]["api_key"]) == "mr-new"
 
 
+def test_put_config_preserves_vault_dir_and_token_limit():
+    """2026-10-16 回归（审查 H-1）：PUT 服务商配置不得静默丢弃 vault_dir / run_token_limit。
+
+    原实现从零重建 new_cfg，只拷贝列出的键——保存一次服务商配置后，
+    vault_dir 被重置回默认（错题在界面上「消失」）、token 预算上限丢失。
+    """
+    c = make_client()
+    saved = _install_isolated_cfg()
+    saved["vault_dir"] = "D:/我的错题本"
+    saved["run_token_limit"] = 123456
+    r = c.put("/api/config", json={
+        "provider": "deepseek", "base_url": "https://api.deepseek.com",
+        "api_key": "sk-keep-x", "model_gen": "deepseek-flash", "model_qc": "deepseek-flash",
+        "web_search_enabled": False, "web_search_api_key": "",
+        "mineru_api_key": "", "mineru_auto_ocr": True,
+    })
+    assert r.status_code == 200, r.text
+    assert saved["vault_dir"] == "D:/我的错题本", "vault_dir 不得在保存配置时丢失"
+    assert saved["run_token_limit"] == 123456, "run_token_limit 不得在保存配置时丢失"
+
+
 def test_provider_key_archive_and_promotion():
     """v0.5.1 多服务商 Key 存档：归档 → 掩码列表 → 免 Key 切换（自动提升）→ 删除。"""
     c = make_client()

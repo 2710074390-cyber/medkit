@@ -366,7 +366,8 @@ def _effective_ratios(ratios: dict[str, int]) -> dict[str, int]:
     return {k: v for k, v in dict(ratios).items() if v > 0}
 
 
-def _sample_paper_exact(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
+def _sample_paper_exact(questions: list[dict[str, Any]], n: int,
+                        rng: Optional[random.Random] = None) -> list[dict[str, Any]]:
     """按模块+Bloom 分层取样（组卷），精确取样 n 个（不做最小 10 的抬升）。
 
     ME-6：案例组（A3/A4，同 case_id）视为**原子**——子题同进同出，防止子题被拆散
@@ -374,6 +375,9 @@ def _sample_paper_exact(questions: list[dict[str, Any]], n: int) -> list[dict[st
     B26：补足抽样（N-len(reused)）需要精确数量，不能用抬升后的 _sample_paper。
     """
     n = min(n, len(questions))
+    # 2026-10-16 修复（M-5）：抽样随机源由进程全局 `random`（管线起点曾 random.seed
+    # 污染全局）改为调用方传入的局部 Random 实例；未传时退回全局 random（兼容旧调用）。
+    shuffler = rng if rng is not None else random
     # 1) 案例组原子合并为「组块」
     groups: list[list[dict[str, Any]]] = []
     gidx: dict[str, int] = {}
@@ -392,8 +396,8 @@ def _sample_paper_exact(questions: list[dict[str, Any]], n: int) -> list[dict[st
         by_key.setdefault((g[0].get("sid", ""), g[0].get("bloom", "")), []).append(g)
     for v in by_key.values():
         for g in v:
-            random.shuffle(g)
-        random.shuffle(v)
+            shuffler.shuffle(g)
+        shuffler.shuffle(v)
     keys = sorted(by_key.keys())
     picked: list[dict[str, Any]] = []
     i = 0
@@ -409,9 +413,10 @@ def _sample_paper_exact(questions: list[dict[str, Any]], n: int) -> list[dict[st
     return picked[:n]
 
 
-def _sample_paper(questions: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
+def _sample_paper(questions: list[dict[str, Any]], n: int,
+                  rng: Optional[random.Random] = None) -> list[dict[str, Any]]:
     """组卷入口：保底至少 10 题（押题卷页数体验），再走精确分层取样。"""
-    return _sample_paper_exact(questions, max(10, n))
+    return _sample_paper_exact(questions, max(10, n), rng)
 
 
 def _save_paper_ids(base: Path, paper_qs: list[dict[str, Any]]) -> None:
@@ -424,18 +429,21 @@ def _save_paper_ids(base: Path, paper_qs: list[dict[str, Any]]) -> None:
 
 
 def _gate_image_refs(questions: list[dict[str, Any]],
-                     image_sids: set[str]) -> tuple[list[dict[str, Any]], list[str | None]]:
+                     image_sids: set[str]) -> tuple[list[dict[str, Any]], list[str]]:
     """B28：image_ref 门禁——任何 image_ref 不在 image_sids 中都剔除并返回被剔除 id。
     不再要求 image_sids 非空：未传图项目的幻觉 image_ref 同样被拦截（防伪图题零提示）。"""
-    dropped = [q.get("id") for q in questions
-               if q.get("image_ref") and q.get("image_ref") not in image_sids]
+    # 2026-10-16 修复（L-4）：q.get("id") 可能为 None（未分配 id 的题），
+    # 下游按 id 留痕/比对时不应混入 None。
+    dropped = [str(q["id"]) for q in questions
+               if q.get("id") and q.get("image_ref") and q.get("image_ref") not in image_sids]
     kept = [q for q in questions
             if not (q.get("image_ref") and q.get("image_ref") not in image_sids)]
     return kept, dropped
 
 
 def select_paper_stable(saved_ids: list[str], questions: list[dict[str, Any]],
-                        n: int = PAPER_DEFAULT) -> list[dict[str, Any]]:
+                        n: int = PAPER_DEFAULT,
+                        rng: Optional[random.Random] = None) -> list[dict[str, Any]]:
     """ME-7：押题卷抽样防漂移——优先复用上次抽样（仍存在于题库的 id）。
     B26：复用不足时不再整卷重抽——保留已复用题 + 从剩余池补足（抽样 N-len(reused) 追加），
     剔除/重掷场景下已复用题的顺序与成员不被洗牌。"""
@@ -446,7 +454,7 @@ def select_paper_stable(saved_ids: list[str], questions: list[dict[str, Any]],
         picked_ids = {q.get("id") for q in picked}
         remaining = [q for q in questions if q.get("id") not in picked_ids]
         if remaining:
-            picked = picked + _sample_paper_exact(remaining, need - len(picked))
+            picked = picked + _sample_paper_exact(remaining, need - len(picked), rng)
     return picked
 
 
@@ -717,7 +725,11 @@ def _stage_websearch(*, base: Path, meta_path: Path, meta: dict[str, Any],
                 for m in conflicts:
                     lines.append(f"- {m.get('title', '')} · {m.get('url', '')}\n"
                                  f"  {m.get('snippet', '')[:200]}")
-                (base / "人工复核清单.md").write_text("\n".join(lines), encoding="utf-8")
+                # 2026-10-16 修复（L-3）：与 _append_* 系列同口径——保留既有内容再追加，
+                # 不再整文件覆盖（此前续跑/多次触发会抹掉已记入的其他复核段落）。
+                _target = base / "人工复核清单.md"
+                _pre = _target.read_text(encoding="utf-8") + "\n" if _target.exists() else ""
+                _target.write_text(_pre + "\n".join(lines) + "\n", encoding="utf-8")
                 _log(base, f"  ⚠️ {len(conflicts)} 条素材与教材冲突 → 人工复核清单.md")
             _log(base, f"  网络检索完成：{len(materials)} 条素材（引用配额 {web_ref_quota}%）")
     return web_materials, web_materials_text, False
@@ -1186,7 +1198,10 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
                    f"——本次按断点续跑；已完成切片的题目不会重出")
     if seed is None:
         seed = int(meta.get("seed") or 42)
-    random.seed(seed)
+    # 2026-10-16 修复（M-5）：不再 `random.seed(seed)` 污染进程全局 PRNG——
+    # 并发项目/同进程其他用 random 的代码（如 projects.py 造项目种子）曾被静默影响。
+    # 抽样改用本运行的局部实例，可复现性不变、作用域收口。
+    rng = random.Random(seed)
 
     slices = json.loads((base / "slices.json").read_text(encoding="utf-8"))
     textbook_slices = [s for s in slices if s.get("role") == "textbook"]
@@ -1489,7 +1504,7 @@ def _run_project_impl(pid: str, seed: Optional[int] = None,
              "qbank.md / qbank.html")
     if toggles.get("paper", True):
         _substep(base, "rendering", "paper", "押题卷", "running", "抽样+渲染…")
-        paper_qs = _sample_paper(questions, min(PAPER_DEFAULT, len(questions)))
+        paper_qs = _sample_paper(questions, min(PAPER_DEFAULT, len(questions)), rng)
         _save_paper_ids(base, paper_qs)   # ME-7：审核重渲染时防抽样漂移
         _set_progress(base, "rendering", 0, 1, "生成押题卷…",
                       sub="押题卷", sub_done=2, sub_total=5)

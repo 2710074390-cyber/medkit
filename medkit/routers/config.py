@@ -103,7 +103,11 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
                        re.split(r"[,\n;，；]+", body.web_search_trusted_domains or "")
                        if d.strip()]
 
+    # 以已保存配置为底、仅覆盖本端点负责的键（2026-10-16 修复：此前从零重建，
+    # 静默丢弃 vault_dir / run_token_limit 等未列键——保存一次服务商配置，
+    # 错题 vault 目录被重置回默认，界面上错题「消失」）。
     new_cfg = {
+        **saved,
         "provider": body.provider,
         "base_url": base_url,
         "api_key": cfg.encrypt_for_save(api_key),
@@ -121,6 +125,9 @@ def put_config(body: ConfigBody) -> dict[str, Any]:
         "projects_dir": saved.get("projects_dir", cfg.DEFAULTS["projects_dir"]),
         "provider_keys": pkeys,
         "features": saved.get("features", {}),   # IMP-02：前端 PUT 不改 features 节，原样保留
+        # 显式透传（语义强调；{**saved} 已保证不丢，列出以防未来重构再拆）
+        "vault_dir": saved.get("vault_dir", cfg.DEFAULTS.get("vault_dir", "")),
+        "run_token_limit": saved.get("run_token_limit", cfg.DEFAULTS.get("run_token_limit", 0)),
     }
     try:
         cfg.save(new_cfg)

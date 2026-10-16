@@ -692,9 +692,10 @@ function writeAnswer(i,val){{
 }}
 function answersEqual(a,b){{
   if(typeof a!=="string"||typeof b!=="string") return false;
-  // 空白归一化：答案键可能带空格（如"B D "/"B, D"），归一后再排序比较
-  const sa=a.replace(/[\\s,，、]+/g,"").split("").sort().join("");
-  const sb=b.replace(/[\\s,，、]+/g,"").split("").sort().join("");
+  // 空白+大小写归一：答案键可能带空格（如"B D "/"B, D"），且须与 Python
+  // bank.answers_equal 同口径大写（2026-10-16 修复：契约层已统一大写，此处做防御性对齐）
+  const sa=a.toUpperCase().replace(/[\\s,，、]+/g,"").split("").sort().join("");
+  const sb=b.toUpperCase().replace(/[\\s,，、]+/g,"").split("").sort().join("");
   return sa.length>0 && sa===sb;
 }}
 

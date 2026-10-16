@@ -228,11 +228,26 @@ def reparse_bank(bid: str) -> dict[str, Any]:
         raise KeyError("保存的原文为空，无法重解析")
     rows = bank_iq.parse_bank_text(raw, fmt)
     n_attempts = len(list_attempts(bank_id=bid))
+    # 2026-10-16 修复（原子性）：删除与重建收进**同一事务**。此前 DELETE 先单独
+    # 提交、add_items 再开第二个事务——重建中途失败（磁盘满/进程中断）题库被清空
+    # 且未回填；两个事务之间并发读还会看到「空库」窗口。
+    stats, to_write = _prepare_items(bid, rows, "md_import", "new", existing=[])
+    now = _now()
     with dbs.tx(write=True) as cur:
         cur.execute("DELETE FROM bank_items WHERE bank_id=?", (bid,))
         cur.execute("DELETE FROM bank_attempts WHERE bank_id=?", (bid,))
-    stats = add_items(bid, rows, origin="md_import", dedupe="new")
-    save_source(bid, raw, fmt, bank_iq.PARSER_VERSION)   # 记下本次用的解析器版本
+        for rec in to_write:
+            dbs.put_row(cur, "bank_items", rec, _ITEM_COLS)
+        bank = _row_bank(cur, bid)
+        if bank is not None:
+            bank["updated_at"] = now
+            dbs.put_row(cur, "banks", bank, _BANK_COLS)
+        # 记下本次用的解析器版本（同事务，避免库已换血但版本号滞留）
+        dbs.put_row(cur, "bank_sources", {
+            "id": str(bid), "bank_id": str(bid), "fmt": fmt,
+            "parser_version": bank_iq.PARSER_VERSION,
+            "imported_at": now, "raw_text": raw,
+        }, _SRC_COLS)
     return {
         "bank_id": bid, "parsed": len(rows), "items": len(list_items(bid)),
         "added": stats["added"], "skipped": stats["skipped"],
@@ -265,21 +280,16 @@ def get_item(iid: str) -> Optional[dict[str, Any]]:
         cur.close()
 
 
-def add_items(bid: str, items: list[dict[str, Any]], origin: str = "md_import",
-              dedupe: str = "update") -> dict[str, Any]:
-    """批量入题。dedupe ∈ {update, skip, new}（对应 Anki 的重复项三选一）。
+def _prepare_items(bid: str, items: list[dict[str, Any]], origin: str,
+                   dedupe: str, existing: list[dict[str, Any]]
+                   ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """构建待写入记录（纯计算，无库 I/O）。返回 (stats, to_write)。
 
-    单条失败不阻断整批（照 `library.batch_add` 的模式）。返回 {added, updated, skipped, errors}。
+    从 `add_items` 抽出，供 `reparse_bank` 把「删除 + 重建」收进同一事务。
     """
-    ensure_ready()
     from . import bank_iq  # 局部导入：避免 core 内循环依赖（bank_iq 会 import library）
 
     stats: dict[str, Any] = {"added": 0, "updated": 0, "skipped": 0, "errors": []}
-    if not items:
-        return stats
-    if dedupe not in ("update", "skip", "new"):
-        dedupe = "update"
-    existing = list_items(bid)
     by_strict: dict[str, dict[str, Any]] = {}
     by_loose: dict[str, dict[str, Any]] = {}
     for it in existing:
@@ -316,6 +326,23 @@ def add_items(bid: str, items: list[dict[str, Any]], origin: str = "md_import",
         except Exception as e:  # noqa: BLE001  单条失败不阻断整批
             stats["skipped"] += 1
             stats["errors"].append(f"#{i}: {e}")
+    return stats, to_write
+
+
+def add_items(bid: str, items: list[dict[str, Any]], origin: str = "md_import",
+              dedupe: str = "update") -> dict[str, Any]:
+    """批量入题。dedupe ∈ {update, skip, new}（对应 Anki 的重复项三选一）。
+
+    单条失败不阻断整批（照 `library.batch_add` 的模式）。返回 {added, updated, skipped, errors}。
+    """
+    ensure_ready()
+    stats: dict[str, Any] = {"added": 0, "updated": 0, "skipped": 0, "errors": []}
+    if not items:
+        return stats
+    if dedupe not in ("update", "skip", "new"):
+        dedupe = "update"
+    stats, to_write = _prepare_items(bid, items, origin, dedupe, list_items(bid))
+    now = _now()
     if to_write:
         with dbs.tx(write=True) as cur:
             for rec in to_write:

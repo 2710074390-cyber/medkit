@@ -412,3 +412,46 @@ def iter_mistake_files(root: Optional[Path] = None) -> Iterable[Path]:
     for p in sorted(mdir.rglob("*.md")):
         if p.is_file():
             yield p
+
+
+def archive_mistake(rec: dict[str, Any], extra_paths: Iterable[Path] = (),
+                    root: Optional[Path] = None,
+                    include_canonical: bool = True) -> list[Path]:
+    """错题删除联动：**软删**该错题的 vault md——移入 `.trash/<时间戳>/`，不硬删。
+
+    为什么不直接删：md 里可能有用户手写的「我的理解 / 我的疑问」（文件即真相域的
+    用户资产），硬删等于静默丢用户内容；`.trash/` 不在 `iter_mistake_files` 的
+    扫描范围（`mistakes/**`）内，归档后错题本/检索/错题助手都不再看到它。
+    `extra_paths` 用于一并收编索引里登记过的历史路径（题干改动产生的旧 slug 文件）。
+    `include_canonical=False` 时只归档 extra_paths（用于「题干编辑后收编旧文件，
+    保留刚写入的新文件」场景）。
+    返回实际归档的路径列表；单文件失败跳过，不阻断。
+    """
+    base = Path(root) if root else vault_root()
+    if not is_vault(base):
+        return []
+    cands: list[Path] = []
+    seen: set[str] = set()
+    sources = ([mistake_path(rec, base)] if include_canonical else []) + list(extra_paths)
+    for p in sources:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            cands.append(Path(p))
+    ts = re.sub(r"[^0-9]", "", _utcnow())[:14] or "undated"
+    moved: list[Path] = []
+    for p in cands:
+        try:
+            if not p.is_file():
+                continue
+            dest = base / ".trash" / ts / p.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            n = 1
+            while dest.exists():          # 同秒同名冲突：追加序号
+                dest = dest.with_name(f"{p.stem}-{n}{p.suffix}")
+                n += 1
+            p.replace(dest)               # 同一卷内 rename，原子
+            moved.append(dest)
+        except OSError:
+            continue
+    return moved

@@ -27,7 +27,7 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from . import db as dbs
 from . import library as lib
@@ -146,6 +146,37 @@ def _rows(where: str = "", params: tuple = ()) -> list[dict[str, Any]]:
     sql += " ORDER BY created DESC, path ASC"
     with dbs.tx() as cur:
         return [dict(r) for r in cur.execute(sql, params).fetchall()]
+
+
+def paths_of(mid: str) -> list[str]:
+    """按错题 id 反查索引登记的全部 vault 相对路径（错题删除联动用）。
+
+    可能多于一条：题干被编辑过会留下旧 slug 文件（同 id 不同文件名）。
+    库未就绪 / 查询失败 → []（调用方按 best-effort 处理）。
+    **库未建立时不查**：`dbs.tx()` 会凭空建出 medkit.db，把学习库从 JSON 轨翻到
+    SQL 轨（与 `reindex_file` 同款护栏）。
+    """
+    if not Path(dbs.DB_PATH).exists():
+        return []
+    try:
+        return [str(r["path"]) for r in _rows("id = ?", (str(mid),))]
+    except sqlite3.Error:
+        return []
+
+
+def drop_paths(paths: Iterable[str]) -> None:
+    """从索引摘除指定相对路径（文件已归档/删除后调用）。失败静默（下次 rebuild 会收编）。
+    库未建立时同样不碰 DB（见 `paths_of` 的护栏说明）。"""
+    rels = [str(p) for p in (paths or []) if str(p or "").strip()]
+    if not rels or not Path(dbs.DB_PATH).exists():
+        return
+    try:
+        ensure_index()
+        with dbs.tx(write=True) as cur:
+            for rel in rels:
+                cur.execute("DELETE FROM vault_items WHERE path=?", (rel,))
+    except sqlite3.Error:
+        pass
 
 
 def _like_pattern(term: str) -> str:
