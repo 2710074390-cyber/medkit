@@ -66,9 +66,19 @@ def test_gap_paper_no_subject_autopicks_first(page, server_url):
         page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
         page.click('button[data-tab="learn"]')
         page.wait_for_selector("#tab-learn.show", timeout=15000)
+        # 先等概览把科目下拉填充完，再点——固定 sleep 会与「拉 subjects → 重渲染下拉」赛跑，
+        # 慢的 runner（CI ubuntu）上 1.5s 不够 ⇒ 点的时候下拉还是空的，自动选科无从发生。
+        page.wait_for_function(
+            "() => { const s = document.getElementById('dash_subject');"
+            " return !!s && Array.from(s.options).some(o => o.value); }",
+            timeout=20000)
         page.locator("#btn_gap_paper").wait_for(state="visible", timeout=15000)
         page.click("#btn_gap_paper")
-        page.wait_for_timeout(1500)
+        # 自动选科落地（#dash_subject 由空变成本科目）后再断言，不赌时间
+        page.wait_for_function(
+            "() => { const s = document.getElementById('dash_subject');"
+            " return !!s && s.value !== ''; }",
+            timeout=20000)
         assert "请先在上方选择科目范围" not in page.locator("#toasts").inner_text()
         sel_value = page.evaluate("() => document.getElementById('dash_subject').value")
         assert sel_value == "儿科学", f"应自动选中第一个可选科目，实得 {sel_value!r}"
