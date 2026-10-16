@@ -94,6 +94,14 @@ async def _lifespan(_app: FastAPI):
         dbs.import_from_json()
     except Exception as e:  # noqa: BLE001  迁移/补导失败 → 退回 JSON 轨，不阻断启动
         errs.record("main._lifespan", "启动建库/补导失败（本次回落 JSON 轨）", e=e)
+    # 错题本（vault）与旧库一次性对齐：把用户已有的错题补写成 md 文件，免去手动「导入/迁移」。
+    # 只做一次（`.medkit-vault-migrated` 标记）——之后判错回流走 `library._mirror_to_vault`
+    # 实时入库；否则用户手删的错题会在每次启动复活。
+    try:
+        from .core import vault_index
+        vault_index.reconcile_from_library()
+    except Exception as e:  # noqa: BLE001  补写失败不阻断启动（下次启动重试）
+        errs.record("main._lifespan", "错题本一次性补写失败（不阻断启动）", e=e)
     # B34：启动时恢复 OCR 任务记录（jobs.json）并清理无记录的孤儿 tmp 文件
     try:
         from .routers.ocr import restore_ocr_persistence

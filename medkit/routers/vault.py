@@ -4,10 +4,13 @@
 
 - `/api/vault/status|init|rebuild` —— 目录管理
 - `/api/vault/mistakes` —— 列表（读索引）
+- `/api/vault/mistakes/{path}/download` —— **下载一条错题的原始 md**（attachment）
+- `/api/vault/export` —— 合并导出全部错题为一个 md（attachment）
 - `/api/vault/stats` —— 薄弱项（纯本地计算，零 LLM）
 - `/api/vault/mistakes/{path}/section` —— **唯一写回入口**（用户确认后才调）
 - `/api/vault/import-from-library` —— 从旧错题本一键导出为 md
-- `/api/vault/ask` —— Agent 问答（SSE 流式）
+- `/api/vault/ask` —— Agent 问答（SSE 流式，支持多轮 history）
+- `/api/vault/handbook` —— 按科目生成「薄弱点复习手册」（LLM，可缺席）
 
 ## 红线
 
@@ -18,16 +21,32 @@
 from __future__ import annotations
 
 import json
+import threading
+from datetime import date
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from ..agents.mistake_agent import ask as _agent_ask
+from ..agents.mistake_agent import handbook as _agent_handbook
 from ..core import library as lib
 from ..core import vault, vault_index
 
 router = APIRouter(tags=["vault"])
+
+
+def _attachment(name: str) -> str:
+    """`Content-Disposition` 值：中文名走 RFC 5987 `filename*`（ASCII 兜底名另给）。
+
+    只写 `filename="中文.md"` 时，各浏览器对非 ASCII 的处理不一致（有的乱码、有的丢名），
+    故统一补一个 `filename*=UTF-8''…`。
+    """
+    ascii_fallback = "".join(ch if ch.isascii() and ch not in '"\\' else "_" for ch in name) or "download.md"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(name)}"
+
 
 
 def _safe_vault_rel(rel: str) -> str:
@@ -93,6 +112,47 @@ def mistakes(subject: str = "", status: str = "", q: str = "",
 @router.get("/api/vault/stats")
 def stats(subject: str = "") -> dict[str, Any]:
     return vault_index.stats(subject=subject)
+
+
+# ------------------------------------------------------------------ 下载（原始 md）
+@router.get("/api/vault/mistakes/{path:path}/download")
+def download_mistake(path: str) -> FileResponse:
+    """下载**一条错题的原始 markdown**（真身文件，逐字节原样）。
+
+    为什么必须是「原始文件」而不是重新序列化：错题文件是真身、用户可以手改，
+    重新序列化会把用户的排版/注释按本程序的格式重写一遍——那等于悄悄改了用户的东西。
+    """
+    rel = _safe_vault_rel(path)
+    f = vault.vault_root() / rel
+    if not f.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在（可能已删）")
+    return FileResponse(f, media_type="text/markdown; charset=utf-8", filename=Path(rel).name)
+
+
+@router.get("/api/vault/export")
+def export_all(subject: str = "") -> Response:
+    """把错题**合并导出为一个 md**（每题原文之间用 `---` 分隔），便于打印 / 发给同学。
+
+    同样读**原始文件字节**（不做重序列化），只是拼在一起。
+    """
+    items = vault_index.list_items(subject=subject)
+    chunks: list[str] = []
+    for it in items:
+        rel = str(it.get("path") or "")
+        if not rel:
+            continue
+        try:
+            f = vault.vault_root() / rel
+            if not f.is_file():
+                continue
+            chunks.append(f.read_text(encoding="utf-8", errors="replace").rstrip())
+        except OSError:
+            continue                      # 单文件读失败只跳过它，不整包失败
+    head = f"# MedKit 错题导出（{subject or '全部科目'}）\n\n共 {len(chunks)} 条 · 导出日期 {date.today().isoformat()}\n"
+    body = head + "\n\n---\n\n" + "\n\n---\n\n".join(chunks) + "\n" if chunks else head + "\n（没有可导出的错题）\n"
+    name = f"MedKit错题导出_{subject or '全部科目'}_{date.today().isoformat()}.md"
+    return Response(content=body, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": _attachment(name)})
 
 
 # ------------------------------------------------------------------ 写回（用户确认后）
@@ -183,18 +243,60 @@ def review_grade(path: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 # ------------------------------------------------------------------ Agent 问答
 @router.post("/api/vault/ask")
 async def ask(body: dict[str, Any] = Body(...)) -> StreamingResponse:
+    """错题助手（SSE）：`stage` / `delta`（**逐字流式**）/ `result` / `error`，以 `[DONE]` 收尾。
+
+    `cancel`（`threading.Event`）在**流结束、出错、或客户端断连**（Starlette 关闭生成器 ⇒
+    `GeneratorExit`）时一律置位——`LLMClient.chat_stream` 见位即截断 provider 流，
+    所以用户点「停止生成」/关页面之后**不会继续烧 token**（口径与已删的讲解/提问域一致）。
+    """
     question = str(body.get("question") or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="question 不能为空")
     scope = str(body.get("scope") or "").strip()
     path = _safe_vault_rel(str(body.get("path") or "")) if body.get("path") else ""
+    raw_hist = body.get("history")
+    history: list[dict[str, Any]] = []
+    if isinstance(raw_hist, list):
+        for h in raw_hist[-8:]:                      # 只带最近 8 条，避免上下文无限膨胀
+            if isinstance(h, dict) and str(h.get("content") or "").strip():
+                history.append({"role": str(h.get("role") or "user"),
+                                "content": str(h.get("content"))[:4000]})
+    cancel = threading.Event()
 
     async def gen():
         try:
-            async for ev in _agent_ask(question, scope=scope, path=path):
+            async for ev in _agent_ask(question, scope=scope, path=path,
+                                       history=history, cancel=cancel):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001  工具失败必须让用户看见，不得静默
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            cancel.set()
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ------------------------------------------------------------------ 薄弱点复习手册
+@router.post("/api/vault/handbook")
+async def handbook(body: dict[str, Any] = Body(default_factory=dict)) -> StreamingResponse:
+    """按科目生成「薄弱点复习手册」（SSE 流式，Markdown 正文）。
+
+    **依据只有用户自己的 vault**（薄弱项分组 + 错题条目原文）；没有 API Key / 没有错题时
+    都给出明确原因，不返回半成品。空错题库**不调模型**（直接给说明）。
+    """
+    subject = str(body.get("subject") or "").strip()
+    cancel = threading.Event()
+
+    async def gen():
+        try:
+            async for ev in _agent_handbook(subject, cancel=cancel):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except Exception as e:  # noqa: BLE001  模型/网络异常必须让用户看见原因
+            yield f"data: {json.dumps({'type': 'error', 'message': f'手册生成失败：{e}'}, ensure_ascii=False)}\n\n"
+        finally:
+            cancel.set()
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+

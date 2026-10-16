@@ -43,14 +43,10 @@ function showLearnView(name) {
     v.classList.toggle("show", v.id === "lv-" + name);
   });
   if (name === "syllabus") sylLoad();
-  // P-E（奥卡姆精简第二轮）：「本地错题」并入「错题本」一个 pill。`vault` 名字仍被接受
-  // （旧书签 / 历史 hash / sessionStorage 记忆），落到同一视图的「本地文件」pane。
-  if (name === "vault") {
-    if (typeof mistakeView === "function") mistakeView("vault");
+  // 「本地错题」已并入「错题本」一个 pill；`vault` 名字仍被接受（旧书签 / 历史 hash /
+  // sessionStorage 记忆），落到同一视图。切到本视图时拉起聊天与错题列表数据。
+  if (name === "vault" || name === "mistakes") {
     if (typeof window.vaultView === "function") window.vaultView();
-  } else if (name === "mistakes") {
-    // 回到错题本：无参调用 → mistakeView 内部读 `_mvCur`（默认本地文件），不重置成旧库
-    if (typeof mistakeView === "function") mistakeView();
   }
   try { sessionStorage.setItem("medkit-learn-view", name); } catch (e) { /* ignore */ }
 }
@@ -59,7 +55,8 @@ document.querySelectorAll("#learnnav button").forEach(b => {
 });
 /* IMP-12①：学习中心子导航 Alt+1..3 直达。
    2026-10-15 奥卡姆精简第二轮：T2 移除讲解产物与提问学习；P-E 把「本地错题」并入
-   「错题本」（视图内二级切换，见 mistakeView）→ 3 个 pill。 */
+   「错题本」（视图内二级切换）→ 3 个 pill。
+   2026-10-16 第三轮：错题本的二级切换也删了，该视图以聊天为唯一主界面。 */
 const LEARN_ALT_KEYS = ["overview", "mistakes", "syllabus"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）

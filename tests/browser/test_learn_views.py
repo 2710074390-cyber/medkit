@@ -15,7 +15,9 @@ commit 7555b77 修复；本文件同时断言 aria-selected 与可见性双重�
 from __future__ import annotations
 
 # 2026-10-15（奥卡姆精简第二轮）：T2 删掉讲解产物与提问学习两视图；P-E 把「本地错题」
-# 并入「错题本」（视图内 `#mv_tabs` 二级切换）⇒ learn 族只剩 3 个 pill。
+# 并入「错题本」⇒ learn 族只剩 3 个 pill。
+# 2026-10-16（第三轮）：「错题本」内的 `#mv_tabs` 二级切换与导入导出入口也删掉了，
+# 该视图以聊天为唯一主界面。
 # 函数名 six_views 是历史遗留（更早一版只有 5 个），清单才是判据来源。
 VIEWS = ["overview", "mistakes", "syllabus"]
 
@@ -109,7 +111,6 @@ def test_learn_views_shortcut_keys(page, server_url):
     assert page.locator("#lv-syllabus").is_visible()
     page.keyboard.press("Alt+2")
     assert page.locator("#lv-mistakes").is_visible(), "Alt+2 应切到错题本"
-    assert page.locator("#mv_tabs").is_visible(), "错题本内应有来源切换（P-E 合并入口）"
     page.keyboard.press("Alt+1")
     assert page.locator("#lv-overview").is_visible()
     # ←/→：聚焦当前 pill（overview）→ 右键 → mistakes

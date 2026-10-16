@@ -480,6 +480,22 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{int(time.time() * 1000)}_{next(_ID_SEQ)}"
 
 
+def _mirror_to_vault(record: dict[str, Any] | None) -> None:
+    """把一条库内错题**自动补写**进 vault（本地 md 真身），让「错题本」无需导入/导出即可看到。
+
+    best-effort：文件层任何异常都不上抛——库记录已落库，下次启动 `reconcile` 会补齐。
+    延迟 import 是为了避开 `vault_index → library` 的模块级循环依赖。
+    """
+    if not record:
+        return
+    with errs.swallow("VAULT_MIRROR", "错题补写进 vault 失败（下次启动 reconcile 会补齐）"):
+        from . import vault as _vault
+        from . import vault_index as _vi
+        path = _vault.mirror_record(record)
+        if path is not None:
+            _vi.reindex_file(path)
+
+
 def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
     """新增一条错题并派生/更新知识点。返回落库后的错题记录。
 
@@ -532,6 +548,8 @@ def add_mistake(data: dict[str, Any]) -> dict[str, Any]:
         st["dirty"]["mistakes"] = True
         _mark_m_row(st, record)   # 单行增量写（新增或同 id 覆盖，均为一行）
         _touch_knowledge_in(st, record)
+    # 错题自动流入「错题本」（vault 的本地 md 真身）——用户不必导入/导出/迁移。
+    _mirror_to_vault(record)
     # D-25：入库错题事件（ACTIVITY_EVENTS['mistake'] 已有定义但此前无写入方）
     log_knowledge_events(_kp_key(record), "mistake", note=f"错题 {record.get('id')} 入库")
     return record
@@ -706,6 +724,7 @@ def update_mistake(mid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
         st["dirty"]["mistakes"] = True
         _mark_m_row(st, cur)
         _touch_knowledge_in(st, cur)
+    _mirror_to_vault(cur)      # 状态/字段变更同步回 vault 文件
     return cur
 
 
@@ -884,6 +903,7 @@ def mark_learned(mid: str, learned: bool = True) -> Optional[dict[str, Any]]:
         cur["learned"] = bool(learned)
         st["dirty"]["mistakes"] = True
         _mark_m_row(st, cur)   # 单行增量写（仅翻转 learned 一个字段）
+    _mirror_to_vault(cur)      # 「重练答对 → 已掌握」同步回 vault 文件状态
     return cur
 
 

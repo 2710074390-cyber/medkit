@@ -278,24 +278,6 @@ try {
       <div class="hint" id="ws_test_result"></div>
     </div>
 
-    <h2 class="subh"><svg class="ic"><use href="#i-doc"></use></svg>本地错题（vault）</h2>
-    <p class="psub">错题 = 你自己文件夹里的 markdown · 可同步、可手改、可拷走</p>
-    <div class="card">
-      <h2>错题文件夹</h2>
-      <div class="hint" style="margin-bottom:8px">
-        空 = 用默认目录 <code>~/文档/MedKit错题本/</code>（建议，你会同步它）。改成任意路径即可指向已有文件夹。
-      </div>
-      <div class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
-        <div style="flex:2;min-width:240px"><label>vault 目录</label>
-          <input type="text" id="vault_dir" placeholder="（空 = 默认 ~/文档/MedKit错题本/）"></div>
-        <div style="flex:none;align-self:flex-end">
-          <button class="act gray" onclick="vaultSaveDir()">保存目录</button>
-          <button class="act gray" onclick="vaultRebuild()">重建索引</button>
-        </div>
-      </div>
-      <div class="hint" id="vault_dir_status" style="margin-top:8px"></div>
-    </div>
-
     <h2 class="subh"><svg class="ic"><use href="#i-doc"></use></svg>提示词与规则</h2>
     <p class="psub">查看出题管线使用的全部提示词与门禁规则，可编辑影子副本</p>
     <div class="card">
@@ -521,7 +503,7 @@ try {
   <!-- ④ 学习中心（v0.7 M1/M2：错题本 + 掌握度诊断） -->
   <section id="tab-learn" class="panel">
     <h1 class="ptitle"><svg class="ic"><use href="#i-learn"></use></svg>学习中心</h1>
-    <p class="psub">错题沉淀 → 掌握度诊断 → 待学优先级 → 教材讲解 → 提问式学习 · 数据存于本机 ~/.medkit/library/</p>
+    <p class="psub">错题、诊断、薄弱点组卷与提问——数据和 AI 都在本机</p>
 
     <!-- v0.8.1 子导航：一屏一任务（概览/错题本/讲解产物/提问学习/大纲覆盖；复习计划已迁入「刷题」） -->
     <nav class="learnnav" id="learnnav" role="tablist" aria-label="学习中心分栏">
@@ -554,36 +536,35 @@ try {
       <h3 style="margin-top:18px;font-size:13.5px;color:var(--text)">接下来重点学什么</h3>
       <div id="learn_reco"><div class="hint">暂无薄弱点</div></div>
       <div class="row" style="margin-top:16px;flex-wrap:wrap;align-items:center">
-        <div class="hint" style="flex:1;min-width:220px">按薄弱点配题（单知识点 ≤3 题）→ 复用本科目教材/教师重点生成「薄弱点专项」卷；判错自动回流错题本。</div>
+        <div class="hint" style="flex:1;min-width:220px">按薄弱点自动配题，判错自动进错题本。</div>
         <button class="act" id="btn_gap_paper" onclick="gapPaper()">⚡ 一键刷薄弱组卷</button>
       </div>
     </div>
   </div>
 
-  <!-- 视图 2/4：错题本（新增/导入 + 列表） -->
+  <!-- 视图 2/3：错题本（聊天优先 + 新建 / 列表 / 薄弱项 / 今日复习） -->
   <div class="learnview" id="lv-mistakes">
-      <!-- P-E（奥卡姆精简第二轮）：错题入口合并 —— 「本地错题」并入「错题本」，
-           同一概念只有一个家：本地文件为真身，旧库（DB）是它的一个视图。 -->
-      <div class="mv-tabs" id="mv_tabs" role="tablist" aria-label="错题来源">
-        <button class="mv-tab on" data-mv="vault" role="tab" aria-selected="true" onclick="mistakeView('vault')">
-          本地文件（真身）</button>
-        <button class="mv-tab" data-mv="lib" role="tab" aria-selected="false" onclick="mistakeView('lib')">旧库（导入/扫描）</button>
+    <!-- 错题助手：本视图的主界面 —— 一屏搞定「问错题 + 看错题」 -->
+    <div class="card" style="margin-top:14px">
+      <div class="cardh"><h2>错题助手</h2>
+        <span class="hint">只依据你的错题本作答</span>
+        <button class="mini-btn" id="btn_vault_chat_clear" onclick="vaultChatClear()">清空对话</button>
       </div>
-      <div class="mvpane" id="mv-vault">
-      <div class="card" style="margin-top:14px">
-        <div class="cardh"><h2>本地错题（vault）</h2><span class="hint" id="vault_root_hint"></span></div>
-        <div class="hint" style="margin-bottom:10px">
-          错题就是<b>你这个文件夹里的 markdown 文件</b>，一道一文件——不装 MedKit 也能读，
-          可以丢进坚果云 / OneDrive / Git。<b>随便改</b>：在任何编辑器里改完，点「重建索引」即刻生效。
-          Agent 只是可选的增强层，没配 API Key 也不影响任何功能。
-        </div>
-        <div class="btns" style="flex-wrap:wrap">
-          <button class="act gray" id="btn_vault_init" onclick="vaultInit()">选择 / 创建文件夹</button>
-          <button class="act gray" id="btn_vault_rebuild" onclick="vaultRebuild()">重建索引</button>
-          <button class="act gray" id="btn_vault_migrate" onclick="vaultMigrate()">从旧错题本一键迁移</button>
-        </div>
-        <div class="hint" id="vault_status" style="margin-top:8px"><span class="spin"></span>读取中…</div>
+      <div class="chat-quick" id="vault_chat_quick"></div>
+      <div class="chat-box" id="vault_chat" aria-live="polite" aria-label="与错题助手的对话"></div>
+      <div class="chat-input">
+        <textarea id="vault_ask_q" rows="1" placeholder="输入问题…（Enter 发送 / Shift+Enter 换行）"
+          onkeydown="vaultChatKey(event)"></textarea>
+        <button class="act" id="btn_vault_ask_global" onclick="vaultAskGlobal()">发送</button>
       </div>
+      <div class="btns" style="margin-top:10px;flex-wrap:wrap">
+        <select id="vault_hb_subject" style="max-width:220px" title="按科目生成复习手册">
+          <option value="">全部科目</option>
+        </select>
+        <button class="act gray" id="btn_vault_handbook" onclick="vaultHandbook()">生成复习手册</button>
+        <span class="hint" id="vault_handbook_meta" style="align-self:center"></span>
+      </div>
+    </div>
 
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>新建错题</h2>
@@ -591,16 +572,16 @@ try {
           <button class="act gray" id="btn_vault_new_toggle" onclick="vaultNewToggle()">展开 / 收起</button>
         </div>
         <div id="vault_new_form" style="display:none">
-          <div class="row" style="gap:8px;flex-wrap:wrap">
-            <input type="text" id="nt_sub" placeholder="科目（可空）" style="flex:1;min-width:110px">
-            <input type="text" id="nt_ch" placeholder="章节（可空）" style="flex:1;min-width:110px">
-            <input type="text" id="nt_tp" placeholder="主题（可空）" style="flex:1;min-width:110px">
-          </div>
-          <label style="margin-top:8px">题干（唯一必填）</label>
+          <label>题干（唯一必填）</label>
           <textarea id="nt_q" rows="3" placeholder="例如：慢阻肺最主要的病因是"></textarea>
           <input type="file" id="nt_photo" accept="image/*" style="display:none" onchange="vaultPhotoPick(this)">
           <div class="btns" style="margin-top:6px">
             <button class="act gray" id="btn_nt_photo" onclick="vaultPickPhoto()">拍题（图片 OCR，需 MinerU Key）</button>
+          </div>
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+            <input type="text" id="nt_sub" placeholder="科目（可空）" style="flex:1;min-width:110px">
+            <input type="text" id="nt_ch" placeholder="章节（可空）" style="flex:1;min-width:110px">
+            <input type="text" id="nt_tp" placeholder="主题（可空）" style="flex:1;min-width:110px">
           </div>
           <label style="margin-top:8px">选项（每行一个，可空）</label>
           <textarea id="nt_opts" rows="3" placeholder="A. 吸烟&#10;B. 感染"></textarea>
@@ -620,32 +601,24 @@ try {
       </div>
 
       <div class="card" style="margin-top:14px">
-        <div class="cardh"><h2>薄弱项</h2><span class="hint">按优先级排序 · 纯本地计算，不调模型</span></div>
+        <div class="cardh"><h2>薄弱项</h2><span class="hint">按优先级排序</span></div>
         <div id="vault_stats"><div class="hint"><span class="spin"></span>计算中…</div></div>
       </div>
 
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>今日复习</h2>
-          <span class="hint" id="vault_due_meta">SM-2 排程 · 纯本地，不调模型</span>
+          <span class="hint" id="vault_due_meta">SM-2 排程</span>
         </div>
         <div id="vault_due"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
 
       <div class="card" style="margin-top:14px">
-        <div class="cardh"><h2>问错题助手</h2><span class="hint">只依据你这个文件夹作答 · 答不出就说不知道</span></div>
-        <div class="row" style="gap:8px">
-          <input type="text" id="vault_ask_q" style="flex:2"
-                 placeholder="例如：我最近哪个章节最弱？这几道题错得有什么共性？"
-                 onkeydown="if(event.key==='Enter'){vaultAskGlobal();}">
-          <button class="act" id="btn_vault_ask_global" onclick="vaultAskGlobal()">问</button>
-        </div>
-        <div id="vault_ask_out" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
-      </div>
-
-      <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>错题</h2>
           <span class="hint" id="vault_list_meta"></span>
+          <button class="mini-btn" id="btn_vault_rebuild" onclick="vaultRebuild()"
+            title="扫描错题文件夹，重建索引">重建索引</button>
         </div>
+        <div class="hint" id="vault_status" style="margin-bottom:8px"><span class="spin"></span>读取中…</div>
         <div class="row" id="vault_filter_row" style="display:none;gap:8px;margin-bottom:8px;align-items:center">
           <span class="hint" id="vault_filter_bar"></span>
           <button class="act gray" id="btn_vault_filter_clear" onclick="vaultFilterClear()">清除筛选</button>
@@ -662,57 +635,14 @@ try {
       </div>
 
       <div class="card" id="vault_detail" style="display:none;margin-top:14px"></div>
-      </div>
-      <div class="mvpane" id="mv-lib" style="display:none">
-    <div class="card" style="margin-top:14px">
-      <div class="cardh"><h2>新增错题</h2></div>
-        <div class="hint" style="margin-bottom:8px">拍题 / 粘贴题干选项答案，自动拆成结构化错题并计入掌握度。</div>
-        <textarea id="mk_text" rows="4" placeholder="粘贴错题文本…&#10;例：题干&#10;A. …&#10;B. …&#10;答案：B&#10;解析：…"></textarea>
-        <div class="row" style="margin-top:10px">
-          <div style="flex:1.4"><label>知识点标签</label><input type="text" id="mk_tag" placeholder="如：支气管肺炎首选治疗（留空则用章节）"></div>
-          <div style="flex:1"><label>章节 / 主题（可选）</label><input type="text" id="mk_chapter" placeholder="如：儿科·呼吸系统"></div>
-        </div>
-        <div class="btns" style="margin-top:12px">
-          <button class="act" id="btn_mk_add" onclick="addMistakeRaw()">入库错题</button>
-          <button class="act gray" id="btn_mk_photo" onclick="mkPhotoPick()">拍题(图片 OCR)</button>
-          <button class="act gray" id="btn_mk_batch" onclick="mkBatchPick()">批量导入(文件)</button>
-          <button class="act gray" id="btn_mk_site" onclick="mkSiteImport()">站点数据(JSON)</button>
-          <input type="file" id="mk_json" accept=".json,.csv,.md,.txt" style="display:none" onchange="mkBatchFile(this)">
-          <input type="file" id="mk_photo" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp" style="display:none" onchange="mkPhotoFile(this)">
-          <input type="file" id="mk_site_file" accept=".json,.csv" style="display:none" onchange="mkSiteFile(this)">
-        </div>
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:20px">
-          <h2 style="margin:0">错题本<span class="hint" id="learn_mk_scope" style="margin-left:8px"></span></h2>
-          <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
-            <label style="font-size:12px">科目</label>
-            <select id="mk_subject" onchange="mkScopeChange(this.value)"><option value="">全部科目</option></select>
-            <button class="mini-btn" onclick="subjectMgrOpen()" title="按科目查看/删除本地数据（先备份再删）">科目管理</button>
-            <span class="hint" id="learn_mk_count"></span>
-          </span>
-        </div>
-        <label class="chk" style="margin:4px 0 8px"><input type="checkbox" id="mk_filter_unlearned" onchange="renderLibraryCurrent()"> 只看未掌握（隐藏已归档「已掌握」错题）</label>
-        <div class="mk-bar" id="mk_bar" style="display:none">
-          <button class="mini-btn" id="btn_mk_all" onclick="mkToggleAllVisible()">全选可见</button>
-          <button class="mini-btn" onclick="mkInvert()">反选</button>
-          <button class="mini-btn" onclick="mkClearSel()">清空</button>
-          <span class="hint" id="mk_sel_count">已选 0</span>
-          <button class="mini-btn danger" id="btn_mk_batch_del" onclick="mkBatchDel()">批量删除</button>
-          <button class="mini-btn" onclick="mkBatchLearn(true)">标记已掌握</button>
-          <button class="mini-btn" onclick="mkBatchExport('json')">导出 JSON</button>
-          <button class="mini-btn" onclick="mkBatchExport('md')">导出 MD</button>
-        </div>
-        <div id="learn_mk"><div class="hint"><span class="spin"></span>加载中…</div></div>
-      </div>
-      </div>
-
-    </div>
+  </div>
 
 
     <!-- 视图 3/4：大纲管理（WP-01/WP-10 考试锚定：教师重点为主 · 官方306补充） -->
     <div class="learnview" id="lv-syllabus">
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>大纲管理</h2><span class="hint" id="syl_meta"></span></div>
-        <div class="hint" style="margin-bottom:10px">大纲管理：<b>教师重点 = 主要依据</b>（出题主线）；<b>官方 306 = 补充大纲</b>（可选导入）。条目与你的错题/掌握度实时对齐（覆盖 = 该考点条目已被错题/掌握度标签命中，非「出过题」）；条目可粘贴导入（本地解析零 LLM），缺什么补什么。</div>
+        <div class="hint" style="margin-bottom:10px"><b>教师重点</b>为主、<b>官方 306</b> 补充。条目与你的错题、掌握度实时对齐，可粘贴导入（本地解析）。</div>
         <div class="row" style="margin-top:8px;flex-wrap:wrap;align-items:center">
           <div class="css-pills" id="syl_std" role="tablist" aria-label="数据标准">
             <button class="css-pill on" data-std="teacher" role="tab" aria-selected="true">教师重点（主要依据）</button>
@@ -734,7 +664,7 @@ try {
         <div id="syl_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
       <div class="card" id="syl_paste_card" style="margin-top:14px;display:none">
-        <div class="cardh"><h2>粘贴大纲解析</h2><span class="hint">章一行（一、xx / 第x章 xx）+ 条目一行（1、xx），先解析预览再确认；教师重点文件（PDF文本层/DOCX/MD/TXT）可上传自动解析入库；官方大纲 md/txt 一键导入（LLM 契约抽取，source=seed）</span></div>
+        <div class="cardh"><h2>粘贴大纲解析</h2><span class="hint">章一行、条目一行，先解析预览再确认；也可上传教师重点文件或官方大纲</span></div>
         <textarea id="syl_paste_text" rows="5" placeholder="例：&#10;一、绪论&#10;1、生理学的任务和研究手段&#10;2、机体的内环境和稳态&#10;二、细胞的基本功能&#10;1、物质跨细胞膜转运方式"></textarea>
         <div class="btns" style="margin-top:10px">
           <button class="act" onclick="sylParse()">解析预览</button>
@@ -749,7 +679,7 @@ try {
       </div>
       <div class="card" id="rex_card" style="margin-top:14px">
         <div class="cardh"><h2>真题考频（自备真题 · 人工确认门）</h2><span class="hint" id="rex_meta"></span></div>
-        <div class="hint" style="margin-bottom:8px">粘贴/上传你的自备真题文本（如 GoldenSet 真题、题库 md）→ 本地按「大纲条目」词典统计考点命中频次 → <b>确认后进入权重</b>（未确认不参与任何推荐）。红线：只用频次，不展示真题原文。</div>
+        <div class="hint" style="margin-bottom:8px">粘贴自备真题，本地统计考点频次；<b>确认后计入权重</b>。仅用频次，不展示原文。</div>
         <textarea id="rex_text" rows="4" placeholder="粘贴真题题干文本（每题一行或一段；例如从 真题上册.md 复制 20~200 题）…"></textarea>
         <div class="btns" style="margin-top:8px">
           <button class="act" onclick="rexAnalyze()">分析频次</button>
@@ -806,6 +736,7 @@ try {
 <script src="/assets/js/learn.js"></script>
 <script src="/assets/js/learn-study.js"></script>
 <script src="/assets/js/learn-vault.js"></script>
+<script src="/assets/js/learn-vault-chat.js"></script>
 <script src="/assets/js/review-desk.js"></script>
 <script src="/assets/js/review-desk-materials.js"></script>
 <script src="/assets/js/review-desk-project.js"></script>

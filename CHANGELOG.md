@@ -10,6 +10,95 @@
 
 > 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+## [0.18.0] - 2026-10-16
+
+> 主题：**刷题闭环补完 + 错题助手聊天化 + 错题本收敛为「一个大聊天界面」**。
+> 全部改动由用户实测反馈驱动：刷题时「看不到下一题」、本地错题「下载不出来」、
+> 点按钮「要刷新浏览器才有反应」、**「错题做了之后没有自动流入错题本」、
+> 「到处是过度解释、还要用户到处导入导出」**。每一条都定位到**根因**（不是加个按钮了事），
+> 并补了可证伪的守卫。
+> 真身：单元 **1094 passed / 2 skipped** · 浏览器 **55** · 总 **1149** · API 端点 129→**132** · mypy 源文件 **73** · 覆盖率 **84.42%**。
+
+### Added
+
+- **错题助手改聊天框式（真·流式）**：新增前端片 `medkit/web/js/learn-vault-chat.js`（learn 族第 4 片）
+  与 `routers/vault.py` 的 SSE。逐字 `delta` 流式（`LLMClient.chat_stream` + **部分 JSON 解析**
+  `_partial_answer`：边收边解 `answer` 字段）、**「■ 停止生成」**（`AbortController` +
+  服务端 `threading.Event` ⇒ 真截断 provider 流，不在后台烧 token）、**「↻ 重新生成」**、
+  **贴底才自动滚动**、会话存 `sessionStorage`、取证工具链可见（`取证：search_my_mistakes → …`）。
+  四条硬约束不变（带引用 / 无依据必须说不知道 / 编造引用剔除 / 工具失败显性）。
+- **薄弱点复习手册**：`POST /api/vault/handbook`（SSE 流式 Markdown）+ `prompts/vault_handbook.md`。
+  依据只有用户自己的 vault（薄弱项分组 + 错题条目原文，含用户写的「我的理解/疑问」）；
+  **空错题库不调模型**（直接给说明）。
+- **本地错题可下载**：`GET /api/vault/mistakes/{path}/download`（单条**原始 md**）、
+  `GET /api/vault/export`（按科目合并导出）。两者读**原始文件字节**、不重序列化——
+  错题文件是真身，用户手改的排版不能被程序重写。前端：列表行 ⇩ / 详情按钮 / 错题卡「⇩ 导出全部」。
+- **刷题「下一题」常驻 + 答对自动跳题**：`#btn_bank_next` 常驻（文案随状态变「下一题 →／查看结果 →」）；
+  判**对**后 3 秒倒计时自动进下一题（可见 + 可「取消」）。判错 / 背题模式 / 最后一题**不**自动跳。
+- `LLMClient.chat_stream(..., json_mode=)`：与 `chat()` **同口径**的 `response_format` 支持
+  （此前流式路径没有这个参数位 ⇒「流式 + JSON 模式」只能退回非流式）。
+- **判错自动流入错题本（零动作）**：`library._mirror_to_vault` 在 `add_mistake` / `update_mistake` /
+  `mark_learned` 落库后自动把该错题补写成 vault 的 md（`core/vault.py::mirror_record` +
+  `core/vault_index.py::reindex_file`）。用户不再需要任何「迁移 / 导入 / 导出」动作。
+- **启动一次性补写旧库错题**：`core/vault_index.py::reconcile_from_library` 在 lifespan 把
+  `library.mistakes` 里 vault 尚无的记录补写成 md（写 `.medkit-vault-migrated` 标记，
+  **只做一次**——否则用户手删的错题会在每次启动复活成幽灵条目），并因此删掉了「一键迁移」按钮。
+
+### Fixed
+
+- **判分后操作栏不刷新**（用户反馈：「只有上一题、跳过、收藏和笔记，没有下一题」）：
+  操作栏原先内联在 `bankDrillRender()` 里，而判分走 `_bankShowResult()`（**不重渲染整块**，
+  免得丢掉刚展开的解析）⇒ 按钮文案停在「跳过」。现抽 `_bankActionsHTML()` + 容器 `#bank_actions`，
+  判分后就地重刷。
+- **进入「错题本」时本地文件面板从不加载**（用户反馈：「点了没反应，要刷新浏览器才有反应」）：
+  P-E 把「本地错题」并成错题本里的 pane 之后，加载数据的 `window.vaultView()` 只剩
+  `showLearnView("vault")` 一条调用路径，而合并后走的是 `showLearnView("mistakes")`。
+  现把加载挂到**切 pane 的唯一入口** `mistakeView()`，并加 `initVaultPane()` 兜底
+  「脚本加载期切视图」那条路径（那时后加载的片还没求值，`window.X` 是 undefined）。
+- **题库变更后「快捷开始」与题库下拉不刷新**：`loadBankHome()` 与 `loadDoEntry()` 是两块独立渲染，
+  8 处变更点（导入 / 新建 / 重命名 / 删除 / 重解析 / 从项目导入 / 手动加题 / 删题）只刷了前者。
+  新增 `refreshBankSurfaces(keepDrill)` 统一替换。
+- **错题做了之后不进错题本**（用户反馈）：判错原先只写库内 `mistakes`（旧库），而「错题本」默认
+  展示的是 vault 本地文件 ⇒ 用户看到的错题本是空的。现判错即补写 vault（见上 `### Added`），
+  且启动时把存量一次性补齐。
+
+### Changed
+
+- **「错题本」收敛为「一个大聊天界面」**：删掉 `#mv_tabs` 二级切换与整个「旧库（导入/扫描）」面板，
+  聊天区 `#vault_chat` 升为**本视图唯一主界面**（空态一句话引导 + 4 条快捷提问，
+  `.chat-box` 随视口放大到 `min-height:280px` / `max-height:min(64vh,720px)`）；
+  新建错题表单把「题干（唯一必填）」提到首位。薄弱项 / 今日复习 / 错题列表降为次要区块。
+- **错题本存储路径固定**：删掉「我的 → 本地错题（vault）」目录设置卡片与 `window.prompt` 选路径；
+  错题本固定用默认目录（`~/文档/MedKit错题本/`），首次写入时自动创建。后端 `/api/vault/init`
+  等接口保留（测试/高级用途仍可编程换根）。
+- **学习中心文案精简**：各视图 `.psub` / `.hint` 去掉「为什么这么设计」式的长段解释，改为短标签。
+- `learn-vault.js` 拆出聊天层 `learn-vault-chat.js`（819 行 → **379 + 450**，两者均 ≤ 800 行判据）；
+  同步 `index.html` 加载顺序、`tests/test_v15_frontend_split.py` 的 `FAMILIES`、
+  `tests/test_frontend_domain_coupling.py` 的 `CORE`。
+- 新增审计文档 `docs/功能闭环审计_2026-10-16.md`（端点 ↔ 前端消费面盘点 + 结构性风险登记）。
+
+### Prompts
+
+- 新增 `medkit/prompts/vault_handbook.md`（薄弱点复习手册）：硬约束与错题助手**同源**——
+  只依据给定数据 / 每条结论带 `[来源: <path>]` / 数据不足直接说 / 正面回应用户自己写的理解。
+  影响：`POST /api/vault/handbook` 的系统提示词；已登记进 `routers/prompts.py` 的 `PROMPT_ROLES`，
+  含占位符 `{subject}`，用**字面量** `render_prompt("vault_handbook.md", …)` 加载
+  （`tests/test_r8w_p2_hardening.py` 的 AST 判据只认字面量）。
+
+### Removed
+
+- **错题本的导入/导出与路径选择入口**：`选择 / 创建文件夹`、`从旧错题本一键迁移`、`⇩ 导出全部`、
+  列表行 `⇩` 单条下载、详情「下载这条错题的 md」；前端函数 `vaultInit` / `vaultSaveDir` /
+  `vaultMigrate` / `vaultDownloadOne` / `vaultExportAll` 与其 `/* exported */` 登记一并删除。
+  旧库 pane 的批量导入（文件 / 站点 JSON）与批量导出（JSON / MD）随之删除——后端端点保留。
+- **旧库面板的管理入口**：`科目管理` 弹层、`只看未掌握` 勾选、批量删除 / 标记已掌握。
+  （判错已自动进 vault，用户不再需要「先导入再管理」这条绕路。）
+- **测试**：浏览器守卫 `test_mistakes_batch` / `test_site_import` / `test_study_subjects` 删除
+  （所测入口已不存在）；`test_bank_drill` 里依赖旧库 pane「→ 重练」的用例删除
+  （重练仍在「刷题」页，入口未丢）；`test_vault_view` 的「一键迁移 / 导出下载」两例改为
+  验证**判错自动流入**与聊天界面；`test_docs_coverage` 为三个删除文件登记豁免。
+- 旧库 pane 的孤儿 CSS（`.mv-tab` / `.mvpane`）随 DOM 删除，`tests/test_css_no_orphans.py` 保持绿。
+
 ## [0.17.0] - 2026-10-15
 
 > 主题：**奥卡姆精简第二轮**（依据 `docs/重构设计方案_奥卡姆精简_第二轮_2026-10-15.md`）。

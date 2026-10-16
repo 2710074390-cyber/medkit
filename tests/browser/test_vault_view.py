@@ -1,7 +1,11 @@
 """本地错题（vault）视图的浏览器守卫。
 
-覆盖真实链路：旧错题 → 一键迁移成 md → 索引 → 薄弱项表 → 列表 → 详情 →
-独立 UI 输入区写「我的理解/疑问」→ **刷新后仍在**（证明真的写进了文件，而不是只改了内存）。
+覆盖真实链路：判错后自动流入 vault（后端 `_mirror_to_vault`）→ 索引 → 薄弱项表 →
+列表 → 详情 → 独立 UI 输入区写「我的理解/疑问」→ **刷新后仍在**
+（证明真的写进了文件，而不是只改了内存）。
+
+2026-10-16（奥卡姆精简第三轮）：「错题本」不再有 `#mv_tabs` 二级切换与导入导出入口
+（旧库错题在判错时已自动补写进 vault，无需「一键迁移」）；本视图以聊天为唯一主界面。
 
 Agent 问答本身不在这里测——它需要真 API Key，其行为由 `tests/test_vault.py`
 的桩客户端覆盖（那才能断言「没有依据必须说不知道」）。
@@ -18,18 +22,10 @@ from __future__ import annotations
 
 
 def _goto_vault(page, server_url: str) -> None:
-    # 「一键迁移」带原生 confirm 确认框；Playwright 默认自动**关闭**对话框（confirm 返回 false），
-    # 不接管它的话迁移会被静默取消、toast 永不出现（实测这里就是 20s 超时的真因）。
-    page.on("dialog", lambda d: d.accept())
     page.goto(f"{server_url}/#learn")
     page.wait_for_selector("#tab-learn.show", timeout=15000)
-    # P-E（奥卡姆精简第二轮）：「本地错题」不再是独立 pill —— 已并入「错题本」，
-    # 靠视图内的来源切换（#mv_tabs）选「本地文件（真身）」。默认 pane 就是 vault，
-    # 这里显式点一次，顺带验证切换控件真的可点（否则合并入口就是坏的）。
     page.click('#learnnav button[data-lv="mistakes"]')
     page.wait_for_selector("#lv-mistakes.show", timeout=15000)
-    page.click('#mv_tabs .mv-tab[data-mv="vault"]')
-    page.wait_for_selector("#mv-vault", state="visible", timeout=15000)
     # 文件夹全域问的入口必须在场（不需要 API Key；未配 Key 时点它只会给出错误提示）
     page.wait_for_selector("#vault_ask_q", timeout=15000)
     # 今日复习卡片（SM-2）也必须在场
@@ -51,11 +47,16 @@ def _seed_library(page, subject: str, n: int = 2) -> None:
            }""", [subject, n])
 
 
-def _migrate(page) -> None:
-    page.click("#btn_vault_migrate")
+def _reload_vault(page, subject: str) -> None:
+    """播种后让前端重新拉 vault 数据（点「重建索引」= 重扫文件夹 + 刷新统计/列表）。
+
+    判错回流会在后端把旧库错题自动补写进 vault 并重建索引；这里等价于用户刷新
+    一次页面。等「薄弱项」表里出现本科目，确保统计真的拉到了，再往下断言。
+    """
+    page.click("#btn_vault_rebuild")
     page.wait_for_function(
-        "() => { const t = document.getElementById('toasts');"
-        " return t && t.innerText.includes('迁移完成'); }", timeout=20000)
+        "(s) => document.getElementById('vault_stats').innerText.includes(s)",
+        arg=subject, timeout=20000)
 
 
 def _search(page, text: str) -> None:
@@ -98,7 +99,7 @@ _SUBJ_B = "外科学_vault检索"
 
 
 def test_vault_view_persists_user_notes_to_file(page, server_url):
-    """迁移 → 薄弱项表 → 写「我的理解/疑问」→ 刷新后仍在。
+    """判错流入 vault → 薄弱项表 → 写「我的理解/疑问」→ 刷新后仍在。
 
     最后一步是全用例的**可证伪点**：如果 `vaultEdit()` 只改了内存（没落盘），
     刷新后两个 textarea 会是空的——这条断言就是用来抓那种"看起来成功了"的实现。
@@ -106,12 +107,11 @@ def test_vault_view_persists_user_notes_to_file(page, server_url):
     _goto_vault(page, server_url)
     _seed_library(page, _SUBJ_A)
     try:
-        _migrate(page)
-
+        _reload_vault(page, _SUBJ_A)
         # 薄弱项表：出现表格且含本用例科目
         page.wait_for_selector("#vault_stats table", timeout=15000)
         assert _SUBJ_A in page.locator("#vault_stats").inner_text(), \
-            "薄弱项表应含迁移进来的科目"
+            "薄弱项表应含流入 vault 的科目"
 
         # 列表：按本科目唯一标记筛到正好 2 条
         _search(page, _SUBJ_A)
@@ -132,8 +132,6 @@ def test_vault_view_persists_user_notes_to_file(page, server_url):
         page.wait_for_selector("#tab-learn.show", timeout=15000)
         page.click('#learnnav button[data-lv="mistakes"]')
         page.wait_for_selector("#lv-mistakes.show", timeout=15000)
-        page.click('#mv_tabs .mv-tab[data-mv="vault"]')
-        page.wait_for_selector("#mv-vault", state="visible", timeout=15000)
         _search(page, _SUBJ_A)
         first = page.locator(".vault-row").first
         assert "有我的理解" in first.inner_text(), "保存后行上应有「有我的理解」标记"
@@ -150,7 +148,7 @@ def test_vault_search_narrows_and_clears(page, server_url):
     _goto_vault(page, server_url)
     _seed_library(page, _SUBJ_B)
     try:
-        _migrate(page)
+        _reload_vault(page, _SUBJ_B)
         _search(page, _SUBJ_B)
         assert page.locator(".vault-row").count() == 2
 
@@ -176,7 +174,7 @@ def test_vault_stat_row_filters_list(page, server_url):
     _goto_vault(page, server_url)
     _seed_library(page, _SUBJ_C)
     try:
-        _migrate(page)
+        _reload_vault(page, _SUBJ_C)
         _search(page, _SUBJ_C)
         assert page.locator(".vault-row").count() == 2
 
@@ -204,6 +202,76 @@ def test_vault_stat_row_filters_list(page, server_url):
 
 
 _SUBJ_D = "皮肤科_vault新建"
+
+
+def test_vault_pane_loads_without_any_extra_action(page, server_url):
+    """**进入「错题本」就必须把本地文件面板的数据拉起来**（不许停在「加载中…」）。
+
+    2026-10-16 修的真缺陷：把「本地错题」并成错题本的唯一主界面之后，
+    `showLearnView("mistakes")` 这条路径一度**没人调 `vaultView()`**，
+    于是面板永远停在占位文案，必须刷新浏览器才出数据
+    ——正是用户反馈的「点了没反应，要刷新才有反应」。
+    判据：进入后**不做任何动作**，薄弱项表/列表/今日复习都必须自己出现。
+    """
+    _goto_vault(page, server_url)
+    # 不做任何点击：等三块数据自己渲染出来
+    page.wait_for_selector("#vault_status", timeout=15000)
+    page.wait_for_function(
+        "() => { const t = document.getElementById('vault_status').innerText;"
+        " return t && !t.includes('读取中'); }", timeout=15000)
+    page.wait_for_function(
+        "() => { const t = document.getElementById('vault_list').innerText;"
+        " return t && !t.includes('加载中'); }", timeout=15000)
+    page.wait_for_function(
+        "() => { const t = document.getElementById('vault_due');"
+        " return t && !t.innerText.includes('加载中'); }", timeout=15000)
+    # 真的到了「已加载」的终态之一，而不是仍停在占位文案
+    status = page.locator("#vault_status").inner_text()
+    assert ("文件夹" in status) or ("还没有创建" in status), status
+    assert "读取中" not in status
+
+
+def test_vault_pane_loads_on_direct_entry(page, server_url):
+    """**直接进入**（hash=#learn + 记忆的子视图）时也必须自己加载，不依赖任何点击。
+
+    这条覆盖上一支用例漏掉的路径：`learn.js` 的 `initLearnView()` 在**脚本加载期**就切到
+    错题本，那时 `learn-vault.js` 还没求值 ⇒ `window.vaultView` 未定义、加载被静默跳过。
+    """
+    page.goto(f"{server_url}/#learn")
+    page.wait_for_selector("#tab-learn.show", timeout=15000)
+    page.evaluate("() => sessionStorage.setItem('medkit-learn-view', 'mistakes')")
+    page.reload()
+    page.wait_for_selector("#tab-learn.show", timeout=15000)
+    page.wait_for_selector("#lv-mistakes.show", timeout=15000)
+    page.wait_for_function(
+        "() => { const t = document.getElementById('vault_list').innerText;"
+        " return t && !t.includes('加载中'); }", timeout=15000)
+    # 真的到了「已加载」的两个终态之一（而不是仍停在占位文案）
+    status = page.locator("#vault_status").inner_text()
+    assert ("文件夹" in status) or ("还没有创建" in status), status
+    assert "加载中" not in page.locator("#vault_due").inner_text()
+
+
+def test_vault_chat_ui_present_and_clears(page, server_url):
+    """错题助手 = 聊天框式：对话区 / 快捷提问 / 输入行 / 手册入口都在场，且能清空对话。"""
+    _goto_vault(page, server_url)
+    assert page.locator("#vault_chat").count() == 1, "必须有对话区"
+    assert page.locator("#vault_chat .chat-empty").count() == 1, "空对话要有引导文案"
+    assert page.locator("#vault_chat_quick .chat-chip").count() >= 3, "快捷提问至少 3 条"
+    assert page.locator("#btn_vault_handbook").count() == 1, "必须有复习手册入口"
+    assert page.locator("#vault_hb_subject").count() == 1, "手册要能按科目生成"
+    # 未配 API Key 时提问必须给出**可见的错误**，而不是静默无反应
+    page.fill("#vault_ask_q", "我哪章最弱？")
+    page.click("#btn_vault_ask_global")
+    page.wait_for_function(
+        "() => { const b = document.querySelector('#vault_chat .chat-msg.bot');"
+        " return !!b && b.innerText.trim().length > 0; }", timeout=20000)
+    assert page.locator("#vault_chat .chat-msg.user").count() == 1, "提问要落成用户气泡"
+    page.click("#btn_vault_chat_clear")
+    page.wait_for_function(
+        "() => { const t = document.getElementById('toasts');"
+        " return t && t.innerText.includes('已清空对话'); }", timeout=15000)
+    assert page.locator("#vault_chat .chat-empty").count() == 1
 
 
 def test_vault_create_and_review_roundtrip(page, server_url):

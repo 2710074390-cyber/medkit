@@ -1,28 +1,7 @@
-/* exported vaultInit, vaultRebuild, vaultMigrate, vaultSaveDir, vaultSearch,
-   vaultSearchClear, vaultAsk, vaultAskGlobal, vaultPersist, vaultClose, vaultEdit, vaultOpen,
-   vaultFilter, vaultFilterClear, vaultNewToggle, vaultPickPhoto, vaultPhotoPick, vaultCreate,
-   vaultNewClear, vaultGrade, vaultReviewLoad, vaultLoad, vaultView, mistakeView */
-/* P-E（奥卡姆精简第二轮）：错题来源二级切换 —— 「本地文件（真身）」与「旧库」。
- * 旧 pill「本地错题」并入「错题本」；本函数是合并后唯一的 pane 切换点。
- * `_mvCur` 记住当前 pane：从别的子视图回到错题本时不重置成默认。 */
-let _mvCur = "vault";
-function mistakeView(name) {
-  // 无参调用 = 「恢复当前 pane」（从别的子视图切回错题本时用），此时才读 `_mvCur`；
-  // 有参则按参数切。这样 `_mvCur` 有真实读取点（不是只写不读的死变量）。
-  if (name === undefined) name = _mvCur;
-  name = name === "lib" ? "lib" : "vault";
-  _mvCur = name;
-  const tabs = document.querySelectorAll("#mv_tabs .mv-tab");
-  for (const b of tabs) {
-    const on = b.dataset.mv === name;
-    b.classList.toggle("on", on);
-    b.setAttribute("aria-selected", on ? "true" : "false");
-  }
-  const v = document.getElementById("mv-vault"), l = document.getElementById("mv-lib");
-  if (v) v.style.display = name === "vault" ? "" : "none";
-  if (l) l.style.display = name === "lib" ? "" : "none";
-}
-window.mistakeView = mistakeView;
+/* exported vaultRebuild, vaultSearch, vaultSearchClear, vaultAsk, vaultAskGlobal,
+   vaultClose, vaultEdit, vaultOpen, vaultFilter, vaultFilterClear, vaultNewToggle,
+   vaultPickPhoto, vaultPhotoPick, vaultCreate, vaultNewClear, vaultGrade,
+   vaultReviewLoad, vaultLoad */
 
 /* ---- 本地错题（vault）视图：读文件索引 + 薄弱项 + Agent 问答 ----
  *
@@ -46,14 +25,16 @@ async function vaultStatus() {
     if (box) {
       box.innerHTML = st.is_vault
         ? `文件夹：<code>${_esc(st.root)}</code> ｜ 已索引 <b>${st.count}</b> 条`
-        : `还没有创建错题文件夹 —— 点上方「选择 / 创建文件夹」（默认 <code>${_esc(st.default_root)}</code>）`;
+        : `还没有创建错题文件夹（默认 <code>${_esc(st.default_root)}</code>）`;
     }
-    const rh = $("vault_root_hint");
-    if (rh) rh.textContent = st.is_vault ? `${st.count} 条` : "未初始化";
-    const di = $("vault_dir");
-    if (di && !di.value) di.placeholder = `（空 = 默认 ${st.default_root}）`;
-    const ds = $("vault_dir_status");
-    if (ds) ds.textContent = st.is_vault ? `当前生效：${st.root}` : "尚未初始化";
+    // 复习手册的科目选择器：选项随 vault 里的科目集刷新（保留已选）
+    const hb = $("vault_hb_subject");
+    if (hb) {
+      const cur = hb.value, subs = st.subjects || [];
+      hb.innerHTML = '<option value="">全部科目</option>'
+        + subs.map(s => `<option value="${_esc(s)}">${_esc(s)}</option>`).join("");
+      if (cur && subs.includes(cur)) hb.value = cur;
+    }
     return st;
   } catch (e) { toast(e.message, false); return null; }
 }
@@ -65,40 +46,6 @@ async function vaultRebuild() {
       + (r.warnings ? ` · ${r.warnings} 条告警` : ""));
     await vaultLoad();
   } catch (e) { toast("重建失败：" + e.message, false); }
-}
-
-async function vaultInit() {
-  const cur = await api("/api/vault/status");
-  const p = (prompt("错题文件夹路径（留空用默认）：", cur.default_root) || "").trim();
-  try {
-    const r = await api("/api/vault/init", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: p }) });
-    toast(r.created ? `已在 ${r.root} 创建错题文件夹` : `已指向已有文件夹 ${r.root}`);
-    await vaultLoad();
-  } catch (e) { toast("初始化失败：" + e.message, false); }
-}
-
-async function vaultSaveDir() {
-  const p = $("vault_dir").value.trim();
-  try {
-    const r = await api("/api/vault/init", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: p }) });
-    toast(`vault 目录已设为 ${r.root}`);
-    await vaultLoad();
-  } catch (e) { toast("保存失败：" + e.message, false); }
-}
-
-async function vaultMigrate() {
-  if (!confirm("把旧错题本导出为 vault 的 markdown 文件？\n\n"
-    + "· 只新增文件，不删除、不修改旧错题本\n"
-    + "· 已迁移过的会按同 id 覆盖同名文件（幂等）")) return;
-  try {
-    const r = await api("/api/vault/import-from-library", { method: "POST" });
-    toast(`迁移完成：写入 ${r.written} 条，跳过 ${r.skipped} 条（无题干）`);
-    await vaultLoad();
-  } catch (e) { toast("迁移失败：" + e.message, false); }
 }
 
 function _stateLabel(s) {
@@ -113,7 +60,7 @@ async function vaultLoad() {
     if (!box) return;
     const g = (st.groups || []).filter(x => x.total > 0);
     if (!st.total) {
-      box.innerHTML = `<div class="hint">还没有错题。点上方「从旧错题本一键迁移」，或直接在文件夹里新建 md 文件。</div>`;
+      box.innerHTML = `<div class="hint">还没有错题。刷题判错的题会自动流入，也可点上方「新建错题」手动添加。</div>`;
     } else if (!g.length) {
       box.innerHTML = `<div class="hint">共 ${st.total} 条，暂无需要优先处理的薄弱项。</div>`;
     } else {
@@ -151,11 +98,12 @@ async function vaultRefreshList() {
     const box = $("vault_list");
     if (box) {
       box.innerHTML = _vaultItems.length ? _vaultItems.map(r => `
-        <button class="vault-row" onclick="vaultOpen('${_esc(r.path).replace(/'/g, "\\'")}')">
+        <div class="vault-row" role="button" tabindex="0"
+             onclick="vaultOpen('${_esc(r.path).replace(/'/g, "\\'")}')">
           <span class="vault-q">${_esc(r.question) || "（无题干）"}</span>
           <span class="vault-meta">${_esc([r.subject, r.chapter, r.topic].filter(Boolean).join(" · "))}
             ${r.understanding ? " · 有我的理解" : ""}${r.doubts ? " · 有疑问" : ""}</span>
-        </button>`).join("")
+        </div>`).join("")
       : `<div class="hint">${q || f.subject || f.chapter || f.topic ? "没有命中的错题。" : "还没有错题文件。"}</div>`;
     }
     const cl = $("btn_vault_q_clear");
@@ -200,18 +148,13 @@ async function vaultOpen(rel) {
       <button class="act" onclick="vaultEdit()">保存理解与疑问</button>
       <button class="act gray" onclick="vaultClose()">收起</button>
     </div>
-    <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
-    <label>问 Agent（只依据你这个文件夹作答，答不出就说不知道）</label>
+    <label style="margin-top:12px">问错题助手（只依据你这个文件夹作答，答不出就说不知道）</label>
     <div class="row" style="gap:8px">
       <input type="text" id="vlt_q" style="flex:2" placeholder="例如：稳定期会用抗菌药吗？"
              onkeydown="if(event.key==='Enter'){vaultAsk();}">
-      <button class="act" id="btn_vault_ask" onclick="vaultAsk()">问</button>
+      <button class="act" id="btn_vault_ask" onclick="vaultAsk()">提问</button>
     </div>
-    <div id="vlt_answer" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
-    <div class="btns" style="margin-top:8px">
-      <button class="act gray" id="btn_vault_persist" style="display:none"
-        onclick="vaultPersist()">把答复存进这个错题</button>
-    </div>`;
+    <div class="hint" style="margin-top:6px">回答会出现在下面的<b>对话区</b>里，可以接着追问（它记得上文）。</div>`;
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -235,80 +178,6 @@ async function vaultEdit() {
     await vaultRefreshList();
   } catch (e) { toast("保存失败：" + e.message, false); }
 }
-
-let _vaultAnswer = "";
-
-/* 单一流式读取：详情内「问」与文件夹全域「问」两处入口共用，避免两份解析逻辑漂移。 */
-async function _vaultAskStream(question, path, out) {
-  const res = await fetch("/api/vault/ask", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, path }) });
-  const reader = res.body.getReader(), dec = new TextDecoder();
-  let buf = "", answer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const lines = buf.split("\n"); buf = lines.pop();
-    for (const line of lines) {
-      if (!line.startsWith("data: ") || line.includes("[DONE]")) continue;
-      let ev; try { ev = JSON.parse(line.slice(6)); } catch (e) { continue; }
-      if (ev.type === "stage" && out) {
-        out.textContent = ev.tool ? `取证中：${ev.tool}…` : (ev.hint || "思考中…");
-      } else if (ev.type === "error") {
-        if (out) out.textContent = `出错了：${ev.message}`;
-      } else if (ev.type === "result") {
-        answer = ev.answer || "";
-        const cites = (ev.citations || []).map(c => `[来源: ${c.path}${c.section ? "#" + c.section : ""}]`).join("\n");
-        if (out) out.textContent = answer + (cites ? "\n\n" + cites : "")
-          + (ev.grounded === false ? "\n\n（本回答因缺少可验证依据被拦下——它只依据你的错题库作答）" : "");
-      }
-    }
-  }
-  return answer;
-}
-
-async function vaultAsk() {
-  const q = ($("vlt_q") && $("vlt_q").value.trim()) || "";
-  if (!q) { toast("先写你的问题", false); return; }
-  const out = $("vlt_answer"), btn = $("btn_vault_ask"), ps = $("btn_vault_persist");
-  if (out) out.textContent = "正在取证…";
-  if (btn) btn.disabled = true;
-  _vaultAnswer = "";
-  try {
-    _vaultAnswer = await _vaultAskStream(q, _vaultCur || "", out);
-    if (ps && _vaultAnswer) ps.style.display = "";
-  } catch (e) { if (out) out.textContent = "请求失败：" + e.message; }
-  finally { if (btn) btn.disabled = false; }
-}
-
-/* 文件夹全域问：不绑定某一条错题（path 为空 ⇒ Agent 自行 search/stats），
-   用来回答「我哪章最弱」「这些错有什么共性」这类跨条目的问题。 */
-async function vaultAskGlobal() {
-  const q = ($("vault_ask_q") && $("vault_ask_q").value.trim()) || "";
-  if (!q) { toast("先写你的问题", false); return; }
-  const out = $("vault_ask_out"), btn = $("btn_vault_ask_global");
-  if (out) out.textContent = "正在取证…";
-  if (btn) btn.disabled = true;
-  try { await _vaultAskStream(q, "", out); }
-  catch (e) { if (out) out.textContent = "请求失败：" + e.message; }
-  finally { if (btn) btn.disabled = false; }
-}
-
-async function vaultPersist() {
-  if (!_vaultCur || !_vaultAnswer) return;
-  try {
-    await api(`/api/vault/mistakes/${encodeURI(_vaultCur)}/section`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "agent_reply", text: _vaultAnswer }) });
-    toast("答复已写进这个错题文件的「## Agent 的答复」");
-    await vaultRefreshList();
-  } catch (e) { toast("写入失败：" + e.message, false); }
-}
-
-/* view 钩子：learn.js 的 showLearnView 会在切到本视图时调它 */
-window.vaultView = function () { vaultLoad(); vaultReviewLoad(); };
-
 
 /* ---- 新建错题：粘贴 / 拍题 → 直接成 md ---- */
 function vaultNewToggle() {
@@ -366,7 +235,7 @@ async function vaultReviewLoad() {
   try {
     const r = await api("/api/vault/review/due");
     const meta = $("vault_due_meta");
-    if (meta) meta.textContent = `到期 ${r.stats.due} / 共 ${r.stats.total} · 纯本地，不调模型`;
+    if (meta) meta.textContent = `到期 ${r.stats.due} / 共 ${r.stats.total}`;
     const items = r.items || [];
     box.innerHTML = items.length ? items.slice(0, 20).map(it => `
       <div class="vault-duerow">

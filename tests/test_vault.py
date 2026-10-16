@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -385,20 +386,34 @@ def test_migration_does_not_touch_library(vroot):
 
 # ================================================================ L4 Agent 硬约束
 class _StubClient:
-    """按预定顺序返回模型回复的假客户端（不联网、不花 Key）。"""
+    """按预定顺序返回模型回复的假客户端（不联网、不花 Key）。
+
+    2026-10-16：Agent 改走 `chat_stream`（逐字流式），故桩也提供**流式**接口，
+    并按小块吐出——这样「部分 JSON 解析」（`_partial_answer`）那条路径也一并被覆盖，
+    否则流式代码在测试里会退化成「一次吐一整块」，等于没测到增量。
+    """
+
+    CHUNK = 7
 
     def __init__(self, replies):
         self.replies = list(replies)
         self.convos = []
 
-    def chat(self, convo, **_kw):
+    def chat_stream(self, convo, **_kw):
+        self.convos.append(convo)
+        raw = self.replies.pop(0)
+        for i in range(0, len(raw), self.CHUNK):
+            yield {"delta": raw[i:i + self.CHUNK], "usage": None, "canceled": False}
+
+    def chat(self, convo, **_kw):      # 兼容仍走非流式的调用点
         self.convos.append(convo)
         return self.replies.pop(0)
 
 
 def _agent(monkeypatch, replies, question="慢阻肺和感染的关系是什么"):
     import medkit.agents.mistake_agent as agent
-    monkeypatch.setattr(agent, "get_client", lambda role="gen": _StubClient(replies))
+    monkeypatch.setattr(agent, "get_client",
+                        lambda role="gen", cancel=None: _StubClient(replies))
 
     async def _drain():
         return [ev async for ev in agent.ask(question)]
@@ -494,19 +509,156 @@ def test_agent_empty_answer_never_blank(vroot, monkeypatch, run_coro):
     assert "没能形成结论" in ev["answer"]
 
 
+# ================================================================ 流式：部分 JSON 解析
+def test_partial_answer_extracts_growing_value():
+    """`_partial_answer`：边流边把 `answer` 的字符串值解出来（含转义与半截转义）。"""
+    import medkit.agents.mistake_agent as agent
+
+    p = agent._partial_answer
+    assert p('{"action":"final","answer":"慢阻') == "慢阻"
+    assert p('{"action":"final","answer":"慢阻肺的病因是吸烟。","citations":[]}') == "慢阻肺的病因是吸烟。"
+    # 转义：JSON 里的 \\n 要还原成真换行（否则流出来的是字面反斜杠 n）
+    assert p(r'{"answer":"第一行\n第二行') == "第一行\n第二行"
+    assert p(r'{"answer":"引号\"里') == '引号"里'
+    # 半截转义 / 半截 \\uXXXX：丢掉那半截，不吐坏字符
+    # （注意用普通字符串：`'…\\'` 才是**一个**反斜杠 = 半截转义；`r'…\\'` 是两个 = 完整转义）
+    assert p('{"answer":"结尾\\') == "结尾"
+    assert p(r'{"answer":"字\u4e2') == "字"
+    assert p(r'{"answer":"字\u4e2d') == "字中"
+    # 还没到值
+    assert p('{"action":"final","ans') is None
+    assert p('{"action":"final","answer":') is None
+
+
+def test_partial_answer_rejects_key_lookalike_inside_values():
+    """判据①的**反向验证**：值里出现 `answer` 字样不许被误判成答复。
+
+    这是本解析器最容易错的地方——`{"action":"search_my_mistakes","args":{"query":"answer"}}`
+    里 `"answer"` 是**值**，若只 `find('"answer"')` 就会把 `"answer"` 之后的内容当答复流出去。
+    """
+    import medkit.agents.mistake_agent as agent
+
+    assert agent._partial_answer(
+        '{"action":"search_my_mistakes","args":{"query":"answer"}}') is None
+    assert agent._partial_answer(
+        '{"action":"read_file","args":{"path":"mistakes/answer.md"}}') is None
+
+
+def test_ask_streams_deltas_before_result(vroot, monkeypatch, run_coro):
+    """`ask()` 逐字流式：先一串 `delta`，最后 `result`（且以 result 为准）。"""
+    _seed(vroot, 2)
+    vault_index.rebuild(vroot)
+    rel = vault_index.list_items()[0]["path"]
+    import medkit.agents.mistake_agent as agent
+
+    # 桩的**一个元素 = 一次模型回复**（桩内部再按 CHUNK 切成多个 delta），
+    # 所以这里给一整条 JSON，而不是自己拼碎块。
+    reply = ('{"action":"final","answer":"感染不是病因。",'
+             '"citations":[{"path":"%s","section":"解析"}]}' % rel)
+    monkeypatch.setattr(agent, "get_client",
+                        lambda role="gen", cancel=None: _StubClient([reply]))
+
+    async def _drain():
+        return [ev async for ev in agent.ask("慢阻肺和感染的关系是什么")]
+
+    evs = run_coro(_drain())
+    kinds = [e["type"] for e in evs]
+    assert kinds[-1] == "result", kinds
+    assert "delta" in kinds, "必须逐字流式（有 delta 事件）"
+    streamed = "".join(e["text"] for e in evs if e["type"] == "delta")
+    assert streamed == "感染不是病因。", streamed
+    assert evs[-1]["answer"] == "感染不是病因。"
+    assert evs[-1]["citations"] == [{"path": rel, "section": "解析"}]
+
+
+def test_ask_sets_cancel_event_on_finish(vroot, monkeypatch, run_coro):
+    """跑完（或中途出错）都必须置位 `cancel`——「停止生成」要真的截断 provider 流。"""
+    _seed(vroot, 1)
+    vault_index.rebuild(vroot)
+    import medkit.agents.mistake_agent as agent
+    monkeypatch.setattr(agent, "get_client",
+                        lambda role="gen", cancel=None: _StubClient(["{}"]))
+    ev = threading.Event()
+
+    async def _drain():
+        return [e async for e in agent.ask("随便问问", cancel=ev)]
+
+    run_coro(_drain())
+    assert ev.is_set(), "结束/断连都必须置位 cancel，否则后台会继续烧 token"
+
+
+def test_handbook_streams_and_empty_vault_skips_model(vroot, monkeypatch, run_coro):
+    """手册：空错题库**不调模型**直接给说明；有数据时逐字流式 + result 收尾。"""
+    import medkit.agents.mistake_agent as agent
+
+    monkeypatch.setattr(agent, "get_client",
+                        lambda role="gen", cancel=None: pytest.fail("空错题库不该调模型"))
+
+    async def _empty():
+        return [e async for e in agent.handbook("内科学")]
+
+    evs = run_coro(_empty())
+    assert evs[-1]["type"] == "result" and evs[-1]["grounded"] is False
+    assert "还没有条目" in evs[-1]["markdown"]
+    assert "未调用模型" in evs[-1]["note"]
+    assert "还没有条目" in "".join(e.get("text", "") for e in evs if e["type"] == "delta")
+
+    # 有数据：证据只来自 vault，逐字流式
+    _seed(vroot, 2)
+    vault_index.rebuild(vroot)
+    rel = vault_index.list_items()[0]["path"]
+    stub = _StubClient(["# 内科学 · 薄弱点复习手册\n## 一页速览\n- 慢阻肺 [来源: %s]\n" % rel])
+    monkeypatch.setattr(agent, "get_client", lambda role="gen", cancel=None: stub)
+
+    async def _run():
+        return [e async for e in agent.handbook("内科学")]
+
+    evs = run_coro(_run())
+    assert evs[-1]["type"] == "result" and evs[-1]["grounded"] is True
+    assert "慢阻肺" in evs[-1]["markdown"] and evs[-1]["items"] == 2
+    assert len([e for e in evs if e["type"] == "delta"]) >= 2, "手册必须逐段流式"
+    evidence = stub.convos[0][1]["content"]
+    assert "薄弱项分组" in evidence and "错题条目" in evidence and rel in evidence
+
+
+def test_handbook_streams_error_frame(vroot, monkeypatch, run_coro):
+    """模型抛错 → `error` 帧（不静默、不返回半成品）。"""
+    _seed(vroot, 1)
+    vault_index.rebuild(vroot)
+    import medkit.agents.mistake_agent as agent
+    from medkit.core.llm import LLMError
+
+    class _Boom:
+        def chat_stream(self, *_a, **_kw):
+            raise LLMError("配额不足")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(agent, "get_client", lambda role="gen", cancel=None: _Boom())
+
+    async def _run():
+        return [e async for e in agent.handbook("内科学")]
+
+    evs = run_coro(_run())
+    assert evs[-1]["type"] == "error" and "配额不足" in evs[-1]["message"]
+
+
 # ================================================================ SSE 接线
 def test_ask_endpoint_streams_and_rejects_empty(vroot, monkeypatch):
     """`/api/vault/ask` 接线：空问题 400；正常问题把 Agent 事件流成 SSE 并以 `[DONE]` 收尾。
 
     这条不依赖任何 API Key——把 Agent 换成桩，只验证路由层的 SSE 封装与空值拦截。
     覆盖的正是「文件夹全域问」（`path=""`）走的那条路径。
+    2026-10-16：聊天框式改版后路由多传一个 `history`（多轮上下文），此处一并钉住透传。
     """
     import medkit.routers.vault as rv
 
-    seen: dict[str, str] = {}
+    seen: dict[str, object] = {}
 
-    async def _fake_ask(question, *, scope="", path=""):
-        seen.update(question=question, scope=scope, path=path)
+    cancels: list[object] = []
+
+    async def _fake_ask(question, *, scope="", path="", history=None, cancel=None):
+        seen.update(question=question, scope=scope, path=path, history=history)
+        cancels.append(cancel)
         yield {"type": "stage", "hint": "思考中"}
         yield {"type": "result", "answer": f"回答：{question}", "citations": [],
                "grounded": True, "note": ""}
@@ -519,6 +671,114 @@ def test_ask_endpoint_streams_and_rejects_empty(vroot, monkeypatch):
         body = "".join(r.iter_text())
     assert '"type": "result"' in body and "回答：我最弱的是哪章？" in body
     assert body.rstrip().endswith("[DONE]") or "[DONE]" in body
-    assert seen == {"question": "我最弱的是哪章？", "scope": "", "path": ""}, seen
+    assert seen == {"question": "我最弱的是哪章？", "scope": "", "path": "", "history": []}, seen
+
+    # 多轮：history 必须真的透传给 Agent（否则「追问」会丢上文）
+    with c.stream("POST", "/api/vault/ask",
+                  json={"question": "那它和 X 怎么鉴别？",
+                        "history": [{"role": "user", "content": "我哪章最弱？"},
+                                    {"role": "assistant", "content": "呼吸系统。"}]}) as r:
+        assert r.status_code == 200
+        r.iter_text()
+    assert seen["history"] == [{"role": "user", "content": "我哪章最弱？"},
+                               {"role": "assistant", "content": "呼吸系统。"}], seen
+    # 路由必须给 Agent 一个 cancel 事件，并在流收尾后**置位**（否则「停止生成」截不断 provider）
+    assert cancels and all(c is not None for c in cancels), cancels
+    assert all(c.is_set() for c in cancels), "流结束后 cancel 必须置位"
 
 
+def test_agent_ask_puts_history_before_current_question(vroot, monkeypatch, run_coro):
+    """`ask(history=…)` 把上文放进对话（模型能指代「它」），且当前问题排在最后一条。"""
+    _seed(vroot, 1)
+    vault_index.rebuild(vroot)
+    import medkit.agents.mistake_agent as agent
+
+    class _SnapClient:
+        """每次调用**快照**一份对话——`ask` 会在同一 list 上原地追加，事后读 `convos[0]`
+        看到的是最终状态（`_StubClient` 的既有行为），这里必须按调用时刻取。"""
+
+        def __init__(self, replies):
+            self.replies = list(replies)
+            self.snaps = []
+
+        def chat_stream(self, convo, **_kw):
+            self.snaps.append([dict(m) for m in convo])
+            raw = self.replies.pop(0)
+            for i in range(0, len(raw), 7):
+                yield {"delta": raw[i:i + 7], "usage": None, "canceled": False}
+
+        def chat(self, convo, **_kw):
+            self.snaps.append([dict(m) for m in convo])
+            return self.replies.pop(0)
+
+    stub = _SnapClient([json.dumps({"action": "get_topic_stats", "args": {}},
+                                   ensure_ascii=False),
+                        json.dumps({"action": "final", "answer": "呼吸系统。", "citations": []},
+                                   ensure_ascii=False)])
+    monkeypatch.setattr(agent, "get_client", lambda role="gen", cancel=None: stub)
+
+    async def _drain():
+        return [ev async for ev in agent.ask(
+            "那它和 X 怎么鉴别？",
+            history=[{"role": "user", "content": "我哪章最弱？"},
+                     {"role": "assistant", "content": "呼吸系统。"}])]
+
+    run_coro(_drain())
+    convo = stub.snaps[0]
+    roles = [m["role"] for m in convo]
+    assert roles == ["system", "user", "assistant", "user"], roles
+    assert convo[1]["content"] == "我哪章最弱？"
+    assert convo[2]["content"] == "呼吸系统。"
+    assert "那它和 X 怎么鉴别？" in convo[3]["content"]
+
+
+# ================================================================ 下载（真身文件）
+def test_download_one_and_export_all(vroot):
+    """单条下载 = **原始文件字节**；合并导出 = 逐条原文 + 分隔线。
+
+    判据取「逐字节相等」而不是「内容包含」——重序列化也会包含题干，
+    但会把用户手改的排版/注释按程序格式重写，那正是本域要避免的。
+    """
+    _seed(vroot, 2)
+    vault_index.rebuild(vroot)
+    rel = vault_index.list_items()[0]["path"]
+    raw = (vroot / rel).read_bytes()
+    c = _client()
+
+    r = c.get(f"/api/vault/mistakes/{rel}/download")
+    assert r.status_code == 200
+    assert r.content == raw, "下载必须是文件原文（不许重序列化）"
+    # Starlette 会把 `filename*` 的小写化（utf-8''）——判据按小写比对
+    cd = r.headers["content-disposition"].lower()
+    assert "attachment" in cd and "filename*=utf-8''" in cd
+
+    ex = c.get("/api/vault/export")
+    assert ex.status_code == 200
+    assert "attachment" in ex.headers["content-disposition"]
+    text = ex.content.decode("utf-8")
+    assert "MedKit 错题导出" in text and "共 2 条" in text
+    for it in vault_index.list_items():
+        assert (vroot / it["path"]).read_text(encoding="utf-8").strip() in text
+
+    # 路径穿越仍然被拦（下载口不豁免 `_safe_vault_rel`）
+    assert c.get("/api/vault/mistakes/../../secret.md/download").status_code in (400, 404)
+    # 不存在的条目 → 404（不是 500）
+    assert c.get("/api/vault/mistakes/mistakes/没有这个.md/download").status_code == 404
+
+
+# ================================================================ 薄弱点复习手册
+
+
+def test_handbook_endpoint_streams_sse(vroot, monkeypatch):
+    """`/api/vault/handbook` 接线：SSE 帧（stage → delta* → result）+ `[DONE]` 收尾。
+
+    空错题库这条不依赖任何 Key（后端直接给说明、不调模型），正好用来验证路由层封装。
+    """
+    c = _client()
+    with c.stream("POST", "/api/vault/handbook", json={"subject": "内科学"}) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        body = "".join(r.iter_text())
+    assert '"type": "delta"' in body and "还没有条目" in body
+    assert '"type": "result"' in body and "[DONE]" in body
+    assert "未调用模型" in body

@@ -166,7 +166,7 @@ class LLMClient:
         raise LLMError(f"调用失败({self.model}): {last_err}")
 
     def chat_stream(self, messages: list[dict[str, Any]], temperature: float = 0.7,
-                      max_tokens: Optional[int] = None):
+                    max_tokens: Optional[int] = None, json_mode: bool = False):
         """WP-8：流式生成器——yield {delta, usage, canceled}，支持取消事件。
 
         与 chat() 的取消语义一致：取消时不等待整段回复烧完 token。
@@ -176,6 +176,11 @@ class LLMClient:
         现在只要中途/异常块带过 usage，即按已见部分快照落账）。
         R5-03：无论结束/取消/异常/断连（生成器被 close），finally 关闭 provider 流——
         断连时立即中止 HTTP 连接，不再让服务端继续生成烧 token。
+
+        2026-10-16：补 `json_mode`（与 `chat()` **同口径**）——错题 Agent 的编排协议是
+        JSON，而答复要逐字流式；「流式 + JSON 模式」此前在本类里根本没有参数位，
+        只能退回非流式（等于把流式能力让给协议）。补齐后 `chat`/`chat_stream` 的
+        `response_format` 语义**单源一致**，不再出现「非流式能约束、流式不能」的缺口。
         """
         if self._cancel is not None and self._cancel.is_set():
             yield {"delta": "", "usage": None, "canceled": True}
@@ -185,6 +190,8 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
         }
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
         acc = {"prompt_tokens": 0, "completion_tokens": 0}

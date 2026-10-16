@@ -46,6 +46,10 @@ def _isolate_medkit_store(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, attr, store_dir / fname)
     monkeypatch.setattr(cfg, "CONFIG_DIR", tmp_path)  # 兜底：派生路径（ocr/presets）不落真实家目录
     monkeypatch.setattr(cfg, "CONFIG_FILE", tmp_path / "config.json")
+    # 2026-10-16（错题自动流入）：判错回流会把错题补写成 vault 的 md 文件。默认 vault 根是
+    # 用户真实「文档/MedKit错题本」——测试若不隔离就会往用户资产目录写文件（R5-01 哨兵只盯
+    # ~/.medkit，看不到这层污染）。这里把默认根钉到本用例 tmp_path。
+    monkeypatch.setitem(cfg.DEFAULTS, "vault_dir", str(tmp_path / "vault"))
     # R5-01 补（2026-09-27 定位到哨兵触发真因）：**日志**同样重定向。
     # `main._lifespan` 裸调 `setup_logging()`，该函数第一优先级读 `MEDKIT_LOG_DIR`，
     # 回落 `cfg.CONFIG_DIR/logs`。只 patch `CONFIG_DIR` 不够稳，根因有两条：

@@ -29,7 +29,9 @@ MAX_LINES = 800
 FAMILIES: dict[str, list[str]] = {
     # 2026-10-15（奥卡姆精简 T2）：learn-live.js（讲解/提问）与 learn-review.js（复习卡）
     # 随其域删除 —— learn 族从 5 片收敛到 3 片。
-    "learn": ["learn.js", "learn-study.js", "learn-vault.js"],
+    # 2026-10-16：错题助手改聊天框（真流式 / 停止 / 重生成 / 会话持久化）后
+    # learn-vault.js 涨到 819 行 ⇒ 拆出第 4 片 learn-vault-chat.js（聊天层）。
+    "learn": ["learn.js", "learn-study.js", "learn-vault.js", "learn-vault-chat.js"],
     "review-desk": ["review-desk.js", "review-desk-materials.js",
                     "review-desk-project.js", "review-desk-review.js"],
     # 2026-10-10 题库刷题族（bank）：核心侧（错题模式）——导入自备题库 + 应用内作答。

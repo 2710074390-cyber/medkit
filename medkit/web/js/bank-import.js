@@ -147,7 +147,7 @@ async function bankCommitImport() {
     toast(`入库完成：新增 ${r.added || 0} · 更新 ${r.updated || 0} · 跳过 ${r.skipped || 0}`);
     bankImportCancel();
     _bankState.current = String(r.bank_id || "");
-    await loadBankHome();
+    await refreshBankSurfaces();
   } catch (e) { toast(e.message, false); }
   finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
 }
@@ -200,7 +200,7 @@ function bankProjectImport(btn) {
       toast(`已导入 ${r.added || 0} 题`
         + (r.updated ? ` · 更新 ${r.updated}` : "") + (r.skipped ? ` · 跳过 ${r.skipped}` : ""));
       _bankState.current = String(r.bank_id || "");
-      await loadBankHome();
+      await refreshBankSurfaces();
     } catch (e) { toast(e.message, false); }
   }, subj || ("项目 " + pid));
 }

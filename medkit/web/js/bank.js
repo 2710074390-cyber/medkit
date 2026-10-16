@@ -44,6 +44,19 @@ async function loadBankHome(keepDrill) {
   }
 }
 
+/* ---- 让「题库」相关界面全部跟上（修「点了要刷新浏览器才生效」） ----
+ *
+ * 「我的题库」列表与「开始刷题」入口（快捷开始网格 / 题库下拉 / 今日进度）是**两块独立渲染**。
+ * 导入 / 重命名 / 删除 / 手动加题 / 重解析 / 从项目导入这些变更原先只刷了前者 ⇒
+ * 新题库在「快捷开始」和下拉里要**刷新浏览器**才出现（2026-10-16 用户反馈的
+ * 「点了没反应」）。变更后统一走本函数，两块一起刷。
+ */
+async function refreshBankSurfaces(keepDrill) {
+  await loadBankHome(keepDrill);
+  if (typeof loadDoEntry === "function") await loadDoEntry();
+}
+window.refreshBankSurfaces = refreshBankSurfaces;
+
 function _pct(v) { return Math.round((Number(v) || 0) * 100); }
 
 function bankRowHTML(b) {
@@ -83,7 +96,7 @@ function bankCreateOpen() {
         body: JSON.stringify({ name, subject: "", source: "manual" }),
       });
       toast(`已创建题库「${name}」——可继续导入题目`);
-      loadBankHome();
+      refreshBankSurfaces();
     } catch (e) { toast(e.message, false); }
   });
 }
@@ -98,7 +111,7 @@ async function bankRename(btn) {
         body: JSON.stringify({ name, subject: cur.subject || "", source: cur.source || "" }),
       });
       toast("已重命名");
-      loadBankHome();
+      refreshBankSurfaces();
     } catch (e) { toast(e.message, false); }
   }, cur.name || "");
 }
@@ -117,7 +130,7 @@ function bankReparse(btn) {
         const r = await api(`/api/bank/banks/${encodeURIComponent(bid)}/reparse`, { method: "POST" });
         toast(`已重新解析：${r.items || 0} 题` + (r.attempts_cleared ? `（清空作答 ${r.attempts_cleared} 条）` : ""));
         if (String(_bankState.current) === String(bid)) _bankState.current = "";
-        await loadBankHome();
+        await refreshBankSurfaces();
       } catch (e) { toast(e.message, false); }
     });
 }
@@ -143,7 +156,7 @@ function bankDelete(btn) {
           mc.style.display = "none";
           _bankState.manage = null;
         }
-        loadBankHome();
+        refreshBankSurfaces();
       } catch (e) { toast(e.message, false); }
     });
 }
@@ -303,7 +316,7 @@ async function bankItemSave() {
     }
     bankItemCancel();
     await bankManageOpen(m.bid);
-    loadBankHome(true);
+    refreshBankSurfaces(true);
   } catch (e) { toast(e.message, false); }
 }
 
@@ -317,7 +330,7 @@ async function bankItemDel(btn) {
         await api(`/api/bank/items/${encodeURIComponent(id)}`, { method: "DELETE" });
         toast("已删除");
         await bankManageOpen(m.bid);
-        loadBankHome(true);
+        refreshBankSurfaces(true);
       } catch (e) { toast(e.message, false); }
     });
 }
@@ -453,7 +466,8 @@ async function loadDoEntry() {
     const r = await api("/api/bank/banks");
     _bankState.banks = r.banks || [];
     if (sel) {
-      const cur = sel.value;
+      // 保留当前选择：下拉自身的值优先，其次 `_bankState.current`（导入/新建后刚被设过）。
+      const cur = sel.value || _bankState.current || "";
       sel.innerHTML = '<option value="">— 选择题库 —</option>'
         + _bankState.banks.map(b =>
             `<option value="${esc(b.id)}">${esc(b.name)}（${b.items || 0} 题）</option>`).join("");

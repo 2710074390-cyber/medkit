@@ -1,4 +1,4 @@
-/* exported C, ERR_LABEL, LEARN_COLORS, LEARN_ORDER, _libCache, _mkBatchSetBusy, _siteImportItems, _subjMgrBusy, a, acc, acts, addMistakeRaw, allChecked, appliedSubject, arcs, arr, bar, blob, body, btn, btnAll, c, cells, ch, chk, cnt, cs, cur, cw, cwBanner, d, dBanner, dash, dashChapterWeak, dashDonut, dashLegend, dashMetrics, dashWeakRows, data, del, detail, ds, el, ext, f, fd, fillMkSubjectSelect, fr, groups, grp, head, healLibrary, id, ids, items, key, kps, list, loadDashboard, loadLibrary, loadOverview, loc, m, meta, mime, mkBatchBusy, mkBatchDel, mkBatchExport, mkBatchFile, mkBatchLearn, mkBatchPick, mkClearSel, mkDel, mkDetailTgl, mkGroupHTML, mkInvert, mkLearn, mkPhotoFile, mkPhotoPick, mkRowHTML, mkScopeChange, mkSelected, mkShowAll, mkShowAllFn, mkSiteFile, mkSiteImport, mkSubject, mkToggleAllVisible, mkToggleGroup, mkToggleRow, mkRetry, n, name, onlyUn, parts, pct, r, recs, renderDashboard, renderLibrary, renderLibraryCurrent, renderMasteryDashboard, rows, scope, scoped, sel, shown, sl, stages, stats, subj, subject, subjectDelete, subjectMgrOpen, subs, syncMkScope, t, tag, text, tot, total, updateByQueue, updateMkToolbar, url */
+/* exported appliedSubject, healLibrary, loadDashboard, loadLibrary, loadOverview, updateByQueue */
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
 const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
 const LEARN_ORDER = ["weak", "shaky", "solid", "mastered"];
@@ -73,8 +73,7 @@ function renderMasteryDashboard(kps, stats) {
     + `<div class="dash-weak"><h3>薄弱点清单（按优先级）</h3>${dashWeakRows(kps)}</div>`
     + dashChapterWeak(kps);
 }
-// 学习闭环总览（掌握度 + 复习 SM-2 + 提问式 MedTutor）
-/* C1：概览统一加载——顶部诊断/推荐/错题列表与「学习闭环总览」共用同一科目范围，避免口径分裂 */
+/* C1：概览统一加载——顶部「闭环总览 + 薄弱点诊断 + 推荐」共用同一科目范围 */
 async function loadOverview(subject) {
   subject = subject || "";
   try {
@@ -86,18 +85,13 @@ async function loadOverview(subject) {
         subs.slice().sort().map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
       if (cur && subs.includes(cur)) sel.value = cur;
     }
-    // R3-22：错题本作用域跟随概览科目过滤（另有独立下拉可切回全部科目）
-    mkSubject = subject;
-    fillMkSubjectSelect();
-    const [d, mk, my, recm] = await Promise.all([
+    const [d, my, recm] = await Promise.all([
       api("/api/library/dashboard?subject=" + encodeURIComponent(subject)),
-      api("/api/library/mistakes"),
       api("/api/library/mastery?subject=" + encodeURIComponent(subject)),
       api("/api/library/recommend?limit=6&subject=" + encodeURIComponent(subject)),
     ]);
     renderDashboard(d);
-    // D-14/R3-22：错题全量进缓存，作用域过滤在渲染层做（错题本可独立切科目）
-    renderLibrary(mk.mistakes || [], my, recm.recommend || []);
+    renderLibrary(my, recm.recommend || []);
   } catch (e) {
     $("dash_scope").textContent = "汇总失败";
     $("dash_loop").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
@@ -124,7 +118,7 @@ function renderDashboard(d) {
   const m = d.mastery || {}, loop = d.loop || {};
   $("dash_scope").textContent = `${d.subject_label} · 闭环 ${loop.mastered || 0}/${m.total_knowledge || 0} 已掌握`;
   updateLearnBadges(d);
-  // 闭环流转：错题沉淀 → 已掌握（2026-10-15 奥卡姆精简 T2：讲解/提问/复习卡三环随其域删除）
+  // 闭环流转：错题沉淀 → 已掌握
   const stages = [
     ["错题沉淀", loop.mistakes || 0, ""], ["已掌握", loop.mastered || 0, "mastered"],
   ];
@@ -168,76 +162,18 @@ async function loadLibrary() {
     $("learn_kp").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
 }
-let _subjMgrBusy = false;
-async function subjectMgrOpen() {
-  if (_subjMgrBusy) return;
-  _subjMgrBusy = true;
-  try {
-    const r = await api("/api/library/subjects");
-    const stats = r.stats || [];
-    const body = !stats.length
-      ? `<div class="hint">暂无科目——先在错题本导入错题，或去「题库」生成题目。</div>`
-      : `<div class="subj-mgr">` + stats.map(s => `
-        <div class="subj-mgr-row">
-          <span class="subj-mgr-avatar">${esc((s.subject || "未分类").slice(0, 1))}</span>
-          <span class="grow"><b>${esc(s.subject)}</b>
-            <small class="hint">错题 ${s.mistakes || 0} · 知识点 ${s.knowledge || 0} · 复习卡 ${s.review_total || 0}</small>
-          </span>
-          <button class="mini-btn danger" data-subj="${esc(s.subject)}" onclick="subjectDelete(this)">删除</button>
-        </div>`).join("") + `</div>
-        <div class="hint" style="margin-top:8px">删除前会自动导出完整备份 JSON；删除后该科错题、知识点、复习卡、记忆卡、讲解与提问会话一并移除。</div>`;
-    confirmModal("科目管理", body, "关闭", () => loadLibrary(), false);
-  } catch (e) {
-    toast(e.message, false);
-  } finally { _subjMgrBusy = false; }
-}
-async function subjectDelete(btn) {
-  const subject = (btn && btn.dataset.subj) || "";
-  if (!subject) return;
-  confirmModal("删除科目？",
-    `<p>将删除科目 <b>${esc(subject)}</b> 的：错题、知识点掌握度（以及该科的大纲条目 / 真题考频）。<br>
-     删除前会自动导出完整备份到本地 exports 目录，删除后需手动恢复。</p>`,
-    "导出并删除", async () => {
-      try {
-        const r = await api("/api/library/subjects/delete",
-          { method: "POST", body: JSON.stringify({ subject }) });
-        const d = r.deleted || {};
-        toast(`已删除「${subject}」：错题 ${d.mistakes || 0} · 知识点 ${d.knowledge || 0}`);
-        loadLibrary();     // 学习中心：概览/dashboard/badge/科目卡片刷新
-        subjectMgrOpen();  // 弹出已刷新的科目管理列表
-      } catch (e) { toast(e.message, false); }
-    });
-}
 function appliedSubject() {
   const el = $("exp_subject");
   return el && el.value ? el.value : "";
 }
-/* C17：错题本「只看未掌握」筛选——缓存最近一次数据，勾选即重渲染（已掌握=归档标记，可隐藏） */
-let _libCache = { mistakes: [], my: null, recm: [] };
-let mkSubject = "";       // R3-22：错题本作用域（跟随概览科目过滤，可独立切回全部科目）
-let mkShowAll = false;     // D-14：错题分块渲染（首屏 100 条 + 「加载全部」按钮）
-let mkSelected = new Set();  // WP-5：错题多选集合（id）
-function renderLibrary(mistakes, my, recm) {
-  _libCache = { mistakes: mistakes || [], my: my || null, recm: recm || [] };
-  mkShowAll = false;       // 新数据到达 → 回到分块首屏
-  mkSelected.clear();      // WP-5：数据刷新后清空多选
-  renderLibraryCurrent();
-}
-function renderLibraryCurrent() {
-  const { mistakes, my, recm } = _libCache;
-  const chk = document.getElementById("mk_filter_unlearned");
-  const onlyUn = !!(chk && chk.checked);
-  // R3-22：作用域过滤（概览科目口径 + 错题本独立下拉）；D-14：分块渲染
-  const scoped = mistakes.filter(m => !mkSubject || m.subject === mkSubject);
-  const list = onlyUn ? scoped.filter(m => !m.learned) : scoped;
-  syncMkScope();
+/* 概览下半区：薄弱点诊断 + 待学优先级（错题列表已由「错题本」视图统一承载） */
+function renderLibrary(my, recm) {
   const stats = (my && my.stats) || {};
   $("learn_stats").innerHTML = `共 <b>${stats.total_knowledge || 0}</b> 个知识点 · 薄弱 <b style="color:#f87171">${stats.weak || 0}</b> · 错题 <b>${stats.total_mistakes || 0}</b>`;
-  // 薄弱点诊断 + 待学优先级
   const kps = (my && my.knowledge) || [];
   $("learn_kp").innerHTML = kps.length
       ? renderMasteryDashboard(kps, stats)
-      : `<div class="hint">还没有知识点。加入错题后，这里会自动按「错题次数 + 距上次失败」给出掌握度。</div>`;
+      : `<div class="hint">还没有知识点。错题入库后，这里会按「错题次数 + 距上次失败」给出掌握度。</div>`;
   const recs = recm || [];
   $("learn_reco").innerHTML = recs.length ? recs.map(r => `
     <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line);flex-wrap:wrap">
@@ -245,241 +181,6 @@ function renderLibraryCurrent() {
       ${learnChip(r.state)}
       <span class="hint" style="font-size:11.5px;white-space:nowrap">优先度 ${Math.round((r.priority || 0) * 100)}</span>
     </div>`).join("") : `<div class="hint">暂无薄弱点，先把错题收进来。</div>`;
-
-  // 错题本（增强版：详情展开 / 重练 / 已掌握 / 删除）
-  const shown = mkShowAll ? list : list.slice(0, 100);   // D-14：首屏约 100 条
-  // R4-21：明示「全选可见」实际选中范围（首屏 N/共 M），未加载全部时不再误导
-  const btnAll = $("btn_mk_all");
-  if (btnAll) btnAll.textContent = list.length > shown.length
-    ? `全选已加载（${shown.length}/${list.length}）` : "全选";
-  updateMkToolbar(list);   // WP-5：工具栏随筛选/数据刷新
-  $("learn_mk_count").textContent = `${list.length} 道`
-    + (onlyUn && list.length !== scoped.length ? `（未掌握 ${list.length} / ${scoped.length}）` : "");
-  if (!list.length) {
-    $("learn_mk").innerHTML = `<div class="empty">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-paper"></use></svg>
-      <div class="sub">${mistakes.length
-        ? (onlyUn && scoped.length
-          ? `当前筛选下没有错题（已掌握 ${scoped.length} 道被隐藏）<br>取消勾选「只看未掌握」可查看全部`
-          : `「${mkSubject || "全部科目"}」下暂无错题<br>切到其他科目或先入库错题`)
-        : `错题本还是空的<br>粘贴一道错题入库，或点「拍题(图片 OCR)」「批量导入(JSON)」`}</div>
-    </div>`;
-  } else {
-    $("learn_mk").innerHTML = mkGroupHTML(shown) +
-      (list.length > shown.length
-        ? `<div class="btns" style="justify-content:center;margin-top:10px"><button class="act gray" onclick="mkShowAllFn()">加载全部（共 ${list.length} 道）</button></div>`
-        : "");
-  }
-}
-function mkShowAllFn() { mkShowAll = true; renderLibraryCurrent(); }
-window.mkShowAllFn = mkShowAllFn;
-/* WP-5：错题本多选/分组/批量操作 */
-function mkToggleRow(cb) {
-  const id = cb && cb.dataset.id;
-  if (!id) return;
-  if (cb.checked) mkSelected.add(id); else mkSelected.delete(id);
-  updateMkToolbar();
-  const ds = cb.closest("details");
-  if (ds) {
-    const head = ds.querySelector(".mk-group-count");
-    if (head) head.textContent = ds.querySelectorAll(".mkck").length + " 道";
-  }
-}
-function mkToggleGroup(cb) {
-  const ds = cb.closest("details");
-  if (!ds) return;
-  ds.querySelectorAll(".mkck").forEach(c => {
-    c.checked = cb.checked;
-    if (cb.checked) mkSelected.add(c.dataset.id); else mkSelected.delete(c.dataset.id);
-  });
-  updateMkToolbar();
-  const head = ds.querySelector(".mk-group-count");
-  if (head) head.textContent = ds.querySelectorAll(".mkck").length + " 道";
-}
-function mkToggleAllVisible() {
-  document.querySelectorAll("#learn_mk .mkck").forEach(c => {
-    c.checked = true; mkSelected.add(c.dataset.id);
-  });
-  updateMkToolbar();
-}
-function mkInvert() {
-  document.querySelectorAll("#learn_mk .mkck").forEach(c => {
-    c.checked = !c.checked;
-    if (c.checked) mkSelected.add(c.dataset.id); else mkSelected.delete(c.dataset.id);
-  });
-  updateMkToolbar();
-}
-function mkClearSel() {
-  mkSelected.clear();
-  document.querySelectorAll("#learn_mk .mkck").forEach(c => { c.checked = false; });
-  updateMkToolbar();
-}
-function updateMkToolbar(list) {
-  const bar = $("mk_bar");
-  if (!bar) return;
-  const total = list ? list.length : document.querySelectorAll("#learn_mk .mk-row").length;
-  bar.style.display = total ? "flex" : "none";
-  const cnt = $("mk_sel_count");
-  if (cnt) cnt.textContent = "已选 " + mkSelected.size;
-  const del = $("btn_mk_batch_del");
-  if (del) del.disabled = !mkSelected.size;
-}
-function mkGroupHTML(list) {
-  const groups = {};
-  list.forEach(mm => {
-    const key = [mm.subject || "未分类", mm.chapter || "未分章",
-                 (mm.know_tags || [])[0] || mm.topic || "未分组"].join("§");
-    (groups[key] = groups[key] || []).push(mm);
-  });
-  return Object.keys(groups).map(key => {
-    const arr = groups[key];
-    const parts = key.split("§");
-    const subj = parts[0] || "未分类", ch = parts[1] || "未分章", tag = parts[2] || "未分组";
-    const allChecked = arr.every(mm => mkSelected.has(mm.id));
-    // P2-10：未填项（未分类/未分章/未分组）不渲染为标签
-    const _lb = [subj, ch, tag].filter(x => x && !["未分类", "未分章", "未分组"].includes(x));
-    return `<details class="mk-group" open>
-      <summary class="mk-group-head">
-        <span class="mk-group-title">${esc(_lb.slice(0, 2).join(" · "))}${_lb[2] ? `<small>${esc(_lb[2])}</small>` : ""}</span>
-        <span class="mk-group-count">${arr.length} 道</span>
-        <label class="chk mk-group-sel" onclick="event.stopPropagation()">
-          <input type="checkbox" ${allChecked ? "checked" : ""} onchange="mkToggleGroup(this)"> 本组全选
-        </label>
-      </summary>
-      <div class="mk-group-body">${arr.map(mm => mkRowHTML(mm)).join("")}</div>
-    </details>`;
-  }).join("");
-}
-/* R4-22：错题批处理在途互斥——连点不再重复发请求（与站内其它批量「禁用」范式一致） */
-let mkBatchBusy = false;
-function _mkBatchSetBusy(on) {
-  mkBatchBusy = on;
-  document.querySelectorAll("#mk_bar button").forEach(b => { b.disabled = on; });
-}
-async function mkBatchDel() {
-  if (mkBatchBusy) return;
-  if (!mkSelected.size) { toast("请先勾选错题", false); return; }
-  const n = mkSelected.size;
-  confirmModal(`批量删除 ${n} 道错题？`,
-    `<p style="margin:0;color:var(--dim)">删除前会自动导出所选错题 JSON 备份（~/.medkit/exports/），删除后对应知识点掌握度刷新。<br>
-     <span class="hint">已生成的讲解 / 提问会话 / 复习卡 / 记忆卡会保留。</span></p>`,
-    "导出并删除", async () => {
-      try {
-        _mkBatchSetBusy(true);
-        const ids = [...mkSelected];
-        const r = await api("/api/library/mistakes/batch-delete",
-          { method: "POST", body: JSON.stringify({ ids }) });
-        toast(`已删除 ${r.deleted || 0} 道` + (r.backup ? "（已备份）" : ""));
-        mkSelected.clear();
-        loadLibrary();
-      } catch (e) { toast(e.message, false); }
-      finally { _mkBatchSetBusy(false); }
-    });
-}
-async function mkBatchLearn(learned) {
-  if (mkBatchBusy) return;
-  if (!mkSelected.size) { toast("请先勾选错题", false); return; }
-  try {
-    _mkBatchSetBusy(true);
-    const ids = [...mkSelected];
-    const r = await api("/api/library/mistakes/batch-learn",
-      { method: "POST", body: JSON.stringify({ ids, learned }) });
-    toast(`${learned ? "已标记" : "已取消"}已掌握 ${r.updated || 0} 道`);
-    mkSelected.clear();
-    loadLibrary();
-  } catch (e) { toast(e.message, false); }
-  finally { _mkBatchSetBusy(false); }
-}
-async function mkBatchExport(fmt) {
-  if (mkBatchBusy) return;
-  if (!mkSelected.size) { toast("请先勾选错题", false); return; }
-  try {
-    _mkBatchSetBusy(true);
-    const r = await api("/api/library/mistakes/batch-export",
-      { method: "POST", body: JSON.stringify({ ids: [...mkSelected], format: fmt }) });
-    const mime = fmt === "md" ? "text/markdown;charset=utf-8" : "application/json;charset=utf-8";
-    const blob = new Blob([r.data || ""], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = r.filename || ("medkit_mistakes_export." + fmt);
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    toast(`已导出 ${mkSelected.size} 道（${r.filename || fmt}）`);
-  } catch (e) { toast(e.message, false); }
-  finally { _mkBatchSetBusy(false); }
-}
-window.mkToggleRow = mkToggleRow; window.mkToggleGroup = mkToggleGroup;
-window.mkToggleAllVisible = mkToggleAllVisible; window.mkInvert = mkInvert;
-window.mkClearSel = mkClearSel; window.mkBatchDel = mkBatchDel;
-window.mkBatchLearn = mkBatchLearn; window.mkBatchExport = mkBatchExport;
-
-/* R3-22：错题本科目下拉——选项随科目集刷新，切换与概览过滤联动 */
-function fillMkSubjectSelect() {
-  const sel = $("mk_subject");
-  if (!sel) return;
-  const cur = sel.value || mkSubject || "";
-  const subs = (LEARN_CACHE.subjects && LEARN_CACHE.subjects.subjects) || [];
-  sel.innerHTML = '<option value="">全部科目</option>' +
-    subs.slice().sort().map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
-  if (cur && subs.includes(cur)) sel.value = cur;
-}
-function mkScopeChange(v) {
-  mkSubject = v || "";
-  // R4-23：先用缓存即时按新科目重渲染列表（syncMkScope 在 renderLibraryCurrent 内）——
-  // 避免「标签已切、列表还是旧态」的短暂错位；异步刷新数据随后跟上
-  renderLibraryCurrent();
-  // 与概览过滤联动：按新作用域刷新概览数据（与切换 dash_subject 行为一致）
-  if (typeof loadOverview === "function") { loadOverview(mkSubject); return; }
-}
-function syncMkScope() {
-  const scope = $("learn_mk_scope");
-  if (scope) scope.textContent = mkSubject ? "科目：" + mkSubject : "";
-  const dash = $("dash_subject");
-  if (dash && dash.value !== mkSubject) dash.value = mkSubject;
-}
-window.mkScopeChange = mkScopeChange;
-window.renderLibraryCurrent = renderLibraryCurrent;
-const ERR_LABEL = { concept_gap: "概念缺失", confusion: "易混", calculation: "计算失误", misread: "误读题干", reasoning: "推理断链", unanswered: "未作答", unknown: "未标注" };
-function mkRowHTML(mm) {
-  const meta = [];
-  const loc = [mm.subject, mm.chapter, mm.topic].filter(Boolean).join(" · ");
-  if (loc) meta.push(`<span class="mk-tag">${esc(loc)}</span>`);
-  (mm.know_tags || []).forEach(t => { if (t && ![mm.subject, mm.chapter, mm.topic].includes(t)) meta.push(`<span class="mk-tag">${esc(t)}</span>`); });
-  meta.push(`<span class="mk-tag">答错 ${mm.miss_count || 1} 次</span>`);
-  if (mm.error_reason) meta.push(`<span class="mk-tag" style="color:var(--warn);border-color:var(--warn)">${esc(ERR_LABEL[mm.error_reason] || mm.error_reason)}</span>`);
-  if (mm.learned) meta.push(`<span class="mk-tag" style="color:var(--good);border-color:var(--good)">已掌握</span>`);
-  const _SRC_LABEL = {"paper": "押题卷", "bank": "题库练习"};
-  if (_SRC_LABEL[mm.source]) meta.push(`<span class="mk-tag" style="color:var(--info);border-color:var(--info)">${esc(_SRC_LABEL[mm.source])}</span>`);
-  if (mm.data_broken) meta.push(`<span class="mk-tag" style="color:var(--bad);border-color:var(--bad)">数据损坏</span>`);
-  const detail = `
-    ${mm.case_stem ? `<div><b>案例</b>：${esc(mm.case_stem)}</div>` : ""}
-    ${mm.image_ref && mm.source_ref && mm.source_ref.pid ? `<div><b>图</b>：<img src="/api/projects/${esc(mm.source_ref.pid)}/assets/${esc(mm.image_ref)}" style="max-width:320px;max-height:240px;border-radius:8px;border:1px solid var(--line);display:block;margin:6px 0" onerror="this.remove()"></div>` : ""}
-    ${(mm.options || []).length ? `<div><b>选项</b>：${mm.options.map((o, i) => `${"ABCDEF"[i] || i + 1}. ${esc(o)}`).join("　")}</div>` : ""}
-    ${mm.answer ? `<div class="ans">✓ 答案：${esc(mm.answer)}</div>` : ""}
-    ${mm.user_answer ? `<div><b>我的作答</b>：${esc(mm.user_answer)}</div>` : ""}
-    ${mm.analysis ? `<div><b>解析</b>：${hlKw(mm.analysis)}</div>` : ""}
-    ${[mm.source_type, mm.source_year].filter(Boolean).length ? `<div><b>出处</b>：${esc([mm.source_type, mm.source_year].filter(Boolean).join(" · "))}</div>` : ""}`;
-  return `<div class="mk-row">
-    <label class="mkck-wrap" title="选择该题">
-      <input type="checkbox" class="mkck" data-id="${esc(mm.id)}" ${mkSelected.has(mm.id) ? "checked" : ""} onchange="mkToggleRow(this)">
-    </label>
-    <div class="mk-main">
-      <div class="mk-q" data-id="${esc(mm.id)}" onclick="mkDetailTgl(this)" title="点击展开详情">${esc(mm.question || "(无题干)")}</div>
-      <div class="mk-meta">${meta.join("")}</div>
-      <div class="mk-detail" id="mkd_${esc(mm.id)}">${detail || '<div class="hint">（无更多详情）</div>'}</div>
-    </div>
-    <div class="mk-actions">
-      ${(mm.options || []).length ? `<button class="mini-btn" data-id="${esc(mm.id)}" onclick="mkRetry(this)" title="到「刷题」页把这道错题再做一遍（判对即归档已掌握）">→ 重练</button>` : ""}
-      ${mm.learned ? "" : `<button class="act" style="padding:5px 11px;font-size:12px" data-id="${esc(mm.id)}" onclick="mkLearn(this,true)">已掌握</button>`}
-      <button class="act gray" style="padding:5px 11px;font-size:12px;color:#f87171" data-id="${esc(mm.id)}" onclick="mkDel(this)">删除</button>
-    </div>
-  </div>`;
-}
-function mkDetailTgl(idOrEl) {
-  // RV1：双签名——内联传 this（data-id），程序化调用传 id
-  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
-  const d = $("mkd_" + id);
-  if (d) d.classList.toggle("open");
 }
 async function updateByQueue() {
   try { const d = await api("/api/library/dashboard"); updateLearnBadges(d); } catch (e) { /* ignore */ }
@@ -492,136 +193,4 @@ async function healLibrary() {
     await loadLibrary();
   } catch (e) { toast(e.message, false); }
 }
-window.mkDetailTgl = mkDetailTgl; window.healLibrary = healLibrary;
-/* 错题 → 练习 直达（跨域调用收敛在**外壳** app.js 的 `openDrillFor`，
-   学习中心不直接引用 bank 域符号——依赖方向 EP-01 → 外壳 → bank）。 */
-function mkRetry(btn) {
-  const id = btn && btn.dataset ? (btn.dataset.id || "") : btn;
-  if (!id) return;
-  if (typeof openDrillFor === "function") openDrillFor(id);
-}
-window.mkRetry = mkRetry;
-async function mkLearn(idOrEl, learned) {
-  // RV1：双签名——内联传 this（data-id），程序化调用传 (id, learned)
-  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
-  try {
-    await api(`/api/library/mistakes/${id}/learn`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ learned: learned }) });
-    toast(learned ? "已标记为已掌握（仅归档标记，错题默认被「只看未掌握」隐藏）"
-                  : "已取消已掌握标记"); loadLibrary();
-  } catch (e) { toast(e.message, false); }
-}
-async function mkDel(idOrEl) {
-  // RV1：双签名——内联传 this（data-id），程序化调用传 id
-  const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
-  confirmModal("删除错题", `<p style="margin:0;color:var(--dim)">确定删除这道错题吗？对应知识点掌握度会随之刷新。<br>
-    <span class="hint">该错题对应的知识点掌握度会随之刷新。</span></p>`,
-    "删除", async () => {
-      try { await api("/api/library/mistakes/" + id, { method: "DELETE" }); toast("已删除"); loadLibrary(); }
-      catch (e) { toast(e.message, false); }
-    });
-}
-async function addMistakeRaw() {
-  const text = $("mk_text").value.trim();
-  if (!text) { toast("请先粘贴或输入错题内容", false); $("mk_text").focus(); return; }
-  const tag = $("mk_tag").value.trim();
-  const ch = $("mk_chapter").value.trim();
-  const body = { question: text, know_tags: tag ? [tag] : [] };
-  if (ch) { const p = ch.split(/[·|,，]/); body.chapter = (p[0] || "").trim(); body.topic = (p[1] || "").trim(); }
-  try {
-    await api("/api/library/mistakes/import-text", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    toast("已入库并计入掌握度");
-    $("mk_text").value = "";
-    loadLibrary();
-  } catch (e) { toast(e.message, false); }
-}
-/* 拍题(图片 OCR)：MinerU 把图转文本 → 回填 `#mk_text`，用户核对后走「入库错题」。
- *
- * 定位（v0.15 奥卡姆精简 P2）：这是**轻量**入口——只认字，不判模型能力、不过闸门、不跑归因。
- * EP-01 的「拍照录入（自动归因）」卡片随归因域移除（它依赖 `vision` 能力判定 + `errorpipe`
- * 归因）。需要 OCR 的用户在「我的 → 连接服务商」配 MinerU Token 即可。
- * 后端 `/api/library/mistakes/import-image` 未变（独立守卫 tests/test_r4_batch3.py）。
- */
-function mkPhotoPick() { $("mk_photo").click(); }
-async function mkPhotoFile(input) {
-  const f = input.files && input.files[0];
-  input.value = "";                       // 允许连续选同一张图
-  if (!f) return;
-  const btn = $("btn_mk_photo"); const old = btn ? btn.textContent : "";
-  if (btn) { btn.disabled = true; btn.textContent = "识别中…"; }
-  try {
-    const fd = new FormData();
-    fd.append("file", f);
-    const r = await api("/api/library/mistakes/import-image", { method: "POST", body: fd });
-    const text = String(r.text || "").trim();
-    if (!text) { toast("OCR 未识别出文字（图片可能过暗/过小/非题目）", false); return; }
-    $("mk_text").value = text;
-    toast("已识别，请核对文本后点「入库错题」");
-  } catch (e) { toast("识别失败：" + (e.message || e), false); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
-}
-
-async function _siteImportItems(items) {
-  if (!items || !items.length) throw new Error("未找到 items 数组");
-  const r = await api("/api/library/mistakes/import-export", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items }) });
-  toast(`站点数据导入：新增 ${r.added || 0} · 更新 ${r.updated || 0} · 跳过 ${r.skipped || 0}`
-    + (r.errors && r.errors.length ? `（${esc(r.errors[0])}…）` : ""));
-  loadLibrary();
-  return r;
-}
-function mkSiteImport() { $("mk_site_file").click(); }
-async function mkSiteFile(input) {
-  const f = input.files && input.files[0];
-  input.value = "";
-  if (!f) return;
-  let data;
-  try { data = JSON.parse(await f.text()); } catch (e) { toast("站点 JSON 解析失败", false); return; }
-  const items = Array.isArray(data) ? data : (data.items || []);
-  const btn = $("btn_mk_site"); const old = btn ? btn.textContent : "";
-  if (btn) { btn.disabled = true; btn.textContent = "导入中…"; }
-  try { await _siteImportItems(items); }
-  catch (e) { toast(e.message, false); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
-}
-function mkBatchPick() { $("mk_json").click(); }
-async function mkBatchFile(input) {
-  const f = input.files && input.files[0];
-  if (!f) return;
-  const btn = $("btn_mk_batch"); const old = btn.textContent;
-  // C11：批量导入单请求——禁用按钮 + 进度文案（防连点重复导入）
-  btn.disabled = true; btn.textContent = "导入中…";
-  const name = (f.name || "").toLowerCase();
-  const ext = name.includes(".") ? name.split(".").pop() : "txt";
-  try {
-    if (ext === "json") {
-      // WP-11：站点导出 JSON（含 items 数组）走 import-export 幂等导入；
-      // 其余 JSON 保持旧 import-file 本地解析器（options:[{label,text}] 等官方结构）
-      let data = null;
-      try { data = JSON.parse(await f.text()); } catch (e) { data = null; }
-      const items = data ? (Array.isArray(data) ? data : (data.items || null)) : null;
-      if (Array.isArray(items) && items.length) {
-        await _siteImportItems(items);
-      } else {
-        const fd = new FormData();
-        fd.append("file", f);
-        const r = await api("/api/library/mistakes/import-file", { method: "POST", body: fd });
-        toast(`已批量入库 ${r.added || 0} 道（共 ${r.total || 0} 条，跳过 ${r.skipped || 0} 条）`);
-        loadLibrary();
-      }
-    } else {
-      // csv / md / txt：统一走本地解析导入（多字段/多格式归一化）
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await api("/api/library/mistakes/import-file", { method: "POST", body: fd });
-      toast(`已导入 ${r.added} 道（解析 ${r.total}，跳过 ${r.skipped}）`);
-      loadLibrary();
-    }
-  } catch (e) { toast(`批量导入失败：${e.message}`, false); }
-  finally { input.value = ""; btn.disabled = false; btn.textContent = old; }
-}
-window.mkLearn = mkLearn; window.mkDel = mkDel;
-window.mkBatchPick = mkBatchPick; window.mkPhotoPick = mkPhotoPick;
+window.healLibrary = healLibrary;

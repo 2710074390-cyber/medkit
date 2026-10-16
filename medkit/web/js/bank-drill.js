@@ -1,4 +1,4 @@
-/* exported _bankDrill, bankDrillCardTgl, bankDrillExit, bankDrillFinish, bankDrillGoto, bankDrillHide,
+/* exported _bankDrill, bankDrillAutoCancel, bankDrillCardTgl, bankDrillExit, bankDrillFinish, bankDrillGoto, bankDrillHide,
    bankDrillMode, bankDrillNext, bankDrillNote, bankDrillPick, bankDrillPrev, bankDrillRender,
    bankDrillRetryWrong, bankDrillStar, bankDrillStart, bankDrillStartMistakes, bankDrillSubmit,
    bankDrillToggleRunmode */
@@ -26,10 +26,13 @@ let _bankDrill = {
   marks: {},                // item_id -> {picked, graded, correct, answer, analysis, note, src…}（已作答记录）
   cardOpen: false,          // 答题卡是否展开
   startedAt: 0, itemAt: 0, timerId: null,
+  autoId: null,             // 自动跳题的倒计时句柄（选对后 N 秒进下一题）
 };
 
 const _BANK_LETTERS = "ABCDEFGHIJ";
 const _BANK_RECITE = "recite";
+/* 选对后自动跳下一题的等待秒数（0 = 关闭自动跳题）。 */
+const _BANK_AUTO_SECS = 3;
 
 /* A-1 出处标签：`真题 · 2024`（缺项自动省略；两者都缺返回空串 ⇒ 不渲染该行） */
 function _bankSrcLabel(it) {
@@ -68,6 +71,49 @@ function _bankItemSecs() {
   const d = _bankDrill;
   return d.itemAt ? Math.max(0, Math.round((Date.now() - d.itemAt) / 1000)) : 0;
 }
+
+/* ---- 选对后自动跳下一题 ----
+ *
+ * 用户诉求：「选对了还要手点一次下一题」是纯摩擦。于是判对后起一个倒计时，
+ * 到点自动进下一题；同时**必须可打断**——任何主动操作（翻页、切模式、开答题卡、
+ * 退出）都取消它，否则用户正在看解析时被强行翻页。
+ *
+ * 三条不做的事（都是刻意的）：
+ * ① 判错**不**自动跳（错题要看解析，且可能要写笔记）；
+ * ② 背题模式不自动跳（背题本来就是逐题精读）；
+ * ③ 最后一题不自动跳（自动收尾会把「看结果」变成猝不及防的页面替换）。
+ */
+function _bankAutoCancel() {
+  const d = _bankDrill;
+  if (d.autoId) { clearInterval(d.autoId); d.autoId = null; }
+  const el = $("bank_auto");
+  if (el) { el.innerHTML = ""; el.style.display = "none"; }
+}
+
+function _bankAutoArm(secs) {
+  const d = _bankDrill;
+  _bankAutoCancel();
+  if (!secs) return;
+  if (d.runmode === _BANK_RECITE) return;
+  if (d.idx >= d.items.length - 1) return;         // 最后一题：不自动收尾
+  const el = $("bank_auto");
+  if (!el) return;
+  let left = secs;
+  const paint = () => {
+    el.style.display = "";
+    el.innerHTML = `答对了 · <b>${left}</b> 秒后自动下一题`
+      + `<button class="mini-btn" onclick="bankDrillAutoCancel()">取消</button>`;
+  };
+  paint();
+  d.autoId = setInterval(() => {
+    left -= 1;
+    if (left <= 0) { _bankAutoCancel(); bankDrillNext(); return; }
+    paint();
+  }, 1000);
+}
+
+/* 用户主动取消自动跳题（点「取消」按钮）——留一条明确的反馈，避免"点了没反应"。 */
+function bankDrillAutoCancel() { _bankAutoCancel(); toast("已取消自动跳题"); }
 
 /* ---- 键盘快捷键（仅沉浸层可见时生效；输入框内不拦截） ---- */
 let _bankDrillKeyBound = false;
@@ -115,6 +161,7 @@ async function bankDrillStart(bid, mode, opts) {
   opts = opts || {};
   const d = _bankDrill;
   const prevRun = d.runmode;
+  _bankAutoCancel();
   Object.assign(d, {
     bid: String(bid || ""), items: [], idx: 0, sel: new Set(), graded: false,
     mode: mode || "all", runmode: opts.runmode || prevRun || "practice",
@@ -173,6 +220,7 @@ async function bankDrillStartMistakes(mode, focusId, opts) {
   // 切范围（全部错题 / 只看未掌握）时**保持当前题目**（若它仍在筛选结果里）：
   // 用户只是想换个范围，把人丢回第一题等于打断他正在做的那题，也丢掉了已作答记录。
   const keepId = (d.source === "mistakes" && d.items[d.idx]) ? d.items[d.idx].id : "";
+  _bankAutoCancel();
   Object.assign(d, {
     bid: "", items: [], idx: 0, sel: new Set(), graded: false,
     mode: mode || "all", runmode: opts.runmode || d.runmode || "practice",
@@ -255,8 +303,36 @@ function _bankDrillProgress() {
   if (bar) bar.style.width = pct + "%";
 }
 
+/* ---- 操作栏 ----
+ *
+ * 抽成函数是**缺陷修复的一部分**：原先这一块内联在 `bankDrillRender()` 里，
+ * 而判分走的是 `_bankShowResult()`（不重渲染整块，免得丢掉刚展开的结果）——
+ * 于是判分后按钮**不会**更新：本该变成「下一题 →」的位置仍显示「跳过」，
+ * 用户看到的操作栏里就"没有下一题"（2026-10-16 用户反馈）。
+ * ⇒ 判分后就地重渲染这一块（`#bank_actions`），按钮文案与可用状态始终与当前题一致。
+ */
+function _bankActionsHTML() {
+  const d = _bankDrill;
+  const it = d.items[d.idx] || {};
+  const multi = _bankIsMulti(it);
+  const recite = d.runmode === _BANK_RECITE;
+  const m = d.marks[it.id];
+  const graded = !!(m && m.graded);
+  const isMistake = d.source === "mistakes";
+  const last = d.idx >= d.items.length - 1;
+  return `
+      <button class="mini-btn" onclick="bankDrillPrev()"${d.idx === 0 ? " disabled" : ""}>← 上一题</button>
+      ${multi && !graded && !recite ? '<button class="act" id="btn_bank_submit" onclick="bankDrillSubmit()">确认作答</button>' : ""}
+      ${!graded && !recite ? '<button class="mini-btn" onclick="bankDrillNext()" title="不做这道，直接下一题">跳过</button>' : ""}
+      <button class="act${graded || recite ? "" : " gray"}" id="btn_bank_next" onclick="bankDrillNext()"
+        title="下一题（Enter / →）">${last ? "查看结果 →" : "下一题 →"}</button>
+      ${isMistake ? "" : `<button class="mini-btn" id="btn_bank_star" onclick="bankDrillStar()">${it.starred ? "★ 已收藏" : "☆ 收藏"}</button>`}
+      ${isMistake ? "" : '<button class="mini-btn" onclick="bankDrillNote()">✎ 笔记</button>'}`;
+}
+
 /* ---- 渲染当前题 ---- */
 function bankDrillRender() {
+  _bankAutoCancel();               // 换题/重渲染一律先撤掉在途的自动跳题倒计时
   const body = $("bank_drill_body");
   if (!body) return;
   const d = _bankDrill;
@@ -288,16 +364,9 @@ function bankDrillRender() {
         <span class="bank-opt-k">${_BANK_LETTERS[i] || (i + 1)}</span>
         <span>${esc(o)}</span>
       </div>`).join("")}</div>
-    <div class="drill-actions">
-      <button class="mini-btn" onclick="bankDrillPrev()"${d.idx === 0 ? " disabled" : ""}>← 上一题</button>
-      ${multi && !graded && !recite ? '<button class="act" id="btn_bank_submit" onclick="bankDrillSubmit()">确认作答</button>' : ""}
-      ${graded || recite
-        ? '<button class="act" onclick="bankDrillNext()">下一题 →</button>'
-        : '<button class="act gray" onclick="bankDrillNext()">跳过</button>'}
-      ${isMistake ? "" : `<button class="mini-btn" id="btn_bank_star" onclick="bankDrillStar()">${it.starred ? "★ 已收藏" : "☆ 收藏"}</button>`}
-      ${isMistake ? "" : '<button class="mini-btn" onclick="bankDrillNote()">✎ 笔记</button>'}
-    </div>
-    <div id="bank_result"></div>`;
+    <div class="drill-actions" id="bank_actions">${_bankActionsHTML()}</div>
+    <div id="bank_result"></div>
+    <div id="bank_auto" class="drill-auto" style="display:none"></div>`;
   if (graded) {
     _bankShowResult({
       correct: m.correct, answer: m.answer, analysis: m.analysis, note: m.note,
@@ -373,9 +442,14 @@ async function bankDrillSubmit() {
       synced: r.synced_mistakes,
     };
     _bankShowResult(r, ans);
+    // 就地刷新操作栏：判分前这里是「跳过」，判分后必须变成「下一题 →」（否则用户看不到下一题）
+    const act = $("bank_actions");
+    if (act) act.innerHTML = _bankActionsHTML();
     _bankDrillProgress();
     _bankDrillRenderCard();
     if (typeof bankGoalRefresh === "function") bankGoalRefresh();   // 每日目标进度（题库作答计入）
+    // 答对 → 起自动跳题倒计时（错题不跳：要看解析、可能要写笔记）
+    if (r.correct) _bankAutoArm(_BANK_AUTO_SECS);
   } catch (e) { toast(e.message, false); }
   finally { d.busy = false; }
 }
@@ -446,6 +520,7 @@ function _bankShowResult(r, userAns) {
 function _bankDrillGoto(idx) {
   const d = _bankDrill;
   if (idx < 0 || idx >= d.items.length) return;
+  _bankAutoCancel();          // 主动翻页 → 撤掉在途的自动跳题
   d.idx = idx; d.sel = new Set(); d.graded = false; d.last = null;
   bankDrillRender();
 }
@@ -469,6 +544,7 @@ function _bankDrillCardReset() {
 function bankDrillCardTgl() {
   const pane = $("bank_drill_cardpane");
   if (!pane) return;
+  _bankAutoCancel();          // 打开答题卡 = 要看全局/回看，不该被自动翻页打断
   _bankDrill.cardOpen = !_bankDrill.cardOpen;
   pane.style.display = _bankDrill.cardOpen ? "" : "none";
   _bankDrillRenderCard();
@@ -514,6 +590,7 @@ async function bankDrillStar() {
   const d = _bankDrill;
   const it = d.items[d.idx];
   if (!it) return;
+  _bankAutoCancel();          // 用户主动操作 → 不该被自动翻页打断
   try {
     const r = await api(`/api/bank/items/${encodeURIComponent(it.id)}/star`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -531,6 +608,7 @@ function bankDrillNote() {
   const d = _bankDrill;
   const it = d.items[d.idx];
   if (!it) return;
+  _bankAutoCancel();          // 打开笔记弹窗前先停下倒计时（否则会在弹窗背后偷偷换题）
   askModal("题目笔记", "写点什么（判分后才显示）", async (note) => {
     try {
       await api(`/api/bank/items/${encodeURIComponent(it.id)}`, {
@@ -560,6 +638,7 @@ function bankDrillRetryWrong() {
 function bankDrillHide() {
   const el = _bankDrillEl();
   if (!el || el.style.display === "none") return;
+  _bankAutoCancel();
   el.style.display = "none";
   document.body.classList.remove("drill-open");
   _bankDrillStopTimer();
@@ -577,6 +656,7 @@ function bankDrillExit() {
 
 function bankDrillFinish() {
   const d = _bankDrill;
+  _bankAutoCancel();
   const total = d.items.length;
   const c = _bankCounts();
   const pct = total ? Math.round(c.ok / total * 100) : 0;
@@ -621,3 +701,4 @@ window.bankDrillFinish = bankDrillFinish;
 window.bankDrillRetryWrong = bankDrillRetryWrong;
 window.bankDrillStar = bankDrillStar;
 window.bankDrillStartMistakes = bankDrillStartMistakes;
+window.bankDrillAutoCancel = bankDrillAutoCancel;

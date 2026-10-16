@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import db as dbs
+from . import library as lib
 from . import vault
 from .library import compute_priority, compute_score, compute_state
 
@@ -250,6 +251,48 @@ def update_section(rel_path: str, key: str, text: str, root: Optional[Path] = No
     rec = vault.read_record(path)
     rec["path"] = str(path)
     return {"ok": True, "path": str(path), "record": rec}
+
+
+def reindex_file(path: Path, root: Optional[Path] = None) -> None:
+    """单文件增量入索引（公开入口）。供「判错自动补写 vault」后立即让列表可见。
+
+    **库尚未建立时不入索引**：`dbs.tx()` 会凭空建出 `medkit.db`，从而把学习库从 JSON 轨
+    翻到 SQL 轨（那时 `mistakes` 表还不存在——旧数据会「消失」，测试里必现）。文件已写好，
+    索引留待首次 `rebuild()` 统一补齐即可。
+    """
+    if not Path(dbs.DB_PATH).exists():
+        return
+    base = Path(root) if root else vault.vault_root()
+    _reindex_one(Path(path), base)
+
+
+def reconcile_from_library() -> dict[str, int]:
+    """把旧库（`library.mistakes`）里 vault 尚无 md 的记录**一次性**补写成文件。
+
+    只做一次（`.medkit-vault-migrated` 存在即跳过）：否则用户手删过的错题会在每次启动
+    复活成幽灵条目。返回 {written, skipped}；`skipped=-1` 表示已补过、本次未动作。
+    """
+    root = vault.vault_root()
+    if not vault.is_vault(root):
+        vault.init_vault(str(root))
+    if vault.is_reconciled(root):
+        return {"written": 0, "skipped": -1}
+    recs = lib.list_mistakes()
+    existing = {str(r.get("id") or "") for r in list_items()}
+    written = 0
+    for rec in recs:
+        if not str(rec.get("question") or "").strip():
+            continue
+        mid = str(rec.get("id") or "")
+        if mid and mid in existing:
+            continue
+        try:
+            create_item(rec, root)
+            written += 1
+        except Exception:  # noqa: BLE001  单条补写失败不阻断其余（文件层 wrote 幂等）
+            continue
+    vault.mark_reconciled(root)
+    return {"written": written, "skipped": len(recs) - written}
 
 
 def _reindex_one(path: Path, base: Path) -> None:

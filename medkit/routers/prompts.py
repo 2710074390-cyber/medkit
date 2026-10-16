@@ -16,7 +16,8 @@ router = APIRouter()
 PROMPT_ROLES = {"medgen.md": "MedGen · 出题", "medqc.md": "MedQC · 质检",
                "medfix.md": "MedFix · 修复", "medreview.md": "MedReview · 复习手册",
                "syllabus_extract.md": "SyllabusExtract · 官方大纲抽取",
-               "mistake_agent.md": "MistakeAgent · 错题助手（只引用用户自己的 vault）"}
+               "mistake_agent.md": "MistakeAgent · 错题助手（只引用用户自己的 vault）",
+               "vault_handbook.md": "VaultHandbook · 薄弱点复习手册（按科目归纳你的错题库）"}
 
 
 def _prompt_meta() -> dict[str, Any]:

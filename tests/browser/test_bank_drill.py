@@ -218,6 +218,74 @@ def test_recite_mode_shows_answer_without_recording(page, server_url):
         _cleanup(page)
 
 
+# ---------------------------------------------------------------- v0.17.x 操作栏 / 自动跳题
+def test_action_bar_has_next_button_and_auto_advances(page, server_url):
+    """操作栏常驻「下一题」；答对后 N 秒**自动**进下一题（判分后按钮不再停留在「跳过」）。
+
+    这条钉住用户反馈的两个具体缺陷：
+    ① 判分后操作栏不刷新 ⇒ 本该是「下一题 →」的位置仍显示「跳过」，用户以为"没有下一题"；
+    ② 答对后还要手点一次才走，摩擦大。
+    """
+    _open_drill(page, server_url)
+    _seed_bank(page)
+    try:
+        page.reload()
+        page.wait_for_selector(".bank-item", timeout=15000)
+        _start_first_bank(page)
+
+        # 判分前：跳过与下一题**都在**（跳过 = 不做这题，下一题 = 前进）
+        assert page.locator("#btn_bank_next").count() == 1, "操作栏必须常驻「下一题」"
+        assert page.locator("#bank_actions button:has-text('跳过')").count() == 1
+
+        page.click("#bopt_0")                     # A = 正确 → 立即判分
+        page.wait_for_selector(".bank-ans", timeout=15000)
+
+        # 判分后：跳过消失、「下一题」仍在且文案正确（此前这里会一直是「跳过」）
+        assert page.locator("#bank_actions button:has-text('跳过')").count() == 0, \
+            "判分后「跳过」应换成「下一题」（操作栏必须就地刷新）"
+        assert page.locator("#btn_bank_next").inner_text().strip().startswith("下一题")
+
+        # 自动跳题：先出现倒计时提示，随后真的走到第 2 题
+        page.wait_for_selector("#bank_auto", state="visible", timeout=6000)
+        assert "自动下一题" in page.locator("#bank_auto").inner_text()
+        page.wait_for_function(
+            "() => document.querySelector('.bank-qidx').innerText.includes('第 2 /')",
+            timeout=15000)
+    finally:
+        _cleanup(page)
+
+
+def test_auto_advance_is_cancellable_and_never_on_wrong_answer(page, server_url):
+    """答错**不**自动跳题；倒计时可被「取消」打断（不会在用户看解析时强行翻页）。"""
+    _open_drill(page, server_url)
+    _seed_bank(page)
+    try:
+        page.reload()
+        page.wait_for_selector(".bank-item", timeout=15000)
+        _start_first_bank(page)
+
+        page.click("#bopt_1")                     # B = 错 → 立即判分
+        page.wait_for_selector(".bank-ans", timeout=15000)
+        assert not page.locator("#bank_auto").is_visible(), "答错不该自动跳题（要看解析）"
+
+        # 换一道答对的：重开一轮（清空作答）后点 A
+        page.click(".bank-bar button:has-text('全部')")
+        page.wait_for_selector(".bank-q", timeout=15000)
+        assert page.locator(".bank-ans").count() == 0, "重开一轮应清掉上一轮的判分结果"
+        page.click("#bopt_0")
+        page.wait_for_selector(".bank-ans", timeout=15000)
+        page.wait_for_selector("#bank_auto", state="visible", timeout=6000)
+        page.click("#bank_auto button")           # 取消自动跳题
+        page.wait_for_function(
+            "() => document.getElementById('toasts').innerText.includes('已取消自动跳题')",
+            timeout=15000)
+        assert not page.locator("#bank_auto").is_visible()
+        page.wait_for_timeout(3500)               # 越过自动跳题的 3 秒窗口
+        assert "第 1 /" in page.locator(".bank-qidx").inner_text(), "取消后不得再自动跳题"
+    finally:
+        _cleanup(page)
+
+
 def test_study_page_do_view_starts_drill(page, server_url):
     """「刷题」页默认是「做题」子视图：快捷卡片可进入沉浸式作答；复习子标签仍在。"""
     _open_drill(page, server_url)
@@ -302,92 +370,6 @@ def test_manage_edit_answer_and_star(page, server_url):
             "改答案必须真的改到判分口径上（不是只改了显示）"
     finally:
         _cleanup(page)
-
-
-# ---------------------------------------------------------------- F7 / B7
-_RETRY_SUBJECT = "内科学_重练A"
-_RETRY_TAG = "重练考点A"
-_RETRY_Q = "重练用题干——心衰治疗要点"
-
-
-def _drop_retry(page) -> None:
-    page.evaluate(
-        """async (subject) => {
-          try {
-            await fetch('/api/library/subjects/delete', {
-              method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({subject: subject})});
-          } catch (e) { /* ignore */ }
-        }""", _RETRY_SUBJECT)
-
-
-def test_mistake_retry_archives_on_correct_and_daily_goal_renders(page, server_url):
-    """F7：错题本「→ 重练」直达 → 判对归档「已掌握」（落库）；B7：今日目标把重练算进进度。"""
-    page.goto(f"{server_url}/#study")
-    page.wait_for_selector("#tab-study.show", timeout=15000)
-    try:
-        st = page.evaluate(
-            """async ([subj, tag, q]) => {
-              const r = await fetch('/api/library/mistakes', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({subject: subj, chapter: '测试章', question: q,
-                  options: ['甲', '乙', '丙'], answer: 'B',
-                  analysis: '解析：乙是正解', know_tags: [tag]})});
-              return r.status;
-            }""", [_RETRY_SUBJECT, _RETRY_TAG, _RETRY_Q])
-        assert st == 200
-
-        # 从错题本「→ 重练」直达（跨域调用经外壳 `openDrillFor` 转发）
-        page.click('button[data-tab="learn"]')
-        page.wait_for_selector("#tab-learn.show", timeout=15000)
-        page.click('#learnnav button[data-lv="mistakes"]')
-        # P-E（奥卡姆精简第二轮）：旧错题本（DB）已并入「错题本」的第二个 pane，
-        # 进入后必须显式切到「旧库」——默认 pane 是「本地文件（真身）」。
-        page.click('#mv_tabs .mv-tab[data-mv="lib"]')
-        page.wait_for_selector('#mv-lib', state='visible', timeout=15000)
-        page.wait_for_selector("#learn_mk .mk-row", timeout=15000)
-        page.locator(".mk-row", has_text=_RETRY_TAG).locator('button:has-text("→ 重练")').click()
-        page.wait_for_selector("#tab-study.show", timeout=15000)
-        page.wait_for_selector(".bank-q", timeout=15000)
-        assert _RETRY_Q in page.locator(".bank-q").inner_text(), "应直达被点的那道题"
-
-        # 判错 → 仍是未掌握（点选项即判分）
-        page.click("#bopt_0")
-        page.wait_for_selector(".bank-ans", timeout=15000)
-        assert "答错了" in page.locator(".bank-ans").inner_text()
-        assert "仍是未掌握" in page.locator(".bank-ans").inner_text()
-
-        # 重开一轮并判对 → 归档
-        page.click('.bank-bar button:has-text("全部错题")')
-        page.wait_for_selector(".bank-q", timeout=15000)
-        page.click("#bopt_1")          # B = 正解
-        page.wait_for_selector(".bank-ans", timeout=15000)
-        assert "答对了" in page.locator(".bank-ans").inner_text()
-        assert "已归档为「已掌握」" in page.locator(".bank-ans").inner_text()
-
-        row = page.evaluate(
-            """async (q) => {
-              const ms = await (await fetch('/api/library/mistakes')).json();
-              return (ms.mistakes || []).find(m => (m.question || '') === q) || null;
-            }""", _RETRY_Q)
-        assert row is not None and row.get("learned") is True, "判对必须真的归档（落库，不只是文案）"
-
-        # 归档后「只看未掌握」应查不到它
-        page.click('.bank-bar button:has-text("只看未掌握")')
-        page.wait_for_selector("#bank_drill_body .empty", timeout=15000)
-
-        # B7：今日目标进度**把错题重练也算进去**（重练 2 次 → 至少 2）
-        # 每日目标在「刷题」页（tab-study）的「做题」子视图里
-        page.click("#bank_drill_card button:has-text('退出')")
-        page.goto(f"{server_url}/#study")
-        page.wait_for_selector("#tab-study.show", timeout=15000)
-        page.wait_for_function(
-            "() => { const t = document.querySelector('#bank_goal_prog');"
-            "  return t && /今日已练\\s*[2-9]/.test(t.textContent); }",
-            timeout=15000)
-        assert page.input_value("#bank_goal") == "20", "默认目标题数"
-    finally:
-        _drop_retry(page)
 
 
 def test_import_from_project_and_export_paper(page, server_url, server_home):

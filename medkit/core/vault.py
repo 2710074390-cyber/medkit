@@ -191,6 +191,36 @@ def write_record(rec: dict[str, Any], root: Optional[Path] = None) -> Path:
     return path
 
 
+def mirror_record(rec: dict[str, Any]) -> Optional[Path]:
+    """把一条「库内错题记录」自动补写成 vault 的 md 文件。返回路径；空题干返回 None。
+
+    这是「错题做了之后自动进错题本」的落点：判错回流（`library.sync_from_paper` →
+    `add_mistake`）后无需任何导入/导出动作，用户下次打开错题本就能看到。
+    文件为空题干、或文件层不可写时返回 None（调用方不因此失败——库记录已落库）。
+    """
+    if not str(rec.get("question") or "").strip():
+        return None
+    root = vault_root()
+    if not is_vault(root):
+        init_vault(str(root))
+    return write_record(rec, root)
+
+
+# 一次性「旧库 → vault」补写标记：避免用户手删的错题在每次启动复活。
+RECONCILE_MARKER = ".medkit-vault-migrated"
+
+
+def is_reconciled(root: Optional[Path] = None) -> bool:
+    base = Path(root) if root else vault_root()
+    return (base / RECONCILE_MARKER).is_file()
+
+
+def mark_reconciled(root: Optional[Path] = None) -> None:
+    base = Path(root) if root else vault_root()
+    base.mkdir(parents=True, exist_ok=True)
+    _write_atomic(base / RECONCILE_MARKER, _utcnow() + "\n")
+
+
 # ------------------------------------------------------------------ 序列化
 def _slug(text: Any, limit: int = 24) -> str:
     """题干 → 文件名安全片段（中文保留，只剥路径/Shell 危险字符）。"""

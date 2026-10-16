@@ -250,6 +250,15 @@ _PATH_EXEMPT = {
     "tests/browser/test_study_quiz.py": "复习卡浏览器测试，随 T2 删除",
     "tests/browser/test_tutor_immersive.py": "提问域浏览器测试，随 T2 删除",
     "tests/test_stream_wiring.py": "流式缝合守卫，其守护的 explain/tutor 两个流式端点随 T2 删除",
+    # ---- 2026-10-16（奥卡姆精简第三轮）：错题本改为「一个大聊天界面 + 极简引导」 ----
+    # 依据：用户反馈「AI 味重、到处过度解释」与「不要再让用户到处导入导出」。
+    # 删掉 #mv_tabs 二级切换 / 旧库面板 / 目录选择 / 一键迁移 / 导出下载等入口，
+    # 三条只服务这些入口的浏览器守卫随之删除；活跃的历史文档（交接文档的
+    # 2026-08-30 里程碑、2026-10-11 验收报告）按**当时事实**引用它们，路径已不存在
+    # 是正常的历史结果——不是文档写错。
+    "tests/browser/test_mistakes_batch.py": "错题本批量/迁移守卫，随聊天单界面精简删除（2026-10-16 第三轮）",
+    "tests/browser/test_site_import.py": "站点数据导入守卫，随导入导出入口删除（2026-10-16 第三轮）",
+    "tests/browser/test_study_subjects.py": "科目管理弹层守卫，随错题本精简删除（2026-10-16 第三轮）",
 }
 
 
