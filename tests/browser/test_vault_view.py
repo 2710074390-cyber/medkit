@@ -22,9 +22,9 @@ from __future__ import annotations
 
 
 def _goto_vault(page, server_url: str) -> None:
+    # v0.19 IA 收敛：错题升为一级页签，进入即渲染错题视图（无二级子导航可点）
     page.goto(f"{server_url}/#learn")
     page.wait_for_selector("#tab-learn.show", timeout=15000)
-    page.click('#learnnav button[data-lv="mistakes"]')
     page.wait_for_selector("#lv-mistakes.show", timeout=15000)
     # 文件夹全域问的入口必须在场（不需要 API Key；未配 Key 时点它只会给出错误提示）
     page.wait_for_selector("#vault_ask_q", timeout=15000)
@@ -130,7 +130,6 @@ def test_vault_view_persists_user_notes_to_file(page, server_url):
         # 刷新后重新检索：行上应出现"有我的理解"标记，详情里两栏内容原样回来
         page.reload()
         page.wait_for_selector("#tab-learn.show", timeout=15000)
-        page.click('#learnnav button[data-lv="mistakes"]')
         page.wait_for_selector("#lv-mistakes.show", timeout=15000)
         _search(page, _SUBJ_A)
         first = page.locator(".vault-row").first
@@ -208,9 +207,8 @@ def test_vault_pane_loads_without_any_extra_action(page, server_url):
     """**进入「错题本」就必须把本地文件面板的数据拉起来**（不许停在「加载中…」）。
 
     2026-10-16 修的真缺陷：把「本地错题」并成错题本的唯一主界面之后，
-    `showLearnView("mistakes")` 这条路径一度**没人调 `vaultView()`**，
-    于是面板永远停在占位文案，必须刷新浏览器才出数据
-    ——正是用户反馈的「点了没反应，要刷新才有反应」。
+    切换路径一度**没人调 `vaultView()`**，于是面板永远停在占位文案，
+    必须刷新浏览器才出数据——正是用户反馈的「点了没反应，要刷新才有反应」。
     判据：进入后**不做任何动作**，薄弱项表/列表/今日复习都必须自己出现。
     """
     _goto_vault(page, server_url)
@@ -232,14 +230,13 @@ def test_vault_pane_loads_without_any_extra_action(page, server_url):
 
 
 def test_vault_pane_loads_on_direct_entry(page, server_url):
-    """**直接进入**（hash=#learn + 记忆的子视图）时也必须自己加载，不依赖任何点击。
+    """**直接进入**（hash=#learn）时也必须自己加载，不依赖任何点击。
 
-    这条覆盖上一支用例漏掉的路径：`learn.js` 的 `initLearnView()` 在**脚本加载期**就切到
-    错题本，那时 `learn-vault.js` 还没求值 ⇒ `window.vaultView` 未定义、加载被静默跳过。
+    这条覆盖上一支用例漏掉的路径：`learn.js` 的进入钩子在**脚本加载期**可能被提前调用，
+    那时 `learn-vault.js` 还没求值 ⇒ `window.vaultView` 未定义、加载被静默跳过。
     """
     page.goto(f"{server_url}/#learn")
     page.wait_for_selector("#tab-learn.show", timeout=15000)
-    page.evaluate("() => sessionStorage.setItem('medkit-learn-view', 'mistakes')")
     page.reload()
     page.wait_for_selector("#tab-learn.show", timeout=15000)
     page.wait_for_selector("#lv-mistakes.show", timeout=15000)

@@ -11,10 +11,9 @@ from __future__ import annotations
 
 
 def _open_overview(page, server_url: str):
-    page.goto(server_url)
-    page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
-    page.click('button[data-tab="learn"]')
-    page.wait_for_selector("#tab-learn.show", timeout=15000)
+    # v0.19 IA 收敛：原「学习中心 → 概览」并入「今天」页，「⚡ 一键刷薄弱组卷」随迁至此
+    page.goto(f"{server_url}/#start")
+    page.wait_for_selector("#tab-start.show", timeout=15000)
 
 
 def _cleanup(page, subject: str, tag: str) -> None:
@@ -63,9 +62,7 @@ def test_gap_paper_no_subject_autopicks_first(page, server_url):
             }"""
         )
         page.reload()
-        page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
-        page.click('button[data-tab="learn"]')
-        page.wait_for_selector("#tab-learn.show", timeout=15000)
+        page.wait_for_selector("#tab-start.show", timeout=15000)
         # 先等概览把科目下拉填充完，再点——固定 sleep 会与「拉 subjects → 重渲染下拉」赛跑，
         # 慢的 runner（CI ubuntu）上 1.5s 不够 ⇒ 点的时候下拉还是空的，自动选科无从发生。
         page.wait_for_function(

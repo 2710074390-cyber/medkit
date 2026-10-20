@@ -1,124 +1,134 @@
-"""IMP-05：学习中心五视图 + 主题 + 窄屏浏览器用例（Playwright，零 LLM）。
+"""主页面 IA 收敛守卫（Playwright，零 LLM）。
 
-覆盖：
-- 五视图（概览 / 错题本 / 讲解产物 / 提问学习 / 大纲覆盖）切换：点击子导航，
-  断言对应视图被激活（aria-selected 翻转 + 视图获得 .show 激活态）；
-- 刷新记忆上次视图（sessionStorage 保留 medkit-learn-view）；
-- 390×844 窄屏：五个视图均无横向溢出（documentElement.scrollWidth 不超视口 + 容忍）；
-- 明暗主题切换：data-theme 属性翻转（light<->dark）且页面内容仍渲染。
+2026-10-20（前端设计重构 S3）：一级页签 5→4（+「题库」随出题工坊开关出现），
+原「学习中心」子导航（`#learnnav` pill）、Alt+数字直达、←/→ 循环整体拆除：
 
-注：v0.8.1 起「复习计划」视图迁入主「刷题」tab，学习中心为五视图；
-历史缺陷（lv-explain 缺失闭合致 tutor/review/syllabus 视图被嵌套隐藏）已在
-commit 7555b77 修复；本文件同时断言 aria-selected 与可见性双重口径。
+- 「概览」（学习闭环总览 + 薄弱点诊断）并入「今天」——`#dash_loop` / `#learn_kp` /
+  `#learn_reco` / `#learn_stats` 等 id 原样保留，指标不再两处各算一遍；
+- 「大纲管理」迁入「设置 → 进阶功能」的 `details.adv`（见 test_syllabus_view.py）；
+- 「错题」升为一级页签，进入即渲染错题助手（聊天为唯一主界面）。
+
+本文件的历史前身守「六视图逐一点击切换」，判据（VIEWS 清单 / `#learnnav`）随功能
+删除而失效，故按新 IA 重写：现在守的是**页面清单、直达初始化、窄屏不溢出、主题翻转、
+Ctrl+1..5 顺序**。
 """
 
 from __future__ import annotations
 
-# 2026-10-15（奥卡姆精简第二轮）：T2 删掉讲解产物与提问学习两视图；P-E 把「本地错题」
-# 并入「错题本」⇒ learn 族只剩 3 个 pill。
-# 2026-10-16（第三轮）：「错题本」内的 `#mv_tabs` 二级切换与导入导出入口也删掉了，
-# 该视图以聊天为唯一主界面。
-# 函数名 six_views 是历史遗留（更早一版只有 5 个），清单才是判据来源。
-VIEWS = ["overview", "mistakes", "syllabus"]
+# 侧栏顺序即契约（顺序变了 = Ctrl+数字与 title 提示全错位）
+TABS = ["start", "study", "learn", "bank", "mine"]
+
+# 直达某页签后，用「占位文案被替换」证明该页的内容加载器真的执行过
+_TAB_CONTENT = {
+    "start": ("#start_body", "加载中"),
+    "study": ("#bank_list", "加载中"),
+    "learn": ("#vault_status", "读取中"),
+    "bank": ("#proj_list", "加载中"),
+    "mine": ("#prompt_list", "加载中"),
+}
 
 
-def _open_learn(page, server_url: str):
+def test_sidebar_order_and_labels(page, server_url):
+    """侧栏就是「今天 / 刷题 / 错题 / 题库 / 设置」，顺序与 title 里的 Ctrl+数字一致。"""
+    page.goto(server_url)
+    page.wait_for_selector("#tab-start.show", timeout=15000)
+    tabs = page.evaluate(
+        """() => [...document.querySelectorAll('.tabs button[data-tab]')]
+                   .map(b => [b.dataset.tab, b.innerText.trim()])"""
+    )
+    assert [t for t, _ in tabs] == TABS, f"页签顺序应为 {TABS}，实得 {tabs}"
+    labels = dict(tabs)
+    assert labels["learn"] == "错题", "「错题」应升为一级页签并可一眼认出"
+    assert labels["mine"] == "设置", "原「我的」应更名为「设置」"
+    # 每个页签 title 里的快捷键提示要与侧栏位置一致（Ctrl+1=今天 … Ctrl+5=设置）
+    for i, tab in enumerate(TABS, start=1):
+        title = page.locator(f'button[data-tab="{tab}"]').get_attribute("title")
+        assert f"Ctrl+{i}" in (title or ""), f"{tab} 的 title 应提示 Ctrl+{i}，实得 {title!r}"
+
+
+def test_today_tab_owns_merged_overview(page, server_url):
+    """原「学习中心 → 概览」的指标块必须整块在「今天」页里（同一批指标不再两处各算）。"""
+    page.goto(f"{server_url}/#start")
+    page.wait_for_selector("#tab-start.show", timeout=15000)
+    for sel in ("#dash_loop", "#dash_subject", "#learn_stats", "#learn_kp", "#learn_reco"):
+        assert page.locator(sel).count() == 1, f"{sel} 应并入「今天」页"
+
+
+def test_learn_tab_renders_mistakes_view(page, server_url):
+    """「错题」页签进入即渲染错题视图（聊天为唯一主界面），无二级子导航。"""
     page.goto(server_url)
     page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
     page.click('button[data-tab="learn"]')
     page.wait_for_selector("#tab-learn.show", timeout=15000)
+    assert page.locator("#lv-mistakes").evaluate("el => el.classList.contains('show')"), \
+        "「错题」页的错题视图应默认激活"
+    page.wait_for_selector("#vault_chat", timeout=15000)
+    assert page.locator("#learnnav").count() == 0, "子导航已随 IA 收敛删除，不应复活"
 
 
-def _assert_active(page, name: str):
-    """断言某子导航对应的视图被激活：对应按钮 aria-selected=true 且视图带 .show。"""
-    btn = page.locator(f'#learnnav button[data-lv="{name}"]')
-    btn.wait_for(state="visible", timeout=15000)
-    assert btn.get_attribute("aria-selected") == "true", f"{name}: aria-selected 应为 true"
-    view = page.locator(f"#lv-{name}")
-    assert view.evaluate("el => el.classList.contains('show')"), f"{name}: 视图未激活(.show)"
-
-
-def test_learn_center_six_views_switch(page, server_url):
-    """六视图逐一点击后均被激活（aria-selected 翻转为 true + 视图 .show）。"""
-    _open_learn(page, server_url)
-    assert page.locator("#lv-overview").evaluate("el => el.classList.contains('show')"), \
-        "默认应停留在概览"
-    for name in VIEWS:
-        page.click(f'#learnnav button[data-lv="{name}"]')
-        _assert_active(page, name)
-
-
-def test_learn_view_remembered_after_reload(page, server_url):
-    """刷新后 sessionStorage 记住上次视图（错题本）。"""
-    _open_learn(page, server_url)
-    page.click('#learnnav button[data-lv="mistakes"]')
-    _assert_active(page, "mistakes")
-    page.reload()
-    page.wait_for_selector("#tab-learn.show", timeout=15000)
-    # 刷新后 URL 仍带 #learn；initLearnView 按 sessionStorage 恢复 mistakes
-    _assert_active(page, "mistakes")
-
-
-def test_learn_views_narrow_no_overflow(page, server_url):
-    """390×844 窄屏：六个视图激活后均无横向溢出。"""
+def test_learn_tab_narrow_no_overflow(page, server_url):
+    """390×844 窄屏：错题页（两栏在窄屏塌成一栏）无横向溢出。"""
     page.goto(server_url)
     page.set_viewport_size({"width": 390, "height": 844})
     page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
     page.click('button[data-tab="learn"]')
     page.wait_for_selector("#tab-learn.show", timeout=15000)
-    for name in VIEWS:
-        page.click(f'#learnnav button[data-lv="{name}"]')
-        # 视图内异步加载会在渲染中途瞬时加宽，这里轮询到稳定后再测，避免时序假阳性。
-        overflow = 999
-        for _ in range(6):
-            page.wait_for_timeout(300)
-            overflow = page.evaluate(
-                "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
-            )
-            if overflow <= 2:
-                break
-        assert overflow <= 2, f"视图 {name} 横向溢出 {overflow}px（390px 视口）"
+    overflow = 999
+    for _ in range(8):
+        page.wait_for_timeout(300)
+        overflow = page.evaluate(
+            "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        )
+        if overflow <= 2:
+            break
+    assert overflow <= 2, f"错题页横向溢出 {overflow}px（390px 视口）"
 
 
-def test_learn_views_breakpoints_no_overflow(page, server_url):
-    """IMP-11：断点收敛（480/640/860 三档）——四视口下六视图均无横向溢出。"""
+def test_ctrl_number_shortcuts_follow_sidebar_order(page, server_url):
+    """Ctrl/⌘+1..5 的映射必须与侧栏顺序一致。
+
+    2026-10-20 S3 收敛后侧栏顺序变了（错题升到第 3、题库挪到第 4），
+    `TAB_KEYS` 若不跟着改，Ctrl+3 会跳到「题库」——这条就是那个错位的可证伪点。
+    """
     page.goto(server_url)
-    page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
-    page.click('button[data-tab="learn"]')
-    page.wait_for_selector("#tab-learn.show", timeout=15000)
-    for w, h in ((860, 900), (820, 900), (640, 900), (480, 900)):
-        page.set_viewport_size({"width": w, "height": h})
-        for name in VIEWS:
-            page.click(f'#learnnav button[data-lv="{name}"]')
-            page.locator(f"#lv-{name}").wait_for(state="visible", timeout=15000)
-            overflow = 999
-            for _ in range(6):
-                page.wait_for_timeout(300)
-                overflow = page.evaluate(
-                    "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
-                )
-                if overflow <= 2:
-                    break
-            assert overflow <= 2, f"{w}px × 视图 {name} 溢出 {overflow}px"
+    page.wait_for_selector("#tab-start.show", timeout=15000)
+    for key, tab in zip("12345", TABS, strict=True):
+        page.keyboard.press(f"Control+{key}")
+        page.wait_for_selector(f"#tab-{tab}.show", timeout=15000)
+        assert page.locator(f"#tab-{tab}.show").count() == 1, f"Ctrl+{key} 应切到「{tab}」"
 
 
-def test_learn_views_shortcut_keys(page, server_url):
-    """IMP-12①：Alt+1..3 直达子导航（2026-10-15 精简第二轮后为 3 视图：概览/错题本/
-    大纲管理）；IMP-08：←/→ 方向键循环切换（APG tab 模式）。"""
-    _open_learn(page, server_url)
-    page.keyboard.press("Alt+3")
-    assert page.locator('#learnnav button[data-lv="syllabus"]').get_attribute("aria-selected") == "true"
-    assert page.locator("#lv-syllabus").is_visible()
-    page.keyboard.press("Alt+2")
-    assert page.locator("#lv-mistakes").is_visible(), "Alt+2 应切到错题本"
-    page.keyboard.press("Alt+1")
-    assert page.locator("#lv-overview").is_visible()
-    # ←/→：聚焦当前 pill（overview）→ 右键 → mistakes
-    page.locator('#learnnav button[data-lv="overview"]').focus()
-    page.keyboard.press("ArrowRight")
-    assert page.locator("#lv-mistakes").is_visible(), "→ 应切到错题本"
-    page.keyboard.press("ArrowLeft")
-    assert page.locator("#lv-overview").is_visible(), "← 应切回概览"
+def test_command_palette_opens_filters_and_runs(page, server_url):
+    """Ctrl+K 命令面板（v0.19 S4）：快捷键唤起 → 搜索过滤 → Enter 执行。
+
+    它同时是「键盘优先」的入口，也是可见导航的兜底（侧栏 `#btn_palette` 能点开），
+    故两个入口都断言。
+    """
+    page.goto(server_url)
+    page.wait_for_selector("#tab-start.show", timeout=15000)
+
+    # ① 侧栏按钮是可见兜底：不记快捷键也能打开
+    page.click("#btn_palette")
+    page.wait_for_selector("#palette_mask", state="visible", timeout=15000)
+    assert page.locator(".palette-item").count() >= 5, "面板里应有可执行命令"
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#palette_mask", state="hidden", timeout=15000)
+
+    # ② 快捷键唤起：Ctrl+K
+    page.keyboard.press("Control+k")
+    page.wait_for_selector("#palette_mask", state="visible", timeout=15000)
+
+    # ③ 输入即过滤（只留含关键词的命令；`length>0` 防「空集 every 恒真」的假绿）
+    page.fill("#palette_q", "刷题")
+    page.wait_for_function(
+        "() => { const it = [...document.querySelectorAll('.palette-item')];"
+        " return it.length > 0 && it.every(b => b.innerText.includes('刷题')); }",
+        timeout=15000)
+
+    # ④ Enter 执行当前高亮项 → 落到「刷题」页，且面板自动收起
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#tab-study.show", timeout=15000)
+    assert page.locator("#palette_mask").is_hidden(), "执行后面板应收起，不挡住首屏"
 
 
 def test_theme_toggle_flips_data_theme(page, server_url):
@@ -138,18 +148,12 @@ def test_theme_toggle_flips_data_theme(page, server_url):
 def test_hash_direct_navigation_initializes_tab(page, server_url):
     """H-1 回归：带 hash 直达 URL 时 tab 内容必须初始化（initTab 推迟到 DOMContentLoaded）。
 
-    v0.8.1 五 Tab（start/study/bank/learn/mine）逐个直达，断言各 tab 的内容加载器
-    均执行（占位文案被替换）且无「脚本异常」toast。修复前 initTab 在脚本加载完成前
-    调用 showTab → stopPoll/loadLibrary 未定义 → ReferenceError（内容空屏 + 错误 toast）。
+    五个页签逐个直达，断言各 tab 的内容加载器均执行（占位文案被替换）且无「脚本异常」toast。
+    修复前 initTab 在脚本加载完成前调用 showTab → stopPoll/loadLibrary 未定义 →
+    ReferenceError（内容空屏 + 错误 toast）。
     """
-    cases = (
-        ("start", "#start_body", "加载中"),
-        ("study", "#bank_list", "加载中"),
-        ("bank", "#proj_list", "加载中"),
-        ("learn", "#dash_loop", "汇总中"),
-        ("mine", "#prompt_list", "加载中"),
-    )
-    for tab, container, placeholder in cases:
+    for tab in TABS:
+        container, placeholder = _TAB_CONTENT[tab]
         page.goto(f"{server_url}/#{tab}")
         page.wait_for_selector(f"#tab-{tab}.show", timeout=15000)
         page.wait_for_function(

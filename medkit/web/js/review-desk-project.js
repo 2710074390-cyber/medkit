@@ -35,7 +35,7 @@ $("btn_trial").onclick = async () => {
       `<div class="${i.severity === "fail" ? "failline" : "warnline"}">[${esc(i.code)}] ${esc(i.reason)}</div>`).join("");
     box.innerHTML = `
       <div class="trialq">
-        <div style="margin:0 0 8px;padding:6px 10px;border:1px dashed var(--warn);border-radius:8px;font-size:12px;color:var(--warn)">⚠️ ${esc(r.note || "试出题不含网络检索/大纲锚定/图片素材，正式生成风格可能不同")}</div>
+        <div style="margin:0 0 8px;padding:6px 10px;border:1px dashed var(--warn);border-radius:8px;font-size:var(--fs-2);color:var(--warn)">⚠️ ${esc(r.note || "试出题不含网络检索/大纲锚定/图片素材，正式生成风格可能不同")}</div>
         <div class="src">试出题 · ${esc(r.from_slice || "")} · <span class="tag">${esc(q.type || "")}</span><span class="tag">${esc(q.bloom || "")}</span></div>
         <div class="qtext">${esc(q.question)}</div>
         <div class="opts">${(q.options || []).map((o, i) => L[i] + ". " + esc(o)).join("<br>")}</div>
@@ -217,7 +217,7 @@ async function rerenderArtifact(pidOrEl, what) {
     what = pidOrEl.dataset.what || "";
   }
   const label = { qbank: "题库", paper: "押题卷", review: "复习手册", anki: "Anki" }[what] || what;
-  confirmModal(`仅重渲染「${label}」？`, `<p style="margin:0;color:var(--dim)">不会改动题库内容，只重新生成对应产物文件（无 token 消耗）。</p>`,
+  confirmModal(`仅重渲染「${label}」？`, `<p style="margin:0;color:var(--text-2)">不会改动题库内容，只重新生成对应产物文件（无 token 消耗）。</p>`,
     "重渲染", async () => {
       try {
         const r = await api("/api/projects/" + encodeURIComponent(pid) + "/rerender", {
@@ -257,7 +257,7 @@ function renderStepper(stage, progress) {
     `<span class="stp ${i === cur ? "cur" : i < cur ? "done" : ""}">${s[1]}</span>`).join("")
     + `<span class="stp ${cur >= STEPS.length ? "done" : ""}">完成</span>`
     + (progress ? `<div style="flex:1;min-width:180px">
-        <div class="pvbar"><i style="width:${pct}%"></i></div>
+        <div class="pvbar"><i style="transform:scaleX(${(pct / 100).toFixed(4)})"></i></div>
         <div id="pvtext">${desc} · ${pct}%${subStr}`
         + (progress.updated ? ` · 更新 ${fmtClock(progress.updated)}` : "") + `</div>
       </div>` : "");
@@ -327,7 +327,7 @@ async function showProject(pid) {
       ? `<div class="hint" style="margin-top:6px">仅重渲染（不重跑管线 · 无 token 消耗）：` +
         Object.entries([["qbank", "题库"], ["paper", "押题卷"], ["review", "复习手册"], ["anki", "Anki"]])
           .map(([w, l]) => `<button class="mini-btn" style="padding:2px 9px" data-pid="${esc(pid)}" data-what="${w}" onclick="rerenderArtifact(this)">${l}</button>`).join(" ")
-        + ` <span class="hint" style="font-size:11px">— 用于只改产物不改题</span></div>`
+        + ` <span class="hint" style="font-size:var(--fs-1)">— 用于只改产物不改题</span></div>`
       : ""}
     ${usage}
     <div id="pd_assets_box" style="margin-top:12px">
@@ -358,10 +358,10 @@ async function pdAssets() {
     if (!r.assets || !r.assets.length) { box.innerHTML = "暂无图片素材——上传后生成时可出图/表题。"; return; }
     box.innerHTML = r.assets.map(a => `<div class="mk-row" style="margin:6px 0">
       <img src="/api/projects/${esc(currentPid)}/assets/${esc(a.sid)}" alt="${esc(a.caption)}"
-        style="max-width:160px;max-height:110px;border-radius:8px;border:1px solid var(--line);margin-right:10px;vertical-align:middle"
+        style="max-width:160px;max-height:110px;border-radius:8px;border:1px solid var(--line-hair);margin-right:10px;vertical-align:middle"
         onerror="this.style.display='none'">
       <b>${esc(a.sid)}</b> · ${esc(a.caption)}<span class="hint"> · ${((a.bytes || 0) / 1024).toFixed(0)}KB</span>
-      <button class="act gray" style="padding:3px 9px;font-size:11px;margin-left:8px" data-sid="${esc(a.sid)}" onclick="pdAssetDel(this)">删除</button>
+      <button class="act gray" style="padding:3px 9px;font-size:var(--fs-1);margin-left:8px" data-sid="${esc(a.sid)}" onclick="pdAssetDel(this)">删除</button>
     </div>`).join("");
   } catch (e) { const box = $("pd_assets"); if (box) box.innerHTML = "素材加载失败：" + esc(e.message); }
 }

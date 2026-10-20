@@ -288,28 +288,27 @@ def main() -> None:
             w.shot("s08_goal", "每日目标进度")
             print("S5 每日目标：", w.txt("#bank_goal_prog"))
 
-            # ===== S6 错题本（学习中心） =====
+            # ===== S6 错题（一级页签：左栏错题助手 + 右栏薄弱项/今日复习/错题列表） =====
             page.click('button[data-tab="learn"]')
             page.wait_for_selector("#tab-learn.show", timeout=15000)
-            page.click('#learnnav button[data-lv="mistakes"]')
             page.wait_for_timeout(1200)
-            w.shot("s09_mistakes", "学习中心 → 错题本")
-            print("S6 错题本行数：", page.locator("#learn_mk .mk-row").count())
+            w.shot("s09_mistakes", "错题页（错题助手 + 错题列表两栏）")
+            print("S6 错题行数：", page.locator("#vault_list .vault-row").count())
             print(
-                "S6 首行按钮：",
-                page.locator("#learn_mk .mk-row").first.inner_text().replace("\n", " | ")[:200]
-                if page.locator("#learn_mk .mk-row").count()
+                "S6 首行内容：",
+                page.locator("#vault_list .vault-row").first.inner_text().replace("\n", " | ")[:200]
+                if page.locator("#vault_list .vault-row").count()
                 else "(空)",
             )
 
-            # ===== S7 错题 → 重练 直达 =====
-            if page.locator("#learn_mk .mk-row").count():
-                page.locator("#learn_mk .mk-row").first.locator('button:has-text("→ 重练")').click()
-                page.wait_for_selector("#tab-study.show", timeout=15000)
-                page.wait_for_selector(".bank-q", timeout=15000)
-                w.shot("s10_retry", "错题本「→ 重练」直达刷题页")
-                print("S7 重练页标题：", w.txt("#bank_drill_title"))
-                print("S7 模式条：", w.txt("#bank_drill_body .bank-bar").replace("\n", " | ")[:160])
+            # ===== S7 错题重练直达 =====
+            page.click('button[data-tab="study"]')
+            page.wait_for_selector("#tab-study.show", timeout=15000)
+            page.locator('button:has-text("错题重练")').first.click()
+            page.wait_for_selector(".bank-q", timeout=15000)
+            w.shot("s10_retry", "「错题重练」直达刷题页")
+            print("S7 重练页标题：", w.txt("#bank_drill_title"))
+            print("S7 模式条：", w.txt("#bank_drill_body .bank-bar").replace("\n", " | ")[:160])
 
             # ===== S8 题库（出题工坊） =====
             page.click('button[data-tab="bank"]')
@@ -338,11 +337,13 @@ def main() -> None:
             page.wait_for_selector("#bi_q", timeout=15000)
             w.shot("s14_edit_form", "编辑表单")
 
-            # ===== S11 导出押题卷 =====
+            # ===== S11 导出押题卷（v0.19：题库行动作收敛进 ⋯ 更多菜单） =====
             page.click("#bank_item_form button:has-text('取消')")
             page.wait_for_timeout(400)
+            row = page.locator(".bank-item").first
+            row.locator("details.bank-more summary").click()
             with page.expect_popup() as pop:
-                page.locator('.bank-item button:has-text("导出押题卷")').first.click()
+                row.locator('.bank-more-menu button:has-text("导出押题卷")').click()
             paper = pop.value
             paper.wait_for_load_state(timeout=15000)
             paper.screenshot(path=str(SHOTS / "s15_paper.png"))

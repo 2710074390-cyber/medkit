@@ -119,9 +119,10 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
      ⚠️ 三条硬约束（`tests/test_v15_frontend_split.py` 已把它们变成闸门，改前端前先读）：
      1. **加载顺序即契约**：`index.html` 里 `<script>` 的顺序必须与分片族顺序一致，且**每个文件恰好一次**；
      2. **加载期不得跨片前向引用**：某片在**加载期立即调用**的函数，其定义必须在**同片或更早片**
-        （函数提升只在同一脚本内生效）。拆分时 `learn.js` 首片保留了 `showLearnView` /
-        `sylLoad` / `sseAbortAll` / 三个 IIFE —— 因为 `initLearnView()` 在加载期就会经
-        `showLearnView` 调到后两者，**跨片即 ReferenceError**；
+        （函数提升只在同一脚本内生效）。拆分时 `learn.js` 首片保留了 `sylLoad` /
+        `sseAbortAll` / 三个 IIFE —— 因为它们在加载期就会被调到，**跨片即 ReferenceError**。
+        （v0.19 前端设计重构 S3 起「学习中心」子导航拆除：原 `showLearnView` / `initLearnView` /
+        `LEARN_ALT_KEYS` / Alt 直达 / ←→ 循环**已删除**，改为单一进入钩子 `enterMistakes()`。）
      3. **每片首行自带 `/* exported ... */`**（原文件的清单已按名字落位到各片）；
         新增顶层声明若被其它文件/内联 HTML 引用，务必补进去，否则 `--max-warnings 0` 会红。
      **未做 ES Module 化**（U-17 的另一半）：那会改 `index.html` 的加载语义（`type="module"` +

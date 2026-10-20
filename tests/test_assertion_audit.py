@@ -38,10 +38,9 @@ TESTS_DIR = ROOT / "tests"
 MIN_SCAN_FILES = 60
 
 # (相对路径, 函数名) → 理由。**新增未登记即红；登记了但代码里没有也红。**
-REGISTERED: dict[tuple[str, str], str] = {
-    ("tests/browser/test_learn_views.py", "test_learn_view_remembered_after_reload"):
-        "断言在**同文件共用的辅助** `_assert_active()` 里（扫描器只看用例自身函数体，看不见它）",
-}
+# 2026-10-20：`test_learn_view_remembered_after_reload` 随 v0.19 IA 收敛（子导航拆除）
+# 一并删除，其登记同时失效——登记不得腐烂，故此处清空。
+REGISTERED: dict[tuple[str, str], str] = {}
 
 
 def _is_assertion_like(node: ast.AST) -> bool:

@@ -70,7 +70,7 @@ def test_generation_workshop_is_hidden_by_default(page, server_url):
     page.goto(server_url)
     page.wait_for_selector("#tab-start.show", timeout=15000)
     assert page.locator(f'button[data-tab="{_GEN_TAB}"]').is_hidden(), "默认不应显示「题库」页签"
-    assert page.locator('#learnnav button[data-lv="syllabus"]').is_hidden(), "默认不应显示「大纲管理」"
+    assert page.locator("#lv-syllabus").is_hidden(), "默认不应显示「大纲管理」"
     assert page.locator("#ws_card").is_hidden(), "默认不应显示「网络检索」卡片"
 
     # hash 直达 #bank 必须被拒（否则「默认关」只是视觉隐藏）
@@ -81,6 +81,9 @@ def test_generation_workshop_is_hidden_by_default(page, server_url):
     # 打开开关 → 「题库」出现（不再导航，避免 init script 把开关又清掉）
     page.goto(f"{server_url}/#mine")
     page.wait_for_selector("#tab-mine.show", timeout=15000)
+    # v0.19：「启用出题工坊」收进「设置 → 进阶功能」折叠区（工坊关闭时默认收起）
+    page.evaluate("() => { const d = document.querySelector('details.adv'); if (d) d.open = true; }")
+    page.locator("#t_gen").wait_for(state="visible", timeout=15000)
     page.check("#t_gen")
     page.wait_for_selector(f'button[data-tab="{_GEN_TAB}"]', state="visible", timeout=15000)
     assert page.locator("#ws_card").is_visible(), "开启后「网络检索」应出现"

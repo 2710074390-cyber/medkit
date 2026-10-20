@@ -1,11 +1,11 @@
-/* exported HL_KEYWORDS, LEARN_ALT_KEYS, LEARN_CACHE, LEARN_STATE, LEARN_TTL, REX_DRAFTS, REX_STATS, SYL_DRAFTS, SYL_LOADED, SYL_STD, anchor, b, batch, body, box, btns, buf, c, cachedMastery, cachedSubjects, consumeSSE, cur, d, dec, est, event, f, fd, first, fold, gapPaper, hint, hlKw, i, inp, invalidateLearnCache, items, kps, label, learnChip, loop, lv, meta, nav, nb, ok, on, pct, pill, pv, qs, r, raw, reader, refreshOverviewIfAny, renderRexDrafts, rexAnalyze, rexConfirmAll, rexDraftClear, rexFile, rexFilePick, rexFileRender, rexHeat, rexItemDel, rexReport, rexSubject, s, sb, sel, setLearnNavBadge, setNavTabBadge, showLearnView, sr, sseAbort, sseAbortAll, sseAborts, sseStopUI, st, stats, stdName, subject, subs, sylDraftClear, sylDraftDel, sylEnsure, sylFail, sylItemDel, sylLoad, sylParse, sylParseConfirm, sylPaste, sylRender, sylReport, sylSeedImport, sylSeedPick, sylSetStd, sylStructurize, sylTeacherImport, sylTeacherPick, t, text, total, txt, updateLearnBadges, v */
+/* exported HL_KEYWORDS, LEARN_CACHE, LEARN_STATE, LEARN_TTL, REX_DRAFTS, REX_STATS, SYL_DRAFTS, SYL_LOADED, SYL_STD, anchor, b, batch, body, box, btns, buf, c, cachedMastery, cachedSubjects, consumeSSE, cur, d, dec, downloadText, enterMistakes, est, event, f, fd, first, fold, gapPaper, hint, hlKw, i, inp, invalidateLearnCache, items, kps, label, learnChip, loop, lv, meta, nav, ok, on, pct, qs, r, raw, reader, refreshOverviewIfAny, renderRexDrafts, rexAnalyze, rexConfirmAll, rexDraftClear, rexFile, rexFilePick, rexFileRender, rexHeat, rexItemDel, rexReport, rexSubject, s, sb, sel, setLearnNavBadge, setNavTabBadge, sr, sseAbort, sseAbortAll, sseAborts, sseStopUI, st, stats, stdName, subject, subs, sylDraftClear, sylDraftDel, sylEnsure, sylFail, sylItemDel, sylLoad, sylParse, sylParseConfirm, sylPaste, sylRender, sylReport, sylSeedImport, sylSeedPick, sylSetStd, sylStructurize, sylTeacherImport, sylTeacherPick, t, text, total, txt, updateLearnBadges, v */
 /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
-/* ---- ④ 学习中心（v0.7 M1/M2：错题本 + 掌握度诊断） ---- */
-/* R4-02 流式取消：在途 AbortController 按入口（anchorId）登记——A-16：讲解/提问可并发生成时
-   互不误杀（旧实现单 _sseAbort + 全局单按钮，sseStopUI 先清上一处=先杀并发流；且声明前置
-   （showLearnView 在脚本求值期即可能被 initLearnView 调用，置于声明行前会触发 let TDZ
-   ReferenceError，中断整个学习中心脚本）——Map 为 const，无 TDZ 问题 */
+/* ---- ④ 错题（原「学习中心」：v0.7 M1/M2 的错题本 + 掌握度诊断；概览已于 v0.19 并入「今天」） ---- */
+/* R4-02 流式取消：在途 AbortController 按入口（anchorId）登记——A-16：多入口可并发生成时
+   互不误杀（旧实现单 _sseAbort + 全局单按钮，sseStopUI 先清上一处=先杀并发流）。
+   本声明须前置：enterMistakes 可能在脚本求值期即被调用，置于声明行前会触发 let TDZ
+   ReferenceError，中断整个错题脚本——Map 为 const，无 TDZ 问题 */
 const sseAborts = new Map();   // anchorId → AbortController（在途流式）
 const LEARN_STATE = { weak: "待加强", shaky: "需复习", solid: "较熟练", mastered: "已掌握" };
 /* 触发浏览器下载一段文本（原在 learn-live.js，随讲解域删除后迁到本片——
@@ -31,71 +31,14 @@ function hlKw(text) {
   for (const k of HL_KEYWORDS) s = s.split(k).join(`<b class="kw">${k}</b>`);
   return s;
 }
-/* ---- 学习中心子导航：一屏一任务（概览/错题本/讲解产物/提问学习/复习计划） ---- */
-function showLearnView(name) {
-  sseAbortAll();   // R4-02：切换子视图/离开学习中心 → 中止在途流式，避免隐藏容器里白烧 token
-  document.querySelectorAll("#learnnav button").forEach(b => {
-    const on = b.dataset.lv === name;
-    b.classList.toggle("on", on);
-    b.setAttribute("aria-selected", on ? "true" : "false");
-  });
-  document.querySelectorAll("#tab-learn .learnview").forEach(v => {
-    v.classList.toggle("show", v.id === "lv-" + name);
-  });
-  if (name === "syllabus") sylLoad();
-  // 「本地错题」已并入「错题本」一个 pill；`vault` 名字仍被接受（旧书签 / 历史 hash /
-  // sessionStorage 记忆），落到同一视图。切到本视图时拉起聊天与错题列表数据。
-  if (name === "vault" || name === "mistakes") {
-    if (typeof window.vaultView === "function") window.vaultView();
-  }
-  try { sessionStorage.setItem("medkit-learn-view", name); } catch (e) { /* ignore */ }
+/* ---- 进入「错题」页的钩子 ----
+   v0.19 IA 收敛：原「学习中心」子导航（概览 / 错题本 / 大纲管理）拆除——
+   概览并入「今天」，大纲管理迁入「设置 → 进阶功能」，本页只剩「错题本」一个视图。
+   因此不再需要 pill 高亮、Alt+数字直达、←/→ 循环那一整套；保留一个进入钩子即可。 */
+function enterMistakes() {
+  sseAbortAll();   // R4-02：切换视图 → 中止在途流式，避免隐藏容器里白烧 token
+  if (typeof window.vaultView === "function") window.vaultView();
 }
-document.querySelectorAll("#learnnav button").forEach(b => {
-  b.onclick = () => showLearnView(b.dataset.lv);
-});
-/* IMP-12①：学习中心子导航 Alt+1..3 直达。
-   2026-10-15 奥卡姆精简第二轮：T2 移除讲解产物与提问学习；P-E 把「本地错题」并入
-   「错题本」（视图内二级切换）→ 3 个 pill。
-   2026-10-16 第三轮：错题本的二级切换也删了，该视图以聊天为唯一主界面。 */
-const LEARN_ALT_KEYS = ["overview", "mistakes", "syllabus"];
-window.addEventListener("keydown", e => {
-  // A6：焦点在输入框/编辑器时不触发子视图快捷键（防打字时被切走/吞键）
-  const t = e.target;
-  // A-新15：焦点守卫纳入 SELECT（下拉聚焦时不触发子视图快捷键，防误切/吞键）
-  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-  if (!e.altKey || e.ctrlKey || e.metaKey || !(e.key >= "1" && e.key <= "3")) return;
-  const lv = LEARN_ALT_KEYS[+e.key - 1];
-  if (!lv) return;
-  const pill = document.querySelector('#learnnav button[data-lv="' + lv + '"]');
-  if (!pill || pill.style.display === "none") return;
-  e.preventDefault();
-  if (!$("tab-learn").classList.contains("show")) showTab("learn");
-  showLearnView(lv);
-});
-/* IMP-08：学习中心子导航 ←/→ 方向键循环（APG tab 模式；隐藏 pill 跳过） */
-(function initLearnNavKeys() {
-  const nav = document.getElementById("learnnav");
-  if (!nav) return;
-  nav.addEventListener("keydown", e => {
-    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-    const btns = [...nav.querySelectorAll("button")].filter(b => b.style.display !== "none");
-    if (!btns.length) return;
-    let i = btns.findIndex(b => b.classList.contains("on"));
-    if (i < 0) i = 0;
-    i = (i + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length;
-    e.preventDefault();
-    btns[i].focus();
-    showLearnView(btns[i].dataset.lv);
-  });
-})();
-(function initLearnView() {
-  let v = null;
-  try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
-  if (v === "review") v = "overview";   // v0.8.1：复习计划已迁入「刷题」tab，旧记忆重定向概览
-  // `vault` 保留为**别名**（并入 mistakes 视图），但不在 Alt 清单里出现
-  const ok = ["overview", "mistakes", "vault", "syllabus"].includes(v);
-  if (ok) showLearnView(v);
-})();
 /* 侧栏待办徽章（v0.8.1 拆分）：刷题 tab = 今日到期复习；学习中心 tab = 进行中提问 */
 function setNavTabBadge(tab, n, title) {
   const b = document.querySelector('button[data-tab="' + tab + '"]');
@@ -104,7 +47,7 @@ function setNavTabBadge(tab, n, title) {
   if (n > 0) {
     if (!d) { d = document.createElement("span"); d.className = "navbadge"; b.appendChild(d); }
     d.textContent = n > 99 ? "99+" : String(n);
-    d.title = title || (`待办 ${n} 项 → 去「${tab === "study" ? "刷题" : "学习中心"}」`);
+    d.title = title || (`待办 ${n} 项 → 去「${tab === "study" ? "刷题" : "错题"}」`);
     d.setAttribute("aria-label", d.title);
     d.dataset.source = tab;
     d.style.cursor = "pointer";
@@ -115,21 +58,10 @@ function setLearnNavBadge(n, detail) {
   setNavTabBadge("study", detail.due || 0, `今日到期复习 ${detail.due || 0} 张 → 去刷题`);
   setNavTabBadge("learn", detail.tutor || 0, `进行中提问 ${detail.tutor || 0} 场 → 去学习中心`);
 }
-/* 子导航计数徽章（闭环数据回填） */
-function updateLearnBadges(d) {
-  const loop = (d && d.loop) || {};
-  const nb = (id, v, hot) => { const el = $(id); if (!el) return;
-    el.textContent = v > 0 ? v : "";
-    el.classList.toggle("hot", !!hot && v > 0);
-    const label = { nb_overview: "概览", nb_mistakes: "错题本" }[id] || id;
-    el.title = v > 0 ? `${label}：${v} 项（点击进入对应视图）` : "";
-    el.setAttribute("aria-label", el.title || label);
-  };
-  nb("nb_overview", 0);
-  nb("nb_mistakes", loop.mistakes || 0);                              // 资料库规模，非待办 → 不标红
-  // 2026-10-15（奥卡姆精简第二轮 T2）：复习卡与提问两域删除后，学习中心**不再有待办型红点**
-  // （原来的两个来源「今日到期复习」「进行中提问会话」都没了）。显式传 0 而不是删掉调用：
-  // 让「没有待办」是一个明确的判定，而不是靠调用缺失来暗示。
+/* 子导航计数徽章已随子导航删除（v0.19 IA 收敛）：
+   复习卡与提问两域删除后本页已无待办型红点，这里显式传 0 而不是删掉调用——
+   让「没有待办」是一个明确的判定，而不是靠调用缺失来暗示。 */
+function updateLearnBadges() {
   setLearnNavBadge(0, { due: 0, tutor: 0 });
 }
 /* ---- ⑥ 大纲管理（WP-01/WP-10 考试锚定 · 教师重点为主 · 官方306补充） ---- */
@@ -319,7 +251,7 @@ window.sylDraftDel = sylDraftDel; window.sylDraftClear = sylDraftClear;
 async function sylItemDel(idOrEl) {
   // RV1：双签名——内联传 this（data-id），程序化调用传 id
   const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
-  confirmModal("删除大纲条目", `<p style="margin:0;color:var(--dim)">确定删除该条目？删除后覆盖率将即时更新；误删可重新导入（种子/教师重点源）。</p>`, "删除", async () => {
+  confirmModal("删除大纲条目", `<p style="margin:0;color:var(--text-2)">确定删除该条目？删除后覆盖率将即时更新；误删可重新导入（种子/教师重点源）。</p>`, "删除", async () => {
     try {
       await api("/api/syllabus/items/" + encodeURIComponent(id), { method: "DELETE" });
       toast("已删除条目");
@@ -525,7 +457,7 @@ function rexDraftClear() {
 async function rexItemDel(idOrEl) {
   // RV1：双签名——内联传 this（data-id），程序化调用传 id
   const id = idOrEl && idOrEl.dataset ? (idOrEl.dataset.id || "") : idOrEl;
-  confirmModal("删除频次记录", `<p style="margin:0;color:var(--dim)">确定删除这条已确认的频次记录？仅删除统计数据，不影响真题原文；删除后热力表即时更新。</p>`, "删除", async () => {
+  confirmModal("删除频次记录", `<p style="margin:0;color:var(--text-2)">确定删除这条已确认的频次记录？仅删除统计数据，不影响真题原文；删除后热力表即时更新。</p>`, "删除", async () => {
     try {
       await api("/api/library/realexams/" + encodeURIComponent(id), { method: "DELETE" });
       toast("已删除频次记录");

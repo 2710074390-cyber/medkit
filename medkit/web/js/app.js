@@ -1,4 +1,4 @@
-/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyGenFlag, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, genEnabled, genToggle, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openDrillFor, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, letters, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
+/* exported EXAM_KEY, FEATURES, FEEDBACK_MAIL, _examEditId, _examSeq, a, active, add, api, applyFeatures, applyGenFlag, applyTheme, askModal, assetBox, body, box, btn, cb, checkUpdate, checks, code, confirmModal, copyText, cur, currentPid, d, date, days, diff, done, e, esc, examCurr, examDelete, examDiff, examFind, examFormClose, examFormOpen, examFormSave, examLoad, examRemindInfo, examSave, fallbackCopy, gapBtn, genEnabled, genToggle, h, hit, html, i, initTab, input, isEdit, j, legacy, list, loadStart, m, markUpdateDot, modalOnCancel, mq, my, o, ocrRunToken, ok, on, openDrillFor, openExternal, openFeedback, openRecentProject, pill, pollFails, pollTimer, pre, r, rds, recent, rem, remind, renderExamPlans, rexCard, rv, saved, setStudyKeys, showTab, showUpdateModal, shownTab, slot, span, state, subject, submit, t, ta, target, themeFollowSystem, themeStateRefresh, title, toast, toastClear, toastTimers, toastWithCopy, toggleTheme, url, v, ver, fmtBytes, letters, loadDataMgmt, dmBackup, dmOpen, dmClear, initDataMgmt */  /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 const $ = id => document.getElementById(id);
 let state = { provider: "", theme: null, files: { textbook: [], teacher: [], exam: [], extra: [] },
@@ -16,9 +16,11 @@ function applyFeatures(cfg) {
   for (const k of ["syllabus", "realexams", "gap", "image_q", "cards"]) {
     if (FEATURES[k] === undefined) FEATURES[k] = true;
   }
-  const pill = document.querySelector('#learnnav button[data-lv="syllabus"]');
-  // 2026-10-13（P4）：大纲管理属出题工坊——开关关闭时一并隐藏（后端 features.syllabus 仍生效）
-  if (pill) pill.style.display = (FEATURES.syllabus && genEnabled()) ? "" : "none";
+  // v0.19：大纲管理从「学习中心」迁到「设置 → 进阶功能」，随工坊开关整块显隐
+  const sylBox = $("lv-syllabus");
+  if (sylBox) sylBox.style.display = (FEATURES.syllabus && genEnabled()) ? "" : "none";
+  const advFold = sylBox && sylBox.closest("details.adv");
+  if (advFold) advFold.open = !!(FEATURES.syllabus && genEnabled());   // 工坊开启 → 直接展开进阶区
   const rexCard = $("rex_card");
   if (rexCard) rexCard.style.display = FEATURES.realexams ? "" : "none";
   const gapBtn = $("btn_gap_paper");
@@ -26,14 +28,6 @@ function applyFeatures(cfg) {
   if (gapBtn) gapBtn.style.display = (FEATURES.gap && genEnabled()) ? "" : "none";
   const assetBox = $("pd_assets_box");
   if (assetBox) assetBox.style.display = FEATURES.image_q ? "" : "none";
-  if (!FEATURES.syllabus) {
-    let v = null;
-    try { v = sessionStorage.getItem("medkit-learn-view"); } catch (e) { /* ignore */ }
-    if (v === "syllabus") {
-      try { sessionStorage.setItem("medkit-learn-view", "overview"); } catch (e) { /* ignore */ }
-      showLearnView("overview");
-    }
-  }
 }
 
 /* v0.5：轮询/项目状态声明提前（showTab 在初始化时即调用 stopPoll，需先于任何 IIFE 就绪） */
@@ -148,12 +142,29 @@ function applyTheme() {
   document.documentElement.dataset.theme = t;
   $("u_theme").setAttribute("href", t === "light" ? "#i-sun" : "#i-moon");
   $("btn_theme").setAttribute("aria-label", t === "light" ? "切换到暗色主题" : "切换到亮色主题");
+  themeStateRefresh();
 }
 function toggleTheme() {
   state.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
   try { localStorage.setItem("medkit-theme", state.theme); } catch (e) { /* 隐私模式等：仅本次生效 */ }
   applyTheme();
 }
+/* 设置 → 外观：把「跟随系统」做成一个明确动作，而不是靠"从没点过切换"这种隐式状态 */
+function themeFollowSystem() {
+  state.theme = null;
+  try { localStorage.removeItem("medkit-theme"); } catch (e) { /* 隐私模式：仅本次会话生效 */ }
+  applyTheme();
+  toast("主题已改为跟随系统");
+}
+function themeStateRefresh() {
+  const el = $("theme_state");
+  if (!el) return;
+  const light = document.documentElement.dataset.theme === "light";
+  el.textContent = state.theme
+    ? `已固定为${light ? "亮色" : "暗色"}主题`
+    : `跟随系统（当前${light ? "亮色" : "暗色"}）`;
+}
+window.themeFollowSystem = themeFollowSystem;
 (function initTheme() {
   try {
     const saved = localStorage.getItem("medkit-theme");
@@ -194,7 +205,7 @@ function toastWithCopy(msg, copyValue) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.textContent = "复制";
-  btn.style.cssText = "margin-left:8px;padding:2px 10px;border:1px solid currentColor;border-radius:6px;background:none;color:inherit;font:inherit;font-size:12px;cursor:pointer";
+  btn.style.cssText = "margin-left:8px;padding:2px 10px;border:1px solid currentColor;border-radius:6px;background:none;color:inherit;font:inherit;font-size:var(--fs-2);cursor:pointer";
   btn.onclick = ev => {
     ev.stopPropagation();
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -217,13 +228,13 @@ function openFeedback() {
   $("md_title").textContent = "反馈与建议";
   const ver = state.version ? "v" + state.version : "";
   $("md_body").innerHTML = `
-    <p style="margin:0 0 10px;color:var(--dim);font-size:13px">遇到问题或有功能建议，欢迎邮件反馈：</p>
-    <div style="display:flex;align-items:center;gap:9px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:10px 12px">
-      <svg class="ic" style="color:var(--dim)"><use href="#i-mail"></use></svg>
-      <b style="font-size:14px;letter-spacing:.3px">${FEEDBACK_MAIL}</b>
-      <button class="act gray" id="fb_copy" style="margin-left:auto;padding:5px 12px;font-size:12px">复制</button>
+    <p style="margin:0 0 10px;color:var(--text-2);font-size:var(--fs-2)">遇到问题或有功能建议，欢迎邮件反馈：</p>
+    <div style="display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line-hair);border-radius:8px;padding:10px 12px">
+      <svg class="ic" style="color:var(--text-2)"><use href="#i-mail"></use></svg>
+      <b style="font-size:var(--fs-3);letter-spacing:.3px">${FEEDBACK_MAIL}</b>
+      <button class="act gray" id="fb_copy" style="margin-left:auto;padding:5px 12px;font-size:var(--fs-2)">复制</button>
     </div>
-    <p style="margin:10px 0 0;color:var(--dim);font-size:12px">点「写邮件」会自动附带版本与系统信息，方便快速定位问题。</p>`;
+    <p style="margin:10px 0 0;color:var(--text-2);font-size:var(--fs-2)">点「写邮件」会自动附带版本与系统信息，方便快速定位问题。</p>`;
   $("md_ok").textContent = "写邮件";
   $("md_ok").className = "act";
   $("modal_mask").style.display = "flex";
@@ -255,13 +266,13 @@ function showUpdateModal(r) {
   if (r.has_update) {
     const pre = r.prerelease ? " <span style='color:var(--warn)'>（预览版）</span>" : "";
     html = `<p style="margin:0 0 8px">当前版本 <b>v${esc(r.current)}</b> → 最新版本 <b style="color:var(--good)">v${esc(r.latest)}</b>${pre}</p>`;
-    if (r.notes) html += `<div style="max-height:180px;overflow:auto;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12.5px;white-space:pre-wrap;line-height:1.6">${esc(r.notes)}</div>`;
+    if (r.notes) html += `<div style="max-height:180px;overflow:auto;background:var(--surface-2);border:1px solid var(--line-hair);border-radius:8px;padding:10px 12px;font-size:var(--fs-2);white-space:pre-wrap;line-height:1.6">${esc(r.notes)}</div>`;
     $("md_ok").textContent = "打开下载页";
   } else if (r.error) {
-    html = `<p style="margin:0;color:var(--dim)">网络检查失败（无法访问 GitHub），可稍后再试，或直接打开发布页查看。</p>`;
+    html = `<p style="margin:0;color:var(--text-2)">网络检查失败（无法访问 GitHub），可稍后再试，或直接打开发布页查看。</p>`;
     $("md_ok").textContent = "打开发布页";
   } else {
-    html = `<p style="margin:0;color:var(--dim)">已是最新版本 <b>v${esc(r.current)}</b></p>`;
+    html = `<p style="margin:0;color:var(--text-2)">已是最新版本 <b>v${esc(r.current)}</b></p>`;
     $("md_ok").textContent = "知道了";
   }
   $("md_body").innerHTML = html;
@@ -294,7 +305,7 @@ document.addEventListener("click", e => {
 async function checkUpdate(silent = false) {
   if (!silent) {
     $("md_title").textContent = "检查更新";
-    $("md_body").innerHTML = `<p style="margin:0;color:var(--dim)">正在检查新版本…</p>`;
+    $("md_body").innerHTML = `<p style="margin:0;color:var(--text-2)">正在检查新版本…</p>`;
     $("md_ok").textContent = "知道了";
     $("md_ok").className = "act";
     $("modal_mask").style.display = "flex";
@@ -392,8 +403,8 @@ function initDataMgmt() {
   bind("btn_dm_clear", () => dmClear());
 }
 
-/* 主导航页签清单（hash 路由与 showTab 共用；顺序即侧栏顺序）。 */
-const TABS_ALL = ["start", "study", "bank", "learn", "mine"];
+/* 主导航页签清单（hash 路由与 showTab 共用；顺序即侧栏顺序——题库随工坊开关显隐）。 */
+const TABS_ALL = ["start", "study", "learn", "bank", "mine"];
 
 /* ---- 出题工坊（生成链）开关 · 2026-10-13 奥卡姆精简 P4 ----
  *
@@ -413,7 +424,7 @@ function applyGenFlag() {
   const on = genEnabled();
   const tab = document.querySelector('button[data-tab="bank"]');
   if (tab) tab.style.display = on ? "" : "none";
-  const syl = document.querySelector('#learnnav button[data-lv="syllabus"]');
+  const syl = $("lv-syllabus");   // v0.19：大纲管理已迁到「设置 → 进阶功能」
   if (syl) syl.style.display = on ? "" : "none";
   const ws = $("ws_card");
   if (ws) ws.style.display = on ? "" : "none";
@@ -423,7 +434,7 @@ function applyGenFlag() {
 function genToggle(on) {
   try { localStorage.setItem(GEN_KEY, on ? "1" : "0"); } catch (e) { /* 隐私模式：仅本次会话生效 */ }
   applyGenFlag();
-  toast(on ? "已启用出题工坊——侧栏出现「题库」页签" : "已关闭出题工坊（日常刷题不受影响）");
+  toast(on ? "已启用出题工坊——侧栏出现「题库」页签，设置页出现「进阶功能」" : "已关闭出题工坊（日常刷题不受影响）");
   const h = (location.hash || "").replace("#", "");
   if (!on && h === "bank") { location.hash = "start"; showTab("start"); }
 }
@@ -444,8 +455,8 @@ function showTab(name) {
     if ((location.hash || "").replace("#", "") === "bank") { location.hash = "start"; return; }
     name = "start";
   }
-  /* 只作用于主导航（data-tab）：学习中心子导航 #learnnav 也是 <nav>，
-     若用裸 "nav button" 会误重置子导航的 aria-selected/active 状态。 */
+  /* 只作用于主导航（data-tab）：页内还有别的 <nav>（如 #syl_std 的 pill 组），
+     若用裸 "nav button" 会误重置它们的 aria-selected / active 状态。 */
   document.querySelectorAll("nav button[data-tab]").forEach(x => {
     const on = x.dataset.tab === name;
     x.classList.toggle("active", on);
@@ -461,13 +472,24 @@ function showTab(name) {
   }
   /* v0.8.1：Tab 分发（开始/练习/刷题/题库/学习中心/我的） */
   if (typeof bankDrillHide === "function") bankDrillHide();   // 切页签一律收起沉浸式作答层（bank 域）
-  if (name === "start") loadStart();
-  if (name === "study") {   // 刷题页（默认「做题」子视图：我的题库 + 开始刷题；复习视图由 studyView 管）
-    studyView();   // 「刷题」页只剩「做题」子视图（2026-10-15 精简 T2 删复习卡）
+  if (name === "start") {          // 「今天」= 今日待办 + 掌握度诊断（原「学习中心 → 概览」已并入，指标不再两处各算）
+    loadStart();
+    if (typeof loadDashboard === "function") loadDashboard();
+    if (typeof loadLibrary === "function") loadLibrary();   // 内含 loadOverview（薄弱点诊断落在本页）
+  }
+  if (name === "study") {   // 刷题页（做题子视图：我的题库 + 开始刷题）
+    studyView();
   }
   if (name === "bank") { loadProjects(); ratioSum(); bloomSum(); if (typeof updateReady === "function") updateReady(); }   // R3-10：切回建课页重拉成本预估（服务商/模型可能已变）
-  if (name === "learn") loadLibrary();
-  if (name === "mine") { loadPrompts(); loadDataMgmt(); }
+  if (name === "learn") {   // 「错题」= 聊天为唯一主界面（原「学习中心」的多子视图已收敛）
+    loadLibrary();
+    if (typeof enterMistakes === "function") enterMistakes();   // 中止在途流式 + 拉起聊天与错题列表
+  }
+  if (name === "mine") {
+    loadPrompts(); loadDataMgmt(); themeStateRefresh();
+    // 大纲管理随「进阶功能」迁入本页：仅在工坊开启时预热（关闭时整块隐藏，白拉数据无意义）
+    if (typeof sylLoad === "function" && FEATURES.syllabus && genEnabled()) sylLoad();
+  }
 }
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   location.hash = b.dataset.tab;
@@ -614,7 +636,13 @@ function examLoad() {
   if (legacy) {
     list = [{ id: "exam_legacy_0", title: "考试", date: legacy, tag: "", color: "",
               remind_days: [3, 7, 14], created_at: new Date().toISOString() }, ...list];
-    try { localStorage.removeItem("medkit-exam-date"); } catch (e) { /* ignore */ }
+    try {
+      localStorage.removeItem("medkit-exam-date");
+      /* 迁移必须**落盘**（2026-10-20 修）：旧单场键删掉后若不同步写回新键，这次迁移就只活在
+         内存派生结果里 —— 下一次加载「考试计划」会凭空消失。这里不走 `examSave`（它会回调
+         renderExamPlans → examCurr → 本函数，成环），直接写新键即可，由调用方负责渲染。 */
+      localStorage.setItem(EXAM_KEY, JSON.stringify(list));
+    } catch (e) { /* 隐私模式：仅本次会话生效 */ }
   }
   list.forEach(e => {
     e.remind_days = Array.isArray(e.remind_days) ? e.remind_days.filter(Number.isFinite) : [3, 7, 14];
@@ -666,7 +694,7 @@ function renderExamPlans() {
       </div>
       <div class="exam-actions">
         <button class="mini-btn" data-id="${esc(e.id)}" onclick="examFormOpen(this)">编辑</button>
-        <button class="mini-btn" style="color:#f87171" data-id="${esc(e.id)}" onclick="examDelete(this)">删除</button>
+        <button class="mini-btn" style="color:var(--bad)" data-id="${esc(e.id)}" onclick="examDelete(this)">删除</button>
       </div>
     </div>`;
   }).join("") + `</div><div style="margin-top:10px">${add}</div><div id="exam_form_slot"></div>`;

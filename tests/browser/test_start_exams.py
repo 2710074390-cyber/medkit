@@ -73,6 +73,12 @@ def test_start_exam_reminder_window_active(page, server_url):
 
 
 def test_start_exam_legacy_migration(page, server_url):
+    """旧单场键 `medkit-exam-date` → 迁移成一场考试，且**迁移结果落盘**。
+
+    最后一步是这条用例的可证伪点：若迁移只派生在内存里（旧实现），刷新一次
+    考试计划就会凭空消失——那正是「迁移看起来成功了、其实白做」的形态
+    （2026-10-20 实测：迁移把旧键删掉却没同步写回新键，刷新后卡片不见了）。
+    """
     _goto_start_clear(page, server_url)
     page.evaluate("() => localStorage.setItem('medkit-exam-date', '2099-06-01')")
     page.reload()
@@ -82,6 +88,10 @@ def test_start_exam_legacy_migration(page, server_url):
     assert "2099-06-01" in page.locator(".exam-card").first.inner_text()
     left = page.evaluate("() => localStorage.getItem('medkit-exam-date')")
     assert left is None, "旧单场键应被迁移并清除"
+    # 迁移结果必须已写回新键 → 再刷一次仍在（否则「迁移成功」只是一次性的假象）
+    page.reload()
+    page.wait_for_selector(".exam-card", timeout=15000)
+    assert page.locator(".exam-card").count() == 1, "迁移结果应落盘：刷新后考试计划不得消失"
 
 
 def _seed_mistake(page, subject: str, tag: str) -> int:

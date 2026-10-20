@@ -421,7 +421,7 @@ async function vaultHandbook() {
   }
 }
 
-/* view 钩子：learn.js 的 showLearnView 会在切到本视图时调它 */
+/* view 钩子：learn.js 的 enterMistakes 会在切到本页时调它 */
 window.vaultView = function () {
   vaultLoad();
   vaultReviewLoad();
@@ -430,11 +430,11 @@ window.vaultView = function () {
   vaultChatRender();
 };
 
-/* 兜底：**脚本加载期**切到错题本时，`window.vaultView` 还没定义（learn.js 先加载、
- * 它的 `initLearnView()` IIFE 立刻调 `showLearnView`，那时本片尚未求值），
- * 于是错题助手会停在占位文案——必须刷新浏览器才出数据（正是用户报的现象）。
- * 本 IIFE 在所有脚本就绪后补一次加载：**幂等**（`vaultLoad` 可重复调，列表侧还有请求序号防抖），
- * 且只在「学习中心已展示 + 错题本视图已展示」时触发。 */
+/* 兜底：**脚本加载期**就落在错题页时，`window.vaultView` 还没定义（learn.js 先加载、
+   它的 `enterMistakes()` 在脚本求值期即可能被调用，那时本片尚未求值），
+   于是错题助手会停在占位文案——必须刷新浏览器才出数据。
+   本 IIFE 在所有脚本就绪后补一次加载：**幂等**（`vaultLoad` 可重复调，列表侧还有请求序号防抖），
+   且只在「错题页已展示 + 错题本视图已展示」时触发。 */
 (function initVaultPane() {
   const ensure = () => {
     const tab = document.getElementById("tab-learn");

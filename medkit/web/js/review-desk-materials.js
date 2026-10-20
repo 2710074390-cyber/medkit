@@ -235,7 +235,7 @@ async function runOcrJobs(group, role) {
     if (!runningN && finished === n) {                       // 全部终态
       tEl.textContent = failN ? "识别结束（部分失败）" : cancelN === n ? "识别已取消" : "识别完成 ✓";
       const cls = failN ? "bad" : cancelN === n ? "" : "good";
-      tEl.style.color = cls === "bad" ? "var(--bad)" : cls === "good" ? "var(--good)" : "var(--accent2)";
+      tEl.style.color = cls === "bad" ? "var(--bad)" : cls === "good" ? "var(--good)" : "var(--accent-strong)";
       cntEl.textContent = `完成 ${doneN}/${n}` + (failN ? ` · 失败 ${failN}` : "") + (cancelN ? ` · 取消 ${cancelN}` : "");
     } else {
       tEl.style.color = "";
@@ -245,7 +245,7 @@ async function runOcrJobs(group, role) {
     bar.classList.toggle("running", runningN > 0);
     bar.classList.toggle("bad", failN > 0);
     bar.querySelector("i").className = failN ? "bad" : "";
-    bar.querySelector("i").style.width = (finished / n * 100).toFixed(1) + "%";
+    bar.querySelector("i").style.transform = "scaleX(" + (finished / n).toFixed(4) + ")";
     jobs.forEach(j => {
       const row = j.row; if (!row) return;
       const [cls, txt] = ROW_STATE[j.state] || ROW_STATE.queued;
@@ -443,7 +443,7 @@ async function loadSessions() {
     box.innerHTML = `<div class="card">
       <h3 style="margin-bottom:6px">素材库（历史解析会话 · 跨项目复用 / 多教材合并）</h3>
       <div class="hint">勾选多个会话 → 「合并载入为教材」（quota 跨 session 按章加权）；单个会话可载入为教师重点。删除即失效。</div>
-      ${list.map(s => `<div class="sessrow" style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
+      ${list.map(s => `<div class="sessrow" style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line-hair)">
         <input type="checkbox" class="sessck" data-id="${esc(s.id)}">
         <b style="width:220px">${esc(s.name)}</b>
         <span class="hint">${esc(s.role)} · ${(s.chars || 0).toLocaleString()} 字 · ${s.slice_count} 章节 · ${esc(s.created)}</span>

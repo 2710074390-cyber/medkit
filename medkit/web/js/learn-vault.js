@@ -60,7 +60,12 @@ async function vaultLoad() {
     if (!box) return;
     const g = (st.groups || []).filter(x => x.total > 0);
     if (!st.total) {
-      box.innerHTML = `<div class="hint">还没有错题。刷题判错的题会自动流入，也可点上方「新建错题」手动添加。</div>`;
+      // 空态统一为「图标 + 为什么空 + 一个动作」：不停在"还没有错题"这句话上，直接给下一步
+      box.innerHTML = `<div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-paper"></use></svg>
+        <div class="sub">还没有错题<br>刷题判错的题会自动流进来，也可以手动记一条</div>
+        <button class="act gray" onclick="vaultNewToggle()">＋ 新建错题</button>
+      </div>`;
     } else if (!g.length) {
       box.innerHTML = `<div class="hint">共 ${st.total} 条，暂无需要优先处理的薄弱项。</div>`;
     } else {
@@ -106,7 +111,17 @@ async function vaultRefreshList() {
           <span class="vault-meta">${_esc([r.subject, r.chapter, r.topic].filter(Boolean).join(" · "))}
             ${r.understanding ? " · 有我的理解" : ""}${r.doubts ? " · 有疑问" : ""}</span>
         </div>`).join("")
-      : `<div class="hint">${q || f.subject || f.chapter || f.topic ? "没有命中的错题。" : "还没有错题文件。"}</div>`;
+        : (q || f.subject || f.chapter || f.topic)
+        ? `<div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-target"></use></svg>
+            <div class="sub">没有命中的错题<br>换个关键词，或清掉搜索与筛选看全部</div>
+            <button class="act gray" onclick="vaultSearchClear()">清除搜索与筛选</button>
+          </div>`
+        : `<div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-paper"></use></svg>
+            <div class="sub">还没有错题<br>刷题判错的题会自动流进来，也可以手动记一条</div>
+            <button class="act gray" onclick="vaultNewToggle()">＋ 新建错题</button>
+          </div>`;
       box.querySelectorAll(".vault-row").forEach(el => {
         const open = () => vaultOpen(el.dataset.path || "");
         el.onclick = open;

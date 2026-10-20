@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedKit 前端设计重构方案 · 2026-10-20</title>
+<style>
+  :root{
+    --ink:#1B2422; --ink-2:#43504D; --ink-3:#6B7874;
+    --paper:#F6F8F7; --sheet:#FFFFFF; --sunk:#EFF3F1;
+    --rule:#DFE5E2; --rule-2:#EDF1EF;
+    --accent:#276B5A; --accent-soft:#E3EFEB; --accent-line:#8FBDAE;
+    --good:#257944; --warn:#8A5A06; --bad:#B32D2D;
+    --f-caption:12px; --f-body:15px; --f-lead:18px;
+    --f-h3:17px; --f-h2:26px; --f-h1:38px;
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px; --sp-8:64px;
+    --r-1:6px; --r-2:8px; --r-3:12px; --r-4:16px;
+    --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+    --sans:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--paper);color:var(--ink);
+    font-size:var(--f-body);line-height:1.65;font-kerning:normal;-webkit-font-smoothing:antialiased}
+  .page{max-width:1240px;margin:0 auto;padding:var(--sp-7) var(--sp-5) var(--sp-8);
+    display:grid;grid-template-columns:228px minmax(0,1fr);gap:var(--sp-7);align-items:start}
+  @media (max-width:1080px){.page{grid-template-columns:1fr;gap:var(--sp-5)}}
+
+  .toc{position:sticky;top:var(--sp-5);font-size:var(--f-caption);color:var(--ink-3)}
+  @media (max-width:1080px){.toc{position:static}}
+  .toc h2{font-size:var(--f-caption);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:600;margin-bottom:var(--sp-3)}
+  .toc ol{list-style:none;counter-reset:s;margin:0}
+  .toc li{counter-increment:s;margin-bottom:5px}
+  .toc li::before{content:counter(s) ". ";color:var(--accent-line);font-variant-numeric:tabular-nums}
+  .toc a{color:var(--ink-2);text-decoration:none;display:inline-block;padding:1px 0}
+  .toc a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+  .toc .grp{margin-top:var(--sp-4);padding-top:var(--sp-3);border-top:1px solid var(--rule)}
+  .toc .grp span{display:block;color:var(--ink-3);margin-bottom:6px}
+
+  main{min-width:0}
+  header.doc{border-bottom:1px solid var(--rule);padding-bottom:var(--sp-5);margin-bottom:var(--sp-6)}
+  .eyebrow{font-size:var(--f-caption);letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:600}
+  h1{font-size:var(--f-h1);line-height:1.2;letter-spacing:-.02em;margin:var(--sp-2) 0 var(--sp-3);font-weight:700}
+  .abstract{font-size:var(--f-lead);line-height:1.6;color:var(--ink-2);max-width:62ch}
+  .meta{margin-top:var(--sp-4);font-size:var(--f-caption);color:var(--ink-3);display:flex;flex-wrap:wrap;gap:6px 20px}
+  .meta b{color:var(--ink-2);font-weight:600}
+  section{margin-bottom:var(--sp-7);scroll-margin-top:var(--sp-5)}
+  h2.sec{font-size:var(--f-h2);font-weight:700;letter-spacing:-.015em;line-height:1.25;
+    padding-bottom:var(--sp-2);border-bottom:2px solid var(--ink);margin-bottom:var(--sp-4)}
+  h2.sec .n{color:var(--accent-line);margin-right:10px;font-variant-numeric:tabular-nums}
+  h3{font-size:var(--f-h3);font-weight:600;margin:var(--sp-5) 0 var(--sp-2)}
+  h4{font-size:var(--f-body);font-weight:600;margin:var(--sp-4) 0 var(--sp-1)}
+  p{margin-bottom:var(--sp-3);max-width:68ch}
+  p.wide{max-width:none}
+  ul,ol{margin:0 0 var(--sp-3) var(--sp-5);max-width:68ch}
+  li{margin-bottom:5px}
+  a{color:var(--accent);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+  code{font-family:var(--mono);font-size:.9em;background:var(--sunk);border-radius:4px;padding:1px 5px;color:var(--ink-2)}
+  strong{font-weight:600}
+  .lead-note{font-size:var(--f-caption);color:var(--ink-3);border-left:2px solid var(--rule);
+    padding-left:var(--sp-3);margin-bottom:var(--sp-4)}
+
+  .verdict{background:var(--sheet);border:1px solid var(--rule);border-left:4px solid var(--accent);
+    border-radius:var(--r-3);padding:var(--sp-4) var(--sp-5);margin-bottom:var(--sp-5)}
+  .verdict h3{margin-top:0}
+  .verdict ol{margin-bottom:0}
+
+  .tw{overflow-x:auto;margin:0 0 var(--sp-4)}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:var(--sheet);
+    border:1px solid var(--rule);border-radius:var(--r-3);overflow:hidden}
+  caption{caption-side:top;text-align:left;font-size:var(--f-caption);color:var(--ink-3);padding-bottom:6px}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--rule-2);vertical-align:top;
+    font-variant-numeric:tabular-nums}
+  th{background:var(--sunk);font-weight:600;color:var(--ink-2);font-size:var(--f-caption);white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  td.num{text-align:right;white-space:nowrap}
+  .pos{color:var(--good);font-weight:600}
+  .neg{color:var(--bad);font-weight:600}
+
+  .sev{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;
+    padding:1px 7px;border-radius:4px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .sev.p0{background:#FBE9E9;color:var(--bad);border:1px solid #E9BEBE}
+  .sev.p1{background:#FCF1DE;color:var(--warn);border:1px solid #E7D2A8}
+  .sev.p2{background:var(--sunk);color:var(--ink-2);border:1px solid var(--rule)}
+  .sev.p3{background:transparent;color:var(--ink-3);border:1px solid var(--rule)}
+
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:var(--sp-2);margin-bottom:var(--sp-4)}
+  .sw{border:1px solid var(--rule);border-radius:var(--r-2);overflow:hidden;font-size:11px;background:var(--sheet)}
+  .sw .chip{height:50px;display:block;border-bottom:1px solid var(--rule-2)}
+  .sw .lbl{padding:5px 8px;color:var(--ink-2);line-height:1.45}
+  .sw .lbl b{display:block;font-weight:600;font-size:11.5px;color:var(--ink)}
+  .sw .lbl span{font-family:var(--mono);color:var(--ink-3);font-size:10.5px}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4)}
+  @media (max-width:720px){.pair{grid-template-columns:1fr}}
+  .pair>div{min-width:0}
+  .pair h4{margin-top:0}
+
+  .spec{border:1px solid var(--rule);border-radius:var(--r-3);background:var(--sheet);
+    padding:var(--sp-4) var(--sp-5);margin-bottom:var(--sp-4)}
+  .spec-row{display:flex;align-items:baseline;gap:var(--sp-4);padding:7px 0;border-bottom:1px dashed var(--rule-2)}
+  .spec-row:last-child{border-bottom:none}
+  .spec-row .tag{flex:none;width:124px;font-size:11px;font-family:var(--mono);color:var(--ink-3)}
+  .spec-row .demo{flex:1;min-width:0}
+  .scale-bar{display:flex;align-items:flex-end;gap:var(--sp-2);flex-wrap:wrap}
+  .scale-bar .b{background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:3px;
+    font-size:10.5px;font-family:var(--mono);color:var(--ink-2);text-align:center;padding-top:3px;height:34px}
+
+  .wire{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3);margin-bottom:var(--sp-4)}
+  @media (max-width:820px){.wire{grid-template-columns:1fr}}
+  .wire>figure{border:1px solid var(--rule);border-radius:var(--r-3);overflow:hidden;background:var(--sheet)}
+  .wire figcaption{font-size:var(--f-caption);padding:7px 12px;border-bottom:1px solid var(--rule);
+    background:var(--sunk);color:var(--ink-2);font-weight:600}
+  .mock{padding:var(--sp-3);font-size:10.5px;color:var(--ink-3)}
+  .mock .shell{display:grid;grid-template-columns:58px 1fr;gap:8px;min-height:200px}
+  .mock .rail{background:var(--sunk);border-radius:6px;padding:8px 6px;display:flex;
+    flex-direction:column;gap:5px;font-size:9px;text-align:center}
+  .mock .rail i{display:block;height:16px;border-radius:4px;background:#fff;border:1px solid var(--rule)}
+  .mock .rail i.on{background:var(--accent);border-color:var(--accent)}
+  .mock .body{display:flex;flex-direction:column;gap:6px}
+  .mock .card{background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:7px 8px}
+  .mock .card.pale{background:var(--paper)}
+  .mock .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .mock .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .mock .bar{height:7px;border-radius:4px;background:var(--accent-soft);border:1px solid var(--accent-line)}
+  .mock .bar.solid{background:var(--accent);border-color:var(--accent);height:19px;border-radius:6px}
+  .mock .txt{color:var(--ink-3);font-size:9.5px;line-height:1.4}
+  .mock .txt.big{font-size:15px;font-weight:700;color:var(--ink)}
+  .mock .txt.mid{font-size:10.5px;font-weight:600;color:var(--ink)}
+  .mock .dead{background:repeating-linear-gradient(45deg,#FBE9E9,#FBE9E9 5px,#F7DDDD 5px,#F7DDDD 10px);
+    border:1px dashed #E9BEBE;border-radius:6px;color:var(--bad);
+    display:flex;align-items:center;justify-content:center;font-size:9px;text-align:center;padding:4px}
+
+  figure.shot{margin:0 0 var(--sp-3)}
+  .shots{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3)}
+  @media (max-width:820px){.shots{grid-template-columns:1fr}}
+  figure.shot img{width:100%;display:block;border:1px solid var(--rule);border-radius:var(--r-2)}
+  figure.shot figcaption{font-size:var(--f-caption);color:var(--ink-3);padding-top:6px}
+
+  .demo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:var(--sp-3);margin-bottom:var(--sp-4)}
+  .demo{border:1px solid var(--rule);border-radius:var(--r-3);background:var(--sheet);padding:var(--sp-3) var(--sp-4)}
+  .demo h4{margin:0 0 var(--sp-2);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+  .btn-new{display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:#fff;border:1px solid var(--accent);
+    border-radius:var(--r-2);padding:8px 16px;font-size:13.5px;font-weight:600;font-family:inherit;cursor:pointer}
+  .btn-new.ghost{background:var(--sheet);color:var(--ink);border-color:#858f8d}
+  .btn-cur{background:#2A6B5A;color:#fff;border:1px solid #2A6B5A;border-radius:8px;padding:9px 20px;
+    font-size:14px;font-weight:600;font-family:inherit;cursor:pointer}
+  .pill-demo{display:inline-flex;background:var(--sunk);border:1px solid var(--rule);border-radius:var(--r-2);padding:2px}
+  .pill-demo b{font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:5px}
+  .pill-demo b.on{background:var(--sheet);border:1px solid var(--rule);box-shadow:0 1px 2px rgba(20,40,35,.06)}
+  .pill-demo b.off{color:var(--ink-3);font-weight:400}
+  .field-new{width:100%;background:var(--sheet);border:1px solid #858f8d;border-radius:var(--r-2);
+    padding:9px 12px;font-size:14px;font-family:inherit;color:var(--ink)}
+  .field-cur{width:100%;background:#f5f5f5;border:1px solid #e5e5e5;border-radius:9px;
+    padding:9px 12px;font-size:14px;font-family:inherit;color:#2E3440}
+  .optrow{border:1px solid #858f8d;border-radius:var(--r-2);padding:10px 12px;font-size:13.5px;
+    display:flex;gap:10px;align-items:flex-start;background:var(--sheet);margin-bottom:6px}
+  .optrow.sel{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent)}
+  .optrow.ok{border-color:var(--good);background:#E9F3EC}
+  .optrow.no{border-color:var(--bad);background:#FBEDEC}
+  .optrow .k{width:22px;height:22px;flex:none;border-radius:50%;background:var(--sunk);border:1px solid var(--rule);
+    display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700}
+  .optrow .mk{margin-left:auto;font-weight:700;font-size:13px}
+  .optrow.cur{border-radius:10px;border-color:#e5e5e5;background:#fff}
+  .optrow.cur.sel{border-color:#2A6B5A;background:#f0f6f4;box-shadow:none}
+  .optrow.cur.no{border-color:#d64545;background:#fdeeee}
+
+  .dec{border:1px solid var(--rule);border-left:4px solid var(--accent-line);border-radius:var(--r-3);
+    background:var(--sheet);padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-2)}
+  .dec b.q{display:block;font-size:14px;font-weight:600;margin-bottom:4px}
+  .dec .opts{font-size:12.5px;color:var(--ink-2);margin-bottom:4px}
+  .dec .mine{font-size:12px;color:var(--ink-3)}
+  .dec .mine b{color:var(--accent);font-weight:600}
+
+  .stage{border:1px solid var(--rule);border-radius:var(--r-3);background:var(--sheet);
+    padding:var(--sp-4) var(--sp-5);margin-bottom:var(--sp-3)}
+  .stage h4{margin-top:0;display:flex;align-items:center;gap:8px;font-size:15px}
+  .stage .id{font-family:var(--mono);font-size:11.5px;color:#fff;background:var(--accent);
+    border-radius:4px;padding:1px 7px;font-weight:700}
+  .stage .risk{font-size:11px;font-weight:600;color:var(--ink-3);margin-left:auto}
+  .stage ul{margin-bottom:0}
+  .kv{font-size:12.5px;color:var(--ink-2)}
+  .kv b{color:var(--ink)}
+
+  footer{border-top:1px solid var(--rule);padding-top:var(--sp-4);font-size:var(--f-caption);color:var(--ink-3)}
+  .tag-inline{display:inline-block;font-size:10.5px;font-family:var(--mono);color:var(--ink-2);
+    background:var(--sunk);border:1px solid var(--rule);border-radius:4px;padding:0 5px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="toc" aria-label="目录">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">产品形态再确认</a></li>
+    <li><a href="#s2">现状诊断</a></li>
+    <li><a href="#s3">对标研究</a></li>
+    <li><a href="#s4">目标设计语言</a></li>
+    <li><a href="#s5">界面与信息架构重构</a></li>
+    <li><a href="#s6">落地计划</a></li>
+    <li><a href="#s7">风险与取舍</a></li>
+    <li><a href="#s8">待你拍板的决策点</a></li>
+  </ol>
+  <div class="grp">
+    <span>速览</span>
+    <a href="#scorecard">评分卡</a><br>
+    <a href="#findings">问题清单</a><br>
+    <a href="#tokens">目标令牌</a><br>
+    <a href="#evidence">证据索引</a>
+  </div>
+</nav>
+
+<main>
+
+<header class="doc">
+  <div class="eyebrow">前端设计重构方案 · 评审稿</div>
+  <h1>把 MedKit 从「功能面板的集合」<br>改造成一间安静的学习工作台</h1>
+  <p class="abstract">
+    先诊断设计债，再给出目标设计语言与分阶段落地路径。本文不含任何代码改动——
+    按你的要求，确认之后才开工。
+  </p>
+  <div class="meta">
+    <span><b>日期</b> 2026-10-20</span>
+    <span><b>对象</b> MedKit v0.18.1 · <span class="tag-inline">medkit/web</span></span>
+    <span><b>证据</b> 实跑截图 8 张 · 源码实测 · 对比度计算 · 5 轮外部检索</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <div class="verdict">
+    <h3>结论先行</h3>
+    <ol>
+      <li><strong>功能是好的，形态是错的。</strong>主闭环（导入题库 → 刷题 → 判错回流 → 错题复盘）扎实；
+        但界面把实际零使用的「出题工坊」放在了最显眼的位置，而把每天要用的「错题」藏在二级页签里。</li>
+      <li><strong>亮色主题是残的。</strong>实测：亮色下卡片底色与页面底色都是 <code>#ffffff</code>，分离度
+        <span class="neg">1.00:1</span>，整个界面塌成一张白纸；控件边框对比度只有
+        <span class="neg">1.26:1</span>，远低于非文本对比要求的 3:1。</li>
+      <li><strong>层级靠字号，而字号挤在一起。</strong>实测现状共有 <b>16 档</b>字号
+        （10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 13.5 / 14 / 15 / 16 / 17 / 20 / 21 / 22 / 24），
+        正文 14px——相邻档常只差 0.5px，撑不起层级，读起来是"糊"的。</li>
+      <li><strong>一切都是卡片。</strong>「设置」一屏纵向 8 张卡，「错题本」6 张卡（含 1 张默认隐藏的详情卡）；
+        而布局只有一条 1000px 单栏——卡片替代了本该由间距和排版完成的组织工作，
+        空间也没有被用来承载"列表 + 详情""主区 + 上下文"这种本应并置的结构。</li>
+      <li><strong>好消息：不需要推倒重来。</strong>暗色对比度已经过硬（正文 14.87:1）、图标体系统一、
+        零构建零 CDN 的架构天然适合"令牌化重写"。核心是三件事：
+        <b>S1 令牌与主题重写 · S2 排版与间距收敛 · S3 信息架构收敛</b>。</li>
+    </ol>
+  </div>
+
+  <div class="tw">
+    <table>
+      <caption>本次诊断的量化总账（对比度用 WCAG 相对亮度公式实测，非估算）</caption>
+      <thead><tr><th>指标</th><th>实测值</th><th>门槛</th><th>判读</th></tr></thead>
+      <tbody>
+        <tr><td>亮色 · 卡片 vs 页面底</td><td class="num neg">1.00:1</td><td>需可感知</td><td>等于零，卡片不可见</td></tr>
+        <tr><td>亮色 · 控件边框 vs 白底</td><td class="num neg">1.26:1</td><td>≥3:1</td><td>输入框/选项行识别性不足</td></tr>
+        <tr><td>亮色 · 「成功」文字 vs 白底</td><td class="num neg">3.96:1</td><td>≥4.5:1</td><td>小字不达标</td></tr>
+        <tr><td>亮色 · 卡片2 vs 卡片</td><td class="num">1.09:1</td><td>—</td><td>填充式层级几乎不可见</td></tr>
+        <tr><td>暗色 · 正文 vs 卡片</td><td class="num pos">14.87:1</td><td>≥4.5:1</td><td>优秀，保留</td></tr>
+        <tr><td>暗色 · 次要文字 vs 卡片</td><td class="num pos">6.15:1</td><td>≥4.5:1</td><td>达标</td></tr>
+        <tr><td>暗色 · 边框 vs 卡片</td><td class="num">1.50:1</td><td>≥3:1</td><td>同亮色问题</td></tr>
+        <tr><td>亮色 · 卡片 vs 页面底（提案）</td><td class="num pos">1.08:1</td><td>需可感知</td><td>靠"底灰卡白"关系成立</td></tr>
+        <tr><td>亮色 · 控件边框 vs 白底（提案）</td><td class="num pos">3.04:1</td><td>≥3:1</td><td>达标</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== 1 ===================== -->
+<section id="s1">
+  <h2 class="sec"><span class="n">1</span>产品形态再确认</h2>
+  <p>设计重构的前提是先把"这东西到底是什么"说准。以下结论全部来自仓库内可复核的记录，不是推测。</p>
+
+  <h3>1.1 交付与技术形态</h3>
+  <ul>
+    <li><strong>本机回环单用户 Web 应用</strong>：FastAPI + uvicorn 监听 <span class="tag-inline">127.0.0.1:4880~4889</span>，
+      前端是纯静态资源（<span class="tag-inline">medkit/web</span>），由浏览器承载；Windows 上以绿色版/安装包交付
+      （<span class="tag-inline">run_medkit.py</span> 自动开浏览器）。</li>
+    <li><strong>零构建 / 零 CDN / 经典脚本</strong>：13 个 JS 分片按固定顺序加载并共享全局作用域；CSP 全同源。
+      这是本方案的硬边界——任何引入打包器、CDN 字体、UI 框架的"现代化"都被排除。</li>
+    <li><strong>规模纪律</strong>：每个 <span class="tag-inline">web/js</span> 文件 ≤800 行；CSS 类必须有消费者；
+      <span class="tag-inline">index.html</span> 的内联 <code>on*</code> 调用的函数必须有顶层声明。</li>
+    <li><strong>未来分叉</strong>：<span class="tag-inline">docs/网页版可行性分析_2026-10-16.md</span> 已论证托管多用户版的可行性
+      （做题闭环 100% 可复现，阻断项是用户体系）。<strong>本方案的令牌与主题系统对桌面版与网页版同时成立</strong>，
+      不构成未来迁移的负担。</li>
+  </ul>
+
+  <h3>1.2 用户与真实场景</h3>
+  <p>目标用户是临床医学本科生/规培，备考执业医师、期末或考研西综。典型使用场景是<strong>晚上 1~2 小时连续刷题
+    加错题复盘</strong>，偶发在手机浏览器上翻错题（桌面已过 768/390 响应式测试）。这意味着：</p>
+  <ul>
+    <li>界面必须有"专注模式"——做题时不应该被导航和状态面板干扰；</li>
+    <li>错题复盘是<strong>粗读—筛选—精读—复述</strong>的来回动作，列表与详情的切换成本要接近零；</li>
+    <li>长时间阅读的眼部负担是关键指标——正文 14px、次要信息 11~12px 偏小。</li>
+  </ul>
+
+  <h3>1.3 真实使用路径（数据口径）</h3>
+  <div class="tw">
+    <table>
+      <caption>本机真实库行数实测（<span class="tag-inline">docs/重构设计方案_奥卡姆精简_第二轮_2026-10-15.md</span>）</caption>
+      <thead><tr><th>数据域</th><th>行数</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td>bank_items / banks / bank_attempts</td><td class="num">460 / 2 / 22</td><td class="pos">在用（主链路）</td></tr>
+        <tr><td>vault_items（本地错题）</td><td class="num">17</td><td class="pos">在用</td></tr>
+        <tr><td>mistakes（错题本）</td><td class="num">11</td><td class="pos">在用</td></tr>
+        <tr><td>knowledge</td><td class="num">1</td><td>边缘</td></tr>
+        <tr><td>projects（出题工坊产物）</td><td class="num">0</td><td class="neg">从未产出</td></tr>
+        <tr><td>cards / review_cards / explains / tutor_sessions / syllabus_items / realexam_freq</td><td class="num">0</td><td class="neg">零使用</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>结论：MedKit 的真实形态是「刷题工具 + 错题复盘本」，出题工坊是可选插件。</strong>
+    这一点决定了后面信息架构收敛的方向——不是砍功能，而是<strong>把零使用的功能从视觉高位撤下来，
+    把高频功能从深层次提上去</strong>。</p>
+
+  <h3>1.4 设计定位（一句话）</h3>
+  <div class="verdict">
+    <p style="margin:0"><strong>安静的学习工作台（Calm Study Workbench）。</strong>
+      它应该像一本排版考究的讲义，而不是一块状态大屏。三条原则贯穿全案：</p>
+    <ul style="margin:var(--sp-2) 0 0 var(--sp-5)">
+      <li><strong>层级先行，装饰殿后。</strong>先用字号、字重、间距把主次分清，再谈颜色和圆角。</li>
+      <li><strong>一屏一个主任务。</strong>同一屏不做两件事，"该做什么"要在两秒内看得出。</li>
+      <li><strong>颜色只承担语义。</strong>强调色稀缺才有力；语义色不可只靠色相区分。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ===================== 2 ===================== -->
+<section id="s2">
+  <h2 class="sec"><span class="n">2</span>现状诊断</h2>
+  <p class="lead-note">方法：把应用真跑起来（<span class="tag-inline">python run_medkit.py</span> +
+    Playwright 抓 8 张实机截图），逐屏走查并结合源码定位；颜色结论用 WCAG 相对亮度公式计算得出，
+    不依赖肉眼判断。代码位置均指向本仓库当前版本。</p>
+
+  <h3>2.1 实机快照</h3>
+  <div class="shots">
+    <figure class="shot">
+      <img src="frontend-redesign-shots/01-start-light.png" alt="开始页 亮色">
+      <figcaption>开始页 · 亮色。卡片与背景同为白色（分离度 1.00:1），整页靠发丝线勉强分区。</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="frontend-redesign-shots/07-start-dark.png" alt="开始页 暗色">
+      <figcaption>开始页 · 暗色。底色 <code>#0a0a0a</code> 接近纯黑，只有一层卡片亮度。</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="frontend-redesign-shots/02-practice-light.png" alt="刷题页 亮色">
+      <figcaption>刷题页 · 亮色。题库行右侧并列 7 个按钮；顶部还有一个只有一项的分段控件。</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="frontend-redesign-shots/05-settings-light.png" alt="设置页 亮色">
+      <figcaption>设置页 · 亮色。8 张卡纵向堆叠，首卡是零使用的「启用出题工坊」。</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="frontend-redesign-shots/04-learn-light.png" alt="学习中心概览 亮色">
+      <figcaption>学习中心概览 · 亮色。指标卡 + 环形图 + 流程节点，与「开始」页的四个数字重复。</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="frontend-redesign-shots/06-mistakes-light.png" alt="错题本 亮色">
+      <figcaption>错题本 · 亮色。聊天框占去大半个首屏且空态只剩一个虚线框，向下还有 4 张卡。</figcaption>
+    </figure>
+  </div>
+
+  <h3>2.2 评分卡</h3>
+
+  <h4 id="scorecard">Nielsen 十项启发式（0–4 分）</h4>
+  <div class="tw">
+    <table>
+      <thead><tr><th>#</th><th>启发式</th><th>分</th><th>依据</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>系统状态可见性</td><td class="num pos">3</td><td>做题层的进度/计时/流式光标做得很好；但列表加载只有转圈 +「加载中…」，无骨架屏。</td></tr>
+        <tr><td>2</td><td>系统与现实世界匹配</td><td class="num pos">3</td><td>术语基本贴近医学生；但「课题/押题卷/切片/门禁 R1、D16」是内部词汇，直接暴露给用户。</td></tr>
+        <tr><td>3</td><td>用户控制与自由</td><td class="num pos">3</td><td>有「停止生成」「恢复默认」「清空对话」；但删除题库/错题只有确认框，无撤销。</td></tr>
+        <tr><td>4</td><td>一致性与标准</td><td class="num neg">2</td><td>按钮有 6 种（act / act.gray / inlineBtn / mini-btn / themeBtn / rst），圆角 6 档，字号 9 档。</td></tr>
+        <tr><td>5</td><td>错误预防</td><td class="num pos">3</td><td>清空数据要求输入确认短语、导入有解析预览（成熟做法）。</td></tr>
+        <tr><td>6</td><td>识别优于回忆</td><td class="num neg">2</td><td>出题参数分散在「题库」与「设置」两处；「题库 / 刷题 / 学习中心 / 错题」概念互相重叠。</td></tr>
+        <tr><td>7</td><td>灵活与效率</td><td class="num pos">3</td><td>已有 Ctrl+1~5、Alt+1~2 快捷键；但无命令面板、无批量操作的菜单化。</td></tr>
+        <tr><td>8</td><td>美学与极简</td><td class="num neg">2</td><td>同构卡片堆叠、成段解释文案、零使用功能占据显要位置。</td></tr>
+        <tr><td>9</td><td>错误恢复</td><td class="num neg">2</td><td>错误多以提示条呈现，部分文案暴露内部实现；无撤销路径。</td></tr>
+        <tr><td>10</td><td>帮助与文档</td><td class="num neg">2</td><td>说明文字散落在各卡片里，但缺少"这一屏我该做什么"的层级引导与统一帮助入口。</td></tr>
+        <tr><td colspan="2"><strong>合计</strong></td><td class="num neg"><strong>25 / 40</strong></td><td><strong>需要改进</strong>（通常在野界面临界 20–32）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>五维技术审计（0–4 分）</h4>
+  <div class="tw">
+    <table>
+      <thead><tr><th>维度</th><th>分</th><th>主要发现</th></tr></thead>
+      <tbody>
+        <tr><td>无障碍</td><td class="num pos">3</td><td>对比度两处硬伤（亮色成功文字 3.96:1、控件边框 1.26:1）；其余良好——全局 <code>:focus-visible</code> 与 skip link 都在。</td></tr>
+        <tr><td>性能</td><td class="num pos">3</td><td>零框架零 CDN 是优势；但进度条动的是 <code>width</code>（布局属性），且无骨架屏。</td></tr>
+        <tr><td>响应式</td><td class="num pos">3</td><td>断点齐全（860/760/720/640/480/420）且三引擎测过；但内容列 <code>max-width:1000px</code> 在宽屏留下大片死区。</td></tr>
+        <tr><td>主题</td><td class="num neg">2</td><td>令牌存在但亮色卡片=背景；透明色硬编码（<code>--good33/--infobg/--errbg</code>）；暗色近纯黑且只有一层亮度。</td></tr>
+        <tr><td>反模式</td><td class="num neg">2</td><td>无 AI 味（没有渐变文字/玻璃拟态/紫蓝渐变），但属"品类中位数"——换皮给任何工具都不违和。</td></tr>
+        <tr><td colspan="2"><strong>合计 13 / 20</strong></td><td><strong>可接受，但仍有实质工作</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="verdict" style="border-left-color:var(--bad)">
+    <h3 style="margin-top:0">反模式判定：没有 AI 味，但"没有味道"</h3>
+    <p style="margin-bottom:0">这版界面<strong>通过</strong>了"看起来不像 AI 生成"的检测——它没有 2024–2025 年那套典型指纹
+      （渐变文字、发光强调、玻璃卡片、hero 指标堆砌）。但它因此撞上了另一个问题：
+      <strong>把它换皮给任何一个桌面工具都不违和</strong>。克制是对的，但没有用排版、留白和节奏立起自己的性格。
+      这是本方案里最需要"做加法"的一处。</p>
+  </div>
+
+  <h4 id="findings">问题清单（按严重度）</h4>
+
+  <h4><span class="sev p0">P0</span> 亮色主题下卡片与页面同色</h4>
+  <ul>
+    <li><strong>位置</strong>：<span class="tag-inline">medkit/web/css/base.css</span> 亮色块 <code>--bg1:#ffffff</code>、
+      <code>--card:#ffffff</code>（文件头两处 <code>:root[data-theme=light]</code> 内），消费点 <code>.card</code>。</li>
+    <li><strong>影响</strong>：亮色是多数人的默认（跟随系统），而这一主题下所有卡片、节标题区、数据区
+      全部融进同一张白纸。用户只能靠 1.26:1 的发丝线猜测"哪里是一块内容"——这就是截图里"白得发慌"的成因。</li>
+    <li><strong>修法</strong>：把亮色关系反过来——页面底用浅灰（<code>#F4F7F6</code>），卡片保持纯白（<code>#FFFFFF</code>），
+      分离度 1.08:1 时卡片自然浮起，发丝线只做"内部分隔"而不再承担"识别卡片"的职责。</li>
+  </ul>
+
+  <h4><span class="sev p1">P1</span> 亮色控件边框对比度不足，交互控件识别性差</h4>
+  <ul>
+    <li><strong>位置</strong>：<code>--line:#e5e5e5</code> 被输入框 / 下拉框 / <code>.bank-opt</code>（选项行）/
+      <code>.dc-cell</code>（答题卡格子）/ <code>.fbox</code>（拖拽区）同时用作<strong>控件边界</strong>。</li>
+    <li><strong>实测</strong>：<code>#e5e5e5</code> 对白底 <span class="neg">1.26:1</span>，对卡片2 <span class="neg">1.16:1</span>。
+      暗色侧 <code>#404040</code> 对卡片 <span class="neg">1.50:1</span>。均低于 WCAG 1.4.11（非文本对比 3:1）。</li>
+    <li><strong>影响</strong>：选项行的边界、答题卡格子的边界、输入框的边界都属于"识别控件所必需的视觉信息"，
+      对比度不足会让视线扫不过去，也影响低视力与强光环境。</li>
+    <li><strong>修法</strong>：拆成<strong>两级描边令牌</strong>——
+      <code>--line-hair</code> 发丝（装饰性分组，允许 1.3:1）与 <code>--line-ctl</code> 控件描边（必须 ≥3:1）。
+      实测 <code>#858F8D</code> 对白底 <span class="pos">3.04:1</span>，暗色 <code>#77817E</code> 对 <code>#1a1f1d</code>
+      <span class="pos">4.16:1</span>，可用。</li>
+  </ul>
+
+  <h4><span class="sev p1">P1</span> 亮色「成功」状态文字低于 AA</h4>
+  <ul>
+    <li><strong>位置</strong>：<code>--good:#4a8f45</code>（亮色）被 <code>.hint.good</code>、<code>.ready .ok</code>、
+      <code>.substep.done &gt; summary</code>、<code>.ocrst.done</code> 用作 12~13px 正文。</li>
+    <li><strong>实测</strong>：<span class="neg">3.96:1</span> &lt; 4.5:1。暗色侧 <code>#6ccb62</code> 对底色达到
+      <span class="pos">11.86:1</span>，对比之下亮色这一档明显欠调。</li>
+    <li><strong>修法</strong>：亮色成功色压深到 <code>#257944</code>（提案实测 <span class="pos">5.39:1</span>），
+      同时把"淡底 + 深字"的组合固定成一个语义色对（<code>--good-fg / --good-bg</code>），不再散落地用 rgba 调。</li>
+  </ul>
+
+  <h4><span class="sev p1">P1</span> 字号档位过多，正文偏小，层级撑不起来</h4>
+  <ul>
+    <li><strong>位置</strong>：<code>base.css</code> + <code>learn.css</code> 合计出现
+      <strong>16 档</strong>字号：10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 13.5 / 14 / 15 / 16 / 17 / 20 / 21 / 22 / 24。</li>
+    <li><strong>影响</strong>：12 / 12.5 / 13 / 13.5 / 14 这五档全挤在 2px 区间内，肉眼几乎无法当作不同层级；
+      而 10.5~12px 的说明文字在整屏铺开，长时间阅读明显吃力。层级实际上靠"有没有加粗"在硬撑。</li>
+    <li><strong>修法</strong>：收敛到 5 档（12 / 13.5 / 15 / 19 / 28），正文从 14 → 15px。
+      相邻档之间保持 ≥1.3 倍以上的可辨间距。</li>
+  </ul>
+
+  <h4><span class="sev p1">P1</span> 信息架构与真实使用错位</h4>
+  <ul>
+    <li><strong>证据</strong>：出题工坊产物为 0，「启用出题工坊」却是设置页的<strong>首张卡</strong>；
+      「题库」是一级页签（默认隐藏），而每天要用的「错题」在学习中心里排第二。</li>
+    <li><strong>影响</strong>：新用户第一眼看到的是自己不会用、也不需要用的东西；
+      而他真正每天要点的东西要多一次点击才能到达。零使用功能占据了最贵的版面。</li>
+    <li><strong>修法</strong>：把出题工坊整组折叠进「设置 → 进阶功能」，位置落到末位；
+      「错题」提升为一级页签（详见 §5）。</li>
+  </ul>
+
+  <h4><span class="sev p2">P2</span> 一切皆卡片，一屏塞多张，宽屏留死区</h4>
+  <ul>
+    <li><strong>位置</strong>：<code>.card</code> 只有一种视觉权重；<code>main{max-width:1000px;margin:0 auto}</code>。</li>
+    <li><strong>实测</strong>：1440×900 下主内容列宽 1000px，两侧各留约 113px，<strong>页面右侧实际空白 151px</strong>（截图像素实测）；
+      设置页纵向 8 张卡、错题页 6 张卡。也就是说：问题不是"屏幕没填满"，
+      而是<strong>卡片内部与卡片之间留了大片空白，却没有用这些空间承载更多结构</strong>。</li>
+    <li><strong>影响</strong>：读者要靠滚动来拼凑信息，同一屏内没有重点；而"列表 + 详情""主区 + 上下文"
+      这类本应并置的关系被拆成了上下堆叠。</li>
+    <li><strong>修法</strong>：宽屏 ≥1360px 时"今天/错题"改为两栏栅格（主区 + 320px 上下文栏）；
+      设置页由 8 卡改为 4 个分组；错题页保持聊天主位，但把"新建/薄弱项/今日复习"收进右栏或折叠区（详见 §5）。</li>
+  </ul>
+
+  <h4><span class="sev p2">P2</span> 透明色硬编码，对比度不可预测</h4>
+  <ul>
+    <li><strong>位置</strong>：<code>--good33</code>、<code>--good14</code>、<code>--infobg</code>、<code>--badbg</code>、
+      <code>--errbg</code>，以及散落的 <code>rgba(251,191,36,.12)</code> 等十余处内联 rgba。</li>
+    <li><strong>影响</strong>：半透明叠加让文字对比度随底色漂移，同一语义在卡片、面板、浮层里表现不一致；
+      也让"这套颜色到底达标没"变成无法手算的事。</li>
+    <li><strong>修法</strong>：为每个语义定义<strong>具名实色对</strong>（前景 / 淡底），需要半透明时只保留在焦点环与
+      交互态图层——那是唯一"看得见底下"是有意义的场景。</li>
+  </ul>
+
+  <h4><span class="sev p2">P2</span> 单个决策点的选项超过 4 项</h4>
+  <ul>
+    <li><strong>位置</strong>：题库行 <code>.bank-item</code> 并列 6~7 个按钮
+      （开始练习 / 管理题目 / 统计 / 导出押题卷 / 重新解析 / 重命名 / 删除）；
+      服务商卡一张卡承载 5 类信息（名称 / 网络检索徽标 / 官网注册 / 已配置 Key / 模型名）。</li>
+    <li><strong>修法</strong>：题库行收敛为「主操作 + ⋯ 菜单」；服务商卡先给"名称 + 一行能力 + 状态点"，
+      模型与注册链接移入展开态。</li>
+  </ul>
+
+  <h4><span class="sev p2">P2</span> 死控件与空态空洞</h4>
+  <ul>
+    <li><strong>位置</strong>：<code>index.html</code> 的 <code>#studynav</code> 分段控件当前只有「做题」一项，
+      构成一个"永远只有一个选项"的选择器；错题聊天空态被放在 <code>min-height:280px</code> 的框里，
+      首屏剩下半个屏的空白。</li>
+    <li><strong>修法</strong>：单选项分段控件直接移除，等真有第二项再加；
+      空态改为"图标 + 一句为什么空 + 一个动作"，并让首屏在空态时也能露出「今日复习」。</li>
+  </ul>
+
+  <h4><span class="sev p2">P2</span> 动效在用布局属性，且无时长/曲线令牌</h4>
+  <ul>
+    <li><strong>位置</strong>：进度条 <code>transition:width</code>（<code>.segbar i</code>、<code>.pvbar i</code>、
+      <code>.ocrbar i</code>）；全仓只用裸 <code>ease</code>/<code>linear</code>，无统一时长变量。</li>
+    <li><strong>影响</strong>：动画 <code>width</code> 每帧触发重排，在这些条同时动（生成/OCR 页）时有实际开销；
+      时长与曲线各处不一，同一类反馈的快慢不一致。</li>
+    <li><strong>修法</strong>：改用 <code>transform:scaleX()</code>；建立 3 档时长与 1 组曲线令牌。
+      值得注意的是 <code>prefers-reduced-motion</code> 已经全局关闭动画，这一点做对了、保留。</li>
+  </ul>
+
+  <h4><span class="sev p3">P3</span> 圆角、层级与语义细节</h4>
+  <ul>
+    <li>圆角取值 6 / 7 / 8 / 9 / 10 / 11 / 14 共 7 种，无阶梯规律；建议收敛到 6 / 8 / 12 / 16 四档 + 全圆。</li>
+    <li>z-index 出现 99 / 110 / 120 / 300 等绝对值，无命名阶梯；建议改为
+      <code>sticky 100 → overlay 200 → modal 300 → toast 400 → tooltip 500</code>。</li>
+    <li>页面级导航使用 <code>role="tablist"</code>（<code>aside.side</code> 的 <code>.tabs</code>、
+      <code>.learnnav</code>、<code>.css-pills</code>）。页签语义适合"同一视图内切换面板"，
+      而这里切换的是整页——更贴近 <code>&lt;nav&gt;</code> + 链接。建议修正语义而非视觉。</li>
+    <li>聊天里的用户气泡使用 <code>--infobg</code>（信息蓝）配 <code>--accent</code>（青绿）描边，
+      两个语义色混用，同一元素承担了两套含义。</li>
+  </ul>
+
+  <h4>值得保留的部分（不要改坏）</h4>
+  <ul>
+    <li><strong>暗色的正文与次级文字对比度已达标甚至优秀</strong>（14.87:1 / 6.15:1）——新主题不能低于这个水平。</li>
+    <li><strong>SVG symbol 图标系统</strong>：统一 15px、stroke 1.8、round linecap，风格一致，直接沿用。</li>
+    <li><strong>键盘可达性基础</strong>：全局 <code>:focus-visible</code> 2px + offset 2，以及
+      <code>a.skip</code> 跳到主内容——这是很多产品没做的，继续维护。</li>
+    <li><strong>沉浸式做题层</strong>：覆盖式作答 + 答题卡侧栏 + 计时 + 背题模式切换，范式正确，只需视觉打磨。</li>
+    <li><strong>空态与说明文案的质量高于平均</strong>（如"只看未掌握（隐藏已归档…）"），有解释、有边界说明。</li>
+    <li><strong>响应式断点体系齐全</strong>，含 390/420 的窄屏处理。</li>
+  </ul>
+</section>
+
+<!-- ===================== 3 ===================== -->
+<section id="s3">
+  <h2 class="sec"><span class="n">3</span>对标研究</h2>
+  <p>多轮检索的取舍标准：只取<strong>与本产品同构</strong>（本地工具、高信息密度、长时间使用）的案例，
+    以及能被具体动作翻译过来的原则。每条结论都标注了"适用于 MedKit 的那一半"，以及"明确不适用"的部分。</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>案例</th><th>它做对了什么</th><th>对 MedKit 的迁移动作</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Linear<br><span class="tag-inline">2026 界面刷新</span></td>
+          <td>两条原则：<strong>"不要让没挣得注意力的元素争抢注意力"</strong>（侧栏整体调暗、图标缩小、
+            去掉无意义的彩色图标底）与<strong>"结构应被感知而非被看见"</strong>（减少分隔线、圆角化边框、降低线对比度）。</td>
+          <td>侧栏从"和内容同等亮度"退到静默；<code>.navsep</code>、卡片框线、各处 <code>.tag</code> 描边
+            统一收敛；标题图标不再一律上色。</td>
+        </tr>
+        <tr>
+          <td>Linear<br><span class="tag-inline">主题系统</span></td>
+          <td>整套主题由 <strong>3 个变量</strong>（基色 / 强调色 / 对比度）生成，共 98 个具体色值；
+            使用感知均匀的 LCH 色彩空间，使不同色相在相同明度下看起来一样亮，
+            并因此能自动产出高对比度主题。</td>
+          <td>MedKit 现在是"每个主题手写约 40 个色值"。改为 primitive → semantic 两层令牌，
+            明暗只重绑语义层；强调色一个 ramp 派生全部档位。</td>
+        </tr>
+        <tr>
+          <td>Arc / Raycast<br><span class="tag-inline">应用外壳</span></td>
+          <td>竖排侧栏承载"空间/上下文"而不是"功能清单"；命令栏（cmd-K）成为真正的导航脊柱。</td>
+          <td>保留侧栏（MedKit 的目的地少且稳定，适合保留），但把它从"交通系统"降级为"礼貌的提醒"；
+            命令面板作为<strong>可选</strong>加速器加入，且必须保留可见导航作为兜底。</td>
+        </tr>
+        <tr>
+          <td>The Death of the Sidebar<br><span class="tag-inline">2026-05</span></td>
+          <td>给出侧栏替代的五种模式，并诚实指出<strong>三种仍然该保留侧栏的场景</strong>：
+            文件树、<strong>有稳定深分类的参考内容</strong>、20+ 目的地的管理台。同时警告四类失败模式
+            （隐形导航焦虑、移动端失效、把侧栏改成七个悬浮按钮等）。</td>
+          <td>MedKit 属于"参考内容 + 少数目的地"→ <strong>保留侧栏，收窄并降噪</strong>，
+            而不是做无侧栏的炫技。失败模式里的"隐形导航焦虑"正是本方案拒绝"纯命令栏"的理由。</td>
+        </tr>
+        <tr>
+          <td>2026 暗色趋势<br><span class="tag-inline">分层 surface</span></td>
+          <td>明暗<strong>不是翻转</strong>：暗色用 3~4 级层次化表面（用 <code>oklch</code> 与 <code>color-mix</code> 计算）
+            表达高度，阴影退场；底色不是纯黑，而是 12~18% 明度。</td>
+          <td>暗色底从 <code>#0a0a0a</code> 抬到 <code>#121614</code>；建立 surface-0/1/2/3 四级；
+            放弃"靠 3 个灰色值硬撑"的现状。</td>
+        </tr>
+        <tr>
+          <td>Bento 模块化栅格<br><span class="tag-inline">2026 趋势</span></td>
+          <td>用不等跨度的模块化栅格组织混合内容，最重要的块获得最大空间；
+            用 CSS Grid 的跨度而不是固定断点实现。</td>
+          <td><strong>只用在「今天」页</strong>：把 4 个等重 hero 数字 + 大按钮，改成一主两辅的模块化栅格。
+            <strong>明确不适用</strong>于做题区与错题列表——高密度列表需要的是稳定节奏，不是不等跨度。</td>
+        </tr>
+        <tr>
+          <td>Anki / Quizlet<br><span class="tag-inline">导入与刷题范式</span></td>
+          <td>导入对话框一律<strong>预览在上、目标与确认在下</strong>；导入必选<strong>牌组/科目</strong>；
+            闪卡手势的同时保留按钮等价路径（手势绝不能是唯一路径）。</td>
+          <td>对齐项目内既有质检结论：预览表前置、补科目输入、判分反馈同时给图标与颜色
+            （不只靠红绿，色盲用户同样可读）。</td>
+        </tr>
+        <tr>
+          <td>shadcn/ui<br><span class="tag-inline">令牌分层</span></td>
+          <td>语义令牌（<code>--primary</code> / <code>--muted</code> / <code>--border</code>）与原始令牌分离，
+            切主题只重绑语义层；主题切换不触碰组件逻辑。</td>
+          <td>直接对应 MedKit 的现状命名问题——<code>--card/--card2/--card3</code>、
+            <code>--good33/--good14</code> 是"按外观数量命名"而不是"按角色命名"，这是主题难维护的根因。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>提炼：可迁移到 MedKit 的 8 条原则</h3>
+  <ol>
+    <li><strong>支持性元素主动退场。</strong>导航、分隔、图标都该比内容暗一档。</li>
+    <li><strong>结构靠间距和排版，而不是框线。</strong>框线是最后手段。</li>
+    <li><strong>暗色不是亮色取反。</strong>暗色用表面层次表达高度；亮色用"底灰卡白"表达层次。</li>
+    <li><strong>令牌按角色命名，按明暗重绑。</strong>一个角色一个名字，两套值。</li>
+    <li><strong>强调色稀缺才有效。</strong>它属于"主要动作、当前选中、焦点"，不属于所有标题图标。</li>
+    <li><strong>颜色不能是唯一的信息载体。</strong>状态必须配文字或图形。</li>
+    <li><strong>高密度列表用稳定节奏，混合内容用模块化栅格。</strong>两种布局服务于两种信息结构，不可互换。</li>
+    <li><strong>任何手势/快捷键都要有可见的等价路径。</strong>否则新用户会卡在"这里没有菜单"的焦虑里。</li>
+  </ol>
+</section>
+
+<!-- ===================== 4 ===================== -->
+<section id="s4">
+  <h2 class="sec"><span class="n">4</span>目标设计语言</h2>
+  <p>以下是可执行的设计处方。<strong>所有色值都经过对比度实测</strong>（数字附在每块之后），
+    挑出来的取值已经满足目标门槛，不存在"看着还行但上不了线"的情况。</p>
+
+  <h3 id="tokens">4.1 色彩：三层令牌 + 感知均匀授权</h3>
+  <p><strong>授权空间用 OKLCH</strong>（现代 Chromium 原生支持；本应用的承载环境是浏览器，
+    可放心使用，同时保留十六进制回退注释以便排查）。理由很实际：固定明度步进在人眼里才是等距的，
+    而现状的纯灰 <code>#242424</code>（chroma = 0）没有任何品牌倾向，
+    换成带极轻青绿底色的中性灰之后，整个界面会自然"贴"到主色上——这一步几乎不花钱，但消除"通用感"的效果最直接。</p>
+
+  <div class="pair">
+    <div>
+      <h4>现状色板（暗色）</h4>
+      <div class="swatches">
+        <div class="sw"><span class="chip" style="background:#0a0a0a"></span><div class="lbl"><b>bg1 / bg2</b><span>#0a0a0a</span></div></div>
+        <div class="sw"><span class="chip" style="background:#242424"></span><div class="lbl"><b>card</b><span>#242424</span></div></div>
+        <div class="sw"><span class="chip" style="background:#303030"></span><div class="lbl"><b>card2</b><span>#303030</span></div></div>
+        <div class="sw"><span class="chip" style="background:#3a3a3a"></span><div class="lbl"><b>card3</b><span>#3a3a3a</span></div></div>
+        <div class="sw"><span class="chip" style="background:#404040"></span><div class="lbl"><b>line</b><span>#404040</span></div></div>
+        <div class="sw"><span class="chip" style="background:#3aa58c"></span><div class="lbl"><b>accent</b><span>#3aa58c</span></div></div>
+        <div class="sw"><span class="chip" style="background:#fafafa"></span><div class="lbl"><b>text</b><span>#fafafa</span></div></div>
+        <div class="sw"><span class="chip" style="background:#a3a3a3"></span><div class="lbl"><b>dim</b><span>#a3a3a3</span></div></div>
+      </div>
+      <h4>现状色板（亮色）</h4>
+      <div class="swatches">
+        <div class="sw"><span class="chip" style="background:#ffffff"></span><div class="lbl"><b>bg1 / bg2</b><span>#ffffff</span></div></div>
+        <div class="sw"><span class="chip" style="background:#ffffff;box-shadow:inset 0 0 0 1px #e5e5e5"></span><div class="lbl"><b>card</b><span>#ffffff（同底）</span></div></div>
+        <div class="sw"><span class="chip" style="background:#f5f5f5"></span><div class="lbl"><b>card2</b><span>#f5f5f5</span></div></div>
+        <div class="sw"><span class="chip" style="background:#e5e5e5"></span><div class="lbl"><b>line</b><span>#e5e5e5</span></div></div>
+        <div class="sw"><span class="chip" style="background:#2A6B5A"></span><div class="lbl"><b>accent</b><span>#2A6B5A</span></div></div>
+        <div class="sw"><span class="chip" style="background:#2E3440"></span><div class="lbl"><b>text</b><span>#2E3440</span></div></div>
+        <div class="sw"><span class="chip" style="background:#4a4a4a"></span><div class="lbl"><b>dim</b><span>#4a4a4a</span></div></div>
+        <div class="sw"><span class="chip" style="background:#4a8f45"></span><div class="lbl"><b>good</b><span>#4a8f45 · 3.96:1</span></div></div>
+      </div>
+    </div>
+
+    <div>
+      <h4>提案色板（暗色）</h4>
+      <div class="swatches">
+        <div class="sw"><span class="chip" style="background:#121614"></span><div class="lbl"><b>surface-0 · 底</b><span>#121614</span></div></div>
+        <div class="sw"><span class="chip" style="background:#1a1f1d"></span><div class="lbl"><b>surface-1 · 卡</b><span>#1a1f1d</span></div></div>
+        <div class="sw"><span class="chip" style="background:#232927"></span><div class="lbl"><b>surface-2 · 凹</b><span>#232927</span></div></div>
+        <div class="sw"><span class="chip" style="background:#2b322f"></span><div class="lbl"><b>surface-3 · 浮</b><span>#2b322f</span></div></div>
+        <div class="sw"><span class="chip" style="background:#77817e"></span><div class="lbl"><b>line-ctl 控件</b><span>#77817e · 4.16:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#5cc0a4"></span><div class="lbl"><b>accent</b><span>#5cc0a4 · 8.28:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#f2f5f3"></span><div class="lbl"><b>text</b><span>#f2f5f3 · 15.21:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#9aa5a1"></span><div class="lbl"><b>text-muted</b><span>#9aa5a1 · 6.58:1</span></div></div>
+      </div>
+      <h4>提案色板（亮色）</h4>
+      <div class="swatches">
+        <div class="sw"><span class="chip" style="background:#f4f7f6"></span><div class="lbl"><b>surface-0 · 底</b><span>#f4f7f6</span></div></div>
+        <div class="sw"><span class="chip" style="background:#ffffff"></span><div class="lbl"><b>surface-1 · 卡</b><span>#ffffff · 底卡 1.08:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#f1f4f3"></span><div class="lbl"><b>surface-2 · 凹</b><span>#f1f4f3</span></div></div>
+        <div class="sw"><span class="chip" style="background:#dde3e1"></span><div class="lbl"><b>line-hair 发丝</b><span>#dde3e1 · 1.30:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#858f8d"></span><div class="lbl"><b>line-ctl 控件</b><span>#858f8d · 3.04:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#276b5a"></span><div class="lbl"><b>accent</b><span>#276b5a · 6.29:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#20282a"></span><div class="lbl"><b>text</b><span>#20282a · 15.02:1</span></div></div>
+        <div class="sw"><span class="chip" style="background:#5a6563"></span><div class="lbl"><b>text-muted</b><span>#5a6563 · 6.04:1</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <h4>语义色（两主题各一对前景/淡底）</h4>
+  <div class="demo-grid">
+    <div class="demo"><h4>成功</h4><p style="margin:0;font-size:13px"><span style="color:#257944;font-weight:600">亮 #257944</span>
+      <span style="color:var(--ink-3)">· 5.39:1</span><br><span style="color:#6fcf7f;font-weight:600">暗 #6fcf7f</span>
+      <span style="color:var(--ink-3)">· 8.79:1</span></p></div>
+    <div class="demo"><h4>警告</h4><p style="margin:0;font-size:13px"><span style="color:#8a5a06;font-weight:600">亮 #8a5a06</span>
+      <span style="color:var(--ink-3)">· 5.92:1</span><br><span style="color:#e0a52e;font-weight:600">暗 #e0a52e</span>
+      <span style="color:var(--ink-3)">· 8.34:1</span></p></div>
+    <div class="demo"><h4>危险</h4><p style="margin:0;font-size:13px"><span style="color:#b32d2d;font-weight:600">亮 #b32d2d</span>
+      <span style="color:var(--ink-3)">· 6.31:1</span><br><span style="color:#ff8b8d;font-weight:600">暗 #ff8b8d</span>
+      <span style="color:var(--ink-3)">· 8.11:1</span></p></div>
+    <div class="demo"><h4>信息</h4><p style="margin:0;font-size:13px">与 accent 分离出一支<b>中性蓝</b>，
+      专门服务于"提示/说明/链接"，不再和主色混用。<br>
+      <span style="color:var(--ink-3)">现状的聊天用户气泡正是两者混用的例子。</span></p></div>
+  </div>
+
+  <div class="tw">
+    <table>
+      <caption>令牌层级（按角色命名，按明暗重绑）</caption>
+      <thead><tr><th>层</th><th>命名</th><th>例子</th><th>规则</th></tr></thead>
+      <tbody>
+        <tr><td>① 原始</td><td>色阶</td><td><code>--teal-400 / --teal-600 / --teal-800</code></td><td>与明暗无关，永不改</td></tr>
+        <tr><td>② 语义</td><td>角色</td><td><code>--surface-1 / --text-muted / --accent / --line-ctl</code></td><td>明暗只重绑这一层</td></tr>
+        <tr><td>③ 组件</td><td>局部</td><td><code>--btn-primary-bg / --opt-border</code></td><td>只被一个组件消费，改动不外溢</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>4.2 字体与字阶：16 档收敛为 5 档</h3>
+  <div class="spec">
+    <div class="spec-row"><span class="tag">--fs-1 · 12px</span>
+      <span class="demo" style="font-size:12px;color:var(--ink-2)">注释、图例、极其次要的元信息（上限：整屏不超过 4 处）</span></div>
+    <div class="spec-row"><span class="tag">--fs-2 · 13.5px</span>
+      <span class="demo" style="font-size:13.5px;color:var(--ink-2)">元信息、卡片副标题、标签、表格</span></div>
+    <div class="spec-row"><span class="tag">--fs-3 · 15px</span>
+      <span class="demo" style="font-size:15px">正文：题干、解析、说明文字、按钮（现状 14px）</span></div>
+    <div class="spec-row"><span class="tag">--fs-4 · 19px</span>
+      <span class="demo" style="font-size:19px;font-weight:600">卡片标题、区块标题、指标数字</span></div>
+    <div class="spec-row"><span class="tag">--fs-5 · 28px</span>
+      <span class="demo" style="font-size:28px;font-weight:700;letter-spacing:-.02em;line-height:1.2">页面标题（现状 21px）</span></div>
+  </div>
+  <p>这一组的要点不是"倍率多大"，而是<strong>不再存在 0.5px 级的相邻档</strong>：5 档里最小的倍率是 1.12（12→13.5），
+    最大 1.47（19→28），相邻两档的绝对差都 ≥1.5px。字重收敛为 400 / 600 / 700 三档（现状 600 与 700 混用）。
+    字体栈沿用系统栈（<strong>不引入 Web 字体</strong>，这是零 CDN 约束下的正确选择，也省掉字体未到达时的重排）；
+    中文优先 <code>Microsoft YaHei UI</code>，等宽补上 <code>Cascadia Mono</code>。数字统一 <code>tabular-nums</code>（现状已用，保留）。</p>
+
+  <h3>4.3 间距与栅格：4pt 基础</h3>
+  <div class="spec">
+    <div class="scale-bar">
+      <span class="b" style="width:34px">4</span><span class="b" style="width:46px">8</span>
+      <span class="b" style="width:58px">12</span><span class="b" style="width:70px">16</span>
+      <span class="b" style="width:88px">24</span><span class="b" style="width:106px">32</span>
+      <span class="b" style="width:124px">48</span><span class="b" style="width:142px">64</span>
+    </div>
+  </div>
+  <ul>
+    <li>现状散落着 5 / 6 / 7 / 9 / 10 / 14 / 18 / 22 等取值 —— 全部并入上表；</li>
+    <li>同级元素之间用 <code>gap</code> 不用 <code>margin</code>，避免相邻塌陷与"末元素清理"规则；</li>
+    <li><strong>间距不平均才产生层级</strong>：区块之间 32，区块内元素之间 12，标题上方 24 下方 8。</li>
+  </ul>
+  <h4>容器宽度</h4>
+  <ul>
+    <li>单栏内容列 <code>max-width</code> 由 1000 → <strong>1080</strong>（表单/列表页）；</li>
+    <li>宽屏 ≥1360px 的「今天」与「错题」改为<strong>主区 + 右侧上下文栏</strong>（栅格 1fr / 320px），
+      让这些留白变成第二信息通道（现状实测右侧空白 151px、卡片内亦有大量空间未被使用）；</li>
+    <li>窄屏回落单栏，右侧栏内容降级为区块，不丢失任何信息。</li>
+  </ul>
+
+  <h3>4.4 圆角、阴影与层级</h3>
+  <div class="demo-grid">
+    <div class="demo"><h4>圆角 4 档</h4>
+      <p style="margin:0;display:flex;gap:10px;align-items:center">
+        <span style="width:38px;height:26px;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:6px;display:inline-block"></span>
+        <span style="width:38px;height:26px;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:8px;display:inline-block"></span>
+        <span style="width:38px;height:26px;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:12px;display:inline-block"></span>
+        <span style="width:38px;height:26px;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:16px;display:inline-block"></span>
+      </p>
+      <p style="margin:6px 0 0;font-size:12px;color:var(--ink-3)">6 控件 · 8 卡内元素 · 12 卡片/面板 · 16 浮层</p></div>
+    <div class="demo"><h4>阴影 3 档（仅亮色）</h4>
+      <p style="margin:0;display:flex;gap:14px">
+        <span style="width:52px;height:34px;background:#fff;border-radius:8px;box-shadow:0 1px 2px rgba(24,45,40,.06);display:inline-block"></span>
+        <span style="width:52px;height:34px;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(24,45,40,.09);display:inline-block"></span>
+        <span style="width:52px;height:34px;background:#fff;border-radius:8px;box-shadow:0 8px 24px rgba(24,45,40,.14);display:inline-block"></span>
+      </p>
+      <p style="margin:6px 0 0;font-size:12px;color:var(--ink-3)">暗色不投影，改用表面层次</p></div>
+    <div class="demo"><h4>z-index 阶梯</h4>
+      <p style="margin:0;font-size:12.5px;line-height:1.8">
+        <code>sticky 100</code> · <code>overlay 200</code> · <code>modal 300</code> ·
+        <code>toast 400</code> · <code>tooltip 500</code></p></div>
+  </div>
+
+  <h3>4.5 动效：3 档时长 + 1 组曲线</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>令牌</th><th>时长</th><th>用于</th><th>曲线</th></tr></thead>
+      <tbody>
+        <tr><td><code>--dur-1</code></td><td>120ms</td><td>即时反馈：按下、开关、颜色切换</td><td rowspan="3"><code>--ease-out-quart: cubic-bezier(.25,1,.5,1)</code><br>离场按时长的 3/4 计</td></tr>
+        <tr><td><code>--dur-2</code></td><td>220ms</td><td>状态变化：悬停、展开、提示</td></tr>
+        <tr><td><code>--dur-3</code></td><td>320ms</td><td>布局变化：面板、抽屉、浮层</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><strong>只动 <code>transform</code> 与 <code>opacity</code></strong>；进度条从 <code>width</code> 改为
+      <code>transform:scaleX()</code>，杜绝每帧重排；</li>
+    <li><strong>骨架屏取代转圈</strong>：错题列表、题库列表、今天页三处先出轮廓，再填内容——它在感知上比转圈快，
+      也让加载中的布局不跳；</li>
+    <li><strong>内容可见性绝不依赖 JS 成功</strong>：入场动画用"终态即可见"的写法（动画结束停在
+      <code>opacity:1</code>），脚本挂了页面照样能读；</li>
+    <li>保留现有的 <code>prefers-reduced-motion</code> 全局关闭策略（这点现状做对了）。</li>
+  </ul>
+
+  <h3>4.6 组件状态：每个控件补齐八态</h3>
+  <p>默认 / 悬停 / 焦点 / 按下 / 禁用 / 加载 / 错误 / 成功。现状最大的缺口是"只有悬停、没有按下"，
+    以及按钮家族过多导致同样一件事在不同页面长得不一样。下面是关键控件的目标样张——左列为提案，右列为现状对照。</p>
+
+  <div class="pair">
+    <div class="demo" style="border:none;padding:0;background:none">
+      <h4>提案</h4>
+      <div style="border:1px solid var(--rule);border-radius:var(--r-3);background:var(--sheet);padding:var(--sp-4)">
+        <p style="margin:0 0 10px"><button class="btn-new" type="button">开始刷题</button>
+          <button class="btn-new ghost" type="button" style="margin-left:8px">导入题库文件</button></p>
+        <p style="margin:0 0 12px"><span class="pill-demo"><b class="on">今天</b><b class="off">本周</b></span></p>
+        <p style="margin:0 0 10px"><input class="field-new" value="在题干 / 解析 / 我的理解里搜…" readonly></p>
+        <div class="optrow ok"><span class="k">A</span><span>吸烟</span><span class="mk">✓</span></div>
+        <div class="optrow no"><span class="k">B</span><span>感染</span><span class="mk">✗</span></div>
+        <div class="optrow sel" style="margin-bottom:0"><span class="k" style="background:var(--accent);border-color:var(--accent);color:#fff">C</span><span>遗传因素</span></div>
+      </div>
+      <p style="font-size:12px;color:var(--ink-3);margin-top:8px">描边 3:1；判分同时给图标与颜色；
+        选中态用描边加浅底而不是整块变色。</p>
+    </div>
+    <div class="demo" style="border:none;padding:0;background:none">
+      <h4>现状</h4>
+      <div style="border:1px solid #e5e5e5;border-radius:10px;background:#fff;padding:16px">
+        <p style="margin:0 0 10px"><button class="btn-cur" type="button">开始刷题</button>
+          <button class="btn-cur gray" type="button" style="background:#fff;color:#2E3440;border-color:#e5e5e5;margin-left:8px">导入题库文件</button></p>
+        <p style="margin:0 0 12px"><span style="display:inline-flex;background:#f5f5f5;border-radius:9px;padding:3px">
+          <b style="background:#2A6B5A;color:#fff;font-size:12.5px;padding:5px 12px;border-radius:7px">做题</b></span></p>
+        <p style="margin:0 0 10px"><input class="field-cur" value="在题干 / 解析 / 我的理解里搜…" readonly></p>
+        <div class="optrow cur"><span class="k" style="background:#ececec;border:none">A</span><span>吸烟</span></div>
+        <div class="optrow cur" style="border-color:#d64545;background:#fdeeee"><span class="k" style="background:#ececec;border:none">B</span><span>感染</span></div>
+        <div class="optrow cur sel" style="margin-bottom:0"><span class="k" style="background:#2A6B5A;border:none;color:#fff">C</span><span>遗传因素</span></div>
+      </div>
+      <p style="font-size:12px;color:var(--ink-3);margin-top:8px">边框 1.26:1；判分只靠边框颜色（色盲不可辨）；
+        分区控件只有一个选项。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 5 ===================== -->
+<section id="s5">
+  <h2 class="sec"><span class="n">5</span>界面与信息架构重构</h2>
+  <p>视觉系统解决"好不好看"，信息架构解决"找不找得到"。这一节是后者，也是本方案里唯一会改动
+    <span class="tag-inline">index.html</span> 与部分 JS 的部分，风险等级更高，单列一节供你决定范围。</p>
+
+  <h3>5.1 应用外壳：保留侧栏，但让它退后一步</h3>
+  <ul>
+    <li>侧栏宽度 212 → <strong>200px</strong>；背景与主区<strong>同层</strong>而不是更暗/更亮，
+      只保留一条发丝线分隔，激活项才用 accent 填充（现状完全是这个思路，只需把对比降下来）；</li>
+    <li>外链区（题库与手册站 / MedAgentWork 技能包）保留，但降到次级文字色，不再与主导航同样重；</li>
+    <li><strong>可选</strong>加入 <code>Ctrl+K</code> 命令面板：跳转（去刷题 / 看错题 / 今天）+ 动作（导入题库 / 新建错题 /
+      切换主题）。它是加速器，<strong>不是导航的替代品</strong>——可见导航必须保留，
+      否则会踩中"隐形导航焦虑"这个已知失败模式。</li>
+  </ul>
+
+  <h3>5.2 一级页签：5 → 4（题库随工坊开关出现）</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>现状</th><th>目标</th><th>为什么</th></tr></thead>
+      <tbody>
+        <tr><td>开始</td><td><strong>今天</strong></td><td>改名贴近"我此刻要干什么"；收敛为一张今日卡 + 考试倒计时 + 最近项目。</td></tr>
+        <tr><td>刷题</td><td><strong>刷题</strong></td><td>保留。它是主链路的入口。</td></tr>
+        <tr><td>学习中心<br>（概览 / 错题本 / 大纲管理）</td><td><strong>错题</strong></td><td>把每天要用的"错题"从二级提到一级；"概览"的指标并入「今天」，<strong>消除重复</strong>；大纲管理仍在工坊开启时出现在设置内。</td></tr>
+        <tr><td>我的</td><td><strong>设置</strong></td><td>改名。它是设置，不是个人主页；分组化后 8 张卡减到 4 组。</td></tr>
+        <tr><td>题库（工坊关闭时隐藏）</td><td>不变（开启时出现）</td><td>现状已如此，保留。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>这个收敛方向与仓库内已有的精简分析结论一致（<span class="tag-inline">docs/重构设计方案_奥卡姆精简_第二轮_2026-10-15.md</span>
+    的"一级页签 5 → 4、学习中心子视图 6 → 2"目标态），属于既定方向，不是本方案新发明的主张。</p>
+
+  <h4>线框对照：今天页</h4>
+  <div class="wire">
+    <figure>
+      <figcaption>现状：4 个等重数字 + 大按钮 + 空出的半屏</figcaption>
+      <div class="mock"><div class="shell">
+        <div class="rail"><i class="on">今天</i><i>刷题</i><i>错题</i><i>设置</i></div>
+        <div class="body">
+          <div class="grid4">
+            <div class="card"><div class="txt">0</div><div class="txt">今日待复习</div></div>
+            <div class="card"><div class="txt">0</div><div class="txt">新卡待学</div></div>
+            <div class="card"><div class="txt">0</div><div class="txt">已完成</div></div>
+            <div class="card"><div class="txt">0%</div><div class="txt">掌握率</div></div>
+          </div>
+          <div class="bar solid"></div>
+          <div class="txt" style="text-align:center">导入你的题库开始刷题</div>
+          <div class="card pale" style="flex:1;display:flex;align-items:center;justify-content:center">
+            <span class="txt">考试计划（大面积留白）</span></div>
+          <div class="dead" style="height:42px">右侧实测空白 151px + 大片未利用空间</div>
+        </div>
+      </div></div>
+    </figure>
+    <figure>
+      <figcaption>提案：一主两辅的模块化栅格 + 右侧上下文栏</figcaption>
+      <div class="mock"><div class="shell">
+        <div class="rail"><i class="on">今天</i><i>刷题</i><i>错题</i><i>设置</i></div>
+        <div class="body" style="display:grid;grid-template-columns:1.6fr 1fr;gap:6px">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div class="card" style="display:flex;gap:5px;align-items:baseline">
+              <span class="txt big">12</span><span class="txt">待复习</span>
+              <span class="txt big" style="margin-left:8px">3</span><span class="txt">新卡</span>
+            </div>
+            <div class="bar solid">继续上次：内科学 · 呼吸与循环</div>
+            <div class="card"><div class="txt mid">本周掌握率</div><div class="bar" style="margin-top:3px"></div></div>
+            <div class="card"><div class="txt mid">最近项目 / 错题热点</div><div class="txt">2 行</div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div class="card"><div class="txt mid">距执医</div><div class="txt big">126 天</div></div>
+            <div class="card pale" style="flex:1"><div class="txt mid">今日复习队列</div>
+              <div class="txt">8 条 · 可一键开始</div></div>
+          </div>
+        </div>
+      </div></div>
+    </figure>
+  </div>
+
+  <h3>5.3 错题页（最高频，重点改）</h3>
+  <p>现状一屏纵向 6 张卡（含 1 张默认隐藏的详情卡），聊天框吃掉大半个首屏。但请注意——<strong>聊天作为主界面是你上一轮明确定下的方向</strong>，
+    本方案不动这个决策，只解决它的两个副作用：空态空洞、以及"聊天以外的东西都被挤到折叠线以下"。</p>
+  <ul>
+    <li><strong>宽屏两栏</strong>：左栏聊天（主位，保持最大），右栏固定 320px 放「今日复习」与「薄弱项」——
+      这是原来被挤到屏外的两块内容，现在常驻可见；</li>
+    <li><strong>聊天空态收缩</strong>：从 <code>min-height:280px</code> 的固定框改为"内容自适应 + 上限"，
+      空态只占 3 行（图标 + 一句为什么空 + 3 个快捷提问），首屏立刻腾出空间；</li>
+    <li><strong>「新建错题」与「错题列表」</strong>：新建保持折叠；列表从"又一张卡"改为右栏下方的紧凑列表
+      （一行一条：题干首行 + 科目/章节标签 + 状态点），点击进入详情；</li>
+    <li><strong>状态不能只靠颜色</strong>：<code>weak / shaky / solid / mastered</code> 四个芯片除了色相，
+      补上形状与文字（现状已带文字，需补图形差异以免色相不可辨）。</li>
+  </ul>
+
+  <h3>5.4 刷题页</h3>
+  <ul>
+    <li>题库行的 7 个并列按钮 → <strong>「开始练习」+ ⋯ 菜单</strong>（管理题目 / 统计 / 导出押题卷 / 重新解析 /
+      重命名 / 删除），单点选项从 7 降到 2；</li>
+    <li>移除只有一个选项的 <code>#studynav</code> 分段控件（等真有第二项再加）；</li>
+    <li>「开始刷题」的三个下拉收敛为一行紧凑控件 + 一个主按钮，「错题重练」降为文字按钮；</li>
+    <li>「今日进度」并入开始卡片的底部一行进度条，不再单独占一张卡。</li>
+  </ul>
+
+  <h3>5.5 设置页</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>分组</th><th>内容</th><th>变更</th></tr></thead>
+      <tbody>
+        <tr><td><strong>外观</strong></td><td>主题切换</td><td>新增分组；把主题从侧栏角落提升为明确设置项</td></tr>
+        <tr><td><strong>连接</strong></td><td>服务商 · Key 存档 · OCR · 网络检索</td><td>OCR 与网络检索默认折叠（它们只在工坊链路里需要）；服务商卡瘦身</td></tr>
+        <tr><td><strong>数据</strong></td><td>存储统计 · 打开目录 · 备份 · 危险区</td><td>由 2 张卡合并为 1 组，危险区仍单独强调</td></tr>
+        <tr><td><strong>进阶功能</strong></td><td>出题工坊开关 · 提示词与规则 · 门禁规则速览</td><td>整组默认折叠，位置移到末位（现状是首卡）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lead-note">注意：这里只动<strong>位置与呈现</strong>，不删除出题工坊的任何能力——
+    你此前对该功能的选择是"保持现状"，本方案严格遵守。</p>
+
+  <h3>5.6 组件级改动清单</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>组件</th><th>现状</th><th>目标</th></tr></thead>
+      <tbody>
+        <tr><td>按钮</td><td>6 个家族：<code>act</code> / <code>act.gray</code> / <code>inlineBtn</code> / <code>mini-btn</code> / <code>themeBtn</code> / <code>rst</code></td><td>3 档：主 / 次 / 静默，各含默认·悬停·按下·禁用·加载</td></tr>
+        <tr><td>输入框</td><td>边框 1.26:1，聚焦仅换边框色</td><td>边框 ≥3:1；聚焦加 2px 焦点环（外置 offset）</td></tr>
+        <tr><td>选项行 <code>.bank-opt</code></td><td>选中/正确/错误只变边框色</td><td>选中加浅底+内描边；正确/错误加 ✓/✗ 图标</td></tr>
+        <tr><td>答题卡 <code>.dc-cell</code></td><td>四态靠底色区分</td><td>四态底色 + 当前格外描边 + 图例同屏（现状已有图例，保留并强化）</td></tr>
+        <tr><td>卡片 <code>.card</code></td><td>单一权重，卡内嵌套卡</td><td>去嵌套，改用间距 + 发丝分隔；只有"独立可操作区块"才用卡片</td></tr>
+        <tr><td>加载</td><td>转圈 +「加载中…」</td><td>骨架屏（列表/统计/项目三类轮廓）</td></tr>
+        <tr><td>进度条</td><td><code>transition:width</code></td><td><code>transform:scaleX()</code> + <code>--dur-2</code></td></tr>
+        <tr><td>页签语义</td><td>页面级导航用 <code>role="tablist"</code></td><td>改回 <code>nav</code> + 链接语义；仅"同屏面板切换"保留 tablist</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== 6 ===================== -->
+<section id="s6">
+  <h2 class="sec"><span class="n">6</span>落地计划</h2>
+  <p>原则：<strong>先做零 JS 风险的部分，再做需要动结构的部分</strong>。每个阶段都能独立验收、独立回滚。</p>
+
+  <div class="stage">
+    <h4><span class="id">S1</span>令牌化与主题重写 <span class="risk">风险：低 · 零 JS 改动</span></h4>
+    <ul>
+      <li>新增 <span class="tag-inline">medkit/web/css/tokens.css</span>：原始色阶 + 语义令牌（约 200 行）；</li>
+      <li><span class="tag-inline">base.css</span> 改为引用令牌；亮色主题重做（底灰卡白、两级描边、语义色达标）；暗色抬底并建 4 级表面；</li>
+      <li><strong>不改任何 CSS 类名</strong>——保住现有 <code>tests/test_css_no_orphans.py</code> 的类消费者守卫；</li>
+      <li>新增单元守卫 <code>tests/test_css_tokens.py</code>：① 令牌消费者检查（无孤立令牌）；
+        ② 对比度下限断言（用纯 Python 算 WCAG，不依赖浏览器）；</li>
+      <li><strong>验收</strong>：对比度脚本全绿 · 亮/暗双主题截图回归 · <code>pytest</code> 与前端 lint 全绿。</li>
+    </ul>
+  </div>
+
+  <div class="stage">
+    <h4><span class="id">S2</span>排版 · 间距 · 圆角收敛 <span class="risk">风险：低 · 零 JS 改动</span></h4>
+    <ul>
+      <li>字号收 5 档、字重收 3 档、间距归 4pt、圆角归 4 档、z-index 归语义阶梯；</li>
+      <li>逐视图调整 <code>.card / .cardh / .hint</code> 与按钮族的排版关系；</li>
+      <li>新增守卫：CSS 中不得出现 4pt 网格之外的间距值、不得出现字号白名单之外的 <code>font-size</code>；
+        动效属性白名单（禁止 <code>transition</code> 出现 <code>width/height/top/left</code>）；</li>
+      <li><strong>验收</strong>：截图回归 + 新守卫 + 全量闸门。</li>
+    </ul>
+  </div>
+
+  <div class="stage">
+    <h4><span class="id">S3</span>信息架构收敛 <span class="risk">风险：中 · 动 index.html 与少量 JS</span></h4>
+    <ul>
+      <li>一级页签 5 → 4（题库随工坊开关出现）；错题提升为一级；设置分组化；今天页重构；错题页两栏；</li>
+      <li>同步改动：<span class="tag-inline">index.html</span> 结构、<code>showTab</code> 与各域视图映射、
+        <span class="tag-inline">tests/browser</span> 的选择器断言、<span class="tag-inline">docs/AGENT_HANDOFF.md</span>；</li>
+      <li>约束检查：每个 JS 文件仍 ≤800 行；内联 <code>on*</code> 调用的函数保持顶层声明；</li>
+      <li><strong>验收</strong>：浏览器用例（含窄屏 768/390）+ 键盘走查（Tab 序、skip link、焦点环）+
+        截图回归 + 全量闸门。</li>
+    </ul>
+  </div>
+
+  <div class="stage">
+    <h4><span class="id">S4</span>动效与微交互 <span class="risk">风险：低</span></h4>
+    <ul>
+      <li>时长/曲线令牌落地；进度条改 transform；三处骨架屏；空态统一为"图标 + 为什么空 + 一个动作"；</li>
+      <li>可选：<code>Ctrl+K</code> 命令面板（独立验收，包含可见导航兜底与首次使用提示）；</li>
+      <li><strong>验收</strong>：<code>prefers-reduced-motion</code> 复测 + 动效属性守卫 + 首屏加载截图对比。</li>
+    </ul>
+  </div>
+
+  <div class="stage">
+    <h4><span class="id">S5</span>收尾与守护 <span class="risk">风险：低</span></h4>
+    <ul>
+      <li>双主题 × 宽/窄屏截图回归基线；无障碍复测（对比度、焦点、语义）；</li>
+      <li>同步 <span class="tag-inline">CHANGELOG.md</span>、<span class="tag-inline">README.md</span> 与设计文档；</li>
+      <li>重建本地发布产物，跑完发布守卫（这是仓库既有的必经环节）。</li>
+    </ul>
+  </div>
+
+  <h3>不做什么（边界）</h3>
+  <ul>
+    <li>不引入构建工具、UI 框架、CDN 或 Web 字体——零构建零 CDN 是硬约束，也是这个项目的优势；</li>
+    <li>不重命名既有 CSS 类（除非同一提交内同步守卫与消费者）；</li>
+    <li>不碰后端、不动数据模型、不改任何业务逻辑与文案含义；</li>
+    <li>不删除出题工坊的任何功能，只调整它的位置与呈现层级。</li>
+  </ul>
+</section>
+
+<!-- ===================== 7 ===================== -->
+<section id="s7">
+  <h2 class="sec"><span class="n">7</span>风险与取舍</h2>
+  <div class="tw">
+    <table>
+      <thead><tr><th>风险</th><th>说明</th><th>对策</th></tr></thead>
+      <tbody>
+        <tr><td>亮色主题变化幅度大</td><td>底灰卡白是观感上的明显改变，可能"看起来不是同一个软件了"。</td>
+          <td>把新亮色与旧亮色各出一张同屏对照，纳入 S1 验收；不满意可只改 <code>--surface-0</code> 一档回退。</td></tr>
+        <tr><td>中英文字体混排基线差</td><td><code>Segoe UI</code> 与 <code>Microsoft YaHei UI</code> 的行内基线不同，行高可能需实测微调。</td>
+          <td>在 S2 用真实中文段落做行高扫描（1.5 / 1.6 / 1.65 三档选一），以截图比对定案。</td></tr>
+        <tr><td>改 IA 会牵动测试</td><td>浏览器用例按 <code>data-tab</code> / <code>data-lv</code> 选择器断言，页签收敛会连带失败。</td>
+          <td>S3 与测试改动同批提交；先跑一遍现有用例摸清受影响面，再动手。</td></tr>
+        <tr><td>命令面板的隐形门槛</td><td>键盘加速器对没用过的人等于不存在。</td>
+          <td>只在 S4 作为可选项；保留可见导航；首次使用给一次提示。</td></tr>
+        <tr><td>卡片改少 → 分组变弱</td><td>去卡片化后如果间距不足，内容会粘成一片。</td>
+          <td>用"间距 + 发丝分隔 + 字号"三件套替代卡片的分组职责，S2 结束时逐屏核对分组是否仍成立。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== 8 ===================== -->
+<section id="s8">
+  <h2 class="sec"><span class="n">8</span>待你拍板的决策点</h2>
+  <p>下面 6 项我无法从代码或数据里推断，需要你定。确认之后我再开工，并按你的选择裁剪落地范围。</p>
+
+  <div class="dec">
+    <b class="q">1. 主色：保留青绿，还是换一支？</b>
+    <div class="opts">A 保留 #2A6B5A 青绿家族（提案：亮 #276B5A / 暗 #5CC0A4） ·
+      B 换成更中性的石墨绿 · C 换成墨蓝</div>
+    <div class="mine"><b>我的建议</b>：A。它已是 PRD 指定色且跑通了全部对比度；换色不解决当前任何问题。</div>
+  </div>
+  <div class="dec">
+    <b class="q">2. 一级页签 5 → 4，并把「错题」提为一级？</b>
+    <div class="opts">A 接受（今天 / 刷题 / 错题 / 设置，题库随工坊出现） ·
+      B 保留 5 个页签，只改视觉</div>
+    <div class="mine"><b>我的建议</b>：A。这是本方案里对使用效率影响最大的一条，且与仓库已有的精简结论一致。</div>
+  </div>
+  <div class="dec">
+    <b class="q">3. 暗色底从 #0a0a0a 抬到 #121614？</b>
+    <div class="opts">A 抬起（更接近"表面层次"而非纯黑） · B 保持近纯黑（OLED 偏好）</div>
+    <div class="mine"><b>我的建议</b>：A。但如果你的显示器偏 OLED，B 也成立——代价是层次只能靠卡片区分。</div>
+  </div>
+  <div class="dec">
+    <b class="q">4. 气质：安静克制，还是更有性格？</b>
+    <div class="opts">A 安静克制（用排版与留白立个性） ·
+      B 更强对比与更明显的品牌印记</div>
+    <div class="mine"><b>我的建议</b>：A，但"克制"不等于"平庸"——本次在字阶跨度、间距节奏、
+      模块化栅格三处做加法，这是它区别于同类工具的地方。</div>
+  </div>
+  <div class="dec">
+    <b class="q">5. 要不要 Ctrl+K 命令面板？</b>
+    <div class="opts">A 要（S4 独立实现，含可见导航兜底与首次提示） · B 不要</div>
+    <div class="mine"><b>我的建议</b>：可以做，但放在最后。它对每天用两小时的用户回报很高，
+      对偶尔用一次的用户等于不存在。</div>
+  </div>
+  <div class="dec">
+    <b class="q">6. 范围：只做视觉系统，还是连信息架构一起改？</b>
+    <div class="opts">A 只做 S1+S2（视觉系统与排版，零 JS 风险） ·
+      B 做 S1–S3（含 IA 收敛与页面重构） · C 做 S1–S5（全套）</div>
+    <div class="mine"><b>我的建议</b>：先 B。S1+S2 是地基，S3 是真正让"找不到东西"消失的部分；
+      S4/S5 可以随后跟进。</div>
+  </div>
+</section>
+
+<!-- ===================== 附录 ===================== -->
+<section id="evidence">
+  <h2 class="sec"><span class="n">附</span>证据索引</h2>
+
+  <h3>截图（本报告同目录下的 <span class="tag-inline">frontend-redesign-shots/</span>）</h3>
+  <ul>
+    <li><code>01-start-light.png</code> · <code>02-practice-light.png</code> · <code>03-bank-light.png</code> ·
+      <code>04-learn-light.png</code> · <code>05-settings-light.png</code> · <code>06-mistakes-light.png</code> —— 亮色（实为默认主题，跟随系统）</li>
+    <li><code>07-start-dark.png</code> · <code>08-learn-dark.png</code> —— 暗色</li>
+  </ul>
+  <p class="lead-note">复现方式：<span class="tag-inline">python run_medkit.py</span> 后，
+    用浏览器打开 <span class="tag-inline">http://127.0.0.1:4880</span>，视口 1440×900 逐页签截图。
+    截图环境与真实 <span class="tag-inline">~/.medkit</span> 存在少量测试数据（2 个题库 497 题、11 条错题），不影响版式结论。</p>
+
+  <h3>代码位置（当前版本实测）</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>结论</th><th>位置</th></tr></thead>
+      <tbody>
+        <tr><td>亮色卡片与底同色</td><td><span class="tag-inline">medkit/web/css/base.css</span> 亮色块 <code>--bg1:--card:#ffffff</code></td></tr>
+        <tr><td>发丝线承担控件边界</td><td>同上 <code>--line:#e5e5e5</code>；消费点 <code>input/select/.bank-opt/.dc-cell/.fbox</code></td></tr>
+        <tr><td>亮色成功色低于 AA</td><td>同上 <code>--good:#4a8f45</code></td></tr>
+        <tr><td>字号档位过多</td><td><span class="tag-inline">base.css</span> + <span class="tag-inline">learn.css</span> 共 11 档 <code>font-size</code></td></tr>
+        <tr><td>内容列宽度与死区</td><td><code>main{max-width:1000px;margin:0 auto}</code></td></tr>
+        <tr><td>进度条动的是布局属性</td><td><code>.segbar i</code> / <code>.pvbar i</code> / <code>.ocrbar i</code> 的 <code>transition:width</code></td></tr>
+        <tr><td>单选项分段控件</td><td><span class="tag-inline">medkit/web/index.html</span> <code>#studynav</code></td></tr>
+        <tr><td>题库行 7 按钮 / 设置页 8 卡</td><td><code>.bank-item</code> 与 <code>#tab-mine</code> 内的 <code>.card</code> 序列</td></tr>
+        <tr><td>页面级导航用 tablist</td><td><code>aside.side .tabs</code> · <code>.learnnav</code> · <code>.css-pills</code></td></tr>
+        <tr><td>全局焦点环与 skip link（做对了）</td><td><code>button:focus-visible…{outline:2px solid var(--accent)}</code> 与 <code>a.skip</code></td></tr>
+        <tr><td>reduced-motion 全局关闭（做对了）</td><td><code>@media (prefers-reduced-motion: reduce)</code> 块</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>仓库内既有文档</h3>
+  <ul>
+    <li><span class="tag-inline">docs/重构设计方案_奥卡姆精简_第二轮_2026-10-15.md</span> —— 真实库行数、页签收敛目标态</li>
+    <li><span class="tag-inline">docs/网页版可行性分析_2026-10-16.md</span> —— 交付形态与技术约束</li>
+    <li><span class="tag-inline">docs/体验质检_医学生视角_2026-10-10.md</span> —— 医学生视角的摩擦点与成熟产品对照</li>
+    <li><span class="tag-inline">docs/adr/</span> —— ADR-001…007（本次重构不触碰其中任何一条）</li>
+  </ul>
+
+  <h3>外部检索来源</h3>
+  <ul>
+    <li>Linear《A calmer interface for a product in motion》(2026-03) —— 层级退让、结构隐于形</li>
+    <li>Linear《How we redesigned the Linear UI (part Ⅱ)》—— LCH 主题生成、对比度变量</li>
+    <li>《The Death of the Sidebar in Modern SaaS App Design》(2026-05) —— 五种替代模式与三种该保留侧栏的场景</li>
+    <li>2026 UI 趋势综述（bento 网格 / 分层暗色表面 / 反 AI 味）—— 多来源交叉</li>
+    <li>Anki 官方手册「文本文件」章 · Quizlet 导入流程 —— 导入预览顺序与必选分组的成熟做法</li>
+    <li>shadcn/ui 与 Vercel Academy 核心概念 —— 语义令牌与原始令牌分层</li>
+  </ul>
+
+  <h3>度量方法说明</h3>
+  <ul>
+    <li>对比度全部使用 WCAG 相对亮度公式（sRGB 线性化 → 0.2126R+0.7152G+0.0722B → (L1+.05)/(L2+.05)）在本地计算，
+      不依赖任何在线检查工具的目测；</li>
+    <li>截图与页面结构结论来自对本机实跑的 Playwright 抓取，而非读代码推测；</li>
+    <li>配色与信息架构的建议属于设计判断，已在文中标注为"建议"而非"实测"。</li>
+  </ul>
+</section>
+
+<footer>
+  <p style="margin:0">MedKit 前端设计重构方案 · 评审稿 · 2026-10-20 ·
+    状态：<strong>待你确认</strong>。确认后按所选范围开工，并按 S1…S5 分阶段验收。</p>
+</footer>
+
+</main>
+</div>
+</body>
+</html>

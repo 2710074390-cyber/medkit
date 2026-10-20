@@ -78,11 +78,16 @@ function bankRowHTML(b) {
     <div class="bank-item-actions">
       <button class="mini-btn primary" data-id="${esc(b.id)}" onclick="bankStartDrill(this)">开始练习</button>
       <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankManageOpen(this)">管理题目</button>
-      <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankStats(this)">统计</button>
-      <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankExportPaper(this)">导出押题卷</button>
-      ${b.has_source ? `<button class="mini-btn" data-id="${esc(b.id)}" onclick="bankReparse(this)" title="用保存的导入原文重新解析（解析器升级后可修旧数据）">重新解析${b.parser_stale ? " ⟳" : ""}</button>` : ""}
-      <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankRename(this)">重命名</button>
-      <button class="mini-btn danger" data-id="${esc(b.id)}" onclick="bankDelete(this)">删除</button>
+      <details class="bank-more" onclick="bankMoreToggle(event)">
+        <summary class="mini-btn" title="更多操作" aria-label="更多操作">⋯</summary>
+        <div class="bank-more-menu">
+          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankStats(this)">统计</button>
+          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankExportPaper(this)">导出押题卷</button>
+          ${b.has_source ? `<button class="mini-btn" data-id="${esc(b.id)}" onclick="bankReparse(this)" title="用保存的导入原文重新解析（解析器升级后可修旧数据）">重新解析${b.parser_stale ? " ⟳" : ""}</button>` : ""}
+          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankRename(this)">重命名</button>
+          <button class="mini-btn danger" data-id="${esc(b.id)}" onclick="bankDelete(this)">删除</button>
+        </div>
+      </details>
     </div>
   </div>`;
 }
@@ -121,9 +126,9 @@ function bankReparse(btn) {
   const bid = btn && btn.dataset ? btn.dataset.id : btn;
   const b = _bankState.banks.find(x => String(x.id) === String(bid)) || {};
   confirmModal("重新解析题库？",
-    `<p style="margin:0;color:var(--dim)">用保存的<b>导入原文</b>重新解析题库 <b>${esc(b.name || bid)}</b>，
+    `<p style="margin:0;color:var(--text-2)">用保存的<b>导入原文</b>重新解析题库 <b>${esc(b.name || bid)}</b>，
      替换其中全部 <b>${b.items || 0}</b> 道题。</p>
-     <p style="margin:6px 0 0;color:var(--dim)"><b>该题库的作答进度会被清空</b>（题目会重新编号）；
+     <p style="margin:6px 0 0;color:var(--text-2)"><b>该题库的作答进度会被清空</b>（题目会重新编号）；
      已回流到错题本的错题<b>不受影响</b>。</p>`,
     "重新解析", async () => {
       try {
@@ -139,7 +144,7 @@ function bankDelete(btn) {
   const bid = btn && btn.dataset ? btn.dataset.id : btn;
   const b = _bankState.banks.find(x => String(x.id) === String(bid)) || {};
   confirmModal("删除题库？",
-    `<p style="margin:0;color:var(--dim)">将删除题库 <b>${esc(b.name || bid)}</b> 及其 <b>${b.items || 0}</b> 道题、
+    `<p style="margin:0;color:var(--text-2)">将删除题库 <b>${esc(b.name || bid)}</b> 及其 <b>${b.items || 0}</b> 道题、
      全部作答记录。<br><span class="hint">删除前会自动导出完整备份 JSON 到本地 exports 目录（可追溯，不静默不可恢复）；
      已回流到错题本的错题<b>不受影响</b>。</span></p>`,
     "导出并删除", async () => {
@@ -175,11 +180,11 @@ async function bankStats(btn) {
         <div class="dash-metric"><b>${_pct(s.accuracy)}%</b><span>正确率</span></div>
       </div>
       <p class="hint" style="margin:10px 0 6px">掌握率 = 最后一次作答为「对」的题 / 全部题；正确率 = 做对次数 / 作答次数。</p>
-      <h3 style="font-size:13px;margin:12px 0 6px">薄弱考点（按正确率升序）</h3>
-      ${weak.length ? weak.map(t => `<div style="display:flex;gap:10px;align-items:center;padding:5px 0;border-bottom:1px dashed var(--line)">
-          <span style="flex:1;font-size:12.5px">${esc(t.topic || "未分类")}</span>
-          <span class="hint" style="font-size:11.5px">对 ${t.correct}/${t.attempts}</span>
-          <b style="font-size:12.5px;color:${t.accuracy < 0.6 ? "var(--bad)" : "var(--text)"}">${_pct(t.accuracy)}%</b>
+      <h3 style="font-size:var(--fs-2);margin:12px 0 6px">薄弱考点（按正确率升序）</h3>
+      ${weak.length ? weak.map(t => `<div style="display:flex;gap:10px;align-items:center;padding:5px 0;border-bottom:1px dashed var(--line-hair)">
+          <span style="flex:1;font-size:var(--fs-2)">${esc(t.topic || "未分类")}</span>
+          <span class="hint" style="font-size:var(--fs-1)">对 ${t.correct}/${t.attempts}</span>
+          <b style="font-size:var(--fs-2);color:${t.accuracy < 0.6 ? "var(--bad)" : "var(--text-1)"}">${_pct(t.accuracy)}%</b>
         </div>`).join("") : `<div class="hint">还没有作答记录——先「开始练习」。</div>`}`;
     confirmModal("题库统计", body, "关闭", () => {}, false);
   } catch (e) { toast(e.message, false); }
@@ -242,7 +247,7 @@ function bankManageRender() {
 function _bankItemFormHTML(it) {
   it = it || {};
   const types = ["A1", "A2", "A3", "A4", "B1", "X"];
-  return `<div class="card" style="background:var(--card2);margin-bottom:12px">
+  return `<div class="card" style="background:var(--surface-2);margin-bottom:12px">
     <label>题干</label>
     <textarea id="bi_q" rows="3">${esc(it.question || "")}</textarea>
     <label style="margin-top:8px">选项（每行一个，<b>不用写字母</b>——字母由系统补）</label>
@@ -324,7 +329,7 @@ async function bankItemDel(btn) {
   const id = btn && btn.dataset ? btn.dataset.id : btn;
   const m = _bankState.manage || {};
   confirmModal("删除这道题？",
-    `<p style="margin:0;color:var(--dim)">删除后该题的作答记录一并移除，不可恢复。</p>`,
+    `<p style="margin:0;color:var(--text-2)">删除后该题的作答记录一并移除，不可恢复。</p>`,
     "删除", async () => {
       try {
         await api(`/api/bank/items/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -443,21 +448,24 @@ window.bankRetryStart = bankRetryStart;
  * 依赖方向：本片（BANK）→ 外壳 `openDrillFor`，一律 `typeof` 守卫（缺失即不炸）——
  * 与既有 `openDrillFor` 同范式。2026-10-15 精简 T2 后不再依赖复习卡快捷键与 loadStudy。
  */
-function studyView(name) {
-  // 2026-10-15（奥卡姆精简 T2）：复习（卡片）子视图随其域删除，「刷题」页只剩「做题」。
-  // 保留本函数是为了兼容既有调用点与 hash 路由（未知值一律落回 do）。
-  name = "do";
-  const nav = $("studynav");
-  if (nav) [...nav.querySelectorAll(".css-pill")].forEach(b => {
-    const on = b.dataset.sv === name;
-    b.classList.toggle("on", on);
-    b.setAttribute("aria-selected", on ? "true" : "false");
-  });
+function studyView() {
+  // 「刷题」页只剩「做题」一个子视图（复习卡域已于 2026-10-15 精简 T2 删除）。
+  // v0.19：单项分段控件 #studynav 一并移除——「永远只有一个选项的选择器」是死控件，
+  // 等真有第二个子视图再加回来。
   const dv = $("sv-do");
   if (dv) dv.style.display = "";
   loadBankHome();
   loadDoEntry();
 }
+
+/* 题库行的「更多」菜单：点里面任一动作后自动收起（原生 <details> 点选后不会自己收） */
+function bankMoreToggle(ev) {
+  const t = ev.target;
+  if (t && t.closest && t.closest(".bank-more-menu button") && ev.currentTarget) {
+    ev.currentTarget.open = false;
+  }
+}
+window.bankMoreToggle = bankMoreToggle;
 
 /* 做题入口数据：题库下拉 + 快捷开始 + 今日进度（每次进「刷题」页刷新） */
 async function loadDoEntry() {
@@ -485,8 +493,13 @@ function _doQuickRender() {
   if (!box) return;
   const banks = (_bankState.banks || []).filter(b => (b.items || 0) > 0);
   if (!banks.length) {
-    box.innerHTML = `<div class="hint">还没有题库——点上方「导入题库文件」把你自备的
-      md / txt / json / csv 题库收进来，或先「新建空题库」手动加题。</div>`;
+    // 空态统一为「图标 + 为什么空 + 一个动作」：直接给两个下一步，而不是只留一句说明
+    box.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-bank"></use></svg>
+      <div class="sub">还没有可练的题库<br>导入你自己准备的 md / txt / json / csv，或新建一个空题库手动加题</div>
+      <button class="act gray" onclick="bankImportPick()">⇧ 导入题库文件</button>
+      <button class="act gray" onclick="bankCreateOpen()">＋ 新建空题库</button>
+    </div>`;
     return;
   }
   const top = banks.slice(0, 6);

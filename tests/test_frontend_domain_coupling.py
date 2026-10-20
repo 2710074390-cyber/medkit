@@ -55,7 +55,9 @@ SHARED = ("md.js",)
 # 2026-10-13（奥卡姆精简 P2）：原 EP-01 归因域的三片（learn-meta / learn-meta-image /
 # learn-search）随功能删除；本域现为「学习中心 + 错题本」，改称 CORE。
 CORE = ("learn.js", "learn-study.js", "learn-vault.js", "learn-vault-chat.js")
-SHELL = ("app.js",)
+# 2026-10-20（v0.19 S4）：命令面板是**外壳**的一部分（键盘优先的入口总览 + 导航兜底），
+# 与 app.js 同域——它引用的业务函数同样受「外壳 → 插件 / bank」登记制约束。
+SHELL = ("app.js", "palette.js")
 PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
 # 2026-10-10 题库刷题域（bank）：**核心侧**（与 EP-01 同级）——导入自备题库 + 应用内作答。
@@ -99,6 +101,12 @@ SHELL_TO_BANK: dict[tuple[str, str], tuple[str, str]] = {
     ("app.js", "bankDrillHide"): ("加 typeof 守卫",
                                   "切页签时收起沉浸式作答层（作答层是 body 级 fixed 覆盖层，"
                                   "切走页签必须收起，否则会挡住其它页面）"),
+    # v0.19 S4 命令面板（同属外壳）：两条直达命令要跨到 bank 域
+    ("palette.js", "bankImportPick"): ("已守卫",
+                                       "命令面板「导入题库文件」——run 里有 typeof 守卫，"
+                                       "bank 域缺失时该命令静默不生效"),
+    ("palette.js", "bankRetryStart"): ("已守卫",
+                                       "命令面板「错题重练」——同上"),
 }
 
 

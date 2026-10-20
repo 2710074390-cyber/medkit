@@ -30,21 +30,19 @@ def _watch(page) -> list[str]:
 
 
 def _walk_app(page, server_url: str) -> None:
-    """走一遍主链路：首屏 + 各主 tab + 学习中心各子视图（触发懒加载/按需渲染）。"""
+    """走一遍主链路：首屏 + 各主 tab + 设置里的「进阶功能」展开（触发懒加载/按需渲染）。"""
     page.goto(server_url)
     page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
-    for tab in ("start", "learn", "study", "mine"):
+    for tab in ("start", "study", "learn", "bank", "mine"):
         btn = page.locator(f'button[data-tab="{tab}"]')
         if btn.count():
             btn.first.click()
             page.wait_for_timeout(250)
-    # 学习中心子视图（每个都可能触发新的渲染分支）
-    page.click('button[data-tab="learn"]')
-    page.wait_for_selector("#tab-learn.show", timeout=15000)
-    pills = page.locator("#learnnav button")
-    for i in range(min(pills.count(), 6)):
-        pills.nth(i).click()
-        page.wait_for_timeout(250)
+    # 「设置 → 进阶功能」展开：大纲管理 / 真题考频的渲染分支都在这个折叠区里
+    page.click('button[data-tab="mine"]')
+    page.wait_for_selector("#tab-mine.show", timeout=15000)
+    page.evaluate("() => { const d = document.querySelector('details.adv'); if (d) d.open = true; }")
+    page.wait_for_timeout(600)
 
 
 def test_app_makes_no_external_requests(page, server_url):

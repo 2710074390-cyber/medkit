@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="data:,">
 <title>MedKit · 医学题库工坊</title>
+<link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/learn.css">
 <script>/* A9：主题防闪烁——CSS 加载前先按偏好设 data-theme（隐私模式静默回退系统偏好） */
@@ -42,11 +43,11 @@ try {
   </div>
   <nav aria-label="主导航">
     <div role="tablist" aria-label="主导航" class="tabs">
-      <button data-tab="start" class="active" role="tab" aria-selected="true" aria-controls="tab-start" title="开始（Ctrl+1）"><svg class="ic"><use href="#i-target"></use></svg><span>开始</span></button>
+      <button data-tab="start" class="active" role="tab" aria-selected="true" aria-controls="tab-start" title="今天（Ctrl+1）"><svg class="ic"><use href="#i-target"></use></svg><span>今天</span></button>
       <button data-tab="study" role="tab" aria-selected="false" aria-controls="tab-study" title="刷题（Ctrl+2）"><svg class="ic"><use href="#i-refresh"></use></svg><span>刷题</span></button>
-      <button data-tab="bank" role="tab" aria-selected="false" aria-controls="tab-bank" title="题库（Ctrl+3）"><svg class="ic"><use href="#i-bank"></use></svg><span>题库</span></button>
-      <button data-tab="learn" role="tab" aria-selected="false" aria-controls="tab-learn" title="学习中心（Ctrl+4）"><svg class="ic"><use href="#i-learn"></use></svg><span>学习中心</span></button>
-      <button data-tab="mine" role="tab" aria-selected="false" aria-controls="tab-mine" title="我的（Ctrl+5）"><svg class="ic"><use href="#i-mine"></use></svg><span>我的</span></button>
+      <button data-tab="learn" role="tab" aria-selected="false" aria-controls="tab-learn" title="错题（Ctrl+3）"><svg class="ic"><use href="#i-paper"></use></svg><span>错题</span></button>
+      <button data-tab="bank" role="tab" aria-selected="false" aria-controls="tab-bank" title="题库（Ctrl+4）"><svg class="ic"><use href="#i-bank"></use></svg><span>题库</span></button>
+      <button data-tab="mine" role="tab" aria-selected="false" aria-controls="tab-mine" title="设置（Ctrl+5）"><svg class="ic"><use href="#i-mine"></use></svg><span>设置</span></button>
     </div>
     <div class="navsep" role="separator"></div>
     <a class="navext" href="https://med-review-site.pages.dev/#reviews" target="_blank" rel="noopener"
@@ -61,6 +62,9 @@ try {
     </a>
   </nav>
   <div class="sidefoot">
+    <button class="themeBtn" id="btn_palette" title="命令面板（Ctrl+K）" onclick="paletteOpen()" aria-label="命令面板">
+      <svg class="ic"><use href="#i-key"></use></svg>
+    </button>
     <button class="themeBtn" id="btn_theme" title="切换亮/暗主题" onclick="toggleTheme()" aria-label="切换主题">
       <svg class="ic"><use id="u_theme" href="#i-moon"></use></svg>
     </button>
@@ -71,24 +75,53 @@ try {
   </div>
 </aside>
 <main id="main" tabindex="-1">
-  <!-- ① 开始（仪表盘） -->
+  <!-- ① 今天（今日待办 + 掌握度诊断；原「学习中心 → 概览」已并入，同一批指标不再两处各算一遍） -->
   <section id="tab-start" class="panel show">
-    <h1 class="ptitle"><svg class="ic"><use href="#i-target"></use></svg>开始</h1>
-    <p class="psub">今天该复习什么、该生成什么——一眼清楚，点一下就开始</p>
-    <div id="start_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
+    <h1 class="ptitle"><svg class="ic"><use href="#i-target"></use></svg>今天</h1>
+    <p class="psub">今天该复习什么、薄弱点在哪——一眼清楚，点一下就开始</p>
+    <div class="today-grid">
+      <div class="today-main">
+        <div id="start_body">
+          <div class="skel" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="hint"><span class="spin"></span>加载中…</div>
+        </div>
+      </div>
+      <aside class="today-side" aria-label="掌握度与薄弱点">
+        <div class="card">
+          <div class="cardh"><h2>学习闭环总览</h2><span class="hint" id="dash_scope"></span></div>
+          <div class="row exp-bar" style="flex-wrap:wrap;margin-top:8px">
+            <div style="flex:1;min-width:150px"><label>科目范围</label>
+              <select id="dash_subject" onchange="loadOverview(this.value)"><option value="">全部科目</option></select>
+            </div>
+            <div style="flex:none;align-self:flex-end">
+              <label style="display:block;height:1px;overflow:hidden">.</label>
+              <button class="act gray" onclick="loadDashboard()">刷新</button>
+            </div>
+          </div>
+          <div id="dash_loop"><div class="hint"><span class="spin"></span>汇总中…</div></div>
+        </div>
+        <div class="card">
+          <div class="cardh"><h2>薄弱点诊断</h2><span class="hint" id="learn_stats"></span></div>
+          <div id="learn_kp"><div class="hint"><span class="spin"></span>诊断中…</div></div>
+          <h3 style="margin-top:16px;font-size:var(--fs-2);color:var(--text-1)">接下来重点学什么</h3>
+          <div id="learn_reco"><div class="hint">暂无薄弱点</div></div>
+          <div class="row" style="margin-top:16px;flex-wrap:wrap;align-items:center">
+            <div class="hint" style="flex:1;min-width:220px">按薄弱点自动配题，判错自动进错题本。</div>
+            <button class="act" id="btn_gap_paper" onclick="gapPaper()">⚡ 一键刷薄弱组卷</button>
+          </div>
+        </div>
+      </aside>
+    </div>
   </section>
 
   <!-- ② 刷题（卡片式：今日到期复习卡 + 记忆卡 + 科目卡片） -->
   <section id="tab-study" class="panel">
     <h1 class="ptitle"><svg class="ic"><use href="#i-refresh"></use></svg>刷题</h1>
     <p class="psub">导入自备题库 → 点选项即判分 → 判错自动进错题本 · 答题卡跳转 · 背题模式（全程本地、零 LLM）</p>
-    <div class="css-pills" id="studynav" role="tablist" aria-label="刷题视图">
-      <button class="css-pill on" data-sv="do" role="tab" aria-selected="true" onclick="studyView('do')">做题</button>
-    </div>
 
     <!-- 视图 A：做题（导入自备题库 + 医考帮式刷题主入口；作答引擎在 bank-drill.js 的沉浸层） -->
     <div class="studyview" id="sv-do">
-      <div class="card" style="margin-top:14px">
+      <div class="card" style="margin-top:16px">
         <div class="cardh"><h2>我的题库</h2><span class="hint" id="bank_meta"></span></div>
         <div class="hint" style="margin-bottom:8px">
           导入<b>你自己准备</b>的题库（md / txt / json / csv），MedKit 只做本地解析与练习——<b>不内置、不分发任何题库</b>，数据权利归各自来源方。
@@ -102,24 +135,27 @@ try {
           <button class="act gray" onclick="bankRetryStart()">错题重练</button>
           <input type="file" id="bank_file" accept=".md,.markdown,.txt,.json,.csv" style="display:none" onchange="bankImportFile(this)">
         </div>
-        <div id="bank_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
+        <div id="bank_list">
+          <div class="skel" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="hint"><span class="spin"></span>加载中…</div>
+        </div>
       </div>
 
-      <div class="card" id="bank_paste_card" style="display:none;margin-top:14px">
+      <div class="card" id="bank_paste_card" style="display:none;margin-top:16px">
         <div class="cardh"><h2>粘贴文本导入</h2><span class="hint">支持 md / txt / csv / json</span></div>
         <textarea id="bank_paste_text" rows="8" placeholder="例：&#10;### 1. 慢阻肺最主要的病因是&#10;- A. 吸烟&#10;- B. 感染&#10;**答案**：A&#10;**解析**：吸烟是 COPD 最重要的环境致病因素"></textarea>
-        <div class="btns" style="margin-top:10px">
+        <div class="btns" style="margin-top:12px">
           <button class="act" onclick="bankPreviewPaste()">解析预览</button>
           <button class="act gray" onclick="bankPasteClose()">取消</button>
         </div>
       </div>
 
-      <div class="card" id="bank_import_card" style="display:none;margin-top:14px">
+      <div class="card" id="bank_import_card" style="display:none;margin-top:16px">
         <div class="cardh"><h2>导入预览</h2><span class="hint" id="bank_import_meta"></span></div>
         <div id="bank_import_body"></div>
       </div>
 
-      <div class="card" id="bank_manage_card" style="display:none;margin-top:14px">
+      <div class="card" id="bank_manage_card" style="display:none;margin-top:16px">
         <div class="cardh"><h2>题目管理</h2><span class="hint" id="bank_manage_meta"></span></div>
         <div class="hint" style="margin-bottom:8px">
           导入的题库常有解析偏差（答案错位、选项切分不对）——在这里直接改，不用重新导入。
@@ -133,9 +169,9 @@ try {
         <div id="bank_item_list"></div>
       </div>
 
-      <div class="card" style="margin-top:14px">
+      <div class="card" style="margin-top:16px">
         <div class="cardh"><h2>开始刷题</h2><span class="hint" id="do_meta"></span></div>
-        <div class="hint" style="margin-bottom:10px">
+        <div class="hint" style="margin-bottom:12px">
           选题库（或错题）→「开始刷题」进入沉浸式作答。<b>点选项即判分</b>，判错自动进错题本；
           随时可切<b>背题模式</b>（直接看答案）或用<b>答题卡</b>跳题。
         </div>
@@ -165,7 +201,7 @@ try {
         </div>
         <div id="do_quick" style="margin-top:12px"></div>
       </div>
-      <div class="card" style="margin-top:14px">
+      <div class="card" style="margin-top:16px">
         <div class="cardh"><h2>今日进度</h2><span class="hint" id="do_today"></span></div>
         <div class="bank-bar">
           <label style="font-size:12px">今日目标（题）</label>
@@ -179,21 +215,20 @@ try {
 
   </section>
 
-  <!-- ⑤ 我的（设置：服务商 + 提示词 + 数据管理） -->
+  <!-- ⑤ 设置（外观 / 连接 / 数据 / 进阶功能） -->
   <section id="tab-mine" class="panel">
-    <h1 class="ptitle"><svg class="ic"><use href="#i-mine"></use></svg>我的</h1>
-    <p class="psub">服务商 / 数据管理——配置一次，平时不用管</p>
+    <h1 class="ptitle"><svg class="ic"><use href="#i-mine"></use></svg>设置</h1>
+    <p class="psub">外观、连接与数据——配置一次，平时不用管</p>
 
-    <h2 class="subh"><svg class="ic"><use href="#i-bank"></use></svg>出题工坊（可选 · 默认关）</h2>
-    <p class="psub">用教材 + 教师重点让 AI 生成全新题库 / 押题卷 / 复习手册</p>
+    <h2 class="subh"><svg class="ic"><use href="#i-sun"></use></svg>外观</h2>
     <div class="card">
-      <h2>启用出题工坊</h2>
-      <div class="hint" style="margin-bottom:8px">
-        出题工坊（原侧栏「题库」页签）用你自己的 API Key 调大模型，<b>从教材生成全新题目</b>——
-        需要上传教材、理解题型配比与门禁规则，属<b>进阶</b>用法。<b>日常刷题与错题复盘不需要它。</b>
-        开启后侧栏出现「题库」页签，学习中心出现「大纲管理」，本页出现「网络检索」。
+      <h2>主题</h2>
+      <div class="hint" style="margin-bottom:8px">默认跟随系统；也可以在这里固定亮或暗。</div>
+      <div class="btns" style="margin-top:0">
+        <button class="act gray" onclick="toggleTheme()">切换亮 / 暗</button>
+        <button class="act gray" onclick="themeFollowSystem()">跟随系统</button>
       </div>
-      <div class="switch"><input type="checkbox" id="t_gen" onchange="genToggle(this.checked)"><label for="t_gen">启用出题工坊（高级）</label></div>
+      <div class="hint" id="theme_state"></div>
     </div>
 
     <h2 class="subh"><svg class="ic"><use href="#i-conn"></use></svg>连接服务商</h2>
@@ -201,7 +236,7 @@ try {
     <div class="card">
       <h2>选择服务商（API 由你自己提供）</h2>
       <div class="provs" id="provs"></div>
-      <div class="row" style="margin-top:18px">
+      <div class="row" style="margin-top:16px">
         <div><label>接口地址 base_url</label><input type="text" id="base_url" placeholder="https://api.deepseek.com"></div>
         <div><label>API Key <span class="hint" id="keymask"></span></label>
           <input type="password" id="api_key" placeholder="sk-... （留空 = 保留已保存的 Key；输入新值 = 替换）"></div>
@@ -209,10 +244,10 @@ try {
       <div class="row">
         <div><label>生成模型（强）<span class="hint" id="gen_hint"></span></label>
           <select class="mselect" id="model_gen"></select>
-          <input type="text" id="model_gen_manual" style="display:none;margin-top:6px" placeholder="手动输入模型名"></div>
+          <input type="text" id="model_gen_manual" style="display:none;margin-top:8px" placeholder="手动输入模型名"></div>
         <div><label>质检模型（性价比，可同款）</label>
           <select class="mselect" id="model_qc"></select>
-          <input type="text" id="model_qc_manual" style="display:none;margin-top:6px" placeholder="手动输入模型名"></div>
+          <input type="text" id="model_qc_manual" style="display:none;margin-top:8px" placeholder="手动输入模型名"></div>
       </div>
       <div class="btns">
         <button class="act gray" id="btn_models">获取模型列表</button>
@@ -236,7 +271,7 @@ try {
           <input type="password" id="mineru_key" placeholder="留空 = 保留已保存的 Token；输入新值 = 替换（不填 Token 走免 Token 轻量 API ≤10MB）">
         </div>
         <div><label>说明</label>
-          <div class="hint">在 <a href="https://mineru.net" target="_blank" rel="noopener" style="color:var(--accent2)">mineru.net</a>「API 管理」页创建 Token。
+          <div class="hint">在 <a href="https://mineru.net" target="_blank" rel="noopener" style="color:var(--accent-strong)">mineru.net</a>「API 管理」页创建 Token。
           扫描件/图片上传后将自动识别并<b>直接加入教材或重点输入</b>，无需手动粘贴。<br>
           <b style="color:var(--warn)">隐私提示</b>：启用 OCR 后文件将<b>上传至 MinerU 云端识别</b>，仅返回文本结果；
           请勿上传涉密材料；介意请使用带文本层的 PDF（全程本机解析）。</div>
@@ -251,10 +286,10 @@ try {
 
     <div class="card" id="ws_card">
       <h2>网络检索（可选 · 默认关）</h2>
-      <div class="hint" style="margin-bottom:6px">生成前自动多轮搜索补充<b>考纲 / 真题 / 指南</b>，作为参考素材进入出题（标注 <code>[源:网 URL]</code>）；
+      <div class="hint" style="margin-bottom:8px">生成前自动多轮搜索补充<b>考纲 / 真题 / 指南</b>，作为参考素材进入出题（标注 <code>[源:网 URL]</code>）；
       与教材冲突的内容自动标记且<b>不自动改写</b>；多轮 ≤3 轮（每轮 ≤3 条查询），费用/轮数以所选后端官网为准。
       <b style="color:var(--warn)">隐私提示</b>：检索词（含章节名）会发送到所选搜索后端。</div>
-  <div class="row" style="margin-top:10px">
+  <div class="row" style="margin-top:12px">
     <div><label>检索后端（各选项「自带 / 需外部搜索」能力见标注）</label>
       <select id="ws_backend"><option value="auto">自动匹配</option></select>
       <div class="hint" id="ws_note"></div></div>
@@ -266,7 +301,7 @@ try {
         <label>手动粘贴素材（每行一条：标题 URL 或任意文本；≤20000 字）</label>
         <textarea id="ws_manual" rows="3" placeholder="例：儿科学第X章 真题  https://example.com/..."></textarea>
       </div>
-      <label class="chk" style="margin-top:10px"><input type="checkbox" id="t_web_trusted"> 仅保留可信来源（命中内置白名单/自定义域名；命中率低时可能过滤掉全部素材）</label>
+      <label class="chk" style="margin-top:12px"><input type="checkbox" id="t_web_trusted"> 仅保留可信来源（命中内置白名单/自定义域名；命中率低时可能过滤掉全部素材）</label>
       <div class="row" style="margin-top:8px">
         <div><label>自定义可信域名（逗号分隔，如：who.int, nhc.gov.cn）</label>
           <input type="text" id="ws_trusted_domains" placeholder="who.int, gov.cn, edu.cn…"></div>
@@ -285,7 +320,7 @@ try {
       <div class="hint">内置提示词打包在安装目录（只读）；编辑将保存为 <b>~/.medkit/prompts/</b> 影子副本并优先生效（不改内置，升级不覆盖）；
       保存会校验占位符完整性；「恢复默认」随时回滚。<b>改完建议先「试出一题」验证效果。</b></div>
       <div id="prompt_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
-      <h2 style="margin-top:22px">门禁规则速览（题目为什么会被改）</h2>
+      <h2 style="margin-top:24px">门禁规则速览（题目为什么会被改）</h2>
       <div class="hint" style="line-height:2">
         <b>R1</b> 选项数必须 5 个 · <b>R7/R8</b> 截断残留 / 以连接词结尾 · <b>R12</b> 无意义括号后缀 ·
         <b>R13</b> 选项长度上限（>20 字）与失衡（>1.5×） · <b>R9</b> 临床数值必须带单位 ·
@@ -316,11 +351,81 @@ try {
       <h2 style="color:var(--warn)">清空全部数据（危险）</h2>
       <div class="hint">清空<b>学习数据与全部项目</b>（错题 / 掌握度 / 复习计划 / 项目与产物），保留服务商等应用配置。
       操作<b>不可逆</b>；执行前自动生成一份完整备份到备份目录。</div>
-      <div class="row" style="margin-top:10px">
+      <div class="row" style="margin-top:12px">
         <div><label>确认短语</label><input type="text" id="dm_confirm" placeholder="输入「清空全部数据」以确认" style="width:100%"></div>
       </div>
       <div class="btns"><button class="act" id="btn_dm_clear">清空全部数据</button></div>
     </div>
+
+    <h2 class="subh"><svg class="ic"><use href="#i-bank"></use></svg>进阶功能（可选 · 默认关）</h2>
+    <p class="psub">用教材 + 教师重点让 AI 生成全新题库 / 押题卷 / 复习手册</p>
+    <details class="adv">
+      <summary>展开进阶功能 · 出题工坊 / 大纲管理 / 真题考频</summary>
+      <div class="card">
+        <h2>启用出题工坊</h2>
+        <div class="hint" style="margin-bottom:8px">
+          出题工坊（原侧栏「题库」页签）用你自己的 API Key 调大模型，<b>从教材生成全新题目</b>——
+          需要上传教材、理解题型配比与门禁规则，属<b>进阶</b>用法。<b>日常刷题与错题复盘不需要它。</b>
+          开启后侧栏出现「题库」页签，本页出现「大纲管理」与「网络检索」。
+        </div>
+        <div class="switch"><input type="checkbox" id="t_gen" onchange="genToggle(this.checked)"><label for="t_gen">启用出题工坊（高级）</label></div>
+      </div>
+
+      <!-- 大纲管理（原「学习中心 → 大纲管理」迁入：仅在出题工坊开启时显示） -->
+      <div id="lv-syllabus">
+        <div class="card">
+          <div class="cardh"><h2>大纲管理</h2><span class="hint" id="syl_meta"></span></div>
+          <div class="hint" style="margin-bottom:12px"><b>教师重点</b>为主、<b>官方 306</b> 补充。条目与你的错题、掌握度实时对齐，可粘贴导入（本地解析）。</div>
+          <div class="row" style="margin-top:8px;flex-wrap:wrap;align-items:center">
+            <div class="css-pills" id="syl_std" role="tablist" aria-label="数据标准">
+              <button class="css-pill on" data-std="teacher" role="tab" aria-selected="true">教师重点（主要依据）</button>
+              <button class="css-pill" data-std="seed" role="tab" aria-selected="false">官方 306（补充）</button>
+            </div>
+            <span class="hint" id="syl_std_hint" style="margin-left:12px"></span>
+          </div>
+          <div class="row exp-bar" style="flex-wrap:wrap">
+            <div style="flex:1;min-width:150px"><label>科目</label>
+              <select id="syl_subject" onchange="sylRender(this.value)"><option value="">全部科目</option></select>
+            </div>
+            <div style="flex:none;min-width:0;max-width:100%;align-self:flex-end;display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end">
+              <button class="act" id="btn_syl_seed" onclick="sylEnsure()">导入官方306种子</button>
+              <button class="act gray" onclick="sylPaste()">粘贴导入</button>
+              <button class="act gray" onclick="sylReport()">导出未覆盖报告</button>
+            </div>
+          </div>
+          <div id="syl_stats"></div>
+          <div id="syl_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
+        </div>
+        <div class="card" id="syl_paste_card" style="display:none">
+          <div class="cardh"><h2>粘贴大纲解析</h2><span class="hint">章一行、条目一行，先解析预览再确认；也可上传教师重点文件或官方大纲</span></div>
+          <textarea id="syl_paste_text" rows="5" placeholder="例：&#10;一、绪论&#10;1、生理学的任务和研究手段&#10;2、机体的内环境和稳态&#10;二、细胞的基本功能&#10;1、物质跨细胞膜转运方式"></textarea>
+          <div class="btns" style="margin-top:12px">
+            <button class="act" onclick="sylParse()">解析预览</button>
+            <button class="act gray" onclick="sylStructurize()">AI 结构化预览</button>
+            <button class="act gray" onclick="sylParseConfirm()">确认入库（当前科目）</button>
+            <button class="act gray" onclick="sylTeacherPick()">上传教师重点文件</button>
+            <input type="file" id="syl_teacher_file" accept=".pdf,.docx,.md,.markdown,.txt,.text" style="display:none" onchange="sylTeacherImport()">
+            <button class="act gray" onclick="sylSeedPick()">上传官方大纲(md/txt)</button>
+            <input type="file" id="syl_seed_file" accept=".md,.txt" style="display:none" onchange="sylSeedImport()">
+          </div>
+          <div id="syl_paste_preview"><div class="hint">未解析。</div></div>
+        </div>
+        <div class="card" id="rex_card">
+          <div class="cardh"><h2>真题考频（自备真题 · 人工确认门）</h2><span class="hint" id="rex_meta"></span></div>
+          <div class="hint" style="margin-bottom:8px">粘贴自备真题，本地统计考点频次；<b>确认后计入权重</b>。仅用频次，不展示原文。</div>
+          <textarea id="rex_text" rows="4" placeholder="粘贴真题题干文本（每题一行或一段；例如从 真题上册.md 复制 20~200 题）…"></textarea>
+          <div class="btns" style="margin-top:8px">
+            <button class="act" onclick="rexAnalyze()">分析频次</button>
+            <button class="act gray" onclick="rexFilePick()">上传真题文件(md/txt)</button>
+            <button class="act gray" onclick="rexReport()">导出高频考点md</button>
+            <input type="file" id="rex_file" accept=".md,.txt" style="display:none" onchange="rexFile(this)">
+          </div>
+          <div id="rex_drafts"><div class="hint">未分析。</div></div>
+          <h3 style="margin-top:16px;font-size:var(--fs-2);color:var(--text-1)">确认后热力表（章节 × 频次）</h3>
+          <div id="rex_heat"><div class="hint">暂无已确认频次。</div></div>
+        </div>
+      </div>
+    </details>
   </section>
 
   <!-- ③ 题库（新建课题 + 项目列表/详情） -->
@@ -376,11 +481,11 @@ try {
             <option value="narrative">病例叙事（A2 化）</option><option value="staged">渐进披露（诊疗决策链）</option>
             <option value="data">数据判读（检验/影像数值）</option></select></div>
       </div>
-      <label>附加生成要求（可选，≤500 字）<span class="hint" style="display:inline;margin-left:6px" id="req_count"></span></label>
+      <label>附加生成要求（可选，≤500 字）<span class="hint" style="display:inline;margin-left:8px" id="req_count"></span></label>
       <textarea id="requirements" maxlength="500" rows="3"
         placeholder="例：多出计算题；解析末尾给「易错点」一行；侧重治疗而非诊断；数值题给单位换算过程"></textarea>
       <div class="hint">在「试出一题」与正式生成中同时生效；与命题硬约束冲突时以硬约束为准</div>
-      <div style="margin-top:10px">
+      <div style="margin-top:12px">
         <label>配置预设（一键回填下列参数）</label>
         <div class="chips" id="preset_chips"></div>
         <div class="btns" style="margin-top:8px">
@@ -422,7 +527,7 @@ try {
       <div class="btns" style="margin-top:12px">
         <button class="act gray" id="btn_sample">手头还没素材？载入示例体验</button>
       </div>
-      <div class="filegrid" style="margin-top:6px">
+      <div class="filegrid" style="margin-top:8px">
         <div class="fbox dz" id="dz_textbook">
           <b>教材（必填）</b><span class="hint">PDF(文本层)/DOCX/MD/TXT，可多个文件；支持拖拽</span>
           <div class="dzlist" id="dzl_textbook"></div>
@@ -445,7 +550,7 @@ try {
       <div style="margin-top:12px">
         <div class="switch"><input type="checkbox" id="t_ocr" checked><label for="t_ocr">扫描件 / 图片自动识别（MinerU OCR；Token 在「连接服务商」页配置）</label></div>
         <b style="font-size:13.5px">自备真题 · 补充资料（可选）</b>
-        <div class="hint" style="margin-bottom:6px">真题仅用于<b>高频考点优先 + 题型风格校准</b>（严禁照抄原题，新题仍以教材为唯一依据）；
+        <div class="hint" style="margin-bottom:8px">真题仅用于<b>高频考点优先 + 题型风格校准</b>（严禁照抄原题，新题仍以教材为唯一依据）；
           资料作为教材的<b>补充上下文</b>（课件/笔记/大纲；与教材冲突时以教材为准）</div>
         <div class="filegrid">
           <div class="fbox dz" id="dz_exam">
@@ -476,7 +581,7 @@ try {
         <button class="act gray" id="btn_tpl_save">存为项目模板</button>
         <button class="act gray" id="btn_tpl_apply">应用模板</button>
       </div>
-      <div id="sess_box" style="margin-top:10px"></div>
+      <div id="sess_box" style="margin-top:12px"></div>
       <div id="trial_box"></div>
       <div id="ocr_progress"></div>
       <div id="ready_list"></div>
@@ -500,52 +605,16 @@ try {
     </div>
   </section>
 
-  <!-- ④ 学习中心（v0.7 M1/M2：错题本 + 掌握度诊断） -->
+  <!-- ④ 错题（原「学习中心」：概览已并入「今天」，大纲管理已迁入「设置 → 进阶功能」） -->
   <section id="tab-learn" class="panel">
-    <h1 class="ptitle"><svg class="ic"><use href="#i-learn"></use></svg>学习中心</h1>
-    <p class="psub">错题、诊断、薄弱点组卷与提问——数据和 AI 都在本机</p>
+    <h1 class="ptitle"><svg class="ic"><use href="#i-paper"></use></svg>错题</h1>
+    <p class="psub">问错题、看错题、按期复习——只依据你自己的错题本作答</p>
 
-    <!-- v0.8.1 子导航：一屏一任务（概览/错题本/讲解产物/提问学习/大纲覆盖；复习计划已迁入「刷题」） -->
-    <nav class="learnnav" id="learnnav" role="tablist" aria-label="学习中心分栏">
-      <button data-lv="overview" class="on" role="tab" aria-selected="true" title="概览（Alt+1）"><svg class="ic"><use href="#i-target"></use></svg>概览<span class="nb" id="nb_overview"></span></button>
-      <button data-lv="mistakes" role="tab" aria-selected="false" title="错题本（Alt+2）"><svg class="ic"><use href="#i-paper"></use></svg>错题本<span class="nb" id="nb_mistakes"></span></button>
-      <button data-lv="syllabus" role="tab" aria-selected="false" title="大纲管理（Alt+4）"><svg class="ic"><use href="#i-target"></use></svg>大纲管理<span class="nb" id="nb_syllabus"></span></button>
-    </nav>
-
-    <!-- 视图 1/4：概览（闭环总览 + 薄弱点诊断 + 推荐） -->
-    <div class="learnview show" id="lv-overview">
-
-    <!-- 学习闭环总览 -->
-    <div class="card">
-      <div class="cardh"><h2>学习闭环总览</h2><span class="hint" id="dash_scope"></span></div>
-      <div class="row exp-bar" style="flex-wrap:wrap;margin-top:8px">
-        <div style="flex:1;min-width:150px"><label>科目范围</label>
-          <select id="dash_subject" onchange="loadOverview(this.value)"><option value="">全部科目</option></select>
-        </div>
-        <div style="flex:none;align-self:flex-end">
-          <label style="display:block;height:1px;overflow:hidden">.</label>
-          <button class="act" onclick="loadDashboard()">刷新</button>
-        </div>
-      </div>
-      <div id="dash_loop"><div class="hint"><span class="spin"></span>汇总中…</div></div>
-    </div>
-
-    <div class="card" style="margin-top:14px">
-      <div class="cardh"><h2>薄弱点诊断</h2><span class="hint" id="learn_stats"></span></div>
-      <div id="learn_kp"><div class="hint"><span class="spin"></span>诊断中…</div></div>
-      <h3 style="margin-top:18px;font-size:13.5px;color:var(--text)">接下来重点学什么</h3>
-      <div id="learn_reco"><div class="hint">暂无薄弱点</div></div>
-      <div class="row" style="margin-top:16px;flex-wrap:wrap;align-items:center">
-        <div class="hint" style="flex:1;min-width:220px">按薄弱点自动配题，判错自动进错题本。</div>
-        <button class="act" id="btn_gap_paper" onclick="gapPaper()">⚡ 一键刷薄弱组卷</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 视图 2/3：错题本（聊天优先 + 新建 / 列表 / 薄弱项 / 今日复习） -->
-  <div class="learnview" id="lv-mistakes">
+    <!-- 聊天是唯一主界面（你上一轮定的方向）；宽屏两栏把「复习 / 薄弱 / 列表」放到右栏常驻 -->
+    <div class="learnview show mistakes-grid" id="lv-mistakes">
+      <div class="mistakes-main">
     <!-- 错题助手：本视图的主界面 —— 一屏搞定「问错题 + 看错题」 -->
-    <div class="card" style="margin-top:14px">
+    <div class="card" style="margin-top:16px">
       <div class="cardh"><h2>错题助手</h2>
         <span class="hint">只依据你的错题本作答</span>
         <button class="mini-btn" id="btn_vault_chat_clear" onclick="vaultChatClear()">清空对话</button>
@@ -557,7 +626,7 @@ try {
           onkeydown="vaultChatKey(event)"></textarea>
         <button class="act" id="btn_vault_ask_global" onclick="vaultAskGlobal()">发送</button>
       </div>
-      <div class="btns" style="margin-top:10px;flex-wrap:wrap">
+      <div class="btns" style="margin-top:12px;flex-wrap:wrap">
         <select id="vault_hb_subject" style="max-width:220px" title="按科目生成复习手册">
           <option value="">全部科目</option>
         </select>
@@ -566,7 +635,7 @@ try {
       </div>
     </div>
 
-      <div class="card" style="margin-top:14px">
+      <div class="card" style="margin-top:16px">
         <div class="cardh"><h2>新建错题</h2>
           <span class="hint">直接写进文件夹 · 也可拍题识别后填入</span>
           <button class="act gray" id="btn_vault_new_toggle" onclick="vaultNewToggle()">展开 / 收起</button>
@@ -575,7 +644,7 @@ try {
           <label>题干（唯一必填）</label>
           <textarea id="nt_q" rows="3" placeholder="例如：慢阻肺最主要的病因是"></textarea>
           <input type="file" id="nt_photo" accept="image/*" style="display:none" onchange="vaultPhotoPick(this)">
-          <div class="btns" style="margin-top:6px">
+          <div class="btns" style="margin-top:8px">
             <button class="act gray" id="btn_nt_photo" onclick="vaultPickPhoto()">拍题（图片 OCR，需 MinerU Key）</button>
           </div>
           <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -599,20 +668,22 @@ try {
           </div>
         </div>
       </div>
+      </div>
 
-      <div class="card" style="margin-top:14px">
+      <aside class="mistakes-side" aria-label="薄弱项、今日复习与错题列表">
+      <div class="card">
         <div class="cardh"><h2>薄弱项</h2><span class="hint">按优先级排序</span></div>
         <div id="vault_stats"><div class="hint"><span class="spin"></span>计算中…</div></div>
       </div>
 
-      <div class="card" style="margin-top:14px">
+      <div class="card" style="margin-top:16px">
         <div class="cardh"><h2>今日复习</h2>
           <span class="hint" id="vault_due_meta">SM-2 排程</span>
         </div>
         <div id="vault_due"><div class="hint"><span class="spin"></span>加载中…</div></div>
       </div>
 
-      <div class="card" style="margin-top:14px">
+      <div class="card" style="margin-top:16px">
         <div class="cardh"><h2>错题</h2>
           <span class="hint" id="vault_list_meta"></span>
           <button class="mini-btn" id="btn_vault_rebuild" onclick="vaultRebuild()"
@@ -631,66 +702,14 @@ try {
           <button class="act" id="btn_vault_q" onclick="vaultSearch()">搜索</button>
           <button class="act gray" onclick="vaultSearchClear()" style="display:none" id="btn_vault_q_clear">清除</button>
         </div>
-        <div id="vault_list"><div class="hint"><span class="spin"></span>加载中…</div></div>
+        <div id="vault_list">
+          <div class="skel" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="hint"><span class="spin"></span>加载中…</div>
+        </div>
       </div>
 
-      <div class="card" id="vault_detail" style="display:none;margin-top:14px"></div>
-  </div>
-
-
-    <!-- 视图 3/4：大纲管理（WP-01/WP-10 考试锚定：教师重点为主 · 官方306补充） -->
-    <div class="learnview" id="lv-syllabus">
-      <div class="card" style="margin-top:14px">
-        <div class="cardh"><h2>大纲管理</h2><span class="hint" id="syl_meta"></span></div>
-        <div class="hint" style="margin-bottom:10px"><b>教师重点</b>为主、<b>官方 306</b> 补充。条目与你的错题、掌握度实时对齐，可粘贴导入（本地解析）。</div>
-        <div class="row" style="margin-top:8px;flex-wrap:wrap;align-items:center">
-          <div class="css-pills" id="syl_std" role="tablist" aria-label="数据标准">
-            <button class="css-pill on" data-std="teacher" role="tab" aria-selected="true">教师重点（主要依据）</button>
-            <button class="css-pill" data-std="seed" role="tab" aria-selected="false">官方 306（补充）</button>
-          </div>
-          <span class="hint" id="syl_std_hint" style="margin-left:10px"></span>
-        </div>
-        <div class="row exp-bar" style="flex-wrap:wrap">
-          <div style="flex:1;min-width:150px"><label>科目</label>
-            <select id="syl_subject" onchange="sylRender(this.value)"><option value="">全部科目</option></select>
-          </div>
-          <div style="flex:none;min-width:0;max-width:100%;align-self:flex-end;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end">
-            <button class="act" id="btn_syl_seed" onclick="sylEnsure()">导入官方306种子</button>
-            <button class="act gray" onclick="sylPaste()">粘贴导入</button>
-            <button class="act gray" onclick="sylReport()">导出未覆盖报告</button>
-          </div>
-        </div>
-        <div id="syl_stats"></div>
-        <div id="syl_body"><div class="hint"><span class="spin"></span>加载中…</div></div>
-      </div>
-      <div class="card" id="syl_paste_card" style="margin-top:14px;display:none">
-        <div class="cardh"><h2>粘贴大纲解析</h2><span class="hint">章一行、条目一行，先解析预览再确认；也可上传教师重点文件或官方大纲</span></div>
-        <textarea id="syl_paste_text" rows="5" placeholder="例：&#10;一、绪论&#10;1、生理学的任务和研究手段&#10;2、机体的内环境和稳态&#10;二、细胞的基本功能&#10;1、物质跨细胞膜转运方式"></textarea>
-        <div class="btns" style="margin-top:10px">
-          <button class="act" onclick="sylParse()">解析预览</button>
-          <button class="act gray" onclick="sylStructurize()">AI 结构化预览</button>
-          <button class="act gray" onclick="sylParseConfirm()">确认入库（当前科目）</button>
-          <button class="act gray" onclick="sylTeacherPick()">上传教师重点文件</button>
-          <input type="file" id="syl_teacher_file" accept=".pdf,.docx,.md,.markdown,.txt,.text" style="display:none" onchange="sylTeacherImport()">
-          <button class="act gray" onclick="sylSeedPick()">上传官方大纲(md/txt)</button>
-          <input type="file" id="syl_seed_file" accept=".md,.txt" style="display:none" onchange="sylSeedImport()">
-        </div>
-        <div id="syl_paste_preview"><div class="hint">未解析。</div></div>
-      </div>
-      <div class="card" id="rex_card" style="margin-top:14px">
-        <div class="cardh"><h2>真题考频（自备真题 · 人工确认门）</h2><span class="hint" id="rex_meta"></span></div>
-        <div class="hint" style="margin-bottom:8px">粘贴自备真题，本地统计考点频次；<b>确认后计入权重</b>。仅用频次，不展示原文。</div>
-        <textarea id="rex_text" rows="4" placeholder="粘贴真题题干文本（每题一行或一段；例如从 真题上册.md 复制 20~200 题）…"></textarea>
-        <div class="btns" style="margin-top:8px">
-          <button class="act" onclick="rexAnalyze()">分析频次</button>
-          <button class="act gray" onclick="rexFilePick()">上传真题文件(md/txt)</button>
-          <button class="act gray" onclick="rexReport()">导出高频考点md</button>
-          <input type="file" id="rex_file" accept=".md,.txt" style="display:none" onchange="rexFile(this)">
-        </div>
-        <div id="rex_drafts"><div class="hint">未分析。</div></div>
-        <h3 style="margin-top:18px;font-size:13.5px;color:var(--text)">确认后热力表（章节 × 频次）</h3>
-        <div id="rex_heat"><div class="hint">暂无已确认频次。</div></div>
-      </div>
+      <div class="card" id="vault_detail" style="display:none"></div>
+      </aside>
     </div>
   </section>
 </main>
@@ -712,6 +731,16 @@ try {
   <div class="drill-wrap">
     <div class="drill-body" id="bank_drill_body"></div>
     <aside class="drill-cardpane" id="bank_drill_cardpane" style="display:none"></aside>
+  </div>
+</div>
+
+<!-- Ctrl/⌘+K 命令面板（v0.19 S4）：键盘优先的入口总览；侧栏按钮是它的可见兜底 -->
+<div class="paletteMask" id="palette_mask" style="display:none" role="dialog" aria-modal="true" aria-label="命令面板">
+  <div class="palette">
+    <input type="text" id="palette_q" autocomplete="off" placeholder="输入页面名或动作…（Esc 关闭）"
+      aria-label="搜索命令" oninput="paletteFilter(this.value)" onkeydown="paletteKey(event)">
+    <div id="palette_list"></div>
+    <div class="hint" style="padding:8px 16px">↑↓ 选择 · Enter 执行 · Esc 关闭 · Ctrl+K 随时唤起</div>
   </div>
 </div>
 
@@ -747,5 +776,8 @@ try {
 <script src="/assets/js/bank.js"></script>
 <script src="/assets/js/bank-import.js"></script>
 <script src="/assets/js/bank-drill.js"></script>
+<!-- 命令面板（v0.19 S4）：只依赖 app.js 的 $ / esc / showTab / toast，
+     命令的 run 里调用的业务函数一律"点时才解析"，故可放最后一片。 -->
+<script src="/assets/js/palette.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
-"""IMP-05：大纲覆盖「粘贴导入 → 解析预览 → 确认入库」+「教师重点文件自动导入」浏览器用例。
+"""IMP-05：大纲管理「粘贴导入 → 解析预览 → 确认入库」+「教师重点文件自动导入」浏览器用例。
 
 流程（对齐 index.html 的 sylPaste / sylParse / sylParseConfirm / sylSetStd）：
-1. 打开「大纲覆盖」视图（不触发任何 LLM / 生成端）；
+1. 打开「设置 → 进阶功能 → 大纲管理」（v0.19 IA 收敛后从「学习中心」迁入，随出题工坊开关显隐）；
 2. 触发「粘贴导入」（sylPaste）显示粘贴卡；
 3. 填入「一、呼吸系统 / 1、肺通气 / 2、肺炎」→ 触发「解析预览」（sylParse）→ 断言草稿列表
    出现（预览「肺通气」「肺炎」两条）；
@@ -18,8 +18,9 @@ v4 说明（相对早期版本）：
   在默认「教师重点」下看到章树；
 - api() 已修复：字符串体自动补 Content-Type: application/json（旧测试缝移除）。
 
-驱动方式说明：index.html 曾存在 div 嵌套缺陷（lv-syllabus 被误嵌套进 lv-explain），现已修复；
-仍保留 page.evaluate 调用同名处理函数的写法，与真实点击等价并规避视口滚动问题。
+驱动方式说明：v0.19 起本视图不再是 `.learnview`（无 `.show` 激活类），而是「设置」页里
+`details.adv` 内的普通区块——判据改为「可见 + #syl_body 已渲染」；仍保留 page.evaluate
+调用同名处理函数的写法，与真实点击等价并规避视口滚动问题。
 """
 from __future__ import annotations
 
@@ -27,12 +28,18 @@ SYL_TEXT = "一、呼吸系统\n1、肺通气\n2、肺炎"
 
 
 def _goto_syllabus(page, server_url: str):
-    page.goto(server_url)
-    page.wait_for_selector('button[data-tab="learn"]', timeout=15000)
-    page.click('button[data-tab="learn"]')
-    page.wait_for_selector("#tab-learn.show", timeout=15000)
-    page.click('#learnnav button[data-lv="syllabus"]')
-    page.wait_for_selector("#lv-syllabus.show", state="attached", timeout=15000)
+    """进入「设置 → 进阶功能 → 大纲管理」。
+
+    conftest 的 page fixture 预置出题工坊为开，故 `#lv-syllabus` 在场；
+    `details.adv` 由 applyFeatures 自动展开，这里再显式 open 一次以消除竞态。
+    """
+    page.goto(f"{server_url}/#mine")
+    page.wait_for_selector("#tab-mine.show", timeout=15000)
+    page.evaluate(
+        "() => { const d = document.querySelector('#lv-syllabus')"
+        "?.closest('details.adv'); if (d) d.open = true; }")
+    page.wait_for_selector("#lv-syllabus", state="visible", timeout=15000)
+    page.wait_for_selector("#syl_body", timeout=15000)
 
 
 def _wait_tree(page, needle: str, std: str = "teacher"):

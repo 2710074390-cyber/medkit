@@ -396,8 +396,10 @@ def test_import_from_project_and_export_paper(page, server_url, server_home):
         assert "题目" in row.inner_text()
 
         # F10：导出押题卷 → 新开标签页（inline 渲染，内容含题干）
+        # v0.19：题库行动作收敛，「导出押题卷」收进 ⋯ 更多菜单（details.bank-more）里
+        row.locator("details.bank-more summary").click()
         with page.expect_popup() as pop:
-            row.locator('button:has-text("导出押题卷")').click()
+            row.locator('.bank-more-menu button:has-text("导出押题卷")').click()
         paper = pop.value
         paper.wait_for_load_state(timeout=15000)
         assert _PROJ_Q in paper.content(), "导出的押题卷 HTML 应包含题干"

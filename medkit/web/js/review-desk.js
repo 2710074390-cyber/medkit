@@ -238,7 +238,7 @@ function pickProvider(pr) {
   if (prev && prev !== pr.id && baseUrlDirty && $("base_url").value.trim()) {
     // A5：手改的 base_url + 不是默认值 → 覆盖前确认（防止静默吞掉自定义端点）
     confirmModal("切换服务商？",
-      `<p style="margin:0;color:var(--dim)">你修改过「接口地址」为 <b>${esc($("base_url").value.trim())}</b>。<br>
+      `<p style="margin:0;color:var(--text-2)">你修改过「接口地址」为 <b>${esc($("base_url").value.trim())}</b>。<br>
       切换后将被覆盖为「${esc(pr.name)}」的默认地址（回答可重填）。</p>`,
       "覆盖并切换", () => { baseUrlDirty = false; doPickProvider(pr); }, false);
     return;
@@ -432,7 +432,7 @@ function renderSegBar(barId, segs, label) {
   segs.forEach((s, i) => {
     const v = Math.max(0, vals[i]);
     const labelTxt = v >= 8 ? `<b>${esc(s[0])} ${vals[i]}%</b>` : "";
-    html += `<i data-seg="${i}" style="width:${v}%;background:var(--s${i + 1})" title="${esc(s[0])} ${vals[i]}%">
+    html += `<i data-seg="${i}" style="width:${v}%;background:var(--viz-${i + 1})" title="${esc(s[0])} ${vals[i]}%">
       ${labelTxt}</i>`;
     cum += v;
     // 边界把手：相邻两段之和 > 0 即渲染（某段被拖到 0 时把手仍在，可拖回）

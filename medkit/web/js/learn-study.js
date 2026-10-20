@@ -1,11 +1,11 @@
 /* exported appliedSubject, healLibrary, loadDashboard, loadLibrary, loadOverview, updateByQueue */
 /* ---- 掌握度驾驶舱：指标卡 + 状态分布环图 + 弱项清单 + 最弱章节 ---- */
-const LEARN_COLORS = { weak: "#f87171", shaky: "#fbbf24", solid: "#34d399", mastered: "#4ade80" };
+const LEARN_COLORS = { weak: "var(--bad)", shaky: "var(--warn)", solid: "var(--viz-2)", mastered: "var(--good)" };
 const LEARN_ORDER = ["weak", "shaky", "solid", "mastered"];
 function dashDonut(stats) {
   const total = stats.total_knowledge || 0;
   if (!total) {
-    return `<svg viewBox="0 0 120 120" width="132" height="132" style="display:block"><circle cx="60" cy="60" r="48" fill="none" stroke="var(--card3)" stroke-width="14"/><text x="60" y="63" text-anchor="middle" font-size="13" fill="var(--dim)">无数据</text></svg>`;
+    return `<svg viewBox="0 0 120 120" width="132" height="132" style="display:block"><circle cx="60" cy="60" r="48" fill="none" stroke="var(--surface-3)" stroke-width="14"/><text x="60" y="63" text-anchor="middle" font-size="13" fill="var(--text-2)">无数据</text></svg>`;
   }
   const C = 2 * Math.PI * 48;
   const arcs = [];
@@ -15,25 +15,25 @@ function dashDonut(stats) {
     if (!c) continue;
     const fr = c / total;
     const sl = Math.max(fr * C - 2, 0.6);
-    arcs.push(`<circle cx="60" cy="60" r="48" fill="none" stroke="${LEARN_COLORS[s]}" stroke-width="14"
+    arcs.push(`<circle cx="60" cy="60" r="48" fill="none" style="stroke:${LEARN_COLORS[s]}" stroke-width="14"
       stroke-dasharray="${sl} ${C - sl}" stroke-dashoffset="${-(acc * C + 2)}" transform="rotate(-90 60 60)"/>`);
     acc += fr;
   }
   const pct = Math.round(((stats.solid || 0) + (stats.mastered || 0)) / total * 100);
   return `<svg viewBox="0 0 120 120" width="132" height="132" style="display:block">
     ${arcs.join("")}
-    <text x="60" y="57" text-anchor="middle" font-size="26" font-weight="700" fill="var(--text)" font-variant-numeric="tabular-nums">${pct}%</text>
-    <text x="60" y="74" text-anchor="middle" font-size="9" fill="var(--dim)">掌握率</text>
+    <text x="60" y="57" text-anchor="middle" font-size="26" font-weight="700" fill="var(--text-1)" font-variant-numeric="tabular-nums">${pct}%</text>
+    <text x="60" y="74" text-anchor="middle" font-size="9" fill="var(--text-2)">掌握率</text>
   </svg>`;
 }
 function dashMetrics(stats) {
   const cells = [["total_knowledge", "知识点"], ["weak", "薄弱"], ["shaky", "需复习"], ["solid", "较熟练"], ["mastered", "已掌握"]];
   return `<div class="dash-metrics">` + cells.map(([k, l]) =>
-    `<div class="dash-metric"><b style="${k === "weak" ? "color:#f87171" : ""}">${esc(stats[k] || 0)}</b><span>${l}</span></div>`).join("") + `</div>`;
+    `<div class="dash-metric"><b style="${k === "weak" ? "color:var(--bad)" : ""}">${esc(stats[k] || 0)}</b><span>${l}</span></div>`).join("") + `</div>`;
 }
 function dashLegend(stats) {
   return `<div class="dash-legend">` + LEARN_ORDER.map(s =>
-    `<div style="display:flex;align-items:center;gap:8px"><i style="width:11px;height:11px;border-radius:50%;background:${LEARN_COLORS[s]};flex:none"></i><span style="flex:1;color:var(--dim);font-size:12px">${LEARN_STATE[s]}</span><b style="font-variant-numeric:tabular-nums">${stats[s] || 0}</b></div>`).join("") + `</div>`;
+    `<div style="display:flex;align-items:center;gap:8px"><i style="width:11px;height:11px;border-radius:50%;background:${LEARN_COLORS[s]};flex:none"></i><span style="flex:1;color:var(--text-2);font-size:var(--fs-2)">${LEARN_STATE[s]}</span><b style="font-variant-numeric:tabular-nums">${stats[s] || 0}</b></div>`).join("") + `</div>`;
 }
 function dashWeakRows(kps) {
   const list = kps.filter(k => (k.miss || 0) > 0 || k.state === "weak" || k.state === "shaky")
@@ -42,15 +42,15 @@ function dashWeakRows(kps) {
   return list.map(k => {
     const tot = k.attempts || 0, c = k.correct || 0, m = k.miss || 0, den = tot || 1;
     const cs = Math.round(c / den * 100), ms = Math.round(m / den * 100);
-    return `<div style="padding:7px 0;border-bottom:1px dashed var(--line)">
+    return `<div style="padding:7px 0;border-bottom:1px dashed var(--line-hair)">
       <div style="display:flex;align-items:center;gap:10px">
-        <span style="flex:1;color:var(--text);font-size:12.5px;min-width:0">${esc(k.name)}</span>
+        <span style="flex:1;color:var(--text-1);font-size:var(--fs-2);min-width:0">${esc(k.name)}</span>
         ${learnChip(k.state)}
-        <span class="hint" style="font-size:11px;white-space:nowrap">优先 ${Math.round((k.priority || 0) * 100)}</span>
+        <span class="hint" style="font-size:var(--fs-1);white-space:nowrap">优先 ${Math.round((k.priority || 0) * 100)}</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:5px">
         <div class="stack-bar"><i class="ok" style="width:${cs}%"></i><i class="miss" style="width:${ms}%"></i></div>
-        <span class="hint" style="font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums">对 ${c}/${tot}</span>
+        <span class="hint" style="font-size:var(--fs-1);white-space:nowrap;font-variant-numeric:tabular-nums">对 ${c}/${tot}</span>
       </div>
     </div>`;
   }).join("");
@@ -64,12 +64,12 @@ function dashChapterWeak(kps) {
   });
   const rows = Object.entries(grp).sort((a, b) => b[1].miss - a[1].miss).slice(0, 3);
   if (!rows.length) return "";
-  return `<h3 style="font-size:12.5px;color:var(--dim);margin:12px 0 4px;font-weight:600">最弱章节（按错题量）</h3>` + rows.map(([name, g]) =>
-    `<div style="display:flex;align-items:center;gap:10px;padding:4px 0"><span style="flex:1;color:var(--text);font-size:12px">${esc(name)}</span><span class="hint" style="font-size:11px;white-space:nowrap">${g.n} 点 · ${g.miss} 错</span></div>`).join("");
+  return `<h3 style="font-size:var(--fs-2);color:var(--text-2);margin:12px 0 4px;font-weight:600">最弱章节（按错题量）</h3>` + rows.map(([name, g]) =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:4px 0"><span style="flex:1;color:var(--text-1);font-size:var(--fs-2)">${esc(name)}</span><span class="hint" style="font-size:var(--fs-1);white-space:nowrap">${g.n} 点 · ${g.miss} 错</span></div>`).join("");
 }
 function renderMasteryDashboard(kps, stats) {
   return dashMetrics(stats)
-    + `<div class="dash">${dashDonut(stats)}<div><div style="font-size:12px;color:var(--text);margin-bottom:6px">知识点状态分布</div>${dashLegend(stats)}<div class="hint" style="margin-top:8px;font-size:11px">掌握率 = (较熟练 + 已掌握) / 全部</div></div></div>`
+    + `<div class="dash">${dashDonut(stats)}<div><div style="font-size:var(--fs-2);color:var(--text-1);margin-bottom:6px">知识点状态分布</div>${dashLegend(stats)}<div class="hint" style="margin-top:8px;font-size:var(--fs-1)">掌握率 = (较熟练 + 已掌握) / 全部</div></div></div>`
     + `<div class="dash-weak"><h3>薄弱点清单（按优先级）</h3>${dashWeakRows(kps)}</div>`
     + dashChapterWeak(kps);
 }
@@ -117,7 +117,7 @@ async function loadDashboard(keepSubject) {
 function renderDashboard(d) {
   const m = d.mastery || {}, loop = d.loop || {};
   $("dash_scope").textContent = `${d.subject_label} · 闭环 ${loop.mastered || 0}/${m.total_knowledge || 0} 已掌握`;
-  updateLearnBadges(d);
+  updateLearnBadges();
   // 闭环流转：错题沉淀 → 已掌握
   const stages = [
     ["错题沉淀", loop.mistakes || 0, ""], ["已掌握", loop.mastered || 0, "mastered"],
@@ -169,21 +169,21 @@ function appliedSubject() {
 /* 概览下半区：薄弱点诊断 + 待学优先级（错题列表已由「错题本」视图统一承载） */
 function renderLibrary(my, recm) {
   const stats = (my && my.stats) || {};
-  $("learn_stats").innerHTML = `共 <b>${stats.total_knowledge || 0}</b> 个知识点 · 薄弱 <b style="color:#f87171">${stats.weak || 0}</b> · 错题 <b>${stats.total_mistakes || 0}</b>`;
+  $("learn_stats").innerHTML = `共 <b>${stats.total_knowledge || 0}</b> 个知识点 · 薄弱 <b style="color:var(--bad)">${stats.weak || 0}</b> · 错题 <b>${stats.total_mistakes || 0}</b>`;
   const kps = (my && my.knowledge) || [];
   $("learn_kp").innerHTML = kps.length
       ? renderMasteryDashboard(kps, stats)
       : `<div class="hint">还没有知识点。错题入库后，这里会按「错题次数 + 距上次失败」给出掌握度。</div>`;
   const recs = recm || [];
   $("learn_reco").innerHTML = recs.length ? recs.map(r => `
-    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line);flex-wrap:wrap">
-      <span style="flex:1;min-width:150px;color:var(--text);font-size:13px">${esc(r.name)}</span>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line-hair);flex-wrap:wrap">
+      <span style="flex:1;min-width:150px;color:var(--text-1);font-size:var(--fs-2)">${esc(r.name)}</span>
       ${learnChip(r.state)}
-      <span class="hint" style="font-size:11.5px;white-space:nowrap">优先度 ${Math.round((r.priority || 0) * 100)}</span>
+      <span class="hint" style="font-size:var(--fs-1);white-space:nowrap">优先度 ${Math.round((r.priority || 0) * 100)}</span>
     </div>`).join("") : `<div class="hint">暂无薄弱点，先把错题收进来。</div>`;
 }
 async function updateByQueue() {
-  try { const d = await api("/api/library/dashboard"); updateLearnBadges(d); } catch (e) { /* ignore */ }
+  try { await api("/api/library/dashboard"); updateLearnBadges(); } catch (e) { /* ignore */ }
 }
 /* 数据卫生：一键修复学习库乱码（备份 → 还原 → 标记） */
 async function healLibrary() {

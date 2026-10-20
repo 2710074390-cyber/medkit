@@ -1,3 +1,3 @@
 """MedKit 包版本（单源：build.bat / medkit.iss / README 均从这里取值）。"""
 
-__version__ = "0.18.1"
+__version__ = "0.19.0"

@@ -113,15 +113,15 @@ function renderReview(scrollToId = null) {
         <span class="hint" id="rev_batch_n" style="margin:0"></span>
         <select id="rev_bb" style="min-width:96px"><option value="">Bloom →</option>
           <option>记忆</option><option>理解</option><option>应用</option><option>创造</option></select>
-        <button class="act gray" id="rev_bb_apply" style="padding:8px 12px;font-size:12.5px">应用</button>
-        <button class="act gray" id="rev_drop_sel" style="padding:8px 12px;font-size:12.5px;color:#f87171">批量剔除</button>
-        <button class="act gray" id="rev_restore_sel" style="padding:8px 12px;font-size:12.5px;color:var(--good)">批量恢复</button>
-        <button class="act gray" id="rev_sel_vis" style="padding:8px 12px;font-size:12.5px">全选可见</button>
-        <button class="act gray" id="rev_sel_inv" style="padding:8px 12px;font-size:12.5px">反选</button>
-        <button class="act gray" id="rev_unsel" style="padding:8px 12px;font-size:12.5px">取消选择</button>
+        <button class="act gray" id="rev_bb_apply" style="padding:8px 12px;font-size:var(--fs-2)">应用</button>
+        <button class="act gray" id="rev_drop_sel" style="padding:8px 12px;font-size:var(--fs-2);color:var(--bad)">批量剔除</button>
+        <button class="act gray" id="rev_restore_sel" style="padding:8px 12px;font-size:var(--fs-2);color:var(--good)">批量恢复</button>
+        <button class="act gray" id="rev_sel_vis" style="padding:8px 12px;font-size:var(--fs-2)">全选可见</button>
+        <button class="act gray" id="rev_sel_inv" style="padding:8px 12px;font-size:var(--fs-2)">反选</button>
+        <button class="act gray" id="rev_unsel" style="padding:8px 12px;font-size:var(--fs-2)">取消选择</button>
       </span>
-      <button class="act gray" id="rev_keepall" style="padding:8px 14px;font-size:12.5px">全部保留</button>
-      <button class="act gray" id="rev_dropall" style="padding:8px 14px;font-size:12.5px;color:#f87171">全部剔除</button>
+      <button class="act gray" id="rev_keepall" style="padding:8px 14px;font-size:var(--fs-2)">全部保留</button>
+      <button class="act gray" id="rev_dropall" style="padding:8px 14px;font-size:var(--fs-2);color:var(--bad)">全部剔除</button>
       <button class="act" id="rev_save" style="margin-left:auto">保存并重渲染</button>
       <button class="act gray" id="rev_refresh">刷新</button>
       <button class="act gray" id="rev_hide">隐藏已剔除</button>
@@ -141,7 +141,7 @@ function renderReview(scrollToId = null) {
   };
   $("rev_refresh").onclick = () => {
     if (reviewState.dirty) {
-      confirmModal("刷新将丢弃未保存的修改", `<p style="margin:0;color:var(--dim)">当前有未保存的剔除/编辑，刷新会将其丢弃（产物未变）。继续刷新？</p>`,
+      confirmModal("刷新将丢弃未保存的修改", `<p style="margin:0;color:var(--text-2)">当前有未保存的剔除/编辑，刷新会将其丢弃（产物未变）。继续刷新？</p>`,
         "刷新", () => openReview());
     } else openReview();
   };
@@ -168,7 +168,7 @@ function renderReview(scrollToId = null) {
       : null;
     const target = visIds && visIds.length ? visIds : qs.map(q => q.id);
     confirmModal(filtered ? "剔除筛选结果？" : "全部剔除？",
-      `<p style="margin:0;color:var(--dim)">${filtered
+      `<p style="margin:0;color:var(--text-2)">${filtered
         ? `将把当前筛选后可见的 <b>${target.length} 道题</b>标记为剔除（共 ${qs.length} 题；可逐题恢复后保存）。确定继续？`
         : `将把<b>全部 ${qs.length} 道题</b>标记为剔除（可逐题恢复后保存）。确定继续？`}</p>`,
       "剔除", () => {
@@ -227,7 +227,7 @@ function renderReview(scrollToId = null) {
       <div class="qhead">
         <input type="checkbox" class="revck" title="勾选以批量操作">
         <b>${esc(q.id)}</b><span class="tag">${esc(q.type)}</span><span class="tag">${esc(q.bloom)}</span>
-        ${q.source_type === "真题" ? `<span class="tag" style="background:rgba(245,158,11,.15);color:var(--warn)">${esc((q.source_year ? String(q.source_year).slice(0, 4) + " " : "") + "真题")}</span>` : ""}
+        ${q.source_type === "真题" ? `<span class="tag" style="background:var(--warn-bg);color:var(--warn)">${esc((q.source_year ? String(q.source_year).slice(0, 4) + " " : "") + "真题")}</span>` : ""}
         <span class="hint">${esc(q.subtopic || "")}</span>
         <button class="inlineBtn revact" data-a="drop">${dropped ? "↩ 恢复" : "✗ 剔除"}</button>
         <button class="inlineBtn blue revact" data-a="edit">编辑</button>
@@ -503,7 +503,7 @@ function renderPrompt(p) {
   d.style.marginTop = "12px";
   const ph = (p.placeholders || []).map(x => `<span class="chip" data-ph="${esc(x)}">${esc(x)}</span>`).join("");
   d.innerHTML = `
-    <summary style="font-size:15px">
+    <summary style="font-size:var(--fs-3)">
       <span class="ppm" style="display:inline-flex;margin:0">
         <span class="b">${esc(p.name)}</span><span>${esc(p.role)}</span>${promptStatusBadge(p)}
       </span>
@@ -604,8 +604,8 @@ async function diffPrompt(nameOrEl) {
 
 /* ---- init */
 ratioSum(); bloomSum();
-/* Ctrl/⌘+1..5 快速切换页签（开始/刷题/题库/学习中心/我的） */
-const TAB_KEYS = ["", "start", "study", "bank", "learn", "mine"];
+/* Ctrl/⌘+1..5 快速切换页签（今天 / 刷题 / 错题 / 题库 / 设置）——顺序必须与侧栏、title 提示一致 */
+const TAB_KEYS = ["", "start", "study", "learn", "bank", "mine"];
 window.addEventListener("keydown", e => {
   // A6：焦点在输入框/编辑器时不触发页签快捷键（防打字时被切走/吞键）
   const t = e.target;
