@@ -1,5 +1,4 @@
-/* exported _bankState, bankCreateOpen, bankDelete, bankExportBundle, bankExportPaper,
-   bankGoalLoad, bankGoalRefresh,
+/* exported _bankState, bankCreateOpen, bankDelete, bankExportPaper, bankGoalLoad, bankGoalRefresh,
    bankGoalSave, bankImportPick, bankItemCancel, bankItemDel, bankItemEdit, bankItemNew, bankItemSave,
    bankItemStar, bankManageClose, bankManageOpen, bankManageRender, bankPasteClose, bankPasteOpen,
    bankPreviewPaste, bankRename, bankReparse, bankRetryStart, bankRowHTML, bankStartDrill, bankStats,
@@ -84,8 +83,6 @@ function bankRowHTML(b) {
         <div class="bank-more-menu">
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankStats(this)">统计</button>
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankExportPaper(this)">导出押题卷</button>
-          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankExportBundle(this)"
-            title="导出给手机端（MedKit 刷题 App）的同步包，含答案以便离线判分">导出手机同步包</button>
           ${b.has_source ? `<button class="mini-btn" data-id="${esc(b.id)}" onclick="bankReparse(this)" title="用保存的导入原文重新解析（解析器升级后可修旧数据）">重新解析${b.parser_stale ? " ⟳" : ""}</button>` : ""}
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankRename(this)">重命名</button>
           <button class="mini-btn danger" data-id="${esc(b.id)}" onclick="bankDelete(this)">删除</button>
@@ -409,22 +406,6 @@ function bankExportPaper(btn) {
   const bid = btn && btn.dataset ? btn.dataset.id : btn;
   if (!bid) return;
   window.open(`/api/bank/banks/${encodeURIComponent(bid)}/export/paper`, "_blank", "noopener");
-}
-
-/* ---- 导出手机同步包（`medkit.bundle/v1`） ----
-   与「押题卷」的区别：押题卷是给人做的单文件 HTML；同步包是给**手机端 App** 的 JSON，
-   带题目 id 与答案（手机离线判分）。端点带 Content-Disposition: attachment，
-   故用 <a download> 触发下载，不新开标签页（新开会出现一闪而过的空白页）。 */
-function bankExportBundle(btn) {
-  const bid = btn && btn.dataset ? btn.dataset.id : btn;
-  if (!bid) return;
-  const a = document.createElement("a");
-  a.href = `/api/bank/export/bundle?bid=${encodeURIComponent(bid)}`;
-  a.download = "";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  toast("已导出同步包——把它发到手机，在手机端「数据」页导入", true);
 }
 
 /* ---- 进入练习（作答引擎在 bank-drill.js） ---- */

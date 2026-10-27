@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +22,6 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .. import __version__
 from ..core import bank as banklib
 from ..core import bank_iq
 from ..core import config as cfg
@@ -408,93 +406,6 @@ def import_project(body: ImportProjectBody) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 导出回流（F10）
-@router.get("/api/bank/export/bundle")
-def export_bundle(bid: str = "", include_mistakes: bool = True,
-                  include_attempts: bool = True) -> Response:
-    """题库 → **手机端同步包**（`medkit.bundle/v1`，JSON 下载）。
-
-    与 `/export/paper`、`/banks/{bid}/drill` 的区别，也是本端点存在的唯一理由：
-
-    1. **带答案**。`/drill` 刻意不返回 `answer`（防前端提前作弊），但手机端要**离线判分**，
-       没有答案就判不了。所以这是有意的例外：产物是给「用户自己的设备」的同步包，
-       不是给答题会话的临时载荷。
-    2. **带稳定 id**。手机端的作答记录、错题归档都按 `item.id` 归并；换一次导出就变 id
-       的话，复习进度全部丢失。
-    3. **带作答流水与错题**（可选）。手机端据此接着算「做过几次、对过几次」，
-       而不是从零开始——否则第一次同步就是一次学习记录清零。
-
-    手机端是 PWA + IndexedDB，导入后**完全不依赖本机**（离线刷题）。
-    """
-    if bid:
-        one = banklib.get_bank(bid)
-        if one is None:
-            raise HTTPException(404, "题库不存在")
-        banks = [one]
-    else:
-        banks = banklib.list_banks()
-
-    out_banks: list[dict[str, Any]] = []
-    for b in banks:
-        items = banklib.list_items(str(b["id"]))
-        out_banks.append({
-            "id": b.get("id"), "name": b.get("name"), "subject": b.get("subject") or "",
-            "source": b.get("source") or "",
-            "created_at": b.get("created_at"), "updated_at": b.get("updated_at"),
-            # 只搬手机端用得上的字段：`group` / `data_table` / `image_ref` 是桌面渲染产物，
-            # 手机上没有对应渲染器，带过去只是让包变大。
-            "items": [{
-                "id": it.get("id"), "question": it.get("question") or "",
-                "type": it.get("type") or "", "bloom": it.get("bloom") or "",
-                "subtopic": it.get("subtopic") or "",
-                "options": it.get("options") or [], "answer": it.get("answer") or "",
-                "analysis": it.get("analysis") or "",
-                "case_id": it.get("case_id") or "", "case_stem": it.get("case_stem") or "",
-                "source_year": it.get("source_year") or "",
-                "starred": bool(it.get("starred")), "note": it.get("note") or "",
-                "origin_ref": it.get("origin_ref") or {},
-            } for it in items],
-        })
-
-    payload: dict[str, Any] = {
-        "schema": "medkit.bundle/v1",
-        "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "app_version": __version__,
-        "banks": out_banks,
-    }
-    if include_attempts:
-        rows = banklib.list_attempts()
-        payload["attempts"] = [{
-            "bank_id": a.get("bank_id"), "item_id": a.get("item_id"),
-            "correct": bool(a.get("correct")), "mode": a.get("mode") or "",
-            "occurred_at": a.get("occurred_at"),
-        } for a in rows]
-    if include_mistakes:
-        # 错题本只在桌面端有；带上它手机端才能「接着复习」而不是重新攒。
-        from ..core import library as lib
-        # 字段以 `library.add_mistake` 的白名单为准（该 record 是固定形状，未列出的键会被丢弃）。
-        # 这里**不带 `ease/interval/reps`**：错题本没有 SM-2 状态，那套状态只存在于 vault 的
-        # md front matter。手机端首次导入时按「新卡」处理（今天到期），是诚实的默认值。
-        payload["mistakes"] = [{
-            "id": m.get("id"), "subject": m.get("subject") or "",
-            "chapter": m.get("chapter") or "", "topic": m.get("topic") or "",
-            "question": m.get("question") or "", "options": m.get("options") or [],
-            "answer": m.get("answer") or "", "user_answer": m.get("user_answer") or "",
-            "analysis": m.get("analysis") or "", "bloom": m.get("bloom") or "",
-            "source_year": m.get("source_year") or "",
-            "miss_count": m.get("miss_count") or 0,
-            "learned": bool(m.get("learned")),
-            "mastery": m.get("mastery") or "",
-            "last_tried": m.get("last_tried") or "", "created_at": m.get("created_at"),
-        } for m in lib.list_mistakes()]
-
-    fname = f"medkit-bundle-{datetime.now().strftime('%Y%m%d-%H%M')}.json"
-    return Response(
-        content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        media_type="application/json; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
-
-
 @router.get("/api/bank/banks/{bid}/export/paper")
 def export_paper(bid: str) -> Response:
     """题库 → 交互押题卷 HTML（复用 `render/qbank_html.export_paper_html`，零 LLM）。
