@@ -252,7 +252,65 @@ _V10_DOWN: list[str] = [
     "DROP TABLE IF EXISTS bank_sources",
 ]
 
-MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 版本列表（只增不改）
+# v11（2026-10-27 · v0.22 阶段 2 · 知识点图谱与学习者模型）：
+# - `item_kc`：题 → 知识点映射（多对多）。kc_id 指向 `syllabus_items.id`（稳定哈希）。
+#   **这是全仓缺的「题目主键」**：此前 `bank_items.topic` 与 `QuestionItem.subtopic`
+#   都是自由字符串，同一考点跨题库永远是几个不同的字符串 ⇒ 做不了知识追踪。
+# - `kc_state`：人 × 知识点的状态（**读模型**，可从 `bank_attempts ⋈ item_kc` 重放重建）。
+# - `kc_edges`：知识点之间的关系（前置 / 关联 / 易混）——「打地基」式溯源的基础。
+# - `bank_attempts` 增列 `confidence`：作答前自评 1..5（可空）⇒ 校准曲线的数据源。
+#
+# 回滚策略：新增表可直接 DROP（数据可由作答流水重放重建，不丢用户资产）；
+# `confidence` 列是 ALTER 追加，SQLite 旧版不支持 DROP COLUMN ⇒ 与 v6 同口径，DOWN 留空，
+# 回滚兜底依赖升级前全量自动备份（ADR-005 既有机制）。
+_V11_UP: list[str] = [
+    """
+    CREATE TABLE IF NOT EXISTS item_kc (
+        item_id    TEXT NOT NULL,
+        kc_id      TEXT NOT NULL,
+        source     TEXT NOT NULL DEFAULT 'rule',
+        confidence REAL NOT NULL DEFAULT 0.0,
+        confirmed  INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (item_id, kc_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_item_kc_kc ON item_kc(kc_id)",
+    "CREATE INDEX IF NOT EXISTS idx_item_kc_confirmed ON item_kc(confirmed)",
+    """
+    CREATE TABLE IF NOT EXISTS kc_state (
+        id       TEXT PRIMARY KEY,
+        data     TEXT NOT NULL,
+        subject  TEXT, chapter TEXT, item TEXT,
+        p_mastery REAL, scaffold_level INTEGER,
+        attempts INTEGER, correct INTEGER,
+        due      TEXT, last_seen TEXT, updated_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_kc_state_subject ON kc_state(subject)",
+    "CREATE INDEX IF NOT EXISTS idx_kc_state_due ON kc_state(due)",
+    """
+    CREATE TABLE IF NOT EXISTS kc_edges (
+        src        TEXT NOT NULL,
+        dst        TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        weight     REAL NOT NULL DEFAULT 1.0,
+        source     TEXT NOT NULL DEFAULT 'rule',
+        confirmed  INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (src, dst, kind)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_kc_edges_src ON kc_edges(src)",
+    "ALTER TABLE bank_attempts ADD COLUMN confidence INTEGER",
+]
+
+# v11 可精确回滚三张新表；`bank_attempts.confidence` 列不可精确回滚（同 v6 口径）。
+_V11_DOWN: list[str] = [
+    "DROP TABLE IF EXISTS kc_edges",
+    "DROP TABLE IF EXISTS kc_state",
+    "DROP TABLE IF EXISTS item_kc",
+]
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -307,6 +365,10 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         for stmt in _V10_UP:
             cur.execute(stmt)
         return
+    if ver == 11:
+        for stmt in _V11_UP:
+            cur.execute(stmt)
+        return
     raise ValueError(f"未知迁移版本 {ver}")
 
 
@@ -350,6 +412,10 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 10:
         for stmt in _V10_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 11:
+        for stmt in _V11_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

@@ -301,6 +301,11 @@ def _prepare_items(bid: str, items: list[dict[str, Any]], origin: str,
     for i, raw in enumerate(items or [], 1):
         try:
             rec = bank_iq.normalize_item(raw, bid=bid, origin=origin, now=now)
+            # `bank_items.topic` 是**冗余查询列**，但题记录里的字段名是 `subtopic`
+            # ⇒ 不补这一行的话该列恒为 NULL，`idx_bi_topic` 索引白建，
+            # 任何 `WHERE topic = ?` 都查不到东西（2026-10-27 实施 v0.22 阶段 2 时发现）。
+            if rec is not None:
+                rec["topic"] = rec.get("subtopic") or ""
             if rec is None:
                 stats["skipped"] += 1
                 stats["errors"].append(f"#{i}: 缺题干或答案，已跳过")
@@ -398,6 +403,7 @@ def update_item(iid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
                                      origin=str(row.get("origin") or "manual"), now=_now())
         if rec is None:
             raise ValueError("题干不能为空")
+        rec["topic"] = rec.get("subtopic") or ""   # 冗余查询列（见 _prepare_items 的说明）
         rec["id"] = row.get("id")            # id 不可改（作答流水按它关联）
         rec["created_at"] = row.get("created_at") or rec["created_at"]
         dbs.put_row(cur, "bank_items", rec, _ITEM_COLS)

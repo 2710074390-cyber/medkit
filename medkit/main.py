@@ -38,6 +38,7 @@ from .routers import config as r_config
 from .routers import data as r_data
 from .routers import diagnostics as r_diagnostics
 from .routers import gap as r_gap
+from .routers import kc as r_kc
 from .routers import library as r_library
 from .routers import ocr as r_ocr
 from .routers import parse as r_parse
@@ -333,6 +334,7 @@ app.include_router(r_config.router)
 app.include_router(r_data.router)
 app.include_router(r_diagnostics.router)
 app.include_router(r_gap.router)
+app.include_router(r_kc.router)
 app.include_router(r_library.router)
 app.include_router(r_ocr.router)
 app.include_router(r_parse.router)

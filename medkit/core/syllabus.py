@@ -378,6 +378,17 @@ def chapter_items_text(subject: str = "", limit: int = 800,
     return "\n".join(lines)[:limit]
 
 
+def list_kc_items(subject: str = "", source: str = "all") -> list[dict[str, Any]]:
+    """**可挂载的知识点**（`kind='item'` 的条目），含稳定 id。
+
+    v0.22 阶段 2（知识点图谱）：`core/kc.py` 用它当知识点池——
+    `id`（`sha1[:16]`）就是全仓缺失的**题目主键**的锚点。
+    章级行（`kind='chapter'`）**不进池**：它们是分组，不是可挂载的知识点。
+    """
+    rows = _rows(subject=subject, source=source)
+    return [r for r in rows if str(r.get("kind") or "") == "item"]
+
+
 def list_subjects(source: str = "all") -> list[dict[str, Any]]:
     """有大纲条目的科目清单（含章/条目计数；source 限定 all|seed|teacher）。"""
     dbs.migrate()   # U-09：schema 按需确保（原由路由层调用，收敛到 core）

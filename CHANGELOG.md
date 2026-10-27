@@ -12,6 +12,34 @@
 
 ### Added
 
+- **知识点图谱与学习者模型（v0.22 阶段 2 · 新增）**：`core/kc.py` + `routers/kc.py` + 迁移 v11。
+  补上两处结构性断点——**题目第一次有了稳定的知识点身份**、**学习者模型第一次看得见「对」**。
+
+  - **题目主键**：`item_kc` 把题挂到 `syllabus_items.id`（`sha1[:16]` 稳定哈希）上。此前
+    `bank_items.topic` 与 `QuestionItem.subtopic` 都是自由字符串，同一考点跨题库永远是几个不同字符串
+    ⇒ 做不了知识追踪、无法聚合、无法追溯前置知识。
+  - **映射三段式 + 人工确认门**：规则精确匹配（归一后完全相等）⇒ **自动确认**；
+    规则模糊匹配（字符 bigram Jaccard ≥ 0.45）⇒ **必须人工点确认**；LLM 兜底通道未实现 ⇒
+    **降级为规则并在 `notes` 里如实说明**，不报错（BYOK 场景下「没 Key」是常态）。
+    **为什么只让 exact 自动确认**：自动确认意味着「用户没看过、系统就认定挂对了」——
+    而「诊断」与「治疗」字符上极像却是两个考点，挂错会让掌握度归到错的知识点，比不挂更糟。
+  - **学习者模型**：`kc_state` 承接**全部**作答（对与错），BKT 四参数（已掌握/学习/失误/猜测）
+    + 经验贝叶斯收缩（先验 0.30、权重 2 ⇒ 第一次观测只占 1/3，8 次后先验自动失效）。
+    **为什么不上深度模型**：公开 benchmark 上 SAINT 比 BKT 高 0.06–0.09 AUC，但 SAINT 需要 1,000 万次交互，
+    单用户本地永远到不了——**样本量决定选型，不是先进程度决定**。
+  - **`kc_state` 是读模型不是真相**：真相是 append-only 的 `bank_attempts`；状态可从
+    `bank_attempts ⋈ item_kc` 重放重建（与 vault 域「SQLite 只是可弃索引」同一原则）。
+  - **端点**（`/api/kc/*`）：`items`（题目 + 映射状态）、`items/{id}/map`（**唯一写入口**，覆盖式）、
+    `backfill`（幂等可重入，默认 dry_run）、`state`（掌握概率 + 优先级）、
+    `calibration`（自评 → 实际正确率 + Brier，样本 < 10 时 `insufficient=true`）、`overview`、`edges`。
+    开关 `features.kc` 关闭时整组 404（服务端下线，前端入口同批隐藏）。
+  - **修一个潜在缺陷**：`bank_items.topic` 是冗余查询列，但题记录里的字段名是 `subtopic` ⇒
+    该列**恒为 NULL**，`idx_bi_topic` 索引白建，任何 `WHERE topic = ?` 都查不到。
+    已在归一后补齐（`core/bank.py` 的 `_prepare_items` / `update_item`）。
+  - 守护：`tests/test_kc.py`（32 项）——BKT 方向与黄金值、收缩冷启动/收敛、匹配三态、
+    **exact 才自动确认而 fuzzy 必须人工确认**、`kc_state` 冗余列与 `data` 逐值一致（双写不变量）、
+    `bank_items.topic` 查询列有值、接口契约（含 `features.kc=false` ⇒ 404）。
+
 - **复习调度升级 FSRS（ADR-004 重新接线 · v0.22 阶段 1）**。
   `core/scheduler.py` 恢复——**全部复习调度数学的单一真相来源**：FSRS（默认）+ SM-2（legacy）并列，
   `/api/vault/scheduler` 可查可切（`GET` / `PUT`），配置项 `scheduler` / `fsrs_retention` / `fsrs_max_interval`。
