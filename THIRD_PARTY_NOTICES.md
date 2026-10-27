@@ -31,7 +31,7 @@
 | annotated-types | 0.7.0 | MIT License |
 | anyio | 4.13.0 | 见包内 LICENSE |
 | cached-property | 2.0.1 | BSD |
-| certifi | 2026.4.22 | MPL-2.0 |
+| certifi | 2026.10.23 | MPL-2.0 |
 | chevron | 0.14.0 | MIT |
 | click | 8.4.1 | 见包内 LICENSE |
 | colorama | 0.4.6 | BSD License |

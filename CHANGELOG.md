@@ -38,6 +38,16 @@
   - 科目候选从**文件名带「题库 / 押题卷」的兄弟 md** 推断——实测按「最短 md 名」会把整批科目
     认成 `AGENT4_修改声明`（修改声明/溯源表比 `ALL_questions_FIXED.md` 短），题库名跟着变脏。
 
+### Fixed
+
+- **依赖安全：`certifi` 2026.4.22 → 2026.10.23（PYSEC-2026-4320 修复线）**。
+  CI 的 `Dependency vulnerability audit (U-16)` 自 v0.20.0 起一直红在这一条（release 提交
+  `6db0acc` 同样红），而它在 `Test` 步骤**之前** ⇒ 两个 verify job 的单元测试、迁移、完整性
+  检查全被跳过，等于发布前跑的是「只有 lint + mypy」。
+  同步了三处：`requirements.txt`（意图声明）、`requirements.lock`（wheel + sdist 双哈希，
+  已用 `pip download --require-hashes` 实测可装）、`THIRD_PARTY_NOTICES.md`（版本表）。
+  `test_lock_closure` 7 项通过（含闭包一致性与声明条目计数）。
+
 ## [0.20.0] - 2026-10-27
 
 > 主题：**前端改进（可访问性 / 一致性 / 效率）+ 后端全量审查修复**。
