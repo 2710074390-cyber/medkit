@@ -10,6 +10,34 @@
 
 > 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Added
+
+- **题库同步：从 MedAgentWork 项目拉取最新题库（零 LLM）**。
+  「刷题 → 我的题库 → ⇩ 同步 MedAgentWork 题库」：列远端批次（科目 / 题数 / 未同步·有更新·已同步）
+  → 勾选 → 并入本地题库。`core/banksync.py` + `routers/banksync.py`
+  （`GET /api/bank/sync/sources`、`GET /api/bank/sync/state`、`POST /api/bank/sync/run`）+ `web/js/bank-sync.js`。
+
+  - **只认完整题目文件**：`最终产物/<batch>/ALL_questions_FIXED.json` 与 `最终产物/押题卷_*.json`。
+    `question_bank/registry.jsonl` 虽有 6490 条，但每条只有 `stem_snippet`（题干片段），
+    **没有完整题干**，不能当题库用——只用它的 `registry_meta.json` 报「远端共 N 题」的量级。
+  - **不复用通用 JSON 导入**（会降级）：上游存在两代题面结构（v1 `question_text`/`correct_answer`、
+    v2 `stem`/`answer`）与押题卷的第三种写法（`qid`/`system`），三者统一在 `adapt_item()` 收敛，
+    并保住通用通道会丢的字段：题型（否则 B1/A2/A3/A4 会被按答案字母数重推、全塌成 A1）、
+    Bloom（英文值译回中文）、考点（`topic`→`subtopic`）、教材页码（→`origin_ref.page`）、
+    考研真题出处与年份（`kaoyan_origin`→`source_type`/`source_year`）。
+  - **幂等、且不覆盖用户改动**：按文件 `sha` 落状态（`~/.medkit/banksync/state.json`），
+    远端未变且题库还在 ⇒ `unchanged`（零下载）；变了才下载并 `dedupe=update` 合并，
+    同题**保留原 `id`** ⇒ 作答流水 / 收藏 / 笔记不丢。
+  - **逐源独立成败**：一份失败不阻断其余（11 份里坏 1 份，另外 10 份照常入库，面板逐条报错）；
+    限流（匿名 60 次/小时）命中后**不再逐份重试**——额度不会在循环里恢复。
+  - **网络只走 `api.github.com`**：实测 `raw.githubusercontent.com` 在目标环境 SSL 握手失败
+    （`curl` exit 35），故一律用 Blob API（base64）取文件；可选 `GITHUB_TOKEN` / 配置
+    `github_token` 把限额提到 5000 次/小时。
+  - **不内置、不随包分发**：题目按需从公开仓库下载；与「导入题库文件」并存，职责不同
+    （任意来源 vs 固定来源且保留上游字段）。
+  - 科目候选从**文件名带「题库 / 押题卷」的兄弟 md** 推断——实测按「最短 md 名」会把整批科目
+    认成 `AGENT4_修改声明`（修改声明/溯源表比 `ALL_questions_FIXED.md` 短），题库名跟着变脏。
+
 ## [0.20.0] - 2026-10-27
 
 > 主题：**前端改进（可访问性 / 一致性 / 效率）+ 后端全量审查修复**。

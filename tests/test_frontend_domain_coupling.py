@@ -63,7 +63,7 @@ PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
 # 2026-10-10 题库刷题域（bank）：**核心侧**（与 EP-01 同级）——导入自备题库 + 应用内作答。
 # 剥离生成链后它也必须能独立工作 ⇒ 对它同样零容忍引用 PLUGIN 独有符号。
-BANK = ("bank.js", "bank-import.js", "bank-drill.js")
+BANK = ("bank.js", "bank-import.js", "bank-sync.js", "bank-drill.js")
 
 # 顶层声明（行首；与 eslint.config.js 的 TOP_LEVEL_RE 同口径）
 _TOP_DECL = re.compile(r"^(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)", re.M)

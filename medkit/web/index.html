@@ -128,10 +128,12 @@ try {
         <div class="cardh"><h2>我的题库</h2><span class="hint" id="bank_meta"></span></div>
         <div class="hint" style="margin-bottom:var(--space-2)">
           导入<b>你自己准备</b>的题库（md / txt / json / csv），MedKit 只做本地解析与练习——<b>不内置、不分发任何题库</b>，数据权利归各自来源方。
+          「同步 MedAgentWork 题库」会按需从公开仓库下载题目，不随安装包分发。
           想从教材生成新题？去「题库」页签（出题工坊）。
         </div>
         <div class="btns" style="flex-wrap:wrap">
           <button class="act" id="btn_bank_import" onclick="bankImportPick()">⇧ 导入题库文件</button>
+          <button class="act gray" onclick="bankSyncOpen()" title="从 MedAgentWork 公开仓库拉取最新题库（按批次勾选）">⇩ 同步 MedAgentWork 题库</button>
           <button class="act gray" onclick="bankPasteOpen()">粘贴文本导入</button>
           <button class="act gray" onclick="bankProjectOpen()">从出题项目导入</button>
           <button class="act gray" onclick="bankCreateOpen()">＋ 新建空题库</button>
@@ -786,6 +788,9 @@ try {
      （守卫见 tests/test_frontend_domain_coupling.py）。 -->
 <script defer src="/assets/js/bank.js"></script>
 <script defer src="/assets/js/bank-import.js"></script>
+<!-- 题库同步（MedAgentWork 远端 → 本地题库）：只依赖 app.js 的 $/esc/toast/api 与
+     ui-modal 的 confirmModal，属 bank 域核心侧（不引用生成链插件符号）。 -->
+<script defer src="/assets/js/bank-sync.js"></script>
 <script defer src="/assets/js/bank-drill.js"></script>
 <!-- 命令面板（v0.19 S4）：只依赖 app.js 的 $ / esc / showTab / toast，
      命令的 run 里调用的业务函数一律"点时才解析"，故可放最后一片。 -->

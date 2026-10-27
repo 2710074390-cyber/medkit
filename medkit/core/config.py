@@ -93,6 +93,10 @@ DEFAULTS: dict[str, Any] = {
     "provider_keys": {},   # v0.5.1：多服务商 Key 存档 {pid: {api_key, base_url, model_gen, model_qc}}
     "features": {},        # v0.8 (IMP-02)：WP 级 feature flag 节 {name: bool}，缺省 True（state.flag 读取）
     "run_token_limit": 0,  # W10（2026-10-02）：单次运行 token 硬上限（0 = 不限制）；越线中止运行
+    # 2026-10-27（题库同步）：GitHub 只读 Token（可选，空 = 匿名）。匿名 60 次/小时，
+    # 一次题库同步约 13 次 ⇒ 连点两轮就会撞限流；填了可到 5000 次/小时。
+    # 只用于读公开仓库，不需要任何 scope（public_repo 都不必）。
+    "github_token": "",
 }
 
 # v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行模型自动迁移

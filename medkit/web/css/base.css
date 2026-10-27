@@ -288,7 +288,15 @@
   .modal h3{font-size:var(--fs-4);margin-bottom:8px;color:var(--accent-strong)}
   .modal p{font-size:var(--fs-2);color:var(--text-2);line-height:1.8}
   .modal .btns{margin-top:16px}
-  .modal{max-width:520px}
+  /* 长内容面板的按钮**吸底**：`.modal` 现在会滚动（见上），不吸底的话「取消 / 关闭」
+     会被滚出视口——面板开到一半找不到出口是硬伤（2026-10-27 题库同步面板实测）。 */
+  .modal > .btns{position:sticky;bottom:-24px;z-index:2;background:var(--surface-2);
+    padding:12px 0 4px;margin-bottom:-8px;border-top:1px solid var(--line-hair)}
+  .modal{max-width:520px;
+    /* 2026-10-27（题库同步面板实测）：此前只有 max-width，没有高度约束——一旦面板内容
+       超过视口（同步面板 12 行表格 + 工具条 + 说明 ≈ 900px），标题与底部按钮会被**裁到视口外**，
+       而 .modalMask 是 flex 居中、不滚动的。加高度上限 + 面板内滚动，长内容才可用。 */
+    max-height:calc(100vh - 48px);overflow-y:auto;overflow-x:hidden}
   /* ---- Ctrl/⌘+K 命令面板（v0.19 S4）：键盘优先的"入口总览" ----
      它同时是**可见导航的兜底**——侧栏有一个按钮能打开它，不必先记住快捷键。 */
   .paletteMask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;
