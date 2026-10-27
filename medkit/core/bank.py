@@ -36,7 +36,8 @@ from .fsutil import write_json_atomic
 
 _BANK_COLS = ("name", "subject", "source", "created_at", "updated_at")
 _ITEM_COLS = ("bank_id", "qtype", "topic", "answer", "origin", "created_at")
-_ATT_COLS = ("bank_id", "item_id", "session_id", "correct", "mode", "occurred_at")
+_ATT_COLS = ("bank_id", "item_id", "session_id", "correct", "mode", "occurred_at",
+             "confidence")
 _SRC_COLS = ("bank_id", "fmt", "parser_version", "imported_at")
 
 # 单次批量上限（对齐 routers 侧 mistakes 的 500 条口径；题库一次导入千题要分批）
@@ -420,21 +421,78 @@ def set_starred(iid: str, starred: bool) -> Optional[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- 作答流水
-def record_attempt(bank_id: str, item_id: str, user_answer: str = "",
-                   correct: bool = False, mode: str = "practice",
-                   session_id: str = "", secs: int = 0) -> dict[str, Any]:
-    """记一条作答流水（append-only）。返回落库记录。"""
-    ensure_ready()
+def _norm_confidence(confidence: Any) -> int:
+    """自评置信度归一到 **0（未采集）或 1..5**。非法值一律当未采集，不抛错。
+
+    为什么不抛错：置信度是**可选**输入（前端允许「跳过」）。为了一个可跳过的字段
+    让整次判分失败，是把自己的可选功能变成别人的必填项。
+    """
+    try:
+        v = int(confidence)
+    except (TypeError, ValueError):
+        return 0
+    return v if 1 <= v <= 5 else 0
+
+
+def _put_attempt_in(cur: Any, bank_id: str, item_id: str, user_answer: str,
+                    correct: bool, mode: str, session_id: str, secs: int,
+                    confidence: int) -> dict[str, Any]:
+    """在**调用方的事务里**写一条流水（不自己开事务，理由见 `kc.put_state_in`）。"""
     rec = {
         "id": _new_id("at"),
         "bank_id": str(bank_id or ""), "item_id": str(item_id or ""),
         "session_id": str(session_id or ""), "user_answer": str(user_answer or ""),
         "correct": bool(correct), "mode": str(mode or "practice"),
-        "secs": int(secs or 0), "occurred_at": _now(),
+        "secs": int(secs or 0), "confidence": _norm_confidence(confidence),
+        "occurred_at": _now(),
     }
-    with dbs.tx(write=True) as cur:
-        dbs.put_row(cur, "bank_attempts", rec, _ATT_COLS)
+    dbs.put_row(cur, "bank_attempts", rec, _ATT_COLS)
     return rec
+
+
+def record_attempt(bank_id: str, item_id: str, user_answer: str = "",
+                   correct: bool = False, mode: str = "practice",
+                   session_id: str = "", secs: int = 0,
+                   confidence: int = 0) -> dict[str, Any]:
+    """记一条作答流水（append-only）。返回落库记录。
+
+    只写流水、**不动学习者状态**——需要两者原子一致时用 `record_attempt_with_kc`。
+    """
+    ensure_ready()
+    with dbs.tx(write=True) as cur:
+        return _put_attempt_in(cur, bank_id, item_id, user_answer, correct,
+                               mode, session_id, secs, confidence)
+
+
+def record_attempt_with_kc(bank_id: str, item_id: str, user_answer: str = "",
+                           correct: bool = False, mode: str = "practice",
+                           session_id: str = "", secs: int = 0,
+                           confidence: int = 0,
+                           kc_item_id: str = "") -> dict[str, Any]:
+    """**写流水 + 更新 `kc_state`，同一事务**。返回 `{"attempt", "kc"}`。
+
+    这是 v0.22 阶段 3 的核心：审计断点 A（「答对 50 题，掌握度纹丝不动」）的根治点。
+
+    ## 为什么必须同事务
+
+    两次独立写入之间失败，会留下「有流水、无状态」的裂口：流水是真相、状态是读模型，
+    读模型落后一步**不会自愈**（除非全量重放）。同事务后，要么两者都在，要么都不在。
+
+    ## 为什么放在 core 而不是 routers
+
+    本仓 U-09 守卫禁止路由层写 `dbs.tx(` / 裸 SQL——事务边界归 core。
+    路由层只负责参数校验与响应拼装。
+
+    `kc_item_id` 用于「流水 id ≠ 映射 id」的场景（错题重练记的是错题 id，
+    但它可能带 `source_ref.item_id` 指向原题）。
+    """
+    ensure_ready()
+    from . import kc as kclib
+    with dbs.tx(write=True) as cur:
+        rec = _put_attempt_in(cur, bank_id, item_id, user_answer, correct,
+                              mode, session_id, secs, confidence)
+        kc = kclib.apply_attempt_in(cur, item_id, bool(correct), kc_item_id=kc_item_id)
+    return {"attempt": rec, "kc": kc}
 
 
 def list_attempts(bank_id: str = "", item_id: str = "") -> list[dict[str, Any]]:
@@ -559,8 +617,8 @@ def drill_items(bid: str, mode: str = "all", limit: int = 0) -> list[dict[str, A
 # ---------------------------------------------------------------- 判分与回流
 def grade(bid: str, item_id: str, user_answer: str, session_id: str = "",
           mode: str = "practice", secs: int = 0,
-          sync_mistake: bool = True) -> dict[str, Any]:
-    """判一道题：比对答案 → 记流水 → （判错时）回流错题本。返回判分结果。
+          sync_mistake: bool = True, confidence: int = 0) -> dict[str, Any]:
+    """判一道题：比对答案 → 记流水 + 更新知识点状态 → （判错时）回流错题本。
 
     ## 判分口径（与押题卷同源，见 `render/qbank_html.py` 的 `answersEqual`）
 
@@ -571,14 +629,21 @@ def grade(bid: str, item_id: str, user_answer: str, session_id: str = "",
 
     `sync_mistake=True` 且判错 → 复用 `library.sync_from_paper()`（题面 + `user_answer`），
     与押题卷「同步错题到错题本」走同一条通道 ⇒ 不会绕过任何既有口径。
+
+    ## 学习者状态（v0.22 阶段 3）
+
+    流水与 `kc_state` **同事务**写入（`record_attempt_with_kc`）——**答对也更新状态**，
+    不再只在判错时回流。`confidence` 是作答前的自评 1..5（0 = 未采集，允许跳过）。
     """
     ensure_ready()
     item = get_item(item_id)
     if item is None or str(item.get("bank_id") or "") != str(bid or ""):
         raise KeyError("题目不在该题库内")
     correct = answers_equal(user_answer, str(item.get("answer") or ""))
-    record_attempt(bid, item_id, user_answer=user_answer, correct=correct,
-                   mode=mode, session_id=session_id, secs=secs)
+    wrote = record_attempt_with_kc(bid, item_id, user_answer=user_answer,
+                                   correct=correct, mode=mode,
+                                   session_id=session_id, secs=secs,
+                                   confidence=confidence)
     synced = 0
     if not correct and sync_mistake:
         from . import library as lib  # 局部导入：回流通道与押题卷共用
@@ -605,6 +670,9 @@ def grade(bid: str, item_id: str, user_answer: str, session_id: str = "",
         "source_type": str(item.get("source_type") or ""),
         "source_year": str(item.get("source_year") or ""),
         "synced_mistakes": synced,
+        # v0.22 阶段 3：这道题影响了哪些知识点、各自掌握度怎么变（未映射则 mapped=false）
+        "kc": wrote["kc"],
+        "attempt_id": str(wrote["attempt"].get("id") or ""),
     }
 
 

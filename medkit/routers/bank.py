@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -124,6 +124,7 @@ class GradeBody(BaseModel):
     session_id: str = ""
     mode: str = "practice"
     secs: int = 0
+    confidence: Optional[int] = None    # 作答前自评 1..5；None/0 = 未采集（可跳过）
 
 
 @router.get("/api/bank/banks")
@@ -296,13 +297,21 @@ def drill(bid: str, mode: str = "all", limit: int = 0) -> dict[str, Any]:
 
 @router.post("/api/bank/grade")
 def grade(body: GradeBody) -> dict[str, Any]:
-    """判一道题：比对答案 → 记流水 → 判错回流错题本。返回判分结果（含解析）。"""
+    """判一道题：比对答案 → 记流水 + 更新知识点状态 → 判错回流错题本。返回判分结果（含解析）。
+
+    响应里的 `kc` 段说明本题影响了哪些知识点（`mapped=false` = 这题还没映射到知识点，
+    不是错误，只是该题暂不参与掌握度）。`confidence` 越界一律 **400**，不静默吞掉——
+    它是可选字段，但**填了就得对**，否则校准曲线会被脏数据污染。
+    """
     if not body.item_id:
         raise HTTPException(400, "缺少题目 id")
+    if body.confidence is not None and body.confidence != 0 and not 1 <= body.confidence <= 5:
+        raise HTTPException(400, "confidence 必须是 1~5（或留空表示不采集）")
     try:
         res = banklib.grade(body.bank_id, body.item_id, body.user_answer,
                             session_id=body.session_id, mode=body.mode,
-                            secs=max(0, int(body.secs or 0)))
+                            secs=max(0, int(body.secs or 0)),
+                            confidence=int(body.confidence or 0))
     except KeyError as e:
         raise HTTPException(404, str(e.args[0] if e.args else "题目不存在"))
     return {"ok": True, **res}

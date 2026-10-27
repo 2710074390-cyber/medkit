@@ -12,6 +12,38 @@
 
 ### Added
 
+- **作答真正进入学习者模型（v0.22 阶段 3 · 断点 A 根治）**。
+  审计断点 A 是「答对 50 题，掌握度纹丝不动」——`bank_attempts` 只是流水，
+  掌握度只由**错题**聚合（`_touch_knowledge_in` 记的 `correct` 是「错题后来被攻下」，
+  不是「答对」）。本轮把全量作答接进 `kc_state`。
+
+  - **同事务**：`core/bank.py::record_attempt_with_kc` 在**一个** `dbs.tx(write=True)` 里
+    写流水与状态。两次独立写入之间失败会留下「有流水、无状态」的裂口，而读模型落后一步
+    **不会自愈**。`kc_state` 的写入因此拆出接受外部游标的 `put_state_in(cur, …)` /
+    `apply_attempt_in(cur, …)`——`dbs.tx()` 是 `BEGIN IMMEDIATE`，**不可重入**。
+    **编排放 core 而非 routers**：U-09 守卫禁止路由层出现 `dbs.tx(`（事务边界归 core）。
+  - **薄弱项表改口径**：`library.get_mastery_view` 优先读 `kc_state.p_mastery`，
+    对不上的老知识点**保留 legacy 分数**并标 `score_source`（`kc` / `legacy`）。
+    刻意是**覆盖**不是**替换**——整表替换会让未映射的考点从界面消失，那不是修口径，是丢数据。
+  - **准备度**：`dashboard.summary()` 新增 `readiness`（`ready` / `kcs` / `avg_mastery` /
+    `weakest[3]`）。无流水时 `ready=false`——不拿 0% 冒充准备度；**不做分数预测**
+    （单用户本地没有常模，绝对分是编的）。
+  - **置信度**：`bank_attempts.confidence` 落库；`/api/bank/grade` 与
+    `/api/library/mistakes/{id}/retry` 都接受 1..5，留空 = 不采集；
+    显式填非法值 **400**（两个入口同口径），核心层则一律归 0（可选字段不绑架内部调用方）。
+  - **`grade` 响应新增 `kc` 摘要**：`{mapped, item_id, kcs:[{kc_id,p_before,p_mastery,
+    delta,attempts,correct}]}` + `attempt_id`。`mapped=false` 表示这题还没映射到知识点
+    ——**不是错误**，只是暂不参与掌握度。
+  - **修一个溯源缺陷**：`library.sync_from_paper` 原来无条件写 `source_ref =
+    {pid, question_id, sid}`，把题库回流塞的 `bank_id` / `item_id` **覆盖掉了** ⇒
+    错题重练永远找不到原题、掌握度归不到知识点（「练了不算」）。改为 `_merge_source_ref`
+    **合并**：标准三键优先，调用方自带键保留；重练侧同时认 `item_id` 与 `question_id`。
+  - 守护：`tests/test_kc_state.py`（16 项）——答对**上升**/答错**下降**的方向断言、
+    **注入状态写入失败 ⇒ 流水一并回滚**（成功路径测不出同事务，只能靠注入）、
+    `kc_state` 与「`bank_attempts ⋈ item_kc` 重放」逐值相等（`p_mastery`/`attempts`/`correct`）、
+    未映射题照常判分、置信度归零与 400 两处口径、薄弱项表覆盖与 legacy 回退、
+    重练经 `source_ref` 归位、**不得存在 `attempt_kc` 表**（避免第二个真相）。
+
 - **知识点图谱与学习者模型（v0.22 阶段 2 · 新增）**：`core/kc.py` + `routers/kc.py` + 迁移 v11。
   补上两处结构性断点——**题目第一次有了稳定的知识点身份**、**学习者模型第一次看得见「对」**。
 

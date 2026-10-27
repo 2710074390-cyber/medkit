@@ -723,6 +723,20 @@ def batch_add(records: list[dict[str, Any]]) -> int:
     return added
 
 
+def _merge_source_ref(extra: Any, pid: Optional[str], q: dict[str, Any]) -> dict[str, Any]:
+    """合并溯源键：标准三键（pid/question_id/sid）+ 调用方自带键（如题库的 bank_id/item_id）。
+
+    调用方**显式**塞进 `source_ref` 的键代表它知道这题从哪来，不该被统一格式覆盖掉。
+    冲突时以标准三键为准（`pid` 由参数决定，`question_id`/`sid` 由题目决定）。
+    """
+    ref: dict[str, Any] = {"pid": pid, "question_id": q.get("id"), "sid": q.get("sid")}
+    if isinstance(extra, dict):
+        for k, v in extra.items():
+            if k not in ref and v not in (None, ""):
+                ref[str(k)] = v
+    return ref
+
+
 def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None, source: str = "paper") -> int:
     """押题卷/题库判错同步：把判错的（结构化）题目转成错题记录。返回新增条数。
 
@@ -746,8 +760,10 @@ def sync_from_paper(questions: list[dict[str, Any]], pid: Optional[str] = None, 
             continue
         rows.append({
             "source": source,
-            "source_ref": {"pid": pid, "question_id": q.get("id"),
-                           "sid": q.get("sid")},
+            # 调用方可能已经带了溯源键（题库回流会塞 `bank_id` / `item_id`）。
+            # **合并而不是覆盖**：覆盖会把「这题是从哪个题库哪道题来的」抹掉——
+            # 错题重练要靠它把掌握度归到原题的知识点（v0.22 阶段 3 实测踩到）。
+            "source_ref": _merge_source_ref(q.get("source_ref"), pid, q),
             "subject": q.get("subject") or str((q.get("source_ref") or {}).get("subject") or ""),
             "chapter": q.get("chapter") or str(q.get("sid") or ""),
             "topic": str(q.get("subtopic") or "").strip(),
@@ -1428,8 +1444,57 @@ def _drop_knowledge_of_in(st: dict[str, Any], rec: dict[str, Any]) -> None:
         st["dirty"]["knowledge"] = True
 
 
+def _overlay_kc_rows(kps: list[dict[str, Any]], subject: str = "") -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """把 `kc_state` 的掌握度**覆盖**到薄弱项表上，返回 (行, 来源计数)。
+
+    ## 为什么是「覆盖」而不是「替换」
+
+    `kc_state` 只有**映射过知识点**的题才写得出状态；而错题本里还有大量题从未映射
+    （用户没回填、或题目是手录的）。整表替换会让这些考点从薄弱项表里**凭空消失**——
+    那不是修好了口径，是丢了数据。所以：
+    - 能按归一后的名字对上 → **用 kc 的 `p_mastery` 覆盖分数**（这是真实掌握率）；
+    - 对不上 → 保留 legacy 行，`score_source="legacy"`；
+    - kc 有、legacy 没有 → **补一行**（题库里练过的考点，错题本未必有）。
+
+    ## 为什么用名字而不是 id 对
+
+    legacy 的 knowledge 键是**自由字符串**（`chapter·topic` 或 tag），不是 `syllabus_items.id`；
+    两者之间唯一的桥就是文本。归一口径必须与映射同源（`kc.norm_text`），
+    否则「同一考点两种写法」会在这里分裂成两行。
+    """
+    from . import kc as kclib  # 局部导入：避免 core 模块间的循环依赖
+
+    rows = kclib.knowledge_rows(subject)
+    if not rows:
+        return kps, {"kc": 0, "legacy": len(kps)}
+    by_name = {kclib.norm_text(str(k.get("name") or "")): k for k in kps}
+    added = 0
+    for row in rows:
+        key = kclib.norm_text(str(row.get("name") or ""))
+        hit = by_name.get(key)
+        if hit is not None:
+            hit["score"] = row["score"]
+            hit["score_source"] = "kc"
+            hit["kc_id"] = row.get("kc_id") or ""
+            # 计数口径以「真实作答次数」为准（legacy 只有「错了几次」）
+            hit["attempts"] = row.get("attempts", 0)
+            hit["correct"] = row.get("correct", 0)
+            hit["miss"] = max(int(hit.get("miss") or 0), int(row.get("miss") or 0))
+        else:
+            kps.append(dict(row))
+            added += 1
+    n_kc = sum(1 for k in kps if k.get("score_source") == "kc")
+    return kps, {"kc": n_kc, "legacy": len(kps) - n_kc, "added": added}
+
+
 def get_mastery_view(subject: str = "") -> dict[str, Any]:
-    """掌握度驾驶舱：知识点全貌 + 全局统计（C1：可选按科目过滤，供概览顶部与闭环同口径）。"""
+    """掌握度驾驶舱：知识点全貌 + 全局统计（C1：可选按科目过滤，供概览顶部与闭环同口径）。
+
+    **v0.22 阶段 3 起优先读 `kc_state`**：`score` 用 BKT 后验 `p_mastery`（看得见「对」），
+    对不上的老知识点回退 `compute_score`（只看错题攻克率）。
+    每行带 `score_source`（`"kc"` / `"legacy"`）——**来源必须可分辨**，
+    否则「为什么这条降了」没法解释。
+    """
     kps = _load(KNOWLEDGE_FILE)
     # U-22：先剔除脏数据（???/编码损坏）——不参与掌握率分母与推荐排序
     kps = [k for k in kps if is_kp_dirty(k) is False]
@@ -1437,8 +1502,13 @@ def get_mastery_view(subject: str = "") -> dict[str, Any]:
         kps = [k for k in kps if k.get("subject") == subject]
     for kp in kps:
         kp.setdefault("score", 0.0)
+        kp.setdefault("score_source", "legacy")
+    kps, sources = _overlay_kc_rows(kps, subject)
+    for kp in kps:
         kp["state"] = compute_state(kp["score"])
         kp["priority"] = compute_priority(kp["score"], kp.get("miss", 0), kp.get("last_tried"))
+        kp.setdefault("attempts", 0)
+        kp.setdefault("correct", 0)
     stats = {
         "total_knowledge": len(kps),
         "weak": sum(1 for k in kps if k["state"] == "weak"),
@@ -1446,6 +1516,8 @@ def get_mastery_view(subject: str = "") -> dict[str, Any]:
         "solid": sum(1 for k in kps if k["state"] == "solid"),
         "mastered": sum(1 for k in kps if k["state"] == "mastered"),
         "total_mistakes": count_mistakes(subject),
+        # 口径来源计数：kc = 有真实作答流水支撑的考点；legacy = 仅由错题推出来的
+        "score_sources": sources,
     }
     kps.sort(key=lambda k: k["priority"], reverse=True)
     return {"knowledge": kps, "stats": stats}

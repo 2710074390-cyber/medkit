@@ -8,7 +8,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -179,6 +179,7 @@ def learn_mistake(mid: str, learned: bool = True) -> dict[str, Any]:
 
 class RetryBody(BaseModel):
     user_answer: str = ""
+    confidence: Optional[int] = None    # 作答前自评 1..5；None/0 = 未采集（可跳过）
 
 
 @router.post("/api/library/mistakes/{mid}/retry")
@@ -187,7 +188,14 @@ def retry_mistake(mid: str, body: RetryBody) -> dict[str, Any]:
 
     判分口径与题库练习 / 押题卷**同源**（`core.bank.answers_equal`，集合比较）；
     返回答案与解析 ⇒ 本入口同时充当「查看解析」。
+
+    v0.22 阶段 3：流水与 `kc_state` **同事务**写入（`record_attempt_with_kc`）；
+    若这道错题带着 `source_ref.item_id`（从题库/押题卷回流来的），知识点状态就归到**原题**——
+    否则重练永远只改错题本、不影响掌握度，等于「练了不算」。
     """
+    if body.confidence is not None and body.confidence != 0 and not 1 <= body.confidence <= 5:
+        raise HTTPException(400, "confidence 必须是 1~5（或留空表示不采集）")
+    rec = lib.get_mistake(mid) or {}
     res = lib.retry_mistake(mid, body.user_answer)
     if res is None:
         raise HTTPException(404, "错题不存在")
@@ -195,9 +203,15 @@ def retry_mistake(mid: str, body: RetryBody) -> dict[str, Any]:
     # 为什么：每日目标的「今日作答数」取自 `bank_attempts`——错题重练也是练习，
     # 不记的话用户设了目标、重练一整晚，进度条还是 0（自相矛盾的体验）。
     # 跨域写放在 **routers 层编排**（core 之间不互相写对方的表）。
-    banklib.record_attempt("", mid, user_answer=body.user_answer,
-                           correct=bool(res.get("correct")), mode="retry")
-    return {"ok": True, **res}
+    ref = rec.get("source_ref") or {}
+    ref = ref if isinstance(ref, dict) else {}
+    # `question_id` 是 `library.sync_from_paper` 的标准键（题库回流额外补 `item_id`）
+    ref_item = str(ref.get("item_id") or ref.get("question_id") or "")
+    wrote = banklib.record_attempt_with_kc(
+        str(ref.get("bank_id") or ""), mid, user_answer=body.user_answer,
+        correct=bool(res.get("correct")), mode="retry",
+        confidence=int(body.confidence or 0), kc_item_id=ref_item)
+    return {"ok": True, **res, "kc": wrote["kc"]}
 
 
 @router.delete("/api/library/mistakes/{mid}")

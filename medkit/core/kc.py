@@ -324,13 +324,8 @@ def ensure_ready() -> None:
 
 
 # ---- kc_state（读模型） ----------------------------------------------
-def upsert_state(state: dict) -> dict:
-    """写入一条知识点状态（`data` JSON 为权威，查询列是冗余副本）。
-
-    **双写不变量**：冗余列的值必须与 `data` 里的同名字段一致。
-    守卫：`tests/test_kc.py::test_kc_state_columns_match_data`。
-    """
-    ensure_ready()
+def _normalize_state(state: dict) -> dict:
+    """补齐一条状态记录的必填字段（**纯函数**，不改入参）。"""
     rec = dict(state)
     kc_id = str(rec.get("kc_id") or rec.get("id") or "")
     if not kc_id:
@@ -347,9 +342,165 @@ def upsert_state(state: dict) -> dict:
     rec.setdefault("due", "")
     rec.setdefault("last_seen", "")
     rec.setdefault("updated_at", _now())
-    with dbs.tx(write=True) as cur:
-        dbs.put_row(cur, "kc_state", rec, _KC_STATE_COLS)
     return rec
+
+
+def put_state_in(cur: Any, state: dict) -> dict:
+    """在**调用方的事务里**写一条状态（不自己开事务）。
+
+    为什么必须存在：`dbs.tx()` 是 `BEGIN IMMEDIATE`，**不可重入**——在别人的写事务里
+    再开一个会直接抛 `cannot start a transaction within a transaction`。
+    而「作答流水 + 状态」必须**同事务原子**（见 `report_attempt`），
+    所以状态写入必须能接受外部游标。
+    """
+    rec = _normalize_state(state)
+    dbs.put_row(cur, "kc_state", rec, _KC_STATE_COLS)
+    return rec
+
+
+def upsert_state(state: dict) -> dict:
+    """写入一条知识点状态（`data` JSON 为权威，查询列是冗余副本）。
+
+    **双写不变量**：冗余列的值必须与 `data` 里的同名字段一致。
+    守卫：`tests/test_kc.py::test_kc_state_columns_match_data`。
+    """
+    ensure_ready()
+    with dbs.tx(write=True) as cur:
+        return put_state_in(cur, state)
+
+
+def _state_in(cur: Any, kc_id: str) -> Optional[dict]:
+    return dbs.find_row(cur, "kc_state", "id = ?", (str(kc_id),))
+
+
+def _confirmed_kcs_in(cur: Any, item_id: str) -> list[str]:
+    rows = cur.execute(
+        "SELECT kc_id FROM item_kc WHERE item_id = ? AND confirmed = 1 ORDER BY kc_id",
+        (str(item_id or ""),)).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+def _kc_meta_in(cur: Any, kc_id: str) -> dict:
+    """知识点的展示元数据（科目/章节/条目）——来自 `syllabus_items`。
+
+    用**同一个游标**读，既省一次连接、也不会在写事务里再开事务。
+    """
+    row = dbs.find_row(cur, "syllabus_items", "id = ?", (str(kc_id),)) or {}
+    return {"subject": str(row.get("subject") or ""),
+            "chapter": str(row.get("chapter") or ""),
+            "item": str(row.get("item") or "")}
+
+
+def apply_attempt_in(cur: Any, item_id: str, correct: bool,
+                     kc_item_id: str = "") -> dict:
+    """在**调用方的事务里**把一次作答应用到该题映射到的全部知识点。
+
+    `item_id` 是流水里的题 id；`kc_item_id` 允许覆盖用于**查映射**的 id
+    （错题重练的流水记的是错题 id，但它可能带着 `source_ref.item_id` 指向原题）。
+
+    返回 `{"item_id", "mapped", "kcs": [{"kc_id","p_before","p_mastery","delta",
+    "attempts","correct"}]}`——**没有映射不算错**（未回填的用户就是这样），
+    只是 `mapped=False`，调用方如实展示即可。
+    """
+    probe = str(kc_item_id or item_id or "")
+    kc_ids = _confirmed_kcs_in(cur, probe)
+    out: dict[str, Any] = {"item_id": str(item_id or ""), "mapped": bool(kc_ids), "kcs": []}
+    meta_cache: dict[str, dict] = {}
+    for kc_id in kc_ids:
+        row = _state_in(cur, kc_id) or {"kc_id": kc_id}
+        if not row.get("item"):
+            if kc_id not in meta_cache:
+                meta_cache[kc_id] = _kc_meta_in(cur, kc_id)
+            meta = meta_cache[kc_id]
+            for k, v in meta.items():
+                if v and not row.get(k):
+                    row[k] = v
+        before = _as_float(row.get("p_mastery"), PRIOR_P_MASTERY)
+        new = apply_attempt(row, bool(correct))
+        new["kc_id"] = kc_id
+        put_state_in(cur, new)
+        out["kcs"].append({
+            "kc_id": kc_id,
+            "p_before": round(before, 4),
+            "p_mastery": round(_as_float(new.get("p_mastery")), 4),
+            "delta": round(_as_float(new.get("p_mastery")) - before, 4),
+            "attempts": _as_int(new.get("attempts")),
+            "correct": _as_int(new.get("correct")),
+        })
+    return out
+
+
+def apply_attempt_for_item(item_id: str, correct: bool,
+                           kc_item_id: str = "") -> dict:
+    """`apply_attempt_in` 的自持事务版本（调用方**没有**现成事务时用）。"""
+    ensure_ready()
+    with dbs.tx(write=True) as cur:
+        return apply_attempt_in(cur, item_id, correct, kc_item_id=kc_item_id)
+
+
+def rebuild_state() -> dict:
+    """从 `bank_attempts ⋈ item_kc` **重放重建** `kc_state`（读模型的真相校验）。
+
+    这是「`kc_state` 是读模型不是真相」这条设计的**可执行证明**：
+    清空状态表后按流水顺序重放，得到的 `p_mastery` / `attempts` / `correct`
+    必须与增量维护的结果**逐值相等**（守卫：`tests/test_kc_state.py`）。
+
+    只重放**已确认映射**的题；未映射的流水跳过（它们没有知识点归属，不是丢失）。
+    """
+    ensure_ready()
+    with dbs.tx(write=True) as cur:
+        cur.execute("DELETE FROM kc_state")
+        rows = cur.execute(
+            "SELECT item_id, correct FROM bank_attempts"
+            " ORDER BY occurred_at, id").fetchall()
+        applied = 0
+        for item_id, correct in rows:
+            res = apply_attempt_in(cur, str(item_id or ""), bool(correct))
+            if res["mapped"]:
+                applied += 1
+        total = cur.execute("SELECT COUNT(*) FROM kc_state").fetchone()[0]
+    return {"attempts": len(rows), "applied": applied,
+            "kcs": int(total)}
+
+
+def knowledge_rows(subject: str = "") -> list[dict]:
+    """把 `kc_state` 摊成「薄弱项表」的行（与 legacy `knowledge` 行同形）。
+
+    `score` 直接用 `p_mastery`（0~1，与 legacy `compute_score` 同量纲）；
+    `miss` = attempts − correct（错几次就密度多少，`_priority_of` 同口径）。
+
+    **没有数据库时返回空表**（不建库）：本函数会被 `library.get_mastery_view()` 在
+    纯 JSON 模式下调用，读路径**不该**有「顺手把库建出来」的副作用。
+    """
+    if not dbs.enabled():
+        return []
+    ensure_ready()
+    where, params = "", []
+    if subject:
+        where = "WHERE subject = ?"
+        params.append(subject)
+    with dbs.tx(write=False) as cur:
+        rows = dbs.list_rows(cur, "kc_state", where, tuple(params))
+    out: list[dict] = []
+    for r in rows:
+        attempts = _as_int(r.get("attempts"))
+        if attempts <= 0:
+            continue          # 没作答过的状态只是占位，不该出现在「薄弱项」里
+        correct = _as_int(r.get("correct"))
+        out.append({
+            "name": str(r.get("item") or r.get("id") or ""),
+            "kc_id": str(r.get("id") or ""),
+            "subject": str(r.get("subject") or ""),
+            "chapter": str(r.get("chapter") or ""),
+            "score": round(_as_float(r.get("p_mastery"), PRIOR_P_MASTERY), 4),
+            "miss": max(0, attempts - correct),
+            "attempts": attempts,
+            "correct": correct,
+            "last_tried": str(r.get("last_seen") or ""),
+            "priority": _priority_of(r),
+            "score_source": "kc",
+        })
+    return out
 
 
 def get_state(kc_id: str) -> Optional[dict]:

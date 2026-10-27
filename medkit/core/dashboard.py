@@ -51,6 +51,31 @@ def _contract_warnings(subject: str = "") -> dict[str, Any]:
     return {"total": total, "by_subject": by_subject}
 
 
+def _readiness(subject: str) -> dict[str, Any]:
+    """「准备度」：`kc_state` 的聚合（v0.22 阶段 3）。
+
+    **为什么不给一个「考试分数预测」**：单用户本地没有常模，任何绝对分都是编的。
+    这里只给三个**可核**的量：练过的知识点数、平均掌握概率、最薄弱的几个。
+    `ready=False` 表示还没有任何流水支撑（此时前端显示「练几道题再看」而不是 0%）。
+    """
+    from . import kc as kclib  # 局部导入：避免 core 模块间循环依赖
+
+    rows = kclib.knowledge_rows(subject)
+    if not rows:
+        return {"ready": False, "kcs": 0, "avg_mastery": 0.0, "weakest": []}
+    avg = round(sum(float(r.get("score") or 0.0) for r in rows) / len(rows), 4)
+    weakest = sorted(rows, key=lambda r: float(r.get("score") or 0.0))[:3]
+    return {
+        "ready": True,
+        "kcs": len(rows),
+        "avg_mastery": avg,
+        "weakest": [{"name": str(r.get("name") or ""),
+                     "kc_id": str(r.get("kc_id") or ""),
+                     "p_mastery": round(float(r.get("score") or 0.0), 4)}
+                    for r in weakest],
+    }
+
+
 def summary(subject: str = "") -> dict[str, Any]:
     subject = (subject or "").strip()
 
@@ -86,4 +111,6 @@ def summary(subject: str = "") -> dict[str, Any]:
         "recent": lib.recent_activity(8, subject, kps=kps),
         # NX-03（R-2）：契约告警计数（生成输出软校验；0 表示最近一轮无告警或未生成过）
         "contract_warnings": _contract_warnings(subject),
+        # v0.22 阶段 3：准备度（kc_state 聚合；无流水时 ready=False）
+        "readiness": _readiness(subject),
     }
