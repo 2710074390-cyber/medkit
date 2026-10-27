@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MedKit 刷题">
+  <rect width="512" height="512" rx="112" fill="#0f766e"/>
+  <path d="M128 132h144c26 0 46 20 46 46v202c0-21-17-38-38-38H128z"
+        fill="#e6fffb" opacity=".95"/>
+  <path d="M384 132H240c-26 0-46 20-46 46v202c0-21 17-38 38-38h152z"
+        fill="#b9f5ea" opacity=".9"/>
+  <path d="M188 236l30 30 58-62" fill="none" stroke="#0f766e" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

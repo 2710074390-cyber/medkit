@@ -1,0 +1,20 @@
+{
+  "name": "MedKit 刷题",
+  "short_name": "MedKit",
+  "description": "手机端刷题、错题归纳与间隔复习。数据只存在本机。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f7f8",
+  "theme_color": "#0f766e",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

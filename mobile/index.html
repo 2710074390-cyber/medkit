@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="MedKit 刷题">
+<title>MedKit 刷题 · 错题 · 复习</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- ============ 顶栏 ============ -->
+<header class="topbar" id="topbar">
+  <div class="topbar-in">
+    <h1 id="page_title">刷题</h1>
+    <div class="topbar-sub" id="page_sub"></div>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ 刷题 ============ -->
+  <section class="screen" id="scr-drill" aria-labelledby="page_title">
+    <!-- 空态：还没导入 -->
+    <div class="empty" id="drill_empty" hidden>
+      <div class="empty-ico" aria-hidden="true">📥</div>
+      <h2>还没有题库</h2>
+      <p>在电脑上打开 MedKit →「题库」→ 导出手机同步包，然后把文件传到这里。</p>
+      <button class="btn btn-primary" data-go="data">去导入</button>
+    </div>
+
+    <!-- 题库选择 -->
+    <div id="drill_home" hidden>
+      <div class="stat-row" id="drill_stats"></div>
+      <h2 class="sec-title">选择题库</h2>
+      <div class="list" id="bank_list"></div>
+    </div>
+
+    <!-- 作答 -->
+    <div id="drill_run" hidden>
+      <div class="runbar">
+        <button class="ghost-btn" id="drill_quit">退出</button>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="drill_prog">
+          <i></i>
+        </div>
+        <span class="counter" id="drill_counter">1/1</span>
+      </div>
+      <div class="qcard" id="drill_card"></div>
+    </div>
+  </section>
+
+  <!-- ============ 错题 ============ -->
+  <section class="screen" id="scr-mistakes" hidden>
+    <div class="stat-row" id="mk_stats"></div>
+    <h2 class="sec-title">薄弱点（按错题聚类）</h2>
+    <p class="sec-hint">越靠前＝错得越多、错得越近。点进去只练这一组。</p>
+    <div class="list" id="mk_groups"></div>
+    <div class="list" id="mk_recent" hidden></div>
+  </section>
+
+  <!-- ============ 复习 ============ -->
+  <section class="screen" id="scr-review" hidden>
+    <div id="rv_empty" class="empty" hidden>
+      <div class="empty-ico" aria-hidden="true">🌤️</div>
+      <h2>今天没有到期的</h2>
+      <p id="rv_empty_sub">按记忆曲线，下一批会在该复习的时候出现。先去刷题或看看错题。</p>
+      <button class="btn" data-go="drill">去刷题</button>
+    </div>
+    <div id="rv_run" hidden>
+      <div class="runbar">
+        <span class="counter" id="rv_counter">1/1</span>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="rv_prog"><i></i></div>
+        <button class="ghost-btn" id="rv_quit">退出</button>
+      </div>
+      <div class="qcard" id="rv_card"></div>
+    </div>
+    <div id="rv_done" class="empty" hidden>
+      <div class="empty-ico" aria-hidden="true">✅</div>
+      <h2>今天的复习做完了</h2>
+      <p id="rv_done_sub"></p>
+      <button class="btn" data-go="drill">再刷几题</button>
+    </div>
+  </section>
+
+  <!-- ============ 数据 ============ -->
+  <section class="screen" id="scr-data" hidden>
+    <h2 class="sec-title">同步题库</h2>
+    <div class="card">
+      <p class="card-p">在电脑端 <b>MedKit → 题库 → 导出手机同步包</b>，得到 <code>.json</code> 文件。
+        选择文件后，题库、作答记录、错题会一起同步过来；<b>不会覆盖你手机上已有的复习进度</b>。</p>
+      <label class="btn btn-primary btn-block" for="file_input">选择同步包文件</label>
+      <input type="file" id="file_input" accept=".json,application/json" hidden>
+      <div class="hint" id="import_status" role="status" aria-live="polite"></div>
+      <div class="hint" id="last_sync"></div>
+    </div>
+
+    <h2 class="sec-title">本机数据</h2>
+    <div class="stat-row" id="data_stats"></div>
+    <div class="card card-actions">
+      <button class="btn btn-ghost" id="btn_export">导出我的复习数据</button>
+      <button class="btn btn-danger-ghost" id="btn_clear">清空本机数据</button>
+    </div>
+    <p class="foot-note">数据只存在这台手机（IndexedDB），不联网、不上传。换机前请先导出。</p>
+  </section>
+
+</main>
+
+<!-- ============ 底部导航 ============ -->
+<nav class="tabbar" aria-label="主导航">
+  <button data-tab="drill" class="on" aria-current="page">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+    <span>刷题</span>
+  </button>
+  <button data-tab="mistakes">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h6M9 16h4"/></svg>
+    <span>错题</span>
+  </button>
+  <button data-tab="review">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>
+    <span>复习</span>
+  </button>
+  <button data-tab="data">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    <span>数据</span>
+  </button>
+</nav>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="js/db.js"></script>
+<script src="js/sm2.js"></script>
+<script src="js/model.js"></script>
+<script src="js/drill.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
