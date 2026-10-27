@@ -50,7 +50,9 @@ SECTION_TITLES: dict[str, str] = {
 }
 FM_ORDER = ("id", "subject", "chapter", "topic", "tags", "status", "created",
             "source", "source_type", "source_year", "bloom", "miss_count",
-            "last_tried", "due", "state", "ease", "interval", "reps", "lapses")
+            "last_tried", "due", "state", "ease", "interval", "reps", "lapses",
+            # FSRS 字段（v0.22.0 · ADR-004 重新接线）：切到 SM-2 时原样保留不参与计算。
+            "stability", "difficulty", "fsrs_state", "fsrs_step", "last_review")
 
 README_TEXT = """# MedKit 错题本
 
@@ -278,6 +280,18 @@ def serialize(rec: dict[str, Any]) -> str:
     _ev = _as_float(rec.get("ease"))
     if _ev:
         raw["ease"] = _ev
+    # FSRS 字段（v0.22.0）：记忆稳定性 / 难度 / 卡片状态 / 学习步 / 上次复习时刻。
+    # 只在该算法真的写过时才有值——SM-2 路径下这些键不存在，切算法时由调度器负责播种。
+    for _k in ("fsrs_state", "last_review"):
+        if rec.get(_k):
+            raw[_k] = str(rec.get(_k))
+    _fs = _as_int(rec.get("fsrs_step"))
+    if _fs:
+        raw["fsrs_step"] = _fs
+    for _k in ("stability", "difficulty"):
+        _fv = _as_float(rec.get(_k))
+        if _fv:
+            raw[_k] = _fv
     for k in ("source", "source_type", "source_year", "bloom"):
         if rec.get(k):
             raw[k] = str(rec.get(k))
@@ -385,6 +399,12 @@ def to_record(fm: dict[str, Any], sec: dict[str, str]) -> dict[str, Any]:
         "interval": _as_int(fm.get("interval")),
         "reps": _as_int(fm.get("reps")),
         "lapses": _as_int(fm.get("lapses")),
+        # FSRS 字段（v0.22.0）：读回来才能把卡还原成 fsrs.Card（否则每次复习都当新卡）
+        "stability": _as_float(fm.get("stability")),
+        "difficulty": _as_float(fm.get("difficulty")),
+        "fsrs_state": str(fm.get("fsrs_state") or ""),
+        "fsrs_step": _as_int(fm.get("fsrs_step")),
+        "last_review": str(fm.get("last_review") or ""),
         "question": title,
         "options": options,
         "answer": answer,

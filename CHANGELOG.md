@@ -12,6 +12,28 @@
 
 ### Added
 
+- **复习调度升级 FSRS（ADR-004 重新接线 · v0.22 阶段 1）**。
+  `core/scheduler.py` 恢复——**全部复习调度数学的单一真相来源**：FSRS（默认）+ SM-2（legacy）并列，
+  `/api/vault/scheduler` 可查可切（`GET` / `PUT`），配置项 `scheduler` / `fsrs_retention` / `fsrs_max_interval`。
+
+  - **为什么现在才接上**：ADR-004（2026-08-27）就决策了「FSRS 默认 / SM-2 可切」，但实现模块随 v0.15 奥卡姆精简
+    （复习卡域实测零使用）一起被删 ⇒ **FSRS 从未接到线上路径**；`core/bank.py` 至今仍把排期委托给已不存在的
+    `review` / `cards` 域（悬空引用，本轮一并修掉）。依赖 `fsrs==6.3.2` 早就在 `requirements.txt` 里 ⇒ **零新依赖**。
+  - **参数是实测标定的**（fsrs 库默认值不能照搬）：学习步长默认以**秒**为单位、`maximum_interval=36500`
+    实测会把间隔排到 8/66/397/1875/7265/23933 天（考完试都轮不到）、`enable_fuzzing=True` 让**同输入不同输出**。
+    本仓采用 `learning_steps=(10 分钟, 1 天)` / `relearning_steps=(10 分钟,)` / `maximum_interval=180`（半年封顶）/
+    `desired_retention=0.9` / **关 fuzzing**。对照：SM-2 `1→6→15→38→95→238` 天，FSRS `1→7→32→118→180→180` 天；
+    失败后两者都**当天**重来（与 SM-2 的 relearning→今天一致）。
+  - **quality(0~5) → FSRS 四档**：`≤1 Again` / `2 Hard` / `3~4 Good` / `5 Easy`。
+    「记住」映射到 Good 而非 Easy 是刻意的——Easy 会让新卡**直接毕业**（首次到期 8 天），
+    而 SM-2 的首次「记住」只排 1 天，体感上像「白复习了」。
+  - **切算法不丢卡数据**：两套字段并存于错题 front matter，各自只读自己的那套；历史 SM-2 卡切到 FSRS 时按
+    `interval→stability`、`ease→difficulty` **播种**（否则刚复习完的卡会被当全新卡）。
+    vault 侧老字段语义（`reps` / `lapses` / `state` / `status`）**跨算法完全一致**——
+    「连续记住两次即已掌握」这条对用户的承诺不因换算法而变。
+  - **守护**：`tests/test_scheduler.py`（33 项）——含**手写的旧 SM-2 实现**逐值比对（不引用新代码，
+    否则两边一起错就恒绿）、FSRS 确定性、阶梯形状、上限生效、legacy 播种、跨算法语义一致、切算法不丢字段、接口契约。
+
 - **题库同步：从 MedAgentWork 项目拉取最新题库（零 LLM）**。
   「刷题 → 我的题库 → ⇩ 同步 MedAgentWork 题库」：列远端批次（科目 / 题数 / 未同步·有更新·已同步）
   → 勾选 → 并入本地题库。`core/banksync.py` + `routers/banksync.py`

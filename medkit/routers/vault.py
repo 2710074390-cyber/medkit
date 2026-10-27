@@ -11,6 +11,7 @@
 - `/api/vault/import-from-library` —— 从旧错题本一键导出为 md
 - `/api/vault/ask` —— Agent 问答（SSE 流式，支持多轮 history）
 - `/api/vault/handbook` —— 按科目生成「薄弱点复习手册」（LLM，可缺席）
+- `/api/vault/scheduler` —— 复习调度算法（FSRS 默认 / SM-2 legacy）查询与切换
 
 ## 红线
 
@@ -32,7 +33,9 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from ..agents.mistake_agent import ask as _agent_ask
 from ..agents.mistake_agent import handbook as _agent_handbook
+from ..core import config as cfg
 from ..core import library as lib
+from ..core import scheduler as _sched
 from ..core import vault, vault_index
 
 router = APIRouter(tags=["vault"])
@@ -212,17 +215,65 @@ def create_mistake(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     return {"ok": True, **vault_index.create_item(rec)}
 
 
-# ------------------------------------------------------------------ 复习闭环（SM-2，零 LLM）
+# ------------------------------------------------------------------ 复习闭环（调度器，零 LLM）
 @router.get("/api/vault/review/due")
 def review_due(subject: str = "") -> dict[str, Any]:
+    """今日到期的错题 + 当前调度算法标识。
+
+    `scheduler` 字段让前端能如实显示「FSRS」还是「SM-2」——排期口径变了必须可见，
+    不能让用户在不知情的情况下经历复习节奏的变化。
+    """
     items = vault_index.due_items(subject=subject)
     return {"count": len(items), "items": items,
-            "stats": vault_index.review_stats(subject=subject)}
+            "stats": vault_index.review_stats(subject=subject),
+            "scheduler": _sched.get_scheduler().name}
+
+
+@router.get("/api/vault/scheduler")
+def scheduler_info() -> dict[str, Any]:
+    """当前复习调度算法与参数（前端「我的 → 复习设置」用）。"""
+    return {"ok": True, **_sched.describe()}
+
+
+@router.put("/api/vault/scheduler")
+def scheduler_set(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """切换复习调度算法。
+
+    **切换不丢卡数据**：两套算法的字段并存于错题 front matter，各自只读自己的那套
+    （`core/scheduler.py` 的模块 docstring 有字段职责表）。切回 SM-2 时，
+    `ease` / `interval` 还是上次用 SM-2 时的值（可能已过时，但语义自洽）。
+    """
+    name = str(body.get("name") or "").strip().lower()
+    if name not in _sched.SCHEDULERS:
+        raise HTTPException(400, "复习算法只能是 fsrs 或 sm2")
+    saved = cfg.load()
+    saved["scheduler"] = name
+    if body.get("fsrs_retention") is not None:
+        try:
+            ret = float(body["fsrs_retention"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "fsrs_retention 必须是 0.70~0.98 的数字")
+        if not 0.70 <= ret <= 0.98:
+            raise HTTPException(400, "fsrs_retention 必须是 0.70~0.98 的数字")
+        saved["fsrs_retention"] = ret
+    if body.get("fsrs_max_interval") is not None:
+        try:
+            mx = int(body["fsrs_max_interval"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "fsrs_max_interval 必须是正整数（天）")
+        if mx < 1 or mx > 3650:
+            raise HTTPException(400, "fsrs_max_interval 必须是 1~3650 的天数")
+        saved["fsrs_max_interval"] = mx
+    try:
+        cfg.save(saved)
+    except OSError as e:  # noqa: BLE001 —— 磁盘满/只读 → 500 中文提示（不裸 traceback）
+        raise HTTPException(500, f"配置保存失败（磁盘满或只读？）：{e}") from e
+    return {"ok": True, **_sched.describe(name)}
 
 
 @router.post("/api/vault/review/{path:path}/grade")
 def review_grade(path: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    """写回一次复习评分（quality 0~5）：推进 SM-2 并原子改写该文件。"""
+    """写回一次复习评分（quality 0~5）：推进调度器并原子改写该文件。"""
     rel = _safe_vault_rel(path)
     # 用 `body["quality"]` 而非 `.get()`：`.get()` 的静态类型是 `Any | None`，
     # mypy 2.4 起会直接拒 `int(Any | None)`（本地 mypy 2.3.1 放行 ⇒ 曾假绿一次，

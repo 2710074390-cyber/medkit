@@ -250,14 +250,16 @@ async function vaultCreate() {
 }
 
 
-/* ---- 今日复习：SM-2 排程 + 评分回写 ---- */
+/* ---- 今日复习：调度器排程（FSRS 默认 / SM-2 legacy）+ 评分回写 ---- */
 async function vaultReviewLoad() {
   const box = $("vault_due");
   if (!box) return;
   try {
     const r = await api("/api/vault/review/due");
     const meta = $("vault_due_meta");
-    if (meta) meta.textContent = `到期 ${r.stats.due} / 共 ${r.stats.total}`;
+    // 排期口径必须可见——换了算法，复习节奏就变了，用户有权知道。
+    const alg = r.scheduler === "sm2" ? "SM-2" : "FSRS";
+    if (meta) meta.textContent = `到期 ${r.stats.due} / 共 ${r.stats.total} · ${alg}`;
     const items = r.items || [];
     box.innerHTML = items.length ? items.slice(0, 20).map(it => `
       <div class="vault-duerow">
@@ -265,9 +267,9 @@ async function vaultReviewLoad() {
         <span class="vault-meta">${_esc([it.subject, it.chapter, it.topic].filter(Boolean).join(" · "))}
           · 到期 ${_esc(it.due || "—")}</span>
         <span class="btns" style="margin-top:6px">
-          <button class="act" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',5)">记得</button>
-          <button class="act gray" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',3)">模糊</button>
-          <button class="act gray" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',1)">忘了</button>
+          <button class="act" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',4)">记得</button>
+          <button class="act gray" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',2)">模糊</button>
+          <button class="act gray" onclick="vaultGrade('${_esc(it.path).replace(/'/g, "\\'")}',0)">忘了</button>
         </span>
       </div>`).join("") : `<div class="hint">今天没有到期的错题。</div>`;
   } catch (e) { box.innerHTML = `<div class="hint">读取失败：${_esc(e.message)}</div>`; }

@@ -97,6 +97,15 @@ DEFAULTS: dict[str, Any] = {
     # 一次题库同步约 13 次 ⇒ 连点两轮就会撞限流；填了可到 5000 次/小时。
     # 只用于读公开仓库，不需要任何 scope（public_repo 都不必）。
     "github_token": "",
+    # 复习调度（v0.22.0 · ADR-004 重新接线）：
+    # - `scheduler`：fsrs（默认）| sm2（legacy）。切换**不丢卡数据**——两套算法的字段并存于
+    #   错题 front matter，各自只读自己的那套（详见 core/scheduler.py 的模块 docstring）。
+    # - `fsrs_retention`：目标保持率 0.70~0.98，默认 0.9（FSRS 社区默认）。
+    # - `fsrs_max_interval`：间隔上限（天），默认 180（半年）——医学生的复习周期以月计，
+    #   上限封顶避免出现「排到几年后、考完试都轮不到」的情况。
+    "scheduler": "fsrs",
+    "fsrs_retention": 0.9,
+    "fsrs_max_interval": 180,
 }
 
 # v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行模型自动迁移

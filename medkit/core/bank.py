@@ -18,8 +18,9 @@
 ## 与既有资产的接线（不另起炉灶）
 
 - 判错回流错题本：复用 `library.sync_from_paper()`（题面 + user_answer）。
-- 「何时该复习」一律交给既有的知识点级调度（`review` / `cards`），**题库域不实现第二套 SM-2/FSRS**
-  （两套调度器并存是维护灾难）。`bank_attempts` 只回答「这道题做过几次、对了几次」。
+- 「何时该复习」一律交给**知识点级调度**（`core/scheduler.py`：FSRS 默认 / SM-2 legacy，
+  由 vault 调用），**题库域不实现第二套调度器**（两套调度器并存是维护灾难）。
+  `bank_attempts` 只回答「这道题做过几次、对了几次」。
 """
 
 from __future__ import annotations

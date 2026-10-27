@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 辅助学习 · 行业对标与 MedKit 改进</title>
+<style>
+  :root{
+    --bg:#0e1113; --panel:#15191c; --panel2:#1b2024; --line:#2a3136;
+    --ink:#e8ecef; --ink2:#a7b1b8; --ink3:#6f7a82;
+    --teal:#4ec9a8; --teal-dim:#1f5c4d; --amber:#d9a441; --red:#d96b6b; --blue:#6aa6d8;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f7f6f3; --panel:#ffffff; --panel2:#f1efea; --line:#e2ded6;
+      --ink:#1c2024; --ink2:#5a636a; --ink3:#8b949b;
+      --teal:#17836a; --teal-dim:#bfe5d9; --amber:#9a6c14; --red:#a83a3a; --blue:#2f6f9f;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:15px; line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:64px 28px 96px}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--teal)}
+  h1{font-size:40px;line-height:1.2;font-weight:600;letter-spacing:-.02em;margin:16px 0 14px}
+  .lede{font-size:18px;line-height:1.75;color:var(--ink2);max-width:760px;margin:0}
+  .meta{display:flex;gap:22px;flex-wrap:wrap;margin-top:28px;font-family:var(--mono);font-size:11px;color:var(--ink3);letter-spacing:.04em}
+  .rule{height:1px;background:var(--line);margin:56px 0}
+  h2{font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin:0 0 22px;font-family:var(--mono)}
+  h3{font-size:19px;font-weight:600;margin:0 0 8px;letter-spacing:-.01em}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .stat{background:var(--panel);padding:20px 18px}
+  .stat b{display:block;font-family:var(--mono);font-size:28px;font-weight:500;letter-spacing:-.03em;line-height:1.1}
+  .stat span{display:block;font-size:12px;color:var(--ink3);margin-top:7px;line-height:1.5}
+  .stat b.t{color:var(--teal)} .stat b.a{color:var(--amber)} .stat b.r{color:var(--red)}
+
+  .thesis{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--teal);border-radius:0 10px 10px 0;padding:22px 26px;margin-top:34px}
+  .thesis p{margin:0;font-size:17px;line-height:1.8;color:var(--ink)}
+  .thesis em{font-style:normal;color:var(--teal)}
+
+  .gaps{display:grid;gap:12px;margin-top:26px}
+  .gap{display:grid;grid-template-columns:36px 1fr auto;gap:16px;align-items:start;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+  .gap .tag{font-family:var(--mono);font-size:12px;color:var(--red);border:1px solid var(--red);border-radius:4px;text-align:center;padding:2px 0;height:22px;line-height:18px}
+  .gap b{display:block;font-size:15px;font-weight:600;margin-bottom:3px}
+  .gap p{margin:0;font-size:13.5px;color:var(--ink2);line-height:1.65}
+  .gap code{font-family:var(--mono);font-size:11.5px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--ink2);white-space:nowrap}
+  .gap .cost{font-family:var(--mono);font-size:11px;color:var(--ink3);white-space:nowrap;padding-top:3px}
+
+  .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 14px;display:flex;flex-direction:column;gap:9px}
+  .card .n{font-family:var(--mono);font-size:10px;color:var(--ink3);letter-spacing:.1em}
+  .card .name{font-size:14px;font-weight:600;line-height:1.35;min-height:38px}
+  .card .who{font-size:11px;color:var(--teal);font-family:var(--mono);line-height:1.5}
+  .card .mech{font-size:12px;color:var(--ink2);line-height:1.6;flex:1}
+  .card .ev{font-size:11px;color:var(--ink3);border-top:1px solid var(--line);padding-top:8px;line-height:1.55}
+
+  .bars{margin-top:6px;border-top:1px solid var(--line)}
+  .row{display:grid;grid-template-columns:120px 1fr 52px 1fr 52px;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line)}
+  .row .label{font-size:13px;color:var(--ink)}
+  .row .who{font-size:11.5px;color:var(--ink3)}
+  .track{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;position:relative}
+  .fill{height:100%;border-radius:3px;display:block}
+  .fill.m{background:var(--teal)} .fill.b{background:var(--blue)}
+  .row .val{font-family:var(--mono);font-size:12px;text-align:right;color:var(--ink2)}
+  .row.head{padding:10px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .row.head .c{grid-column:2 / 4;text-align:center}
+  .row.head .d{grid-column:4 / 6;text-align:center}
+
+  .loops{display:grid;grid-template-columns:1.1fr 1fr;gap:26px;align-items:start;margin-top:8px}
+  .loop{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:10px}
+  .loop b{font-size:14px;font-weight:600;display:block;margin-bottom:4px}
+  .loop p{margin:0;font-size:12.5px;color:var(--ink2);line-height:1.65}
+  .loop .chips{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font-family:var(--mono);font-size:10.5px;color:var(--teal);border:1px solid var(--teal-dim);border-radius:20px;padding:1px 8px;white-space:nowrap}
+  .chartbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
+  .chartbox h4{margin:0 0 12px;font-size:12px;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);font-weight:500}
+
+  .road{margin-top:8px}
+  .phase{display:grid;grid-template-columns:110px 1fr;gap:22px;padding:20px 0;border-bottom:1px solid var(--line)}
+  .phase:last-child{border-bottom:0}
+  .phase .p{font-family:var(--mono);font-size:11px;color:var(--teal);letter-spacing:.05em}
+  .phase .p b{display:block;font-size:20px;color:var(--ink);font-weight:500;letter-spacing:-.02em;margin-bottom:2px}
+  .phase ul{margin:0;padding-left:16px;font-size:13.5px;color:var(--ink2);line-height:1.8}
+  .phase li b{color:var(--ink);font-weight:500}
+  .phase .why{font-size:12px;color:var(--ink3);margin-top:6px}
+
+  .dont{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:8px}
+  .dont div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;font-size:13px;color:var(--ink2);line-height:1.65}
+  .dont div b{display:block;color:var(--ink);font-weight:600;font-size:13.5px;margin-bottom:3px}
+  .dont div::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--red);margin-right:8px;vertical-align:middle}
+
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink3);line-height:1.8;font-family:var(--mono)}
+
+  @media (max-width:900px){
+    .cards{grid-template-columns:repeat(2,1fr)}
+    .loops{grid-template-columns:1fr}
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .dont{grid-template-columns:1fr}
+    .row{grid-template-columns:92px 1fr 40px;row-gap:6px}
+    .row .who,.row .val:nth-of-type(2){display:none}
+    .row.head{display:none}
+  }
+  @media (max-width:560px){
+    .wrap{padding:40px 18px 64px}
+    h1{font-size:29px} .lede{font-size:16px}
+    .cards{grid-template-columns:1fr}
+    .gap{grid-template-columns:30px 1fr} .gap .cost{display:none}
+    .phase{grid-template-columns:1fr;gap:8px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kicker">Research · 2026-10-27</div>
+  <h1>AI 辅助学习的行业标杆<br>与 MedKit 的下一步</h1>
+  <p class="lede">调研了五种产品范式、六项技术底座，并把结论落回这个仓库的代码行号。核心判断只有一句：MedKit 缺的不是模型，是学习者状态与教学策略之间的那一层。</p>
+  <div class="meta">
+    <span>对象 MedKit v0.20.0</span>
+    <span>代码 73 py / 19,088 行</span>
+    <span>测试 1,190 项</span>
+    <span>证据分级 强 / 中 / 弱</span>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>一 · 三个结构性断点</h2>
+
+  <div class="thesis">
+    <p>它今天是一个很好的「生成器 + 刷题器」。但行业头部已经走到 <em>学习者状态 + 教学策略引擎 + 可验证内容</em> 的三体闭环，模型只是执行器。三处断点，全部可在代码里指认。</p>
+  </div>
+
+  <div class="gaps">
+    <div class="gap">
+      <div class="tag">A</div>
+      <div>
+        <b>作答流水没有进入学习者模型</b>
+        <p><code>bank_attempts</code> 是全量流水，但掌握度只由<strong>错题</strong>聚合。<code>_touch_knowledge_in</code> 只在错题入库时被调，它记的「correct」不是「答对」，是「<strong>错题后来被攻下</strong>」。所以那个比率算的是<strong>错题攻克率</strong>，不是知识掌握率。</p>
+      </div>
+      <div class="cost">library.py:1353 / bank.py:22</div>
+    </div>
+    <div class="gap">
+      <div class="tag">B</div>
+      <div>
+        <b>题目没有稳定的知识点身份</b>
+        <p><code>syllabus_items.id</code> 是稳定的哈希，<code>bank_items.topic</code> 与 <code>QuestionItem.subtopic</code> 是自由字符串，三者之间没有 join。同一个考点在三个题库里是三个字符串，永远不会合并。</p>
+      </div>
+      <div class="cost">schema.py:62 / db.py:219</div>
+    </div>
+    <div class="gap">
+      <div class="tag">C</div>
+      <div>
+        <b>错题之后是「问答」，不是「教学」</b>
+        <p>Agent 只读检索 + 引用 + 拒答，纪律很硬，但没有诊断、没有支架梯度、没有 fading、没有教回。它回答你的问题，但不改变你的状态。</p>
+      </div>
+      <div class="cost">prompts/mistake_agent.md:25</div>
+    </div>
+    <div class="gap">
+      <div class="tag">D</div>
+      <div>
+        <b>溯源是字符串对齐，不是语义蕴含</b>
+        <p><code>_align_hit</code> 在整串未命中时，只要知识点前两个字出现在切片里就放行。引用对了切片、内容说错了，门禁照样 PASS。</p>
+      </div>
+      <div class="cost">gates/trace_check.py:14</div>
+    </div>
+    <div class="gap">
+      <div class="tag">E</div>
+      <div>
+        <b>解析是一整块文本</b>
+        <p>没有逐选项理由、没有误解标签、没有原文引句、没有难度标定。与 UWorld / AMBOSS 的差距不在题，在解析的教育密度——它们让每个错选项都教一次。</p>
+      </div>
+      <div class="cost">schema.py:62</div>
+    </div>
+    <div class="gap">
+      <div class="tag">F</div>
+      <div>
+        <b>排期是 SM-2 + 每题一卡</b>
+        <p>同一考点的五道错题 = 五张卡，重复复习。FSRS-6 在同保持率下比 SM-2 少约 20–30% 复习量，且按知识点合并才符合记忆的单位。</p>
+      </div>
+      <div class="cost">vault_index.py:415</div>
+    </div>
+    <div class="gap" style="border-color:var(--amber)">
+      <div class="tag" style="color:var(--amber);border-color:var(--amber)">G</div>
+      <div>
+        <b>悬空依赖：排期域的委托目标已被删除</b>
+        <p><code>bank.py:22</code> 把「何时该复习」委托给「既有的知识点级调度（review / cards）」——这两个域在 v0.15 精简中已删。ADR-004 决策的 FSRS 实现随 <code>core/scheduler.py</code> 一起消失，<strong>FSRS 从未接到线上路径</strong>；现在跑的是 vault 里逐值复制的 SM-2。</p>
+      </div>
+      <div class="cost">CHANGELOG:316 / ADR-004</div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>二 · 五种范式与它们的护城河</h2>
+
+  <div class="cards">
+    <div class="card">
+      <div class="n">A · CONSTRAINT</div>
+      <div class="name">约束式导师</div>
+      <div class="who">Khanmigo · Study Mode · LearnLM</div>
+      <div class="mech">约束不在模型，在编排：请求分类 → 课程检索 → 苏格拉底链 → 输出过滤。LearnLM 把「教学法指令跟随」做成训练目标。</div>
+      <div class="ev">塞拉利昂 1,763 人 RCT：50→64 百分位，≈1.8–2.5 年进度</div>
+    </div>
+    <div class="card">
+      <div class="n">B · LEARNER MODEL</div>
+      <div class="name">学习者模型驱动</div>
+      <div class="who">Birdbrain · OATutor · 松鼠 AI</div>
+      <div class="mech">能力与难度双参数（Elo 式）→ LSTM 40 维画像；BKT 在步骤级估计掌握；选「最低掌握度」的下一题。</div>
+      <div class="ev">KT 公开 AUC：BKT 0.71–0.76 → SAINT 0.82–0.85</div>
+    </div>
+    <div class="card">
+      <div class="n">C · CLOSED CORPUS</div>
+      <div class="name">闭环语料 RAG</div>
+      <div class="who">NotebookLM · Coursera Coach</div>
+      <div class="mech">ingest → chunk → embed → retrieve → 只用检索段落生成 → 逐段引用。可靠性来自闭卷，不是来自向量库。</div>
+      <div class="ev">低幻觉、可逐句核；无学习增益 RCT</div>
+    </div>
+    <div class="card">
+      <div class="n">D · ITEM BANK</div>
+      <div class="name">题目银行工业</div>
+      <div class="who">UWorld · AMBOSS · Osmosis</div>
+      <div class="mech">每个选项都有 rationale；题↔文双向交叉链接；Learning Radar 把做错的知识点在文章里标红；难度 1–5 + 预测分。</div>
+      <div class="ev">90%+ 美国医学生用 UWorld Step 1；AI 题 60% 干扰项不当</div>
+    </div>
+    <div class="card">
+      <div class="n">E · SIMULATION</div>
+      <div class="name">模拟与推理训练</div>
+      <div class="who">Geeky Medics · Quesmed · iatroX</div>
+      <div class="mech">病例脚本 + 只答被问到的角色约束；先承诺诊断再揭示；按 mark scheme 打分。iatroX 反其道：只在错误那一刻追问推理。</div>
+      <div class="ev">OSCE 反馈 d=0.74；缺考率 4.9%→0.8%；$0.51/次</div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>三 · 八项能力：MedKit 与行业最好</h2>
+
+  <div class="bars">
+    <div class="row head">
+      <div></div>
+      <div class="c">MedKit</div>
+      <div></div>
+      <div class="d">行业标杆</div>
+      <div></div>
+    </div>
+    <div class="row">
+      <div class="label">内容生成</div>
+      <div class="track"><span class="fill m" style="width:85%"></span></div>
+      <div class="val">85</div>
+      <div class="track"><span class="fill b" style="width:70%"></span></div>
+      <div class="val">70</div>
+      <div class="who">自有教材出题，这一项 MedKit 是领先的</div>
+    </div>
+    <div class="row">
+      <div class="label">内容可验证</div>
+      <div class="track"><span class="fill m" style="width:45%"></span></div>
+      <div class="val">45</div>
+      <div class="track"><span class="fill b" style="width:95%"></span></div>
+      <div class="val">95</div>
+      <div class="who">NotebookLM：闭卷 + 逐段引用</div>
+    </div>
+    <div class="row">
+      <div class="label">学习者模型</div>
+      <div class="track"><span class="fill m" style="width:20%"></span></div>
+      <div class="val">20</div>
+      <div class="track"><span class="fill b" style="width:90%"></span></div>
+      <div class="val">90</div>
+      <div class="who">Birdbrain / BKT：题级状态估计</div>
+    </div>
+    <div class="row">
+      <div class="label">教学策略</div>
+      <div class="track"><span class="fill m" style="width:15%"></span></div>
+      <div class="val">15</div>
+      <div class="track"><span class="fill b" style="width:85%"></span></div>
+      <div class="val">85</div>
+      <div class="who">Khanmigo / LearnLM：支架 + fading</div>
+    </div>
+    <div class="row">
+      <div class="label">记忆排期</div>
+      <div class="track"><span class="fill m" style="width:55%"></span></div>
+      <div class="val">55</div>
+      <div class="track"><span class="fill b" style="width:85%"></span></div>
+      <div class="val">85</div>
+      <div class="who">FSRS-6：同保持率少 20–30% 复习</div>
+    </div>    <div class="row">
+      <div class="label">知识结构</div>
+      <div class="track"><span class="fill m" style="width:40%"></span></div>
+      <div class="val">40</div>
+      <div class="track"><span class="fill b" style="width:90%"></span></div>
+      <div class="val">90</div>
+      <div class="who">AMBOSS：题↔文双向链接</div>
+    </div>
+    <div class="row">
+      <div class="label">临床推理</div>
+      <div class="track"><span class="fill m" style="width:5%"></span></div>
+      <div class="val">5</div>
+      <div class="track"><span class="fill b" style="width:85%"></span></div>
+      <div class="val">85</div>
+      <div class="who">虚拟病人 / OSCE：承诺-反馈循环</div>
+    </div>
+    <div class="row">
+      <div class="label">分发与习惯</div>
+      <div class="track"><span class="fill m" style="width:15%"></span></div>
+      <div class="val">15</div>
+      <div class="track"><span class="fill b" style="width:90%"></span></div>
+      <div class="val">90</div>
+      <div class="who">Duolingo / 移动端：碎片时间</div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>四 · 目标架构：三环一图</h2>
+
+  <div class="loops">
+    <div>
+      <div class="loop">
+        <b>内容环</b>
+        <p>generate → verify → calibrate → repair。在现有四道门禁之后，补「断言级蕴含」与「题目心理测量」两道。</p>
+        <div class="chips"><span class="chip">NLI 蕴含</span><span class="chip">p 值</span><span class="chip">区分度</span><span class="chip">答案位置</span></div>
+      </div>
+      <div class="loop">
+        <b>学习环</b>
+        <p>attempt → diagnose → tutor → schedule → retest。核心是把「错了」变成一个有策略的动作序列。</p>
+        <div class="chips"><span class="chip">五类错因</span><span class="chip">L0–L3 支架</span><span class="chip">fading</span><span class="chip">教回</span><span class="chip">迁移题</span></div>
+      </div>
+      <div class="loop">
+        <b>元认知环</b>
+        <p>confidence → calibration → plan。学生最危险的状态不是不会，是「以为会」。</p>
+        <div class="chips"><span class="chip">作答前自评</span><span class="chip">Brier</span><span class="chip">校准曲线</span><span class="chip">周报</span></div>
+      </div>
+      <div class="loop" style="border-color:var(--teal)">
+        <b>中间那张图，才是关键</b>
+        <p>三个环共享同一个 <code style="font-family:var(--mono);font-size:12px">kc_id</code>：内容环产出「题→知识点」，学习环产出「人→知识点」，元认知环产出「人→自己的判断」。没有这张图，三个环各转各的。</p>
+      </div>
+    </div>
+
+    <div class="chartbox">
+      <h4>kc 图谱 · 最小数据模型</h4>
+      <svg viewBox="0 0 440 340" width="100%" role="img" aria-label="知识点图谱与三张表的连接关系">
+        <title>kc 图谱：节点、边与三张表</title>
+        <desc>中心是 syllabus_items 的知识点节点，向上连接前置知识点，向下连接题目与作答状态。</desc>
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M2 1L8 5L2 9" fill="none" stroke="#5a6a72" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+        <g font-family="ui-monospace,Menlo,monospace" font-size="10">
+          <rect x="150" y="26" width="140" height="40" rx="7" fill="#1b2024" stroke="#2a3136"/>
+          <text x="220" y="42" text-anchor="middle" fill="#a7b1b8">kc_edges</text>
+          <text x="220" y="57" text-anchor="middle" fill="#6f7a82">parent / prerequisite</text>
+
+          <rect x="150" y="112" width="140" height="46" rx="7" fill="#152a25" stroke="#4ec9a8" stroke-width="1"/>
+          <text x="220" y="131" text-anchor="middle" fill="#e8ecef">syllabus_items</text>
+          <text x="220" y="147" text-anchor="middle" fill="#4ec9a8">kc_id（稳定哈希）</text>
+
+          <rect x="150" y="276" width="140" height="40" rx="7" fill="#1b2024" stroke="#2a3136"/>
+          <text x="220" y="292" text-anchor="middle" fill="#a7b1b8">item_kc</text>
+          <text x="220" y="307" text-anchor="middle" fill="#6f7a82">题 → 知识点</text>
+
+          <rect x="22" y="190" width="126" height="40" rx="7" fill="#1b2024" stroke="#2a3136"/>
+          <text x="85" y="206" text-anchor="middle" fill="#a7b1b8">bank_items</text>
+          <text x="85" y="221" text-anchor="middle" fill="#6f7a82">题目与解析</text>
+
+          <rect x="292" y="190" width="126" height="40" rx="7" fill="#1b2024" stroke="#2a3136"/>
+          <text x="355" y="206" text-anchor="middle" fill="#a7b1b8">kc_state</text>
+          <text x="355" y="221" text-anchor="middle" fill="#6f7a82">BKT + FSRS</text>
+
+          <rect x="150" y="190" width="140" height="40" rx="7" fill="#1b2024" stroke="#2a3136"/>
+          <text x="220" y="206" text-anchor="middle" fill="#a7b1b8">bank_attempts</text>
+          <text x="220" y="221" text-anchor="middle" fill="#6f7a82">全量作答流水</text>
+
+          <path d="M220 66 L220 112" stroke="#5a6a72" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <path d="M220 158 L220 190" stroke="#5a6a72" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <path d="M220 230 L220 276" stroke="#5a6a72" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <path d="M148 210 L148 210" stroke="#5a6a72" stroke-width="1.2" fill="none"/>
+          <path d="M148 210 L150 210" stroke="#5a6a72" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <path d="M290 210 L292 210" stroke="#5a6a72" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <path d="M355 190 L355 168 L290 158" stroke="#5a6a72" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+        </g>
+      </svg>
+      <p style="font-size:11.5px;color:var(--ink3);margin:10px 0 0;line-height:1.6">灰色是已有资产，青色是唯一需要新建主键的地方。三张新表都能由存量数据回填。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>五 · 改造路线</h2>
+
+  <div class="road">
+    <div class="phase">
+      <div class="p"><b>P0</b>2–3 周</div>
+      <div>
+        <ul>
+          <li><b>给 ADR-004 重新接线</b>：恢复 scheduler 协议，py-fsrs 默认、SM-2 legacy（1 天）</li>
+          <li><b>全量作答入模</b>：答对也写状态（1 天，收益覆盖全部学习视图）</li>
+          <li><b>item_kc 映射 + v11 迁移</b>：题第一次有稳定知识点身份</li>
+          <li><b>BKT 估计器</b>：人群先验收缩到个人后验</li>
+          <li><b>KC 级 FSRS-6</b>：五道错题合并成一张卡</li>
+          <li><b>逐选项解析</b>：rationale / misconception / source_quote</li>
+          <li><b>蕴含级溯源</b>：替掉「前两字命中」</li>
+        </ul>
+        <div class="why">零新模型。全部可由历史 bank_attempts 离线回放验证。</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="p"><b>P1</b>4–6 周</div>
+      <div>
+        <ul>
+          <li><b>五类错因诊断</b>：知识缺口 / 概念混淆 / 审题偏差 / 推理跳跃 / 记忆衰退</li>
+          <li><b>支架梯度状态机</b>：L0 反问 → L1 概念 → L2 步骤 → L3 讲解</li>
+          <li><b>fading 规则</b>：连续两次独立做对才降级</li>
+          <li><b>教回 + 迁移检查</b>：讲一遍，换情境再做一遍</li>
+          <li><b>每日计划 + Tutor 评测集</b>：40 场景 × 5 维 rubric</li>
+        </ul>
+        <div class="why">这一阶段才真正把「Agent」从 RAG 形态升级为策略形态。</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="p"><b>P2</b>6–10 周</div>
+      <div>
+        <ul>
+          <li><b>虚拟病人</b>：病例按问揭示，先承诺诊断再反馈</li>
+          <li><b>前置知识图 + 打地基</b>：追到两年前的那个断层</li>
+          <li><b>题 ↔ 教材双链 + 标红</b>：Learning Radar 的本地版</li>
+          <li><b>移动消费面 PWA</b>：只做约 30 个端点</li>
+        </ul>
+        <div class="why">这一层是医学特有的差异化，也是最难被通用聊天机器人复制的一层。</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="p"><b>P3</b>探索</div>
+      <div>
+        <ul>
+          <li><b>IRT / CAT-lite</b>：单题累计 ≥100 次作答后再做</li>
+          <li><b>多模态</b>：先心电图（图 + 结构化描述，最可验证）</li>
+          <li><b>n-of-1 教学策略试验</b>：同 KC 随机分配两种策略</li>
+          <li><b>成本路由</b>：简单轮次走便宜模型，省 70–85%</li>
+        </ul>
+        <div class="why">先做实验，再产品化。不要用「先进」替代「有效证据」。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>六 · 反面清单</h2>
+
+  <div class="dont">
+    <div><b>不做通用聊天助手</b>拿自己的短板打别人的长板。护城河是「你的教材 + 你的错题 + 可核引用 + 本地」。</div>
+    <div><b>不自建内容库</b>AMBOSS 是 150+ 医生、1,400+ 篇文章。个人项目复制不了，也不该复制。</div>
+    <div><b>不做多智能体剧场</b>已有研究显示智能体与聊天机器人的学习增益无显著差异；自主性不应超过证据成熟度。</div>
+    <div><b>不做没有常模的分数预测</b>本地单用户没有参照系。做「准备度指数」，并明确标注非预测。</div>
+    <div><b>不先做云多租户</b>数据根请求级化是 1–1.5 周的深水区，且要改写隐私承诺。先做局域网 PWA 验证需求。</div>
+    <div><b>不把「AI 生成」当质量保证</b>系统综述：AI 题区分度偏低、无效干扰项常见，像新手写的题。</div>
+  </div>
+
+  <footer>
+    完整报告：docs/research/AI辅助学习_行业对标与MedKit改进_2026-10-27.md<br>
+    所有 MedKit 判断均标注文件与行号，可被证伪。证据分级：强 = RCT/系统综述，中 = 官方文档/benchmark，弱 = 厂商宣称。
+  </footer>
+
+</div>
+</body>
+</html>

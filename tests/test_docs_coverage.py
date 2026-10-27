@@ -232,7 +232,10 @@ _PATH_EXEMPT = {
     "medkit/core/tutor.py": "提问式学习域，随 T2 删除（tutor_sessions 0 场实测）",
     "medkit/core/cards.py": "医学记忆卡域，随 T2 删除（cards 0 张实测）",
     "medkit/core/review.py": "复习卡（SM-2）域，随 T2 删除（review_cards 0 张实测；SM-2 纯函数已搬进 vault_index）",
-    "medkit/core/scheduler.py": "旧复习计划调度器，随 T2 删除（被 vault 的 SM-2 取代）",
+    # 注：`medkit/core/scheduler.py` 曾在此登记为「随 T2 删除」——2026-10-27（v0.22.0
+    # ADR-004 重新接线）该模块**已恢复**，故豁免条目随之删除。
+    # 守卫 `test_path_exempt_entries_are_still_needed` 正是为此存在：豁免只增不减会
+    # 把守卫稀释成空壳（路径一旦回来，豁免就该退休）。
     "medkit/prompts/medexplain.md": "讲解提示词，随 T2 删除",
     "medkit/prompts/medtutor.md": "提问提示词，随 T2 删除",
     "medkit/prompts/medcards.md": "记忆卡提示词，随 T2 删除",
@@ -280,14 +283,27 @@ def _resolve(ref: str):
     return None
 
 
+def _is_planning_doc(name: str) -> bool:
+    """版本化规划任务书判定：`0.X.Y-*.md`。
+
+    这类文档（如 `0.10.0-requirement-analysis.md`、`0.21.0-知识点图谱与学习者模型_实施方案.md`）
+    列的是**待创建**的文件，路径本就不存在——按"活跃文档引用的路径必须真实存在"去判它是误报。
+
+    2026-10-27：由硬编码前缀 `0.10.0-` 放宽为版本号正则，让后续版本化任务书同样豁免。
+    判定抽成**独立函数**并被 `_active_docs()` 与 `test_active_docs_scan_face_is_not_empty()`
+    共用——两处各写一份必然漂移（那正是本守卫要防的那类假绿/假红）。
+    """
+    return bool(re.match(r"^\d+\.\d+\.\d+-", name))
+
+
 def _active_docs(tracked_only: bool = False):
     """活跃文档 = 排除历史快照与历史审查产物（它们记录的是当时的状态）。
 
     - `docs/archive/`：历史快照，路径按当时事实写，不该按现在校正
     - `docs/reviews/`：历史审查产物，同上
-    - `0.10.0-*.md`：规划任务书，列的是**待创建**的文件
+    - `0.X.Y-*.md`：版本化规划任务书，列的是**待创建**的文件
 
-    ## `tracked_only`（2026-10-02 加，**计数漂移**的根治）
+    ## `tracked_only`（2026-10-02 改，**计数漂移**的根治）
 
     默认（`False`）扫**工作区磁盘**——含尚未 `git add` 的草稿。这让
     `test_active_doc_path_refs_exist` 的参数化用例数**取决于开发者手边有没有
@@ -306,7 +322,7 @@ def _active_docs(tracked_only: bool = False):
     for f in sorted((ROOT / "docs").glob("**/*.md")):
         if "archive" in f.parts or "reviews" in f.parts:
             continue
-        if f.name.startswith("0.10.0-"):
+        if _is_planning_doc(f.name):
             continue
         if tracked is not None and f.relative_to(ROOT).as_posix() not in tracked:
             continue
@@ -351,12 +367,12 @@ def test_active_docs_scan_face_is_not_empty():
     tracked = _tracked_docs()
     if tracked is not None:
         # 与 git 索引核对时，先扣掉**设计上就该排除**的两类，只留「意料之外的漏扫」。
-        # （不加这一步会把 archive/ 与 0.10.0-* 的每一份文档都报成缺失——我第一版
+        # （不加这一步会把 archive/ 与版本化规划任务书的每一份文档都报成缺失——我第一版
         #   正是这么写的，实测立刻 44 处「缺失」，是探针误报而非真缺陷。）
+        # 判定必须与 `_active_docs()` 共用 `_is_planning_doc()`：两处各写一份必然漂移。
         expected_excluded = (
             {d for d in tracked if "/archive/" in d or "/reviews/" in d}
-            | {d for d in tracked
-               if pathlib.Path(d).name.startswith("0.10.0-")}
+            | {d for d in tracked if _is_planning_doc(pathlib.Path(d).name)}
         )
         gone = tracked - found - expected_excluded
         assert not gone, (
