@@ -159,19 +159,19 @@ async function vaultOpen(rel) {
   box.innerHTML = `
     <div class="cardh"><h2>${_esc(it.question) || "（无题干）"}</h2>
       <span class="hint">${_esc(rel)}</span></div>
-    <div class="hint" style="margin-bottom:8px">${_esc(it.analysis || "（无解析）")}</div>
+    <div class="hint" style="margin-bottom:var(--space-2)">${_esc(it.analysis || "（无解析）")}</div>
     <details style="margin:6px 0"><summary class="hint">答案（默认收起，防剧透）</summary>
       <div class="hint">${_esc(it.answer || "（无答案）")}</div></details>
-    <label>我的理解（你自己写，可空）</label>
+    <label for="vlt_und">我的理解（你自己写，可空）</label>
     <textarea id="vlt_und" rows="3" placeholder="当时为什么选错？现在怎么理解？">${_esc(it.understanding || "")}</textarea>
-    <label style="margin-top:8px">我的疑问（Agent 会逐条回应）</label>
+    <label for="vlt_doubts" style="margin-top:var(--space-2)">我的疑问（Agent 会逐条回应）</label>
     <textarea id="vlt_doubts" rows="3" placeholder="哪里还不确定？">${_esc(it.doubts || "")}</textarea>
-    <div class="btns" style="margin-top:8px">
+    <div class="btns" style="margin-top:var(--space-2)">
       <button class="act" onclick="vaultEdit()">保存理解与疑问</button>
       <button class="act gray" onclick="vaultClose()">收起</button>
     </div>
-    <label style="margin-top:12px">问错题助手（只依据你这个文件夹作答，答不出就说不知道）</label>
-    <div class="row" style="gap:8px">
+    <label for="vlt_q" style="margin-top:var(--space-3)">问错题助手（只依据你这个文件夹作答，答不出就说不知道）</label>
+    <div class="row" style="gap:var(--space-2)">
       <input type="text" id="vlt_q" style="flex:2" placeholder="例如：稳定期会用抗菌药吗？"
              onkeydown="if(event.key==='Enter'){vaultAsk();}">
       <button class="act" id="btn_vault_ask" onclick="vaultAsk()">提问</button>

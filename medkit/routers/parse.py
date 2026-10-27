@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from ..core import extract as ex
 from ..core import sessions as sessmod
 from ..core.slice import slice_text
-from ._common import TEXT_SUFFIXES, _analyze_slices, _parse_bytes
+from ._common import MAX_FILE_SIZE, TEXT_SUFFIXES, _analyze_slices, _parse_bytes, read_upload_capped
 
 router = APIRouter()
 
@@ -28,7 +28,11 @@ async def parse_files(files: list[UploadFile] = File(...),
         if suffix not in TEXT_SUFFIXES:
             return {"name": f.filename,
                     "error": f"不支持的类型 {suffix}（支持 PDF/DOCX/MD/TXT；图片需开启 OCR）"}
-        data = await f.read()
+        try:
+            data = await read_upload_capped(f, MAX_FILE_SIZE, "文件过大（限 200MB）")
+        except HTTPException as e:
+            # 单文件超限只影响这一项：与「类型不支持」同口径降级为 error，不炸掉整批
+            return {"name": f.filename, "error": str(e.detail)}
         return await asyncio.to_thread(_parse_bytes, f.filename or "未命名文件", data, suffix)
 
     results = await asyncio.gather(*(process(f) for f in files))

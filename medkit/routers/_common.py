@@ -95,6 +95,39 @@ _MAGIC: dict[str, tuple[bytes, ...]] = {
 }
 
 
+# ---------------------------------------------------------------- 上传读取（带上限）
+_UPLOAD_CHUNK = 1024 * 1024   # 1MB/块：既不让单次分块过大，也不至于万次系统调用
+
+
+async def read_upload_capped(file: Any, limit: int, message: str) -> bytes:
+    """按上限**分块**读取上传体，超限立即中止。
+
+    为什么不是 `raw = await file.read()` 再判长度：
+    `UploadFile.read()` 会把整个上传体 materialize 进内存，**先吃满内存、后判 400**。
+    声明「限 200MB」并不妨碍一个 2GB 上传先吃掉 2GB 才被拒（本机也会 OOM/换页）。
+    本函数先看 multipart 解析出的 `size`（绝大多数超限场景一行都不读），
+    再按 1MB 分块累计，任一时刻超限就抛 400 —— 峰值内存不超过 limit + 1 块。
+
+    `message` 由调用方给定，以保留各自既有的错误文案（前端与测试依赖原文）。
+    """
+    declared = getattr(file, "size", None)
+    if isinstance(declared, int) and declared > limit:
+        raise HTTPException(400, message)
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            chunks.clear()          # 超限即丢，别把已读的几块也留在内存里
+            raise HTTPException(400, message)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _content_guard(data: bytes, suffix: str) -> str | None:
     """魔数 + 压缩炸弹闸。返回错误文案（None = 通过）。
 

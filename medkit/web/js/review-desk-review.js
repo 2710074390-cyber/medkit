@@ -9,6 +9,9 @@ let revSaving = false;   // A-03：保存中标志（跨越 openReview 重渲染
 function revHideKey() { return "medkit-rev-hide-" + (currentPid || "__new__"); }
 /* 审核台脏状态守卫：切主 tab / 换项目 / 刷新关闭都要确认（防未保存修改静默丢失） */
 function reviewDirtyGuard() {
+  /* 这里刻意保留原生 confirm：本函数是 showTab 的**同步**闸门（返回布尔值决定是否切页），
+     而 confirmModal 是异步的——改成自定义弹窗就得把整个导航路径改成 await，
+     收益（样式统一）远小于风险（切页时序）。除这一处，全站已无原生 confirm。 */
   if (reviewState.dirty && !confirm("审核台有未保存的修改（剔除/编辑/重掷尚未保存），确定离开？修改将丢失。")) return false;
   return true;
 }
@@ -92,7 +95,7 @@ function renderReview(scrollToId = null) {
   const kept = qs.filter(q => !reviewState.drop.has(q.id)).length;
   const BLOOMS = ["", "记忆", "理解", "应用", "创造"];
   box.innerHTML = `<div class="card" style="margin-top:14px">
-    <div class="cardh"><h2 id="rev_title">逐题审核（保留 ${kept} / 共 ${qs.length} 题）</h2>
+    <div class="cardh"><h3 id="rev_title">逐题审核（保留 ${kept} / 共 ${qs.length} 题）</h3>
       <span class="hint" id="rev_filter_cnt"></span></div>
     <div class="hint">✓ 默认保留 · ✗ 剔除（可反悔）· 行内编辑 · 单题重掷（约 30 秒，消耗一次调用）· 完成后点「保存并重渲染」</div>
     <div class="revtool">
@@ -113,15 +116,15 @@ function renderReview(scrollToId = null) {
         <span class="hint" id="rev_batch_n" style="margin:0"></span>
         <select id="rev_bb" style="min-width:96px"><option value="">Bloom →</option>
           <option>记忆</option><option>理解</option><option>应用</option><option>创造</option></select>
-        <button class="act gray" id="rev_bb_apply" style="padding:8px 12px;font-size:var(--fs-2)">应用</button>
-        <button class="act gray" id="rev_drop_sel" style="padding:8px 12px;font-size:var(--fs-2);color:var(--bad)">批量剔除</button>
-        <button class="act gray" id="rev_restore_sel" style="padding:8px 12px;font-size:var(--fs-2);color:var(--good)">批量恢复</button>
-        <button class="act gray" id="rev_sel_vis" style="padding:8px 12px;font-size:var(--fs-2)">全选可见</button>
-        <button class="act gray" id="rev_sel_inv" style="padding:8px 12px;font-size:var(--fs-2)">反选</button>
-        <button class="act gray" id="rev_unsel" style="padding:8px 12px;font-size:var(--fs-2)">取消选择</button>
+        <button class="act gray" id="rev_bb_apply" style="padding:var(--space-2) var(--space-3);font-size:var(--fs-2)">应用</button>
+        <button class="act gray" id="rev_drop_sel" style="padding:var(--space-2) var(--space-3);font-size:var(--fs-2);color:var(--bad)">批量剔除</button>
+        <button class="act gray" id="rev_restore_sel" style="padding:var(--space-2) var(--space-3);font-size:var(--fs-2);color:var(--good)">批量恢复</button>
+        <button class="act gray" id="rev_sel_vis" style="padding:var(--space-2) var(--space-3);font-size:var(--fs-2)">全选可见</button>
+        <button class="act gray" id="rev_sel_inv" style="padding:var(--space-2) var(--space-3);font-size:var(--fs-2)">反选</button>
+        <button class="act gray" id="rev_unsel" style="padding:var(--space-2) var(--space-3);font-size:var(--fs-2)">取消选择</button>
       </span>
-      <button class="act gray" id="rev_keepall" style="padding:8px 14px;font-size:var(--fs-2)">全部保留</button>
-      <button class="act gray" id="rev_dropall" style="padding:8px 14px;font-size:var(--fs-2);color:var(--bad)">全部剔除</button>
+      <button class="act gray" id="rev_keepall" style="padding:var(--space-2) 14px;font-size:var(--fs-2)">全部保留</button>
+      <button class="act gray" id="rev_dropall" style="padding:var(--space-2) 14px;font-size:var(--fs-2);color:var(--bad)">全部剔除</button>
       <button class="act" id="rev_save" style="margin-left:auto">保存并重渲染</button>
       <button class="act gray" id="rev_refresh">刷新</button>
       <button class="act gray" id="rev_hide">隐藏已剔除</button>
@@ -250,10 +253,10 @@ function renderReview(scrollToId = null) {
         <input class="eb" data-e="answer" placeholder="答案键（如 B / BDE）" value="${esc(ed.answer ?? q.answer)}" style="max-width:120px">
         <input class="eb" data-e="bloom" placeholder="Bloom（记忆/理解/应用/创造）" value="${esc(ed.bloom ?? q.bloom)}" style="max-width:180px">
       </div>
-      <div class="hint bad" data-f="anschk" style="display:none;margin:4px 0"></div>
+      <div class="hint bad" data-f="anschk" style="display:none;margin:var(--space-1) 0"></div>
       <div class="optsrow" data-f="editopts" style="${ed._editOpen ? "" : "display:none"}">
         ${q.group_kind === "option_group"
-          ? `<div class="hint" style="margin:0 0 4px">共享选项（本组所有子题共用）——修改会同步整组</div>
+          ? `<div class="hint" style="margin:0 0 var(--space-1)">共享选项（本组所有子题共用）——修改会同步整组</div>
              <input class="eb" data-e="groupoptions" placeholder="每行一个共享选项（所有子题共用）" value="${esc((ed.groupOptions || (q.group && q.group.options) || []).join("\n"))}">`
           : opList.map((o, i) =>
               `<input class="eb" data-e="opt${i}" placeholder="选项${letters(opList.length)[i]}" value="${esc(o)}">`).join("")}
@@ -632,8 +635,9 @@ api("/api/health").then(h => {
   $("side_ver").textContent = "v" + (h.version || "");
 }).catch(() => {});
 /* v0.6:版本号可点 → 手动检查更新;启动 4s 后静默检查一次 */
+/* #side_ver 已是真正的 <button>：Enter / Space 由浏览器原生派发 click，
+   不再手写 keydown（否则一次按键会触发两次检查）。 */
 $("side_ver").onclick = () => checkUpdate(false);
-$("side_ver").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); checkUpdate(false); } };
 setTimeout(() => checkUpdate(true), 4000);
 loadConfig().catch(e => {
   toast(e.message, false);

@@ -57,9 +57,17 @@ function paletteRender() {
   if (!box) return;
   box.innerHTML = _paletteShown.length
     ? _paletteShown.map((c, i) => `<button class="palette-item${i === _paletteIdx ? " on" : ""}"
+        id="palette_opt_${i}" role="option" aria-selected="${i === _paletteIdx}"
         data-i="${i}" onclick="paletteRun(this)"><span>${esc(c.label)}</span>
         <span class="hint">${esc(c.hint)}</span><span class="pk">Enter</span></button>`).join("")
     : `<div class="palette-empty">没有匹配的命令——换个词试试。</div>`;
+  /* 焦点始终在输入框上（面板是"搜索 + 回车"形态），因此高亮项要靠
+     aria-activedescendant 告知读屏"当前选中的是哪一条"，否则 ↑↓ 完全静默。 */
+  const q = $("palette_q");
+  if (q) {
+    if (_paletteShown.length) q.setAttribute("aria-activedescendant", "palette_opt_" + _paletteIdx);
+    else q.removeAttribute("aria-activedescendant");
+  }
   const on = box.querySelector(".palette-item.on");
   if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest" });
 }
@@ -72,18 +80,30 @@ function paletteFilter(q) {
   paletteRender();
 }
 
+/* 打开前记住触发元素：关闭后焦点要回到侧栏那颗按钮（否则落到 <body>）。 */
+let _paletteReturnFocus = null;
 function paletteOpen() {
   const mask = $("palette_mask");
   if (!mask) return;
+  if (mask.style.display !== "flex") _paletteReturnFocus = document.activeElement;
   mask.style.display = "flex";
+  setBackgroundInert(true);
   const q = $("palette_q");
-  if (q) { q.value = ""; q.focus(); }
+  if (q) { q.value = ""; q.setAttribute("aria-expanded", "true"); q.focus(); }
   paletteFilter("");
 }
 
 function paletteClose() {
   const mask = $("palette_mask");
-  if (mask) mask.style.display = "none";
+  if (!mask || mask.style.display === "none") return;
+  mask.style.display = "none";
+  if (!anyOverlayOpen()) setBackgroundInert(false);
+  const q = $("palette_q");
+  if (q) q.setAttribute("aria-expanded", "false");
+  const back = _paletteReturnFocus; _paletteReturnFocus = null;
+  if (back && document.contains(back) && typeof back.focus === "function") {
+    try { back.focus(); } catch (e) { /* ignore */ }
+  }
 }
 
 /* 执行第 i 条命令（`el` 为被点中的按钮；键盘 Enter 时省略，用当前高亮项）。 */

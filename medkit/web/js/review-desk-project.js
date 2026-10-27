@@ -35,15 +35,15 @@ $("btn_trial").onclick = async () => {
       `<div class="${i.severity === "fail" ? "failline" : "warnline"}">[${esc(i.code)}] ${esc(i.reason)}</div>`).join("");
     box.innerHTML = `
       <div class="trialq">
-        <div style="margin:0 0 8px;padding:6px 10px;border:1px dashed var(--warn);border-radius:8px;font-size:var(--fs-2);color:var(--warn)">⚠️ ${esc(r.note || "试出题不含网络检索/大纲锚定/图片素材，正式生成风格可能不同")}</div>
+        <div style="margin:0 0 var(--space-2);padding:6px 10px;border:1px dashed var(--warn);border-radius:8px;font-size:var(--fs-2);color:var(--warn)">⚠️ ${esc(r.note || "试出题不含网络检索/大纲锚定/图片素材，正式生成风格可能不同")}</div>
         <div class="src">试出题 · ${esc(r.from_slice || "")} · <span class="tag">${esc(q.type || "")}</span><span class="tag">${esc(q.bloom || "")}</span></div>
         <div class="qtext">${esc(q.question)}</div>
         <div class="opts">${(q.options || []).map((o, i) => L[i] + ". " + esc(o)).join("<br>")}</div>
         <details><summary>显示答案</summary>
           <div class="ans">✓ 答案：<b>${esc(q.answer)}</b><br>${esc(q.analysis)}</div>
         </details>
-        ${issues ? `<div style="margin-top:8px">${issues}</div>` : `<div class="hint good">门禁即检：未发现问题 ✓</div>`}
-        <div class="btns" style="margin-top:8px">
+        ${issues ? `<div style="margin-top:var(--space-2)">${issues}</div>` : `<div class="hint good">门禁即检：未发现问题 ✓</div>`}
+        <div class="btns" style="margin-top:var(--space-2)">
           <button class="act" onclick="$('btn_create').click()">满意，创建课题 →</button>
           <button class="act gray" onclick="doclickTrialAgain()">不满意，再试一题</button>
         </div>
@@ -134,7 +134,7 @@ async function loadProjects() {
     box.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-mine"></use></svg>
       <div class="sub">还没有项目 · 上传教材与教师重点，生成你的第一套题库</div>
-      <div class="btns" style="justify-content:center;margin-top:4px">
+      <div class="btns" style="justify-content:center;margin-top:var(--space-1)">
         <button class="act" onclick="document.getElementById('tab-bank').scrollIntoView({behavior:'smooth'})">去上方「新建课题」↑</button>
         <button class="act gray" onclick="loadSample()">载入示例体验</button>
       </div>
@@ -322,7 +322,7 @@ async function showProject(pid) {
     <div id="pd_substeps" class="substeps-card">${renderSubsteps(meta.substeps, meta.stage)}</div>
     <div class="hint" style="margin-top:6px">各章节配额（教师重点词频加权）：</div>
     <div class="quota">${quota}</div>
-    <div id="pd_arts" class="hint" style="margin-top:8px">${artifactLinks(pid, meta.artifacts)}</div>
+    <div id="pd_arts" class="hint" style="margin-top:var(--space-2)">${artifactLinks(pid, meta.artifacts)}</div>
     ${(meta.artifacts || []).some(n => /^qbank\.html$/i.test(n))
       ? `<div class="hint" style="margin-top:6px">仅重渲染（不重跑管线 · 无 token 消耗）：` +
         Object.entries([["qbank", "题库"], ["paper", "押题卷"], ["review", "复习手册"], ["anki", "Anki"]])
@@ -330,7 +330,7 @@ async function showProject(pid) {
         + ` <span class="hint" style="font-size:var(--fs-1)">— 用于只改产物不改题</span></div>`
       : ""}
     ${usage}
-    <div id="pd_assets_box" style="margin-top:12px">
+    <div id="pd_assets_box" style="margin-top:var(--space-3)">
       <div class="hint"><b>图片素材（图/表题）</b>：上传教材插图 / 心电图 / 影像 / 辅检表截图，生成时提示出图题（image_ref 门禁校验，错题可随图查看）；无素材项目零影响。</div>
       <div id="pd_assets" class="hint">加载中…</div>
       <div class="row" style="margin-top:6px;flex-wrap:wrap">
@@ -361,7 +361,7 @@ async function pdAssets() {
         style="max-width:160px;max-height:110px;border-radius:8px;border:1px solid var(--line-hair);margin-right:10px;vertical-align:middle"
         onerror="this.style.display='none'">
       <b>${esc(a.sid)}</b> · ${esc(a.caption)}<span class="hint"> · ${((a.bytes || 0) / 1024).toFixed(0)}KB</span>
-      <button class="act gray" style="padding:3px 9px;font-size:var(--fs-1);margin-left:8px" data-sid="${esc(a.sid)}" onclick="pdAssetDel(this)">删除</button>
+      <button class="act gray" style="padding:3px 9px;font-size:var(--fs-1);margin-left:var(--space-2)" data-sid="${esc(a.sid)}" onclick="pdAssetDel(this)">删除</button>
     </div>`).join("");
   } catch (e) { const box = $("pd_assets"); if (box) box.innerHTML = "素材加载失败：" + esc(e.message); }
 }
@@ -559,8 +559,8 @@ async function ankiPreview(pidOrBtn) {
     $("md_ok").textContent = "知道了";
     $("md_ok").className = "act";
     modalOnCancel = null;   // A-新14：信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
-    $("modal_mask").style.display = "flex";
-    $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
+    _openModal();
+    $("md_ok").onclick = closeModal;
   } catch (e) { toast(e.message, false); }
 }
 window.ankiPreview = ankiPreview;
@@ -580,8 +580,8 @@ function ankiHelp() {
   $("md_ok").textContent = "知道了";
   $("md_ok").className = "act";
   modalOnCancel = null;   // A-新14：信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
-  $("modal_mask").style.display = "flex";
-  $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
+  _openModal();
+  $("md_ok").onclick = closeModal;
 }
 window.ankiHelp = ankiHelp;
 window.ankiPreview = ankiPreview; window.ankiHelp = ankiHelp;

@@ -16,8 +16,10 @@ import time
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -235,6 +237,67 @@ def _err_response(status: int, exc: Exception, code: ErrorCode) -> JSONResponse:
     errs.record(code.value, str(exc))
     return JSONResponse(status_code=status,
                         content={"detail": errs.redact(str(exc)), "error_code": code.value})
+
+
+# 请求参数校验失败（FastAPI 422）：**必须显式接管**。
+#
+# 默认 handler 返回 `{"detail": [{type, loc, msg, input}, …]}` —— detail 是**数组**，
+# 而前端 `api()` 的错误消费是 `new Error(j.detail || …)`：数组会被渲染成
+# "[object Object]" 或一段 Python repr，用户看到的是一串英文内部字段路径。
+# 实测（2026-10-22）：GET /api/library/recommend?limit=abc →
+#   {"detail":[{"type":"int_parsing","loc":["query","limit"],"msg":"Input should be …"}]}
+# 故统一成与其他错误一致的 `{detail: str, error_code: str}`，并附 `fields`
+# 供前端做行内定位（保留机器可读性，但不再是唯一出口）。
+_VALIDATION_MSG: dict[str, str] = {
+    "missing": "缺少必填参数",
+    "int_parsing": "需为整数",
+    "int_type": "需为整数",
+    "float_parsing": "需为数字",
+    "float_type": "需为数字",
+    "bool_parsing": "需为布尔值",
+    "bool_type": "需为布尔值",
+    "string_type": "需为文本",
+    "json_invalid": "请求体不是合法 JSON",
+    "list_type": "需为数组",
+    "dict_type": "需为对象",
+    "string_too_long": "长度超限",
+    "string_too_short": "长度不足",
+    "greater_than_equal": "小于允许下限",
+    "less_than_equal": "超过允许上限",
+    "greater_than": "需大于下限",
+    "less_than": "需小于上限",
+}
+
+
+def _field_label(loc: tuple[Any, ...]) -> str:
+    """`('query','limit')` → `limit`；保留数组下标，去掉 body/query/path/header 前缀。"""
+    parts = [str(x) for x in loc if str(x) not in ("body", "query", "path", "header", "cookie")]
+    out = ""
+    for p in parts:
+        out += f"[{p}]" if p.isdigit() else (f".{p}" if out else p)
+    return out or "请求"
+
+
+def _validation_detail(exc: RequestValidationError) -> tuple[str, list[dict[str, str]]]:
+    fields: list[dict[str, str]] = []
+    for err in exc.errors()[:5]:
+        etype = str(err.get("type") or "")
+        hint = _VALIDATION_MSG.get(etype, "格式不正确")
+        fields.append({"field": _field_label(tuple(err.get("loc") or ())), "msg": hint})
+    head = "；".join(f"{f['field']} {f['msg']}" for f in fields) or "参数格式不正确"
+    more = f"（共 {len(exc.errors())} 项）" if len(exc.errors()) > 5 else ""
+    return f"请求参数不合法：{head}{more}", fields
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(_request: Request,
+                                        exc: RequestValidationError) -> JSONResponse:
+    detail, fields = _validation_detail(exc)
+    return JSONResponse(status_code=422, content={
+        "detail": errs.redact(detail),
+        "error_code": ErrorCode.VALIDATION_ERROR.value,
+        "fields": fields,
+    })
 
 
 app.add_exception_handler(LLMError,

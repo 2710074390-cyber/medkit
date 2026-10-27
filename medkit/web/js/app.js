@@ -67,7 +67,7 @@ function toast(msg, ok = true) {
   t._timer = setTimeout(() => { t.remove(); toastTimers.delete(t._timer); }, 3800);
   toastTimers.add(t._timer);
 }
-async function api(path, opts = {}) {
+async function _apiSend(path, opts) {
   const o = { ...opts };
   if (o.body && typeof o.body === "string" && (o.method || "GET") !== "GET") {
     // 字符串体默认 JSON（FormData 原样透传，不设 header）
@@ -84,58 +84,25 @@ async function api(path, opts = {}) {
   }
   return j;
 }
-/* A-新14（含 D-22）：ESC 关闭 confirmModal 必须触发 onCancel 回调（无 onCancel 时才直接关闭） */
-let modalOnCancel = null;
-function confirmModal(title, body, okLabel, onOk, danger = true, onCancel = null) {
-  $("md_title").textContent = title;
-  $("md_body").innerHTML = body;
-  $("md_ok").textContent = okLabel || "确认";
-  $("md_ok").className = "act " + (danger ? "danger" : "");
-  $("modal_mask").style.display = "flex";
-  modalOnCancel = onCancel;
-  $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; modalOnCancel = null; onOk(); };
-  $("md_cancel").onclick = () => {
-    $("modal_mask").style.display = "none";
-    const cb = modalOnCancel; modalOnCancel = null;
-    if (typeof cb === "function") cb();   // C13：取消后回调（如提示已创建的待运行项目）
-  };
-  $("md_ok").focus();
+/* 同一个 GET 在途时复用同一个 Promise。
+ *
+ * 为什么需要：打开「今天」会由三处分别请求 `/api/library/dashboard`（外壳统计卡 /
+ * 掌握度诊断 / 闭环总览），三份响应逐字节相同。本地服务虽然快，但 dashboard 是
+ * 聚合端点（掌握度 + 闭环 + 近期活动），重复拉三次会明显拖慢切页。
+ *
+ * 只去重 GET：写操作必须各自落地。键 = 方法 + 路径（含 query），故不同 subject 不会串。
+ * 请求结束即出表（成功或失败），不存在"拿到过期数据"的窗口。 */
+const _apiInflight = new Map();
+function api(path, opts = {}) {
+  const method = String(opts.method || "GET").toUpperCase();
+  if (method !== "GET") return _apiSend(path, opts);
+  const key = "GET " + path;
+  const running = _apiInflight.get(key);
+  if (running) return running;
+  const p = _apiSend(path, opts).finally(() => { _apiInflight.delete(key); });
+  _apiInflight.set(key, p);
+  return p;
 }
-/* 带文本输入的对话框（替代原生 prompt，风格统一）
-   `value`（可选，默认空）：**预填值**——重命名/导入这类场景应当把当前值摆出来直接改，
-   而不是只给一个 placeholder 让用户重打一遍。 */
-function askModal(title, label, placeholder, onOk, value = "") {
-  $("md_title").textContent = title;
-  $("md_body").innerHTML = `<label style="margin:0">${esc(label)}</label>
-    <input type="text" id="md_input" maxlength="40" placeholder="${esc(placeholder || "")}"
-      value="${esc(value || "")}" style="width:100%;margin-top:8px">`;
-  $("md_ok").textContent = "保存";
-  $("md_ok").className = "act";
-  $("modal_mask").style.display = "flex";
-  const input = $("md_input");
-  input.focus();
-  const submit = () => {
-    const v = input.value.trim();
-    if (!v) { input.classList.add("err"); input.focus(); return; }
-    $("modal_mask").style.display = "none";
-    onOk(v);
-  };
-  $("md_ok").onclick = submit;
-  input.onkeydown = e => { if (e.key === "Enter") submit(); };
-  modalOnCancel = null;   // A-新14：askModal 不携带取消回调，防止 ESC 触发上一个 confirmModal 的残留 onCancel
-}
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape") {
-    if ($("modal_mask").style.display === "flex") {
-      $("modal_mask").style.display = "none";
-      // A-新14（含 D-22）：ESC 关闭必须触发 onCancel 回调（无 onCancel 时才直接关闭）
-      const cb = modalOnCancel; modalOnCancel = null;
-      if (typeof cb === "function") cb();
-    }
-  }
-});
-$("md_cancel").onclick = () => { $("modal_mask").style.display = "none"; };
-
 /* ---- 主题 */
 function applyTheme() {
   const t = state.theme || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
@@ -229,19 +196,19 @@ function openFeedback() {
   const ver = state.version ? "v" + state.version : "";
   $("md_body").innerHTML = `
     <p style="margin:0 0 10px;color:var(--text-2);font-size:var(--fs-2)">遇到问题或有功能建议，欢迎邮件反馈：</p>
-    <div style="display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line-hair);border-radius:8px;padding:10px 12px">
+    <div style="display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line-hair);border-radius:8px;padding:10px var(--space-3)">
       <svg class="ic" style="color:var(--text-2)"><use href="#i-mail"></use></svg>
       <b style="font-size:var(--fs-3);letter-spacing:.3px">${FEEDBACK_MAIL}</b>
-      <button class="act gray" id="fb_copy" style="margin-left:auto;padding:5px 12px;font-size:var(--fs-2)">复制</button>
+      <button class="act gray" id="fb_copy" style="margin-left:auto;padding:5px var(--space-3);font-size:var(--fs-2)">复制</button>
     </div>
     <p style="margin:10px 0 0;color:var(--text-2);font-size:var(--fs-2)">点「写邮件」会自动附带版本与系统信息，方便快速定位问题。</p>`;
   $("md_ok").textContent = "写邮件";
   $("md_ok").className = "act";
-  $("modal_mask").style.display = "flex";
+  _openModal();
   modalOnCancel = null;   // A-新14：普通信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
   $("fb_copy").onclick = () => copyText(FEEDBACK_MAIL, $("fb_copy"));
   $("md_ok").onclick = () => {
-    $("modal_mask").style.display = "none";
+    closeModal();
     const subject = `MedKit ${ver} 反馈`;
     const body = `版本：${ver || "未知"}\n系统：${navigator.platform || "未知"}\n时间：${new Date().toLocaleString("zh-CN")}\n\n（请在此描述你遇到的问题或功能建议）`;
     location.href = `mailto:${FEEDBACK_MAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -265,8 +232,8 @@ function showUpdateModal(r) {
   let html = "";
   if (r.has_update) {
     const pre = r.prerelease ? " <span style='color:var(--warn)'>（预览版）</span>" : "";
-    html = `<p style="margin:0 0 8px">当前版本 <b>v${esc(r.current)}</b> → 最新版本 <b style="color:var(--good)">v${esc(r.latest)}</b>${pre}</p>`;
-    if (r.notes) html += `<div style="max-height:180px;overflow:auto;background:var(--surface-2);border:1px solid var(--line-hair);border-radius:8px;padding:10px 12px;font-size:var(--fs-2);white-space:pre-wrap;line-height:1.6">${esc(r.notes)}</div>`;
+    html = `<p style="margin:0 0 var(--space-2)">当前版本 <b>v${esc(r.current)}</b> → 最新版本 <b style="color:var(--good)">v${esc(r.latest)}</b>${pre}</p>`;
+    if (r.notes) html += `<div style="max-height:180px;overflow:auto;background:var(--surface-2);border:1px solid var(--line-hair);border-radius:8px;padding:10px var(--space-3);font-size:var(--fs-2);white-space:pre-wrap;line-height:1.6">${esc(r.notes)}</div>`;
     $("md_ok").textContent = "打开下载页";
   } else if (r.error) {
     html = `<p style="margin:0;color:var(--text-2)">网络检查失败（无法访问 GitHub），可稍后再试，或直接打开发布页查看。</p>`;
@@ -277,11 +244,11 @@ function showUpdateModal(r) {
   }
   $("md_body").innerHTML = html;
   $("md_ok").className = "act";
-  $("modal_mask").style.display = "flex";
+  _openModal();
   modalOnCancel = null;   // A-新14：普通信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
   const url = r.html_url || "https://github.com/2710074390-cyber/medkit/releases/latest";
   $("md_ok").onclick = () => {
-    $("modal_mask").style.display = "none";
+    closeModal();
     if ((r.has_update || r.error) && openExternal(url) === false) {
       toast("当前处于离线状态，无法打开外链（联网后重试）", false);
     }
@@ -308,9 +275,9 @@ async function checkUpdate(silent = false) {
     $("md_body").innerHTML = `<p style="margin:0;color:var(--text-2)">正在检查新版本…</p>`;
     $("md_ok").textContent = "知道了";
     $("md_ok").className = "act";
-    $("modal_mask").style.display = "flex";
+    _openModal();
     modalOnCancel = null;   // A-新14：普通信息弹窗不携带取消回调（防 ESC 触发残留 onCancel）
-    $("md_ok").onclick = () => { $("modal_mask").style.display = "none"; };
+    $("md_ok").onclick = closeModal;
   }
   try {
     const r = await api("/api/update/check");
@@ -349,14 +316,19 @@ async function loadDataMgmt() {
     const row = [];
     for (const k of ["config", "presets", "library", "projects", "prompts"])
       if (r.size && r.size.hasOwnProperty(k)) row.push(`${names[k]} ${fmtBytes(r.size[k])}`);
-    const counts = `项目 ${r.counts.projects} · 错题 ${r.counts.mistakes} · 知识点 ${r.counts.knowledge}` +
-      ` · 复习卡 ${r.counts.review_cards} · 会话 ${r.counts.sessions}`;
+    /* 只渲染后端**真的返回**的键：此前「复习卡」是已删除域（复习卡三域随 T2 移除）的遗留，
+       后端从未提供 `review_cards`，界面上直接显示成 undefined。 */
+    const counts = `项目 ${r.counts.projects} · 错题 ${r.counts.mistakes} · 知识点 ${r.counts.knowledge}`
+      + ` · 素材会话 ${r.counts.sessions || 0}`;
     let subj = "";
     if (r.by_subject && Object.keys(r.by_subject).length)
       subj = "<br>按科目错题：" + Object.entries(r.by_subject).slice(0, 12).map(([s, c]) => `${esc(s)} ${c}`).join(" / ");
     sizes.innerHTML = `总计 <b>${fmtBytes(r.size.total)}</b> · ${row.join(" / ")}<br>${counts}${subj}`;
     if (r.backups && r.backups.length)
-      backups.textContent = "最近备份：" + r.backups.map(b => `${b.name}（${fmtBytes(b.size)}）`).join("，");
+      // 顺带暴露「总份数 / 总占用」：备份只增不删是磁盘增长的唯一来源，先让它可见
+      backups.textContent = (r.backups_count > r.backups.length
+        ? `最近 ${r.backups.length} 份（共 ${r.backups_count} 份 / ${fmtBytes(r.backups_total)}）：`
+        : "最近备份：") + r.backups.map(b => `${b.name}（${fmtBytes(b.size)}）`).join("，");
     else backups.textContent = "暂无备份——建议先「一键备份」留存数据。";
   } catch (e) {
     sizes.innerHTML = "加载数据统计失败：" + esc(e.message || e);
@@ -375,18 +347,28 @@ function dmOpen() {
   api("/api/data/open", { method: "POST", body: "{}" })
     .catch(e => toast("打开数据目录失败：" + (e.message || e), false));
 }
-async function dmClear() {
+/* 清空全部数据：两道闸门（输入确认短语 → 自定义模态再确认）。
+   第二道此前用的是原生 confirm()——不可逆的最高危操作反而是唯一不可控样式的对话框，
+   与第一道闸门的定制风格断裂，且按钮文案只能是「确定/取消」。 */
+function dmClear() {
   const inp = $("dm_confirm");
   if (!inp || inp.value.trim() !== "清空全部数据") {
     toast("请先在输入框输入「清空全部数据」以二次确认", false);
     return;
   }
-  if (!confirm("再次确认：这将删除全部学习数据与项目（执行前自动生成完整备份）。是否继续？")) return;
+  const phrase = inp.value.trim();
+  confirmModal("确认清空全部数据",
+    `<p style="margin:0">将删除<b>学习数据与全部项目</b>（错题 / 掌握度 / 复习计划 / 项目与产物），`
+    + `仅保留服务商等应用配置。<br>操作<b>不可逆</b>；执行前会自动生成一份完整备份。确认继续？</p>`,
+    "确认清空全部数据", () => { dmClearRun(phrase); }, true);
+}
+async function dmClearRun(phrase) {
+  const inp = $("dm_confirm");
   const out = $("dm_result");
   if (out) out.textContent = "正在清空并自动备份…";
   try {
-    const r = await api("/api/data/clear", { method: "POST", body: JSON.stringify({ confirm: inp.value.trim() }) });
-    inp.value = "";
+    const r = await api("/api/data/clear", { method: "POST", body: JSON.stringify({ confirm: phrase }) });
+    if (inp) inp.value = "";
     // S2-13：后端不再恒报成功——被占用的数据（运行中的 SQLite）会回 ok=false + failed
     if (r.ok === false) {
       if (out) out.innerHTML = `⚠️ 部分数据未能删除。${esc(r.hint || "")}`;
@@ -442,6 +424,13 @@ window.genToggle = genToggle;
 
 /* ---- 导航 + hash 路由 */
 let shownTab = null;   // A-新7：记录当前已展示 tab——hashchange 与 showTab 双入口去重（防双倍请求）
+/* 页签显示名（页面标题与 aria-current 共用；顺序即侧栏顺序） */
+const TAB_LABEL = { start: "今天", study: "刷题", learn: "错题", bank: "题库", mine: "设置" };
+/* 导航语义：侧栏是**路由**而非同屏选项卡，故用 nav + aria-current="page"，
+   不再给按钮挂 role="tab"/aria-selected（那套语义还要求 roving tabindex、方向键、
+   配套的 tabpanel，本仓只做了一半，读屏会听到 5 个"选项卡"却按 Tab 连过 5 次）。
+   页面标题同步更新：SPA 切页若不改 document.title，读屏不会播报页面变化（WCAG 2.4.2），
+   浏览器标签页也无法区分。 */
 function showTab(name) {
   if (typeof window.reviewDirtyGuard === "function" && !window.reviewDirtyGuard()) {
     // 审核台有未保存修改：回滚 hash 到当前 tab，不切换
@@ -456,16 +445,16 @@ function showTab(name) {
     name = "start";
   }
   /* 只作用于主导航（data-tab）：页内还有别的 <nav>（如 #syl_std 的 pill 组），
-     若用裸 "nav button" 会误重置它们的 aria-selected / active 状态。 */
+     若用裸 "nav button" 会误重置它们的选中态。 */
   document.querySelectorAll("nav button[data-tab]").forEach(x => {
     const on = x.dataset.tab === name;
     x.classList.toggle("active", on);
     if (on) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current");
-    x.setAttribute("aria-selected", on ? "true" : "false");   // IMP-08：主 tab 语义同步
   });
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
   $("tab-" + name).classList.add("show");
   shownTab = name;   // A-新7：hashchange 目标与当前一致时跳过（见下方 hashchange 监听）
+  if (TAB_LABEL[name]) document.title = TAB_LABEL[name] + " · MedKit 医学题库工坊";
   if (name !== "bank") {            // v0.5：切走题库（项目详情） → 停止进度轮询与 OCR 轮询
     stopPoll();
     ocrRunToken++;
@@ -474,7 +463,9 @@ function showTab(name) {
   if (typeof bankDrillHide === "function") bankDrillHide();   // 切页签一律收起沉浸式作答层（bank 域）
   if (name === "start") {          // 「今天」= 今日待办 + 掌握度诊断（原「学习中心 → 概览」已并入，指标不再两处各算）
     loadStart();
-    if (typeof loadDashboard === "function") loadDashboard();
+    /* loadDashboard() 曾在这里被单独调用一次——而它拉的是同一份 /api/library/dashboard，
+       与 loadLibrary() → loadOverview() 完全重复。现在只走 loadLibrary 一路
+       （loadOverview 同时渲染闭环总览与薄弱点诊断），首屏 dashboard 请求由 3 次降到 1 次。 */
     if (typeof loadLibrary === "function") loadLibrary();   // 内含 loadOverview（薄弱点诊断落在本页）
   }
   if (name === "study") {   // 刷题页（做题子视图：我的题库 + 开始刷题）
@@ -505,10 +496,15 @@ function initTab() {
   else loadStart();   // 无 hash → 默认落地「开始」仪表盘（此时各脚本已就绪）
   initDataMgmt();   // U-20：绑定数据管理区按钮（元素为静态 HTML，可安全绑定）
 }
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initTab);
+/* 初始化时机：**必须等 DOMContentLoaded**，不能按 readyState 立刻执行。
+   原因：全部业务脚本已改为 `defer`，它们在 DOM 解析完成后**依次**执行——app.js 执行时
+   readyState 已是 "interactive"，但 learn.js 等分片还没跑。此时 initTab() 里的
+   showTab() 会调用尚未定义的分片函数（loadPrompts / studyView 等）而炸掉首屏。
+   等 DOMContentLoaded 则保证所有 defer 脚本（含调序在后的分片）都已就绪。 */
+if (document.readyState === "complete") {
+  initTab();          // 动态注入/缓存命中导致事件已过：直接初始化
 } else {
-  initTab();
+  document.addEventListener("DOMContentLoaded", initTab);
 }
 window.addEventListener("hashchange", () => {
   const h = (location.hash || "").replace("#", "");
@@ -536,7 +532,8 @@ async function loadStart() {
   if (!box) return;
   try {
     const [d, projs] = await Promise.all([
-      api("/api/library/dashboard"),
+      // 与右栏「掌握度诊断」共用同一份 dashboard 响应（缓存命中时不发请求）
+      (typeof cachedDashboard === "function" ? cachedDashboard("") : api("/api/library/dashboard")),
       api("/api/projects").catch(() => ({ projects: [] })),
     ]);
     const rv = d.review || {};
@@ -562,12 +559,12 @@ async function loadStart() {
               <div class="ob-step">
                 <span class="ob-n">1</span>
                 <div class="ob-t"><b>导入题库，马上刷题</b><span>md / txt / json / csv 都行——本地解析，不联网、不需要 API Key</span></div>
-                <button class="ob-btn" onclick="showTab('study')">去导入</button>
+                <button class="act ob-btn" onclick="showTab('study')">去导入</button>
               </div>
               ${genOn ? `<div class="ob-step">
                 <span class="ob-n">2</span>
                 <div class="ob-t"><b>（可选）用教材生成新题</b><span>上传教材 + 老师重点 → AI 出全新题库 / 押题卷 / 复习手册</span></div>
-                <button class="ob-btn" onclick="showTab('bank')">去生成</button>
+                <button class="act ob-btn" onclick="showTab('bank')">去生成</button>
               </div>` : ""}
             </div>
           </div>`;
@@ -582,7 +579,7 @@ async function loadStart() {
         <div class="start-stat"><b>${my.mastered_rate || 0}%</b><span>掌握率（${my.total_knowledge || 0} 知识点）</span></div>
       </div>
       <button class="big-start" onclick="showTab('study')">去刷题 →</button>
-      <p class="hint" style="text-align:center;margin:8px 0 4px">导入你的题库开始刷题${genOn ? "；需要新题时再去「题库」生成" : ""}</p>
+      <p class="hint" style="text-align:center;margin:var(--space-2) 0 var(--space-1)">导入你的题库开始刷题${genOn ? "；需要新题时再去「题库」生成" : ""}</p>
       <div class="card" style="margin-top:14px">
         <div class="cardh"><h2>考试计划</h2><span class="hint">支持多场：期末 / 考研 / 执业</span></div>
         <div id="exam_box"></div>
@@ -711,10 +708,10 @@ function examFormOpen(idOrEl) {
   const checks = days.map(d =>
     `<label><input type="checkbox" class="exam-rd" value="${d}" ${(e.remind_days || []).includes(d) ? "checked" : ""}> ${d} 天</label>`).join("");
   slot.innerHTML = `<div class="exam-form">
-    <div class="row" style="gap:8px;flex-wrap:wrap">
-      <div style="flex:1;min-width:130px"><label>名称</label><input id="exam_f_title" maxlength="30" placeholder="如：考研初试 / 期末" value="${esc(e.title || "")}"></div>
-      <div><label>日期</label><input type="date" id="exam_f_date" value="${esc(e.date || "")}"></div>
-      <div style="flex:1;min-width:100px"><label>标签</label><input id="exam_f_tag" maxlength="12" placeholder="考研 / 期末" value="${esc(e.tag || "")}"></div>
+    <div class="row" style="gap:var(--space-2);flex-wrap:wrap">
+      <div style="flex:1;min-width:130px"><label for="exam_f_title">名称</label><input id="exam_f_title" maxlength="30" placeholder="如：考研初试 / 期末" value="${esc(e.title || "")}"></div>
+      <div><label for="exam_f_date">日期</label><input type="date" id="exam_f_date" value="${esc(e.date || "")}"></div>
+      <div style="flex:1;min-width:100px"><label for="exam_f_tag">标签</label><input id="exam_f_tag" maxlength="12" placeholder="考研 / 期末" value="${esc(e.tag || "")}"></div>
     </div>
     <div class="exam-reminds"><span>考前提醒</span>${checks}</div>
     <div class="btns"><button class="act" id="exam_f_ok">保存</button><button class="act gray" onclick="examFormClose()">取消</button></div>

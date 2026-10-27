@@ -103,12 +103,25 @@ def test_llm_models_falls_back_to_catalog(monkeypatch):
 
 # ---------------------------------------------------------------- R4-13 import-image 上限
 class _FakeUpload:
+    """UploadFile 替身。
+
+    2026-10-22：`read()` 补上 `size` 形参 —— 与 `starlette.datastructures.UploadFile.read(size)`
+    同签名。生产侧已改「分块读 + 超限即止」（`_common.read_upload_capped`），
+    替身若仍只接受零参，会把真实的调用形态判成 TypeError（替身与真实接口不一致）。
+    """
+
     def __init__(self, data: bytes, filename: str = "x.png"):
         self.filename = filename
         self._data = data
+        self._pos = 0
 
-    async def read(self):
-        return self._data
+    async def read(self, size: int = -1) -> bytes:
+        if self._pos >= len(self._data):
+            return b""
+        end = len(self._data) if size is None or size < 0 else self._pos + size
+        chunk = self._data[self._pos:end]
+        self._pos += len(chunk)
+        return chunk
 
 
 # U-21：协程驱动统一到 `tests/conftest.py` 的 `run_coro` fixture（此前本文件另有一份

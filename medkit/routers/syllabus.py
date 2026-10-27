@@ -21,7 +21,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..core import syllabus as syl
-from ._common import require_flag
+from ._common import read_upload_capped, require_flag
 
 router = APIRouter()
 
@@ -152,11 +152,9 @@ async def syllabus_teacher_import_file(file: UploadFile = File(...),
     if ext not in _TEACHER_EXTS:
         raise HTTPException(
             400, "仅支持 PDF（带文本层）/ DOCX / MD / TXT；扫描件请先转文字版或走项目内 OCR")
-    raw = await file.read()
+    raw = await read_upload_capped(file, _TEACHER_FILE_MAX, "文件过大（限 20MB）")
     if not raw:
         raise HTTPException(400, "文件内容为空")
-    if len(raw) > _TEACHER_FILE_MAX:
-        raise HTTPException(400, "文件过大（限 20MB）")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
     try:
         tmp.write(raw)
@@ -215,9 +213,7 @@ async def syllabus_seed_parse_file(file: UploadFile = File(...)) -> dict[str, An
     name = (file.filename or "").lower()
     if not name.endswith(_SEED_EXTS):
         raise HTTPException(400, "仅支持 .md / .txt 文本大纲（PDF 请先转成 md）")
-    raw = await file.read()
-    if len(raw) > 2_000_000:
-        raise HTTPException(400, "文件过大（限 2MB）")
+    raw = await read_upload_capped(file, 2_000_000, "文件过大（限 2MB）")
     text = _decode_text(raw).strip()
     if not text:
         raise HTTPException(400, "文件内容为空")

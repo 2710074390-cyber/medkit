@@ -33,7 +33,7 @@ function dashMetrics(stats) {
 }
 function dashLegend(stats) {
   return `<div class="dash-legend">` + LEARN_ORDER.map(s =>
-    `<div style="display:flex;align-items:center;gap:8px"><i style="width:11px;height:11px;border-radius:50%;background:${LEARN_COLORS[s]};flex:none"></i><span style="flex:1;color:var(--text-2);font-size:var(--fs-2)">${LEARN_STATE[s]}</span><b style="font-variant-numeric:tabular-nums">${stats[s] || 0}</b></div>`).join("") + `</div>`;
+    `<div style="display:flex;align-items:center;gap:var(--space-2)"><i style="width:11px;height:11px;border-radius:50%;background:${LEARN_COLORS[s]};flex:none"></i><span style="flex:1;color:var(--text-2);font-size:var(--fs-2)">${LEARN_STATE[s]}</span><b style="font-variant-numeric:tabular-nums">${stats[s] || 0}</b></div>`).join("") + `</div>`;
 }
 function dashWeakRows(kps) {
   const list = kps.filter(k => (k.miss || 0) > 0 || k.state === "weak" || k.state === "shaky")
@@ -64,12 +64,12 @@ function dashChapterWeak(kps) {
   });
   const rows = Object.entries(grp).sort((a, b) => b[1].miss - a[1].miss).slice(0, 3);
   if (!rows.length) return "";
-  return `<h3 style="font-size:var(--fs-2);color:var(--text-2);margin:12px 0 4px;font-weight:600">最弱章节（按错题量）</h3>` + rows.map(([name, g]) =>
-    `<div style="display:flex;align-items:center;gap:10px;padding:4px 0"><span style="flex:1;color:var(--text-1);font-size:var(--fs-2)">${esc(name)}</span><span class="hint" style="font-size:var(--fs-1);white-space:nowrap">${g.n} 点 · ${g.miss} 错</span></div>`).join("");
+  return `<h3 style="font-size:var(--fs-2);color:var(--text-2);margin:var(--space-3) 0 var(--space-1);font-weight:600">最弱章节（按错题量）</h3>` + rows.map(([name, g]) =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:var(--space-1) 0"><span style="flex:1;color:var(--text-1);font-size:var(--fs-2)">${esc(name)}</span><span class="hint" style="font-size:var(--fs-1);white-space:nowrap">${g.n} 点 · ${g.miss} 错</span></div>`).join("");
 }
 function renderMasteryDashboard(kps, stats) {
   return dashMetrics(stats)
-    + `<div class="dash">${dashDonut(stats)}<div><div style="font-size:var(--fs-2);color:var(--text-1);margin-bottom:6px">知识点状态分布</div>${dashLegend(stats)}<div class="hint" style="margin-top:8px;font-size:var(--fs-1)">掌握率 = (较熟练 + 已掌握) / 全部</div></div></div>`
+    + `<div class="dash">${dashDonut(stats)}<div><div style="font-size:var(--fs-2);color:var(--text-1);margin-bottom:6px">知识点状态分布</div>${dashLegend(stats)}<div class="hint" style="margin-top:var(--space-2);font-size:var(--fs-1)">掌握率 = (较熟练 + 已掌握) / 全部</div></div></div>`
     + `<div class="dash-weak"><h3>薄弱点清单（按优先级）</h3>${dashWeakRows(kps)}</div>`
     + dashChapterWeak(kps);
 }
@@ -86,7 +86,7 @@ async function loadOverview(subject) {
       if (cur && subs.includes(cur)) sel.value = cur;
     }
     const [d, my, recm] = await Promise.all([
-      api("/api/library/dashboard?subject=" + encodeURIComponent(subject)),
+      cachedDashboard(subject),
       api("/api/library/mastery?subject=" + encodeURIComponent(subject)),
       api("/api/library/recommend?limit=6&subject=" + encodeURIComponent(subject)),
     ]);
@@ -99,6 +99,7 @@ async function loadOverview(subject) {
 }
 async function loadDashboard(keepSubject) {
   try {
+    invalidateLearnCache();   // 「刷新」按钮 = 用户明确要求重算，绕过缓存
     const subs = (await cachedSubjects()).subjects || [];
     const sel = $("dash_subject");
     // D-08：重建下拉前记录原选中值——仍存在则恢复选中，否则回「全部科目」
@@ -107,7 +108,7 @@ async function loadDashboard(keepSubject) {
       subs.slice().sort().map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
     if (cur && subs.includes(cur)) sel.value = cur;
     const subject = sel.value;
-    const d = await api("/api/library/dashboard?subject=" + encodeURIComponent(subject));
+    const d = await cachedDashboard(subject);
     renderDashboard(d);
   } catch (e) {
     $("dash_scope").textContent = "汇总失败";
@@ -154,10 +155,12 @@ function renderDashboard(d) {
     : "";
 }
 
-async function loadLibrary() {
-  invalidateLearnCache();   // 学习中心刷新 = 全量刷新（子视图内交互走 30s 缓存）
+/* `force=true` 只在**写操作后**或用户点「刷新」时传：
+   切页不该作废缓存（否则同一次切页里 subjects/dashboard 会被反复重拉）。 */
+async function loadLibrary(force = false) {
+  if (force) invalidateLearnCache();
   try {
-    loadOverview($("dash_subject") ? $("dash_subject").value : "");   // C1：顶部与闭环同口径
+    await loadOverview($("dash_subject") ? $("dash_subject").value : "");   // C1：顶部与闭环同口径
   } catch (e) {
     $("learn_kp").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
   }
@@ -176,7 +179,7 @@ function renderLibrary(my, recm) {
       : `<div class="hint">还没有知识点。错题入库后，这里会按「错题次数 + 距上次失败」给出掌握度。</div>`;
   const recs = recm || [];
   $("learn_reco").innerHTML = recs.length ? recs.map(r => `
-    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line-hair);flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:10px;padding:var(--space-2) 0;border-bottom:1px dashed var(--line-hair);flex-wrap:wrap">
       <span style="flex:1;min-width:150px;color:var(--text-1);font-size:var(--fs-2)">${esc(r.name)}</span>
       ${learnChip(r.state)}
       <span class="hint" style="font-size:var(--fs-1);white-space:nowrap">优先度 ${Math.round((r.priority || 0) * 100)}</span>
@@ -190,7 +193,7 @@ async function healLibrary() {
   try {
     const r = await api("/api/library/maintenance/heal", { method: "POST" });
     toast(`修复完成：还原 ${r.healed || 0} 条 · 标记损坏 ${r.flagged || 0} 条` + ((r.backups || []).length ? "（原文件已备份）" : ""));
-    await loadLibrary();
+    await loadLibrary(true);   // 写操作后：作废缓存再重算
   } catch (e) { toast(e.message, false); }
 }
 window.healLibrary = healLibrary;

@@ -57,7 +57,8 @@ SHARED = ("md.js",)
 CORE = ("learn.js", "learn-study.js", "learn-vault.js", "learn-vault-chat.js")
 # 2026-10-20（v0.19 S4）：命令面板是**外壳**的一部分（键盘优先的入口总览 + 导航兜底），
 # 与 app.js 同域——它引用的业务函数同样受「外壳 → 插件 / bank」登记制约束。
-SHELL = ("app.js", "palette.js")
+# 2026-10-21：模态与焦点管理（Tab 陷阱 / 背景 inert / 焦点归还）从 app.js 抽出为独立外壳片
+SHELL = ("app.js", "ui-modal.js", "palette.js")
 PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
 # 2026-10-10 题库刷题域（bank）：**核心侧**（与 EP-01 同级）——导入自备题库 + 应用内作答。

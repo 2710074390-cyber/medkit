@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..core import realexams as rex
-from ._common import require_flag
+from ._common import MAX_FILE_SIZE, read_upload_capped, require_flag
 
 router = APIRouter()
 
@@ -44,7 +44,7 @@ def rex_analyze(body: AnalyzeBody) -> dict[str, Any]:
 @router.post("/api/library/realexams/analyze-file")
 async def rex_analyze_file(file: UploadFile = File(...)) -> dict[str, Any]:
     require_flag("realexams")
-    raw = await file.read()
+    raw = await read_upload_capped(file, MAX_FILE_SIZE, "文件过大（限 200MB）")
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:

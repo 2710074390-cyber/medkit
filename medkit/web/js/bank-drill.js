@@ -44,10 +44,17 @@ function _bankIsMulti(it) { return String((it && it.type) || "") === "X"; }
 /* ---- 沉浸层开关 ---- */
 function _bankDrillEl() { return $("bank_drill_card"); }
 
+/* 打开前记住触发元素，关闭时把焦点还回去（否则键盘用户要从页首重新 Tab）。 */
+let _drillReturnFocus = null;
 function _bankDrillOpen() {
   const el = _bankDrillEl();
-  if (el) el.style.display = "";
+  if (!el) return;
+  if (el.style.display === "none") _drillReturnFocus = document.activeElement;
+  el.style.display = "";
   document.body.classList.add("drill-open");
+  setBackgroundInert(true);        // 沉浸层之外不可交互（兑现 aria-modal 的承诺）
+  const back = $("btn_drill_exit");
+  if (back) { try { back.focus(); } catch (e) { /* ignore */ } }
 }
 
 /* ---- 计时（总时长 + 单题时长，供 grade 记 secs） ---- */
@@ -117,19 +124,37 @@ function bankDrillAutoCancel() { _bankAutoCancel(); toast("已取消自动跳题
 
 /* ---- 键盘快捷键（仅沉浸层可见时生效；输入框内不拦截） ---- */
 let _bankDrillKeyBound = false;
+/* 上层浮层（通用模态 / 命令面板）打开时，Esc 与 Tab 一律让给它们——
+   否则在「笔记」弹窗里按 Esc 会把背后的练习层一起关掉。 */
+function _bankOverlayAbove() {
+  const m = $("modal_mask"), p = $("palette_mask");
+  return !!((m && m.style.display === "flex") || (p && p.style.display === "flex"));
+}
 function _bankDrillKey(e) {
   const el = _bankDrillEl();
   if (!el || el.style.display === "none") return;
+  if (e.key === "Tab") {
+    if (_bankOverlayAbove()) return;
+    trapTabKey(e, el);        // 沉浸层也是 aria-modal 浮层：Tab 不该跑到背后页面
+    return;
+  }
   const tag = (e.target && e.target.tagName) || "";
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
   const d = _bankDrill;
   const it = d.items[d.idx];
   const k = e.key;
-  if (k === "Escape") { bankDrillExit(); e.preventDefault(); return; }
+  if (k === "Escape") {
+    if (_bankOverlayAbove()) return;
+    bankDrillExit(); e.preventDefault(); return;
+  }
   if (k === "c" || k === "C") { bankDrillCardTgl(); e.preventDefault(); return; }
   if (k === "ArrowRight") { bankDrillNext(); e.preventDefault(); return; }
   if (k === "ArrowLeft") { bankDrillPrev(); e.preventDefault(); return; }
   if (k === "Enter") {
+    /* 焦点在选项按钮上时，Enter 应当等同于「按下这个选项」——
+       未作答就交给原生 click（单选即判分 / 多选切换），已作答才当作「下一题」。 */
+    const onOpt = !!(e.target && e.target.closest && e.target.closest(".bank-opt"));
+    if (onOpt && !d.graded && d.runmode !== _BANK_RECITE) return;
     if (d.graded || d.runmode === _BANK_RECITE) bankDrillNext();
     else if (it && _bankIsMulti(it)) bankDrillSubmit();
     e.preventDefault();
@@ -357,15 +382,21 @@ function bankDrillRender() {
       ${!recite && !graded && it._last_correct === false
         ? '<span class="tag" style="color:var(--bad);border-color:var(--bad)">上次做错</span>' : ""}
     </div>
-    ${it.case_stem ? `<div class="hint" style="margin-bottom:8px">案例：${esc(it.case_stem)}</div>` : ""}
+    ${it.case_stem ? `<div class="hint" style="margin-bottom:var(--space-2)">案例：${esc(it.case_stem)}</div>` : ""}
     <div class="bank-q">${esc(it.question || "")}</div>
-    <div id="bank_opts"${recite ? ' class="recite"' : ""}>${opts.map((o, i) => `
-      <div class="bank-opt" id="bopt_${i}" onclick="bankDrillPick(${i})">
-        <span class="bank-opt-k">${_BANK_LETTERS[i] || (i + 1)}</span>
+    <div id="bank_opts" role="${recite || multi ? "group" : "radiogroup"}"
+      aria-label="${recite ? "选项（背题模式：只读）"
+        : (multi ? "多选题：可选中多个选项后点「确认作答」" : "单选题：选中即判分")}">${opts.map((o, i) => `
+      ${recite
+        ? `<div class="bank-opt" id="bopt_${i}">`   /* 静态内容：不加 role/aria-label（generic 元素命名非法） */
+        : `<button type="button" class="bank-opt" id="bopt_${i}" role="${multi ? "checkbox" : "radio"}"
+            aria-checked="false" aria-label="${_BANK_LETTERS[i] || (i + 1)}：${esc(o)}"
+            onclick="bankDrillPick(${i})">`}
+        <span class="bank-opt-k" aria-hidden="true">${_BANK_LETTERS[i] || (i + 1)}</span>
         <span>${esc(o)}</span>
-      </div>`).join("")}</div>
+      ${recite ? "</div>" : "</button>"}`).join("")}</div>
     <div class="drill-actions" id="bank_actions">${_bankActionsHTML()}</div>
-    <div id="bank_result"></div>
+    <div id="bank_result" role="region" aria-label="判分结果"></div>
     <div id="bank_auto" class="drill-auto" style="display:none"></div>`;
   if (graded) {
     _bankShowResult({
@@ -405,7 +436,11 @@ function bankDrillPick(i) {
 function _bankPaintSel() {
   const box = $("bank_opts");
   if (!box) return;
-  [...box.children].forEach((el, k) => el.classList.toggle("sel", _bankDrill.sel.has(k)));
+  [...box.children].forEach((el, k) => {
+    const on = _bankDrill.sel.has(k);
+    el.classList.toggle("sel", on);
+    el.setAttribute("aria-checked", on ? "true" : "false");   // 选中态必须进无障碍树，不能只靠底色
+  });
 }
 
 function _bankSelAnswer() {
@@ -485,15 +520,33 @@ function _bankShowResult(r, userAns) {
   const mine = new Set(String(userAns || "").split(""));
   const box = $("bank_opts");
   if (box) {
+    const optText = (it && it.options) || [];
     [...box.children].forEach((el, i) => {
       const L = _BANK_LETTERS[i] || "";
       // ⚠️ 不能写 `classList.add(a ? "right" : (b ? "wrong" : ""))` ——
       // 传空串会抛 `Failed to execute 'add' on 'DOMTokenList'`（实测：判对时
       // 未选中的干扰项正好落进这个分支，整个结果区因此不渲染）。
       el.classList.remove("sel", "right", "wrong");
+      const picked = mine.has(L);
       if (right.has(L)) el.classList.add("right");
-      else if (mine.has(L)) el.classList.add("wrong");
+      else if (picked) el.classList.add("wrong");
+      // 对/错不能只靠边框颜色传达（1.4.1）：把状态写进 aria，读屏与色觉障碍用户同样可辨。
+      // 背题模式下选项是静态内容（没有 role），写 aria-checked 反而非法。
+      if (el.hasAttribute("role")) el.setAttribute("aria-checked", picked ? "true" : "false");
+      if (optText[i] != null) {
+        const mark = right.has(L) ? "，正确答案" : (picked ? "，你的选择（错误）" : "");
+        el.setAttribute("aria-label", `${L || (i + 1)}${mark}：${optText[i]}`);
+      }
     });
+  }
+  /* 判分结果对读屏是**静默**的：视觉上答案与解析都出现了，语音上什么都没发生。
+     用 overlay 里常驻的 live region 播报一句结论（不播解析全文，避免打断用户阅读）。 */
+  const sr = $("bank_sr_status");
+  if (sr) {
+    sr.textContent = recite
+      ? `答案 ${r.answer || "—"}`
+      : `${r.correct ? "答对了" : "答错了"}。正确答案 ${r.answer || "—"}`
+        + (r.correct ? "" : `，你的作答 ${userAns || "—"}`);
   }
   const res = $("bank_result");
   if (res) {
@@ -503,12 +556,12 @@ function _bankShowResult(r, userAns) {
     res.innerHTML = `<div class="bank-ans ${recite ? "rec" : (r.correct ? "ok" : "no")}">
         ${head}
         <div style="margin-top:6px">${recite ? "" : `你的作答：<b>${esc(userAns || "—")}</b> · `}正确答案：<b>${esc(r.answer || "—")}</b></div>
-        ${r.analysis ? `<div style="margin-top:8px"><b>解析</b>：${window.mdRender ? mdRender(r.analysis) : esc(r.analysis)}</div>` : ""}
+        ${r.analysis ? `<div style="margin-top:var(--space-2)"><b>解析</b>：${window.mdRender ? mdRender(r.analysis) : esc(r.analysis)}</div>` : ""}
         ${_bankSrcLabel(r) ? `<div style="margin-top:6px"><b>出处</b>：${esc(_bankSrcLabel(r))}</div>` : ""}
-        ${r.note ? `<div style="margin-top:8px"><b>我的笔记</b>：${esc(r.note)}</div>` : ""}
-        ${!recite && !r.correct && r.synced_mistakes ? '<div class="hint" style="margin-top:8px">已自动加入错题本（可在「学习中心 → 错题本」查看与讲解）</div>' : ""}
-        ${!recite && d.source === "mistakes" && r.correct ? '<div class="hint" style="margin-top:8px">已归档为「已掌握」（错题本里默认被「只看未掌握」隐藏）</div>' : ""}
-        ${!recite && d.source === "mistakes" && !r.correct ? '<div class="hint" style="margin-top:8px">仍是未掌握——可去「学习中心」用「讲解 / 提问 / 铺卡」继续攻克</div>' : ""}
+        ${r.note ? `<div style="margin-top:var(--space-2)"><b>我的笔记</b>：${esc(r.note)}</div>` : ""}
+        ${!recite && !r.correct && r.synced_mistakes ? '<div class="hint" style="margin-top:var(--space-2)">已自动加入错题本（可在「学习中心 → 错题本」查看与讲解）</div>' : ""}
+        ${!recite && d.source === "mistakes" && r.correct ? '<div class="hint" style="margin-top:var(--space-2)">已归档为「已掌握」（错题本里默认被「只看未掌握」隐藏）</div>' : ""}
+        ${!recite && d.source === "mistakes" && !r.correct ? '<div class="hint" style="margin-top:var(--space-2)">仍是未掌握——可去「学习中心」用「讲解 / 提问 / 铺卡」继续攻克</div>' : ""}
       </div>`;
   }
   const meta = $("bank_drill_meta");
@@ -609,7 +662,7 @@ function bankDrillNote() {
   const it = d.items[d.idx];
   if (!it) return;
   _bankAutoCancel();          // 打开笔记弹窗前先停下倒计时（否则会在弹窗背后偷偷换题）
-  askModal("题目笔记", "写点什么（判分后才显示）", async (note) => {
+  askModal("题目笔记", "写点什么（判分后才显示）", "", async (note) => {
     try {
       await api(`/api/bank/items/${encodeURIComponent(it.id)}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
@@ -641,8 +694,13 @@ function bankDrillHide() {
   _bankAutoCancel();
   el.style.display = "none";
   document.body.classList.remove("drill-open");
+  if (!anyOverlayOpen()) setBackgroundInert(false);
   _bankDrillStopTimer();
   _bankDrillKeyOff();
+  const back = _drillReturnFocus; _drillReturnFocus = null;
+  if (back && document.contains(back) && typeof back.focus === "function") {
+    try { back.focus(); } catch (e) { /* 元素已不可聚焦 */ }
+  }
 }
 
 function bankDrillExit() {
@@ -673,7 +731,7 @@ function bankDrillFinish() {
             : `<br>做错 ${c.no} 道——已回流到「学习中心 → 错题本」`)
           : "<br>全部答对，漂亮"}</div>
     </div>
-    <div class="btns" style="justify-content:center;margin-top:12px">
+    <div class="btns" style="justify-content:center;margin-top:var(--space-3)">
       ${c.no ? `<button class="act" onclick="bankDrillRetryWrong()">只练本次错题（${c.no}）</button>` : ""}
       <button class="act gray" onclick="bankDrillMode('all')">再练一遍</button>
       <button class="act gray" onclick="bankDrillExit()">退出</button>

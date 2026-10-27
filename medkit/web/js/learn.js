@@ -1,4 +1,4 @@
-/* exported HL_KEYWORDS, LEARN_CACHE, LEARN_STATE, LEARN_TTL, REX_DRAFTS, REX_STATS, SYL_DRAFTS, SYL_LOADED, SYL_STD, anchor, b, batch, body, box, btns, buf, c, cachedMastery, cachedSubjects, consumeSSE, cur, d, dec, downloadText, enterMistakes, est, event, f, fd, first, fold, gapPaper, hint, hlKw, i, inp, invalidateLearnCache, items, kps, label, learnChip, loop, lv, meta, nav, ok, on, pct, qs, r, raw, reader, refreshOverviewIfAny, renderRexDrafts, rexAnalyze, rexConfirmAll, rexDraftClear, rexFile, rexFilePick, rexFileRender, rexHeat, rexItemDel, rexReport, rexSubject, s, sb, sel, setLearnNavBadge, setNavTabBadge, sr, sseAbort, sseAbortAll, sseAborts, sseStopUI, st, stats, stdName, subject, subs, sylDraftClear, sylDraftDel, sylEnsure, sylFail, sylItemDel, sylLoad, sylParse, sylParseConfirm, sylPaste, sylRender, sylReport, sylSeedImport, sylSeedPick, sylSetStd, sylStructurize, sylTeacherImport, sylTeacherPick, t, text, total, txt, updateLearnBadges, v */
+/* exported HL_KEYWORDS, LEARN_CACHE, LEARN_STATE, LEARN_TTL, REX_DRAFTS, REX_STATS, SYL_DRAFTS, SYL_LOADED, SYL_STD, anchor, b, batch, body, box, btns, buf, c, cachedDashboard, cachedMastery, cachedSubjects, consumeSSE, cur, d, dec, downloadText, enterMistakes, est, event, f, fd, first, fold, gapPaper, hint, hlKw, i, inp, invalidateLearnCache, items, kps, label, learnChip, loop, lv, meta, nav, ok, on, pct, qs, r, raw, reader, refreshOverviewIfAny, renderRexDrafts, rexAnalyze, rexConfirmAll, rexDraftClear, rexFile, rexFilePick, rexFileRender, rexHeat, rexItemDel, rexReport, rexSubject, s, sb, sel, setLearnNavBadge, setNavTabBadge, sr, sseAbort, sseAbortAll, sseAborts, sseStopUI, st, stats, stdName, subject, subs, sylDraftClear, sylDraftDel, sylEnsure, sylFail, sylItemDel, sylLoad, sylParse, sylParseConfirm, sylPaste, sylRender, sylReport, sylSeedImport, sylSeedPick, sylSetStd, sylStructurize, sylTeacherImport, sylTeacherPick, t, text, total, txt, updateLearnBadges, v */
 /* U-17：跨文件 / 内联 HTML 处理器引用的顶层声明（经典脚本共享全局作用域）*/
   /* U-17：跨文件/内联 HTML 引用的顶层声明（经典脚本共享全局作用域）*/
 /* ---- ④ 错题（原「学习中心」：v0.7 M1/M2 的错题本 + 掌握度诊断；概览已于 v0.19 并入「今天」） ---- */
@@ -79,7 +79,7 @@ let SYL_STD = "teacher";   // 大纲标准二选一：teacher=教师重点(主�
     document.querySelectorAll("#syl_std .css-pill").forEach(b => {
       const on = b.dataset.std === SYL_STD;
       b.classList.toggle("on", on);
-      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
 })();
@@ -120,7 +120,7 @@ function sylSetStd(std) {
   document.querySelectorAll("#syl_std .css-pill").forEach(b => {
     const on = b.dataset.std === std;
     b.classList.toggle("on", on);
-    b.setAttribute("aria-selected", on ? "true" : "false");
+    b.setAttribute("aria-pressed", on ? "true" : "false");
   });
   const sel = document.getElementById("syl_subject");
   sylRender(sel ? sel.value : "");
@@ -223,7 +223,7 @@ async function sylParse() {
       <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span>
       <button class="rv-x" title="移除该草稿" onclick="sylDraftDel(${i})">×</button></div>`).join("") +
     (SYL_DRAFTS.length > 30 ? `<div class="hint">…共 ${SYL_DRAFTS.length} 条（全部入库）</div>` : "") +
-    `<div class="btns" style="margin-top:8px"><button class="mini-btn" onclick="sylDraftClear()">取消草稿</button></div>`;
+    `<div class="btns" style="margin-top:var(--space-2)"><button class="mini-btn" onclick="sylDraftClear()">取消草稿</button></div>`;
 }
 async function sylParseConfirm() {
   if (!SYL_DRAFTS || !SYL_DRAFTS.length) { toast("先解析再确认"); return; }
@@ -293,7 +293,7 @@ async function sylTeacherImport() {
         <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")}</div></span></div>`).join("") +
       (SYL_DRAFTS.length > 30 ? `<div class="hint">…共 ${SYL_DRAFTS.length} 条（确认全部入库）</div>` : "") +
       (kps ? `<div class="hint">知识点提取（前 10 条）：${kps}…（共 ${(r.knowledge || []).length} 条）</div>` : "") +
-      `<div class="btns" style="margin-top:8px"><button class="act" onclick="sylParseConfirm()">确认全部入库</button>
+      `<div class="btns" style="margin-top:var(--space-2)"><button class="act" onclick="sylParseConfirm()">确认全部入库</button>
        <button class="mini-btn" onclick="sylDraftClear()">取消草稿</button></div>`;
   } catch (e) {
     toast(e.message || "导入失败", false);
@@ -370,7 +370,7 @@ function renderRexDrafts(stats) {
       <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter || "（未分章）")} · ${esc(d.subject || "?")}</div></span>
       <button class="act gray mini" data-skip="${i}">跳过</button></div>`).join("") +
     (REX_DRAFTS.length > 30 ? `<div class="hint">…共 ${REX_DRAFTS.length} 条（确认全部入库）</div>` : "") +
-    `<div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
+    `<div class="btns" style="margin-top:var(--space-2)"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
      <button class="mini-btn" onclick="rexDraftClear()">取消草稿</button>
      <span class="hint" style="align-self:center">未确认不进入任何推荐权重（红线）</span></div></details>`;
   box.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => {
@@ -441,7 +441,7 @@ function rexFileRender() {
       <span class="grow"><b>${esc(d.item)}</b><div class="hint">章：${esc(d.chapter)}</div></span>
       <button class="act gray mini" data-skip="${i}">跳过</button></div>`).join("")}
     ${REX_DRAFTS.length > 30 ? `<div class="hint">…共 ${REX_DRAFTS.length} 条（确认全部入库）</div>` : ""}
-    <div class="btns" style="margin-top:8px"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
+    <div class="btns" style="margin-top:var(--space-2)"><button class="act" onclick="rexConfirmAll()">确认全部入库</button>
       <button class="mini-btn" onclick="rexDraftClear()">取消草稿</button></div></details>`;
   box.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => {
     REX_DRAFTS.splice(+b.dataset.skip, 1);
@@ -500,7 +500,7 @@ async function gapPaper() {
       + (r.est.cny ? ` · 约 ¥${r.est.cny.toFixed(2)}（参考价，以官网为准）` : "") : "";
     confirmModal("薄弱组卷就绪",
       `<div class="hint">科目：${esc(subject)} · 共 ${r.plan.total} 题<br>薄弱点：${esc((r.plan.weak_top || []).join("、"))}</div>` +
-      `<div class="hint" style="margin-top:8px">${est}</div>` +
+      `<div class="hint" style="margin-top:var(--space-2)">${est}</div>` +
       (r.reused ? '<div class="hint" style="margin-top:6px">已复用现有薄弱组卷项目（不重复创建）。</div>' : ""),
       r.reused ? "去查看" : "开始生成", () => {
         if (r.reused) { showTab("mine"); return; }
@@ -514,8 +514,12 @@ async function gapPaper() {
   } catch (e) { toast(e.message, false); }
 }
 
-/* 学习中心基础数据缓存：subjects/mastery 30s 内复用，避免多次「加载中」闪烁 */
-let LEARN_CACHE = { subjects: null, mastery: null, t: 0 };
+/* 学习中心基础数据缓存：subjects / mastery / dashboard 30s 内复用，避免多次「加载中」闪烁
+   与重复请求。dashboard 按 subject 分键——切换科目范围不会串数据。
+   ⚠️ 缓存只在**显式刷新**（写操作后 / 用户点刷新）时失效，不要挂在切页路径上：
+   此前 `loadLibrary()` 每次进入都无条件 `invalidateLearnCache()`，把 30s 缓存当场废掉，
+   于是同一次切页里 subjects 被拉 2 次、dashboard 被拉 3 次。 */
+let LEARN_CACHE = { subjects: null, mastery: null, dash: {}, t: 0 };
 const LEARN_TTL = 30000;
 async function cachedSubjects() {
   if (LEARN_CACHE.subjects && Date.now() - LEARN_CACHE.t < LEARN_TTL) return LEARN_CACHE.subjects;
@@ -529,7 +533,19 @@ async function cachedMastery() {
   LEARN_CACHE.mastery = r; LEARN_CACHE.t = Date.now();
   return r;
 }
-function invalidateLearnCache() { LEARN_CACHE.subjects = null; LEARN_CACHE.mastery = null; LEARN_CACHE.t = 0; }
+/* 闭环总览（dashboard）单源：外壳的今日统计卡与右栏的掌握度诊断读的是**同一份**响应。 */
+async function cachedDashboard(subject) {
+  const k = String(subject || "");
+  const hit = LEARN_CACHE.dash[k];
+  if (hit && Date.now() - hit.t < LEARN_TTL) return hit.v;
+  const v = await api("/api/library/dashboard?subject=" + encodeURIComponent(k));
+  LEARN_CACHE.dash[k] = { v, t: Date.now() };
+  return v;
+}
+function invalidateLearnCache() {
+  LEARN_CACHE.subjects = null; LEARN_CACHE.mastery = null;
+  LEARN_CACHE.dash = {}; LEARN_CACHE.t = 0;
+}
 /* WP-8：手动解析 SSE 事件流（fetch ReadableStream）；并发事件逐帧回调 */
 async function consumeSSE(res, onEvent) {
   const reader = res.body.getReader();

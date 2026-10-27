@@ -446,6 +446,54 @@ def count_mistakes(subject: str = "") -> int:
                if not subject or m.get("subject") == subject)
 
 
+def count_knowledge(subject: str = "") -> int:
+    """知识点计数（**只计数不解析**），与 `count_mistakes` 同口径。
+
+    2026-10-22：`/api/data/summary` 原用 `len(list_knowledge())` —— 为了一个数字把整张表
+    `SELECT *` 出来再逐行 `json.loads`。知识点上千条时，打开「设置 → 数据管理」会明显卡顿。
+    """
+    subject = (subject or "").strip()
+    if _sql_ready(KNOWLEDGE_FILE):
+        table, _ = _table_of(KNOWLEDGE_FILE)
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            if subject:
+                row = cur.execute(f"SELECT COUNT(*) FROM {table} WHERE subject = ?",
+                                  (subject,)).fetchone()
+            else:
+                row = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            return int(row[0] if row else 0)
+        finally:
+            cur.close()
+    return sum(1 for k in read_json_list(KNOWLEDGE_FILE)
+               if not subject or k.get("subject") == subject)
+
+
+def count_mistakes_by_subject() -> dict[str, int]:
+    """按科目统计错题数（未分类归入「未分类」），**不加载正文**。
+
+    供「数据管理」展示分发情况——旧实现 `list_mistakes()` 全量解析后在前端侧聚合。
+    """
+    out: dict[str, int] = {}
+    if _sql_ready(MISTAKES_FILE):
+        table, _ = _table_of(MISTAKES_FILE)
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            for row in cur.execute(
+                    f"SELECT COALESCE(NULLIF(TRIM(subject), ''), '未分类') AS s, COUNT(*) "
+                    f"FROM {table} GROUP BY s").fetchall():
+                out[str(row[0])] = int(row[1])
+            return out
+        finally:
+            cur.close()
+    for m in read_json_list(MISTAKES_FILE):
+        key = str(m.get("subject") or "").strip() or "未分类"
+        out[key] = out.get(key, 0) + 1
+    return out
+
+
 def _find(records: list[dict[str, Any]], mid: str) -> Optional[dict[str, Any]]:
     return next((r for r in records if r.get("id") == mid), None)
 

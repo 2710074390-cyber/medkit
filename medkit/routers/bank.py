@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from ..core import bank as banklib
 from ..core import bank_iq
 from ..core import config as cfg
-from ._common import _safe_pid
+from ._common import MAX_FILE_SIZE, _safe_pid, read_upload_capped
 
 router = APIRouter()
 
@@ -237,7 +237,7 @@ def import_preview(body: ImportPreviewBody) -> dict[str, Any]:
 @router.post("/api/bank/import/file")
 async def import_file(file: UploadFile = File(...)) -> dict[str, Any]:
     """上传文件解析预览（md/txt/json/csv，本地解析零 LLM，**不落库**）。"""
-    raw = await file.read()
+    raw = await read_upload_capped(file, MAX_FILE_SIZE, "文件过大（限 200MB）")
     if not raw:
         raise HTTPException(400, "文件为空")
     try:

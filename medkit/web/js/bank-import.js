@@ -79,14 +79,14 @@ function bankRenderPreview(r) {
   const opts = (_bankState.banks || []).map(b =>
     `<option value="${esc(b.id)}">${esc(b.name)}（${b.items || 0} 题）</option>`).join("");
   body.innerHTML = `
-    <div class="hint" style="margin-bottom:8px">
+    <div class="hint" style="margin-bottom:var(--space-2)">
       识别靠<b>本地规则</b>（零 LLM）：起题 = <code>### 题号</code>/<code>1.</code>/<code>第N题</code>；
       选项 = <code>- A.</code>/<code>A、</code>；答案 = <code>答案：</code>/<code>【答案】</code>/<code>✅ 答案：</code>；
       解析 = <code>解析：</code>/<code>💡</code>。<b>题型按答案字母数推断</b>（多字母 → X 型），入库后可改。
       图 / 表题只保真不保证；解析不了的题不会进来。
     </div>
-    ${warn.length ? `<div class="hint" style="color:var(--warn);margin-bottom:8px">告警 ${(_bankImport.warnings || []).length} 条：${warn.map(esc).join("；")}</div>` : ""}
-    ${items.length ? `<div style="max-height:360px;overflow-y:auto;margin-bottom:8px">
+    ${warn.length ? `<div class="hint" style="color:var(--warn);margin-bottom:var(--space-2)">告警 ${(_bankImport.warnings || []).length} 条：${warn.map(esc).join("；")}</div>` : ""}
+    ${items.length ? `<div style="max-height:360px;overflow-y:auto;margin-bottom:var(--space-2)">
       <table class="bank-preview-table">
         <thead><tr><th>#</th><th>题干</th><th>题型</th><th>选项</th><th>答案</th></tr></thead>
         <tbody>${rows.map((it, i) => `<tr>
@@ -99,13 +99,13 @@ function bankRenderPreview(r) {
       </table>${items.length > rows.length ? `<div class="hint" style="margin-top:6px">…还有 ${items.length - rows.length} 道未展示（全部都会入库）</div>` : ""}
     </div>` : `<div class="hint">没有识别到题目——请检查格式（是否每题都带「答案」标记）。</div>`}
     <div class="bank-bar">
-      <label>入库到</label>
+      <label for="bank_target">入库到</label>
       <select id="bank_target" onchange="bankTargetSync()">
         <option value="">＋ 新建题库</option>${opts}
       </select>
-      <input type="text" id="bank_new_name" value="${esc(_bankImport.name || "导入题库")}" placeholder="新题库名称" style="min-width:150px">
-      <input type="text" id="bank_new_subject" value="" placeholder="科目（如：内科学）" style="min-width:120px">
-      <label>重复题</label>
+      <input type="text" id="bank_new_name" aria-label="新题库名称" value="${esc(_bankImport.name || "导入题库")}" placeholder="新题库名称" style="min-width:150px">
+      <input type="text" id="bank_new_subject" aria-label="科目" value="" placeholder="科目（如：内科学）" style="min-width:120px">
+      <label for="bank_dedupe">重复题</label>
       <select id="bank_dedupe">
         <option value="update">更新已有</option>
         <option value="skip">跳过已有</option>
@@ -171,7 +171,7 @@ async function bankProjectOpen() {
     const body = !list.length
       ? `<div class="hint">还没有可导入的项目——先去「题库」（出题工坊）生成一套题，
          生成完成后这里就会出现。</div>`
-      : `<div class="hint" style="margin-bottom:8px">下列项目已生成题目产物。导入是<b>复制</b>，
+      : `<div class="hint" style="margin-bottom:var(--space-2)">下列项目已生成题目产物。导入是<b>复制</b>，
          之后删掉项目也不影响题库。</div>`
         + list.map(p => `<div class="bank-item">
             <div class="bank-item-main">

@@ -180,7 +180,7 @@ async function bankStats(btn) {
         <div class="dash-metric"><b>${_pct(s.accuracy)}%</b><span>正确率</span></div>
       </div>
       <p class="hint" style="margin:10px 0 6px">掌握率 = 最后一次作答为「对」的题 / 全部题；正确率 = 做对次数 / 作答次数。</p>
-      <h3 style="font-size:var(--fs-2);margin:12px 0 6px">薄弱考点（按正确率升序）</h3>
+      <h3 style="font-size:var(--fs-2);margin:var(--space-3) 0 6px">薄弱考点（按正确率升序）</h3>
       ${weak.length ? weak.map(t => `<div style="display:flex;gap:10px;align-items:center;padding:5px 0;border-bottom:1px dashed var(--line-hair)">
           <span style="flex:1;font-size:var(--fs-2)">${esc(t.topic || "未分类")}</span>
           <span class="hint" style="font-size:var(--fs-1)">对 ${t.correct}/${t.attempts}</span>
@@ -247,22 +247,22 @@ function bankManageRender() {
 function _bankItemFormHTML(it) {
   it = it || {};
   const types = ["A1", "A2", "A3", "A4", "B1", "X"];
-  return `<div class="card" style="background:var(--surface-2);margin-bottom:12px">
-    <label>题干</label>
+  return `<div class="card" style="background:var(--surface-2);margin-bottom:var(--space-3)">
+    <label for="bi_q">题干</label>
     <textarea id="bi_q" rows="3">${esc(it.question || "")}</textarea>
-    <label style="margin-top:8px">选项（每行一个，<b>不用写字母</b>——字母由系统补）</label>
+    <label for="bi_opts" style="margin-top:var(--space-2)">选项（每行一个，<b>不用写字母</b>——字母由系统补）</label>
     <textarea id="bi_opts" rows="4">${esc((it.options || []).join("\n"))}</textarea>
-    <div class="row" style="margin-top:8px">
-      <div><label>答案（如 A / AC）</label><input type="text" id="bi_ans" value="${esc(it.answer || "")}"></div>
-      <div><label>题型</label><select id="bi_type">${types.map(t =>
+    <div class="row" style="margin-top:var(--space-2)">
+      <div><label for="bi_ans">答案（如 A / AC）</label><input type="text" id="bi_ans" value="${esc(it.answer || "")}"></div>
+      <div><label for="bi_type">题型</label><select id="bi_type">${types.map(t =>
         `<option value="${t}"${(it.type || "A1") === t ? " selected" : ""}>${t}</option>`).join("")}</select></div>
-      <div><label>考点（可选）</label><input type="text" id="bi_sub" value="${esc(it.subtopic || "")}"></div>
+      <div><label for="bi_sub">考点（可选）</label><input type="text" id="bi_sub" value="${esc(it.subtopic || "")}"></div>
     </div>
-    <label style="margin-top:8px">解析（可选）</label>
+    <label for="bi_ana" style="margin-top:var(--space-2)">解析（可选）</label>
     <textarea id="bi_ana" rows="3">${esc(it.analysis || "")}</textarea>
-    <label style="margin-top:8px">我的笔记（可选，判分后才显示）</label>
+    <label for="bi_note" style="margin-top:var(--space-2)">我的笔记（可选，判分后才显示）</label>
     <textarea id="bi_note" rows="2">${esc(it.note || "")}</textarea>
-    <label class="chk" style="margin-top:8px"><input type="checkbox" id="bi_star"${it.starred ? " checked" : ""}> 收藏（★）</label>
+    <label class="chk" style="margin-top:var(--space-2)"><input type="checkbox" id="bi_star"${it.starred ? " checked" : ""}> 收藏（★）</label>
     <div class="btns" style="margin-top:10px">
       <button class="act" onclick="bankItemSave()">保存</button>
       <button class="act gray" onclick="bankItemCancel()">取消</button>

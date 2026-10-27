@@ -119,17 +119,18 @@ function _vaultMetaHTML(m) {
 
 function _vaultActsHTML(m, i) {
   if (m.pending) {
-    return `<div class="chat-tools"><button class="mini-btn danger" onclick="vaultChatStop()">■ 停止生成</button></div>`;
+    return `<div class="chat-tools"><button class="mini-btn danger" data-act="stop" data-i="${i}"
+      onclick="vaultChatStop()">■ 停止生成</button></div>`;
   }
   if (m.error || !m.text) return "";
   const btns = [];
   if (m.handbook) {
-    btns.push(`<button class="mini-btn" data-i="${i}" onclick="vaultChatDownload(this)">⇩ 下载手册(.md)</button>`);
+    btns.push(`<button class="mini-btn" data-act="download" data-i="${i}" onclick="vaultChatDownload(this)">⇩ 下载手册(.md)</button>`);
   } else {
-    btns.push(`<button class="mini-btn" data-i="${i}" onclick="vaultChatPersist(this)">存入错题</button>`);
-    btns.push(`<button class="mini-btn" data-i="${i}" onclick="vaultChatRegen(this)">↻ 重新生成</button>`);
+    btns.push(`<button class="mini-btn" data-act="persist" data-i="${i}" onclick="vaultChatPersist(this)">存入错题</button>`);
+    btns.push(`<button class="mini-btn" data-act="regen" data-i="${i}" onclick="vaultChatRegen(this)">↻ 重新生成</button>`);
   }
-  btns.push(`<button class="mini-btn" data-i="${i}" onclick="vaultChatCopy(this)">复制</button>`);
+  btns.push(`<button class="mini-btn" data-act="copy" data-i="${i}" onclick="vaultChatCopy(this)">复制</button>`);
   return `<div class="chat-tools">${btns.join("")}</div>`;
 }
 
@@ -145,12 +146,28 @@ function _vaultMsgHTML(m, i) {
 function vaultChatRender() {
   const box = $("vault_chat");
   if (!box) return;
+  /* innerHTML 重建会销毁所有旧节点 ⇒ 焦点必然落回 <body>。
+     记住"焦点在第几条消息的哪个动作按钮上"，重建后按同一个 data-act 放回去。 */
+  const act = document.activeElement;
+  const keepI = (act && box.contains(act) && act.dataset) ? act.dataset.i : "";
+  const keepAct = (act && box.contains(act) && act.dataset) ? (act.dataset.act || "") : "";
   if (!_vaultChat.length) {
     box.innerHTML = `<div class="chat-empty">还没有对话。点上面的问题，或直接在下面输入——它只依据你的错题文件作答。</div>`;
     return;
   }
   box.innerHTML = _vaultChat.map((m, i) => _vaultMsgHTML(m, i)).join("");
   _vaultChatScroll(true);
+  if (keepAct) {
+    const again = box.querySelector(`[data-act="${keepAct}"][data-i="${keepI}"]`);
+    if (again) { try { again.focus(); } catch (e) { /* 目标已不存在 */ } }
+  }
+}
+
+/* 流式期间关掉 live 播报（否则读屏会把逐字增量当新内容反复打断），
+   落地时再打开 —— 整段回答只播一次。 */
+function _vaultChatLive(on) {
+  const box = $("vault_chat");
+  if (box) box.setAttribute("aria-live", on ? "polite" : "off");
 }
 
 /* 流式期间只重画**那一个**气泡（整列重排会打断选中/滚动，也慢） */
@@ -158,7 +175,20 @@ function _vaultChatPaint(i) {
   const box = $("vault_chat");
   if (!box) return;
   const el = box.querySelector(`.chat-msg[data-i="${i}"] .chat-body`);
-  if (el && _vaultChat[i]) el.innerHTML = _vaultBodyHTML(_vaultChat[i]);
+  const m = _vaultChat[i];
+  if (!el || !m) return;
+  if (m.pending && m.text) {
+    /* 只追纯文本：此前每帧都对"累计全文"跑一次 mdRender，是 O(n²)
+       （4000 字 × 约 500 帧 ≈ 200 万字符解析），长回答会持续占用主线程。
+       落地（result）时再一次性渲染 Markdown —— 观感反而更接近"逐字输出"。 */
+    el.textContent = m.text;
+    const caret = document.createElement("span");
+    caret.className = "chat-caret";
+    caret.setAttribute("aria-hidden", "true");
+    el.appendChild(caret);
+    return;
+  }
+  el.innerHTML = _vaultBodyHTML(m);
 }
 
 function _vaultChatPaintSoon(i) {
@@ -224,6 +254,7 @@ async function _vaultChatSend(question, path, echo = true) {
   _vaultChatSetBusy(true);
   _vaultChatCtl = new AbortController();
   _vaultChatPinned = true;
+  _vaultChatLive(false);   // 流式期间不播报逐字增量
   vaultChatRender();
   try {
     await _vaultSse("/api/vault/ask", { question: q, path: path || "", history }, ev => {
@@ -238,6 +269,7 @@ async function _vaultChatSend(question, path, echo = true) {
       } else if (ev.type === "error") {
         bubble.pending = false; bubble.error = true;
         bubble.text = "出错了：" + (ev.message || "未知错误");
+        _vaultChatLive(true);
         vaultChatRender();
       } else if (ev.type === "result") {
         bubble.pending = false;
@@ -248,12 +280,14 @@ async function _vaultChatSend(question, path, echo = true) {
         bubble.failed = (ev.tools || []).filter(t => t && t.ok === false).map(t => t.tool);
         bubble.toolNames = (ev.tools || []).map(t => t.tool);
         _vaultAnswerPath = path || "";
+        _vaultChatLive(true);   // 落地：整段回答播报一次
         vaultChatRender();
       }
     }, _vaultChatCtl.signal);
     if (bubble.pending) {
       bubble.pending = false;
       bubble.text = bubble.text || "（没有收到答复，可重试）";
+      _vaultChatLive(true);
       vaultChatRender();
     }
   } catch (e) {
@@ -270,6 +304,7 @@ async function _vaultChatSend(question, path, echo = true) {
     _vaultChatBusy = false;
     _vaultChatCtl = null;
     _vaultChatSetBusy(false);
+    _vaultChatLive(true);   // 无论成功/停止/失败，播报都要恢复
     _vaultChatSave();
   }
 }
@@ -370,6 +405,7 @@ async function vaultHandbook() {
   _vaultChatPinned = true;
   if (btn) btn.disabled = true;
   if (meta) meta.textContent = "生成中…";
+  _vaultChatLive(false);
   vaultChatRender();
   try {
     await _vaultSse("/api/vault/handbook", { subject }, ev => {
@@ -384,6 +420,7 @@ async function vaultHandbook() {
         bubble.pending = false; bubble.error = true;
         bubble.text = "手册生成失败：" + (ev.message || "未知错误");
         if (meta) meta.textContent = "";
+        _vaultChatLive(true);
         vaultChatRender();
       } else if (ev.type === "result") {
         bubble.pending = false;
@@ -397,6 +434,7 @@ async function vaultHandbook() {
             ? (ev.note || "数据不足，未生成")
             : `已生成：${ev.items || 0} 条错题 · ${ev.groups || 0} 个薄弱组`;
         }
+        _vaultChatLive(true);
         vaultChatRender();
       }
     }, _vaultChatCtl.signal);
@@ -416,6 +454,7 @@ async function vaultHandbook() {
     _vaultChatBusy = false;
     _vaultChatCtl = null;
     _vaultChatSetBusy(false);
+    _vaultChatLive(true);
     if (btn) btn.disabled = false;
     _vaultChatSave();
   }

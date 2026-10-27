@@ -17,7 +17,14 @@ from ..core import errors as _errs
 from ..core import projects as core_projects
 from ..core.fsutil import safe_filename, write_json_atomic
 from ..state import CANCELLING, RUN_LOCK, RUNNING
-from ._common import STAGE_LABELS, _read_meta_checked, _safe_pid, proj_dir, require_flag
+from ._common import (
+    STAGE_LABELS,
+    _read_meta_checked,
+    _safe_pid,
+    proj_dir,
+    read_upload_capped,
+    require_flag,
+)
 
 _ALLOW_IMG = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 _MAX_ASSET_BYTES = 200 * 1024 * 1024   # R4-06：单图上传体积上限 200MB（超限 400，不落盘）
@@ -397,12 +404,11 @@ async def upload_asset(pid: str, file: UploadFile = File(...),
     base = proj_dir(pid)
     if not base.exists():
         raise HTTPException(404, "项目不存在")
-    raw = await file.read()
+    # R4-06：体积限界在落盘/建索引之前——超限即 400，不产生任何磁盘副作用。
+    # 2026-10-22：限界前移到**读取阶段**（原实现先整块读进内存再判）
+    raw = await read_upload_capped(file, _MAX_ASSET_BYTES, "图片过大（限 200MB）")
     if not raw:
         raise HTTPException(400, "文件为空")
-    # R4-06：体积限界在落盘/建索引之前——超限即 400，不产生任何磁盘副作用
-    if len(raw) > _MAX_ASSET_BYTES:
-        raise HTTPException(400, "图片过大（限 200MB）")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in _ALLOW_IMG:
         raise HTTPException(400, f"仅支持图片：{' / '.join(_ALLOW_IMG)}")

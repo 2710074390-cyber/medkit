@@ -10,6 +10,114 @@
 
 > 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+> 主题：**前端改进（可访问性 / 一致性 / 效率）**。依据 `docs/前端改进报告_2026-10-21.md`
+> 的分级清单逐项落地；视觉语言与零构建 / 零 CDN / 不引 Web 字体的底线均未改变。
+
+### Fixed
+
+- **「题目笔记」弹窗不可用（P0 功能缺陷）**：`bank-drill.js` 调 `askModal(title, label, 回调, it.note)`
+  时把回调传进了 `placeholder` 槽，`onOk` 实际是字符串 —— 点「保存」必抛
+  `TypeError: onOk is not a function`，且输入框 placeholder 会显示函数源码。
+  已补齐占位参数并在签名处写明参数顺序。刷题主路径的「笔记」恢复可用。
+- **判分结果对读屏静默**：`.bank-opt` 的对/错此前只改边框颜色，现补 `aria-checked` 与
+  `aria-label`（含「正确答案 / 你的选择（错误）」），并由沉浸层常驻的 `#bank_sr_status`
+  （`role=status`）播报一句结论 —— 不再只靠颜色传达（WCAG 1.4.1 / 4.1.3）。
+- **关闭浮层后焦点落到 `<body>`**：通用模态、命令面板、沉浸作答三处均记录打开前的
+  `activeElement` 并在关闭时归还。
+
+### Changed
+
+- **刷题选项语义化**：`.bank-opt` 由 `<div onclick>` 改为真 `<button>`（单选 `role=radio` /
+  多选 `role=checkbox`，容器 `radiogroup`/`group`），Tab 可落、Enter/Space 可激活；
+  键盘 `Enter` 在选项上时交给原生 click（单选即判分），已作答才当作「下一题」。
+  背题模式下选项改为静态内容（不是控件，不给它挂 role）。
+- **浮层焦点管理（A 级无障碍）**：新增 `medkit/web/js/ui-modal.js`（从 `app.js` 抽出）——
+  `focusableIn` / `trapTabKey` / `setBackgroundInert` / `closeModal` 一套共用能力，
+  三个 `aria-modal` 浮层共用：Tab 陷阱、背景 `inert`、焦点归还；叠加浮层时按
+  「是否仍有浮层」决定是否解锁背景（`anyOverlayOpen()`）。
+  `#modal_mask .modal` 补 `aria-labelledby="md_title"`（此前对话框没有可访问名称）。
+- **导航语义降级（而非补全 APG tabs）**：侧栏 `role=tablist/tab + aria-selected` 改为
+  `nav` + `aria-current="page"` —— 页签本质是路由，同屏并没有 tabpanel 切换；
+  只做一半的 tabs 语义反而让读屏听到 5 个「选项卡」却要连按 5 次 Tab。
+  「大纲 → 数据标准」两个 pill 同理改为 `group` + `aria-pressed`。
+- **`document.title` 随页签更新**：SPA 切页此前标题恒为「MedKit · 医学题库工坊」，
+  读屏不播报页面变化、多标签页无法区分（WCAG 2.4.2）。
+- **窄屏外壳改底部导航**：`≤860px` 不再把侧栏收成 60px 图标条（390px 屏上占 15% 宽度，
+  内容区只剩 306px），改为底部导航条并用 `env(safe-area-inset-bottom)` 适配手势条；
+  复用同一份 `nav button[data-tab]`，快捷键与页签分发逻辑零改动。
+- **双栏工作台门槛 1360 → 1180px**：1366×768 笔记本在 125% 缩放下 CSS 视口约 1093px、
+  1280×800 约 1024px —— 原门槛让绝大多数学生机永远看不到「右栏常驻」。
+- **间距令牌化**：`tokens.css` 新增 `--space-1..7`（4/8/12/16/24/32/64）；
+  `index.html` 与 13 个 JS 模板里 119 处内联间距改写为 `var(--space-*)`。
+  此前「4pt 栅格」只写在文档里，代码靠内联 style 现写，同一屏混用 6/8/10/12/14/16px。
+- **标题层级**：设置页与题库页的卡片标题由 `h2` 降为 `h3`（页面 `h1` → 区块 `.subh` `h2`
+  → 卡片 `h3`），修掉「卡片标题与区块标题同级、读屏大纲被压平」；今天/刷题/错题三页
+  没有区块标题，卡内标题保持 `h2`。
+- **表单标签关联**：`index.html` 与 JS 模板里 61 个 `<label>` 全部补 `for=`（原先 55 个里
+  只有 8 个关联控件，读屏进入「连接服务商」听到的全是无名「编辑框」）；描述一组控件的
+  6 处改为 `.flabel`（分组标签不该硬绑到某一个 input 上）；两处用
+  `<label>.</label>` 撑基线的写法删除。
+- **配比条语义**：`.segbar` 的 `role="img"` 改为 `role="group"` —— `img` 是 leaf role，
+  会把内部精心写了 `aria-valuenow` 的 `role="slider"` 把手整个从无障碍树里吞掉。
+- **聊天流式渲染**：流式期间只追纯文本，落地时再一次性 `mdRender`（原实现每帧对
+  「累计全文」跑一次 Markdown 解析，4000 字 × 约 500 帧 ≈ 200 万字符，是 O(n²)）；
+  `vaultChatRender()` 整列重建时按 `data-act` 把焦点放回原按钮；流式期间
+  `aria-live=off`、落地恢复 `polite`（避免逐字增量反复打断读屏）。
+- **首屏请求去重**：`api()` 为同路径在途 GET 返回同一个 Promise；「今天」页不再由
+  `loadStart` / `loadDashboard` / `loadOverview` 三处各拉一次 `/api/library/dashboard`
+  （`dashboard` 3 次 → 1 次、`subjects` 2 → 1、合计 8 → 5）。`loadLibrary(force)` 的
+  `invalidateLearnCache()` 只在写操作后/用户点刷新时触发（原先每次切页都作废 30s 缓存，
+  缓存机制被自己的刷新入口抵消）。
+- **脚本改 `defer`**：15 个 `<script>` 加 `defer`（并行下载、按序执行）；
+  `initTab` 改为等 `DOMContentLoaded`（`defer` 下 `readyState` 在 app.js 执行时已是
+  `interactive`，若照旧立即初始化会撞上尚未执行的分片函数）。
+- **其余一致性**：「清空全部数据」的第二道闸门由原生 `confirm()` 改为 `confirmModal`
+  （全站仅保留审核台那处同步闸门的原生 confirm，并注明理由）；首屏空状态的两个 CTA
+  补 `.act` 外观（`.ob-btn` 原先只有一条 `margin` 规则，落回浏览器原生按钮）；
+  `#side_ver` 由 `span[role=button]` 改真 `<button>`；`textarea` 纳入 `:focus-visible`
+  焦点环；`.rst` 点按目标提到 24px（WCAG 2.5.8）；补 `@media (hover:none)` 触屏反馈、
+  `100dvh`、表格自滚门槛 420 → 768px；骨架屏由 3 处补齐到 11 处异步区。
+
+### Added
+
+- `medkit/web/js/ui-modal.js`：模态与焦点管理独立片（外壳域，已登记进
+  `tests/test_frontend_domain_coupling.py` 的 `SHELL`）。
+- `tests/test_frontend_a11y.py`：**可访问性静态守卫**（7 条）——label 关联 / dialog 可访问名称 /
+  可点击非交互元素必须带 `tabindex`+`role` / 焦点环覆盖 `textarea`，每条检测器配
+  「用内存样本自证能命中」的元守卫，豁免表支持「登记不得腐烂」。**当前零豁免**。
+- `.sr-only`（屏读专用文本）与 `.flabel`（分组标签）两个类。
+### Changed（后端审查，2026-10-22）
+
+> 依据 `docs/后端审查报告_2026-10-22.md`：ruff / mypy 零告警的基线上，聚焦静态工具
+> 覆盖不到的语义层——错误契约、上传内存安全、统计端点成本、临时资源生命周期。
+
+#### Fixed
+
+- **图片 OCR 导入在 Windows 上必 500 并泄漏临时文件（P0，成功路径零覆盖）**：
+  `library.import_image` 用 `NamedTemporaryFile(delete=False)` 写完数据后**未 close 就在
+  `finally` 里 `unlink`** —— Windows 拒绝删除仍被打开的文件（`WinError 32`），该异常发生在
+  `finally` 中，会把**成功返回的 OCR 文本变成 500**，且每次调用永久泄漏一个临时文件。
+  旧测试只覆盖「体积超限」分支（那时临时文件尚未创建）。现改为：写完即 close（幂等）、
+  清理失败只记持久错误不阻断返回。新增成功路径回归用例。
+- **FastAPI 422 校验错误绕过了统一错误体**：默认 handler 返回 `{"detail": [数组]}`，
+  前端 `api()` 的 `new Error(j.detail)` 会把数组渲染成 `[object Object]` 或 Python repr。
+  现以 `RequestValidationError` 处理器接管：`{detail: 中文摘要, error_code: VALIDATION_ERROR,
+  fields: [{field, msg}]}` —— 人话摘要 + 机器可读的行内定位双出口，类型→中文映射 17 条。
+
+#### Changed
+
+- **上传读取改为「分块 + 上限即止」**：新增 `_common.read_upload_capped()`，9 处
+  `await file.read()`（先整块 materialize 进内存、后判上限）全部替换——200MB 上限不再
+  意味着先吃 2GB 再 400；声明 size 先行短路，超限峰值内存 ≈ limit + 1MB 块。各端点
+  错误文案保持原文（前端与测试依赖）。配套静态守卫禁裸 `await x.read()` 回流。
+- **`/api/data/summary` 统计成本降一个量级**：错题/知识点计数由「整表 SELECT * +
+  逐行 json.loads」改为 `COUNT` / `GROUP BY`（新增 `count_knowledge` /
+  `count_mistakes_by_subject`）；目录体积由 6 次遍历改单遍扫描归桶；会话计数只数文件名。
+  前端同步修掉渲染从未存在的 `counts.review_cards`（已删除域的遗留，显示 undefined），
+  备份列表顺带暴露总份数/总占用。
+- **测试替身对齐真实签名**：`test_r4_batch3._FakeUpload.read()` 补 `size` 形参（与
+  `UploadFile.read(size)` 一致），并改为真实游标语义。
+
 ## [0.19.0] - 2026-10-20
 
 > 主题：**前端设计重构 S1–S4**（方案与实机截图：`docs/前端设计重构方案_2026-10-20.html`

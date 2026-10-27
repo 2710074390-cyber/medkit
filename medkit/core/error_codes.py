@@ -21,3 +21,4 @@ class ErrorCode(str, Enum):
     MINERU_ERROR = "MINERU_ERROR"          # MinerU OCR 失败 → 502
     PIPELINE_ERROR = "PIPELINE_ERROR"      # 出题管线内部失败 → 500
     INTERNAL_ERROR = "INTERNAL_ERROR"      # 未捕获异常兜底 → 500
+    VALIDATION_ERROR = "VALIDATION_ERROR"  # 请求参数校验失败（FastAPI 422）→ 422

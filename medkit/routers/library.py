@@ -16,8 +16,11 @@ from pydantic import BaseModel
 from ..core import bank as banklib
 from ..core import config as cfg
 from ..core import dashboard as dash
+from ..core import errors as _errs
 from ..core import library as lib
 from ..core.config import resolve_key
+from . import _common
+from ._common import read_upload_capped
 
 router = APIRouter()
 
@@ -109,7 +112,7 @@ def batch_mistakes(body: list[MistakeBody]) -> dict[str, Any]:
 async def import_file(file: UploadFile = File(...)) -> dict[str, Any]:
     """批量导入文件（本地解析，零 LLM）：.json / .csv / .md / .txt，按扩展名分派。"""
     name = file.filename or ""
-    raw = await file.read()
+    raw = await read_upload_capped(file, _common.MAX_FILE_SIZE, "文件过大（限 200MB）")
     if not raw:
         raise HTTPException(400, "文件为空")
     try:
@@ -261,26 +264,41 @@ async def import_image(file: UploadFile = File(...)) -> dict[str, Any]:
     if not api_key:
         raise HTTPException(400, "请先在「① 连接服务商」配置 MinerU OCR API Key")
     suffix = Path(file.filename or "").suffix.lower()
-    data = await file.read()
-    # R4-13/B-02：读后即判上限——图片独立 20MB（OCR 读图），超限 400 不落盘/不触发 OCR
-    from ._common import MAX_IMAGE_BYTES
-    if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(400, "图片超过 20 MB，请压缩或裁剪后重试")
+    # R4-13/B-02：图片独立 20MB（OCR 读图）。2026-10-22：上限改在**读取阶段**生效
+    # （原实现先整块读进内存再判，超限文件已经吃满内存）
+    data = await read_upload_capped(
+        file, _common.MAX_IMAGE_BYTES, "图片超过 20 MB，请压缩或裁剪后重试")
     if not data.strip():
         raise HTTPException(400, "文件为空（0 字节或仅空白）——请确认上传了照片/截图")
     if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
         raise HTTPException(400, f"不支持的类型 {suffix}（仅图片）")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(data)
     tmp_path = tmp.name
     try:
+        tmp.write(data)
+        tmp.flush()
+        # 2026-10-22（P0）：**必须在 unlink 之前关掉句柄**。
+        # Windows 上「仍打开的临时文件」无法删除：`Path.unlink()` 抛
+        # `PermissionError [WinError 32]`，而它在 `finally` 里 —— 会把成功返回的
+        # OCR 文本变成 500，并永久留下临时文件。原先只在「体积超限」分支（尚未来得及
+        # 建临时文件）被测试覆盖，成功路径从未跑到这里。实测复现见
+        # `tests/test_backend_audit_fixes.py::test_import_image_returns_text_and_cleans_up`。
+        tmp.close()
         client = mineru_mod.MinerUClient(api_key)
         # extract 内含上传+轮询，可耗时数分钟，须放线程池以免阻塞事件循环冻结全站
         markdown = await asyncio.to_thread(client.extract, tmp_path)
     except MinerUError as e:
         raise HTTPException(502, f"OCR 识别失败：{e}")
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        try:
+            tmp.close()          # 幂等；write 之前就抛异常时也保证关闭
+        except OSError:
+            pass
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except OSError as e:
+            # 删不掉不阻断返回（临时文件残留可接受），但必须留痕而不是让整体 500
+            _errs.record("library.import_image.cleanup", "临时文件未能清理", e=e)
     return {"ok": True, "via": client.mode(), "text": markdown or ""}
 
 

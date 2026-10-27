@@ -66,39 +66,88 @@ def _dir_size(p: Path) -> int:
     return n
 
 
+def _scan_children(root: Path) -> tuple[dict[str, int], int]:
+    """一次遍历 root：按**首段路径**归入各子项，同时累计总计。
+
+    2026-10-22：原实现按 `config / presets / library / projects / prompts` 各 `rglob`
+    一次，最后再对 root 全量走一遍 —— 共 6 次目录遍历，其中 total 那次覆盖了其余全部。
+    统计面板的成本随文件数线性叠加（每个项目的产物有几十个文件），没必要走六遍。
+    """
+    per: dict[str, int] = {}
+    total = 0
+    if not root.exists():
+        return per, 0
+    for f in root.rglob("*"):
+        try:
+            if not f.is_file():
+                continue
+            n = f.stat().st_size
+        except OSError:
+            continue          # 单个文件 stat 失败（权限/被占用）不该让整张面板报错
+        total += n
+        try:
+            head = f.relative_to(root).parts[0]
+        except (ValueError, IndexError):
+            continue
+        per[head] = per.get(head, 0) + n
+    return per, total
+
+
+def _count_sessions() -> int:
+    """素材会话数（sessions/*.json）。**只数文件，不读正文**，也不触发建目录副作用。"""
+    d = Path(cfg.CONFIG_DIR) / "sessions"
+    if not d.is_dir():
+        return 0
+    try:
+        return sum(1 for p in d.glob("*.json") if p.is_file())
+    except OSError as e:
+        _errs.record("data.summary.sessions", "会话计数失败", e=e)
+        return 0
+
+
 @router.get("/api/data/summary")
 def data_summary() -> dict[str, Any]:
     root = cfg.CONFIG_DIR
     projects_dir = Path(cfg.load()["projects_dir"])
-    _size_paths: list[tuple[str, str | None]] = [
-        ("config", "config.json"), ("presets", "presets"), ("library", "library"),
-        ("projects", None), ("prompts", "prompts")]
-    size: dict[str, int] = {}
-    for name, rel in _size_paths:
-        if name == "projects":
-            size[name] = _dir_size(projects_dir)
-        elif rel is not None:
-            size[name] = _dir_size(root / rel)
-    size["total"] = _dir_size(root)
+    per, total = _scan_children(root)
+    size: dict[str, int] = {
+        "config": per.get("config.json", 0),
+        "presets": per.get("presets", 0),
+        "library": per.get("library", 0),
+        "prompts": per.get("prompts", 0),
+    }
+    # projects_dir 可被配置到 root 之外；在内则复用同一次扫描，在外单独走一遍
+    try:
+        inside = projects_dir.resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        inside = False
+    size["projects"] = per.get(projects_dir.name, 0) if inside else _dir_size(projects_dir)
+    size["total"] = total
 
-    counts: dict[str, Any] = {"projects": 0}
-    if projects_dir.is_dir():
-        counts["projects"] = len([d for d in projects_dir.iterdir() if d.is_dir()])
-    mistakes = lib.list_mistakes() if (root / "library").exists() else []
-    knowledge = lib.list_knowledge() if (root / "library").exists() else []
-    counts["mistakes"] = len(mistakes)
-    counts["knowledge"] = len(knowledge)
-    by_subject: dict[str, int] = {}
-    for m in mistakes:
-        s = (m.get("subject") or "未分类").strip() or "未分类"
-        by_subject[s] = by_subject.get(s, 0) + 1
+    counts: dict[str, Any] = {
+        "projects": len([d for d in projects_dir.iterdir() if d.is_dir()])
+        if projects_dir.is_dir() else 0,
+        # 2026-10-22：改走 COUNT/GROUP BY —— 原实现为拿三个数字把错题表与知识点表
+        # 整表 SELECT * + 逐行 json.loads（上千条时打开「数据管理」明显卡顿）。
+        "mistakes": lib.count_mistakes(),
+        "knowledge": lib.count_knowledge(),
+        "sessions": _count_sessions(),
+    }
+    by_subject: dict[str, int] = lib.count_mistakes_by_subject()
 
     bdir = _backups_dir()
     backups = []
+    backups_total = 0
     if bdir.is_dir():
-        for f in sorted(bdir.glob("medkit-backup-*.zip"))[-8:]:
-            backups.append({"name": f.name, "size": f.stat().st_size,
-                            "mtime": f.stat().st_mtime})
+        for f in sorted(bdir.glob("medkit-backup-*.zip")):
+            try:
+                size_b = f.stat().st_size
+                mtime = f.stat().st_mtime
+            except OSError:
+                continue
+            backups_total += size_b
+            backups.append({"name": f.name, "size": size_b, "mtime": mtime})
+        backups = backups[-8:]      # 回执只给最近 8 份（与前端展示一致），总量按全部算
     return {
         "dir": str(root),
         "projects_dir": str(projects_dir),
@@ -108,6 +157,8 @@ def data_summary() -> dict[str, Any]:
         "counts": counts,
         "by_subject": by_subject,
         "backups": backups,
+        "backups_total": backups_total,
+        "backups_count": len(list(bdir.glob("medkit-backup-*.zip"))) if bdir.is_dir() else 0,
     }
 
 
