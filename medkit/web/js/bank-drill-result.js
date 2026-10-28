@@ -1,4 +1,4 @@
-/* exported bankDrillConf */
+/* exported bankDrillConf, _bankRationalesHTML, _bankKcHTML, _bankConfHTML */
 /* v0.22 阶段 5：刷题页的「把握分」与「结果区三段」（从 bank-drill.js 拆出）。
 
    为什么拆：bank-drill.js 一度 835 行，超 U-17 的 800 行上限（守卫 tests/test_v15_frontend_split.py）。
