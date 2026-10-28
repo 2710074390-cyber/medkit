@@ -91,6 +91,14 @@ class QuestionItem(BaseModel):
     # v0.8.1 真题标注（PRD 6.3.2）：管线收尾/渲染层按已确认考频条目标注，缺省为空（不破坏旧产物）。
     source_type: str = ""
     source_year: str = ""
+    # v0.22 阶段 4（G4）：**逐选项解析**。空 dict = 旧产物 / 未启用，不是错误。
+    # 与 UWorld / AMBOSS 的差距不在题，在「每个错选项都教一次」——见 `gates/options_check`。
+    option_rationales: dict[str, str] = Field(default_factory=dict)
+    misconceptions: dict[str, str] = Field(default_factory=dict)
+    # 支撑正确答案的**教材原文那一句**（逐字引用；门禁 `trace_check.check_entailment` 会核它是否真在切片里）
+    source_quote: str = ""
+    # 难度自评 1..5；0 = 未标注（不臆造，缺省即未知）
+    difficulty: int = 0
 
     @field_validator("options", mode="before")
     @classmethod
@@ -115,6 +123,43 @@ class QuestionItem(BaseModel):
     @classmethod
     def _word_str(cls, v: Any) -> str:
         return str(v or "")
+
+    @field_validator("option_rationales", "misconceptions", mode="before")
+    @classmethod
+    def _word_option_map(cls, v: Any) -> Any:
+        """选项 → 文本的映射：键统一成大写字母，丢弃非法键与空值。
+
+        **容错而不拒绝**：LLM 常回 `{"A": "…", "a": "…"}` 或带 `"选项A"` 的键；
+        归一后仍不可用的直接丢（不因为这层映射让整题判死——契约层只做形状校验，
+        「每个选项都要有理由」这条**内容**要求在 `gates/options_check` 里判）。
+        """
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            return {}
+        out: dict[str, str] = {}
+        for k, val in v.items():
+            key = str(k or "").strip().upper()
+            key = key[-1:] if key and key[-1] in "ABCDEF" else ""
+            text = str(val or "").strip()
+            if key and text:
+                out[key] = text[:400]
+        return out
+
+    @field_validator("difficulty", mode="before")
+    @classmethod
+    def _word_difficulty(cls, v: Any) -> int:
+        """难度 1..5；0 / 非法 / 越界一律 0（= 未标注，不臆造）。"""
+        try:
+            n = int(float(v))
+        except (TypeError, ValueError):
+            return 0
+        return n if 1 <= n <= 5 else 0
+
+    @field_validator("source_quote", mode="before")
+    @classmethod
+    def _word_source_quote(cls, v: Any) -> str:
+        return str(v or "").strip()[:600]
 
     @field_validator("answer", mode="before")
     @classmethod

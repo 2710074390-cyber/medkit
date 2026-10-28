@@ -795,6 +795,8 @@ def _stage_qc_fix(*, base: Path, meta_path: Path, qc_report: dict[str, Any],
             "dup": dedup_check.check_dup(questions, source_texts=text_by_sid),
             # S1-2：数值核验（正确选项的临床数值必须有源文本出处）
             "numeric": numeric_check.check_numbers(questions, source_texts=text_by_sid),
+            # v0.22 阶段 4（G5）：断言级溯源（引文必须在所引切片里逐字可核）
+            "entailment": trace_check.check_entailment(questions, text_by_sid),
         }
         _write_json_atomic(base / "质检报告" / "gate1_final.json", gate)
         trace_md = "\n".join(f"- {t['q_id']}: {t['reason']}" for t in fixed["trace"]) or "无修复项"
@@ -862,6 +864,15 @@ def _stage_gate1(*, base: Path, meta_path: Path,
                                    [f"第 {round_i} 轮失败：{trace_err}", "本轮未校验（非通过），产物页标 ⛔ 请人工复核。"])
             _trace_issues = None
             _unverified.append("溯源回查")
+        # v0.22 阶段 4（G5）：断言级溯源——`source_quote` 必须能在所引切片里逐字核到。
+        # 与 F2 合并进同一子项（进度仍是 5 步）：它是「溯源」的一部分，不是第六类检查。
+        # 默认 strict=False ⇒ 引文核不到只 warn（进 MedFix + 人工复核），不剔除题目；
+        # 理由见 trace_check.check_entailment 的 docstring：默认 fail 会把整批剔空。
+        _ent = trace_check.check_entailment(
+            questions, text_by_sid,
+            strict=bool(cfg.load().get("entailment_strict") or False))
+        if _trace_issues is not None:
+            _trace_issues = list(_trace_issues) + list(_ent["issues"])
         _set_progress(base, "gate1", round_i - 1, FIX_ROUNDS_GATE + 1, f"第 {round_i} 轮",
                       sub="查重", sub_done=3, sub_total=5)
         _dup, dup_err = _run_substep(
@@ -892,6 +903,9 @@ def _stage_gate1(*, base: Path, meta_path: Path,
             "trace": {"issues": _trace_issues},
             "dup": _dup,
             "numeric": _num,
+            # v0.22 阶段 4：引文核实的**覆盖率**（issues 已并入 trace，这里只留可读摘要）
+            "entailment": {"available": _ent["available"], "checked": _ent["checked"],
+                           "grounded": _ent["grounded"], "coverage": _ent["coverage"]},
             # W2：本轮「未跑成」的子项名单（非空 ⇒ 产物页必须标 ⛔ 未校验，不得显示为通过）
             "unverified": sorted(set(_unverified)),
         }

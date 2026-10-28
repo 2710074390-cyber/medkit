@@ -257,6 +257,31 @@ def _esc_md(s: Any) -> str:
     return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _html_rationales(q: dict[str, Any]) -> str:
+    """逐选项理由 + 原文引句（v0.22 阶段 4）。
+
+    **无字段 ⇒ 返回空串**：旧产物（没有逐选项解析）的渲染结果必须与以前逐字节一致，
+    否则「重新导出老题库」会变成一次不可预期的版式变更。
+    """
+    rats = q.get("option_rationales") or {}
+    mics = q.get("misconceptions") or {}
+    quote = str(q.get("source_quote") or "").strip()
+    if not isinstance(rats, dict) or (not rats and not quote):
+        return ""
+    parts: list[str] = []
+    if rats:
+        items = "".join(
+            f"<li><b>{html_mod.escape(str(k))}</b> {html_mod.escape(str(v))}"
+            + (f' <i class="mis">误解：{html_mod.escape(str(mics.get(k)))}</i>'
+               if isinstance(mics, dict) and mics.get(k) else "")
+            + "</li>"
+            for k, v in sorted(rats.items()))
+        parts.append(f'<ul class="rat">{items}</ul>')
+    if quote:
+        parts.append(f'<p class="quote">📖 原文：{html_mod.escape(quote)}</p>')
+    return "".join(parts)
+
+
 def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = True) -> list[str]:
     src = _src_text(q)
     qtype = str(q.get("type") or "")
@@ -272,6 +297,17 @@ def _md_question(q: dict[str, Any], prefix: str = "###", show_options: bool = Tr
     out += _md_media(q)
     out.append(f"**✅ 答案：{_esc_md(q.get('answer', ''))}**")
     out.append(f"💡 {_esc_md(q.get('analysis', ''))}")
+    # v0.22 阶段 4：逐选项理由（有才输出；旧产物不加空标题）
+    rats = q.get("option_rationales") or {}
+    if isinstance(rats, dict) and rats:
+        mics = q.get("misconceptions") or {}
+        out.append("**逐选项理由**：")
+        for k in sorted(rats):
+            mis = f"（误解：{_esc_md(mics.get(k))}）" if isinstance(mics, dict) and mics.get(k) else ""
+            out.append(f"- **{_esc_md(k)}** {_esc_md(rats[k])}{mis}")
+    quote = str(q.get("source_quote") or "").strip()
+    if quote:
+        out.append(f"📖 原文：{_esc_md(quote)}")
     out.append("")
     return out
 
@@ -343,7 +379,8 @@ def _html_sub(q: dict[str, Any], show_options: bool = True,
             + f'{html_mod.escape(str(q.get("type", "")))} · '
             + f'{html_mod.escape(str(q.get("question", "")))}</p>{opts}'
             + f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
-            + f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div>')
+            + f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p>'
+            + _html_rationales(q) + '</div>')
 
 
 def export_html(questions: list[dict[str, Any]], title: str = "题库",
@@ -415,7 +452,8 @@ def export_html(questions: list[dict[str, Any]], title: str = "题库",
                 f'<div class="qb">{render_media(q, image_index)}<p><b>{html_mod.escape(str(q.get("subtopic", "")))}</b> · '
                 f'{html_mod.escape(str(q.get("question", "")))}</p><ul>{opts}</ul>'
                 f'<p class="ans">✅ 答案：<b>{html_mod.escape(str(q.get("answer", "")))}</b></p>'
-                f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p></div></details>',
+                f'<p class="ana">💡 {html_mod.escape(str(q.get("analysis", "")))}</p>'
+                f'{_html_rationales(q)}</div></details>',
                 1))
     # D7：按题目数分页（每页 ≤50 题；案例/选项组整组归属同一页，不拆散）
     pages: list[list[str]] = []
@@ -653,6 +691,18 @@ let stInvalidated = false;   // R3S-04：卷面指纹不匹配 → 清档并提�
 let autoGrading = false;    // C-08：限时到点自动判分防重入（取消确认后不再每秒弹窗）
 
 function esc(s){{return String(s??"").replace(/[&<>"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));}}
+/* v0.22 阶段 4：逐选项理由 + 原文引句（无字段 ⇒ 空串，旧卷渲染不变） */
+function ratHtml(q){{
+  const R=q.option_rationales||{{}}, M=q.misconceptions||{{}};
+  const ks=Object.keys(R).sort();
+  if(!ks.length && !q.source_quote) return "";
+  let h="";
+  if(ks.length){{ h+='<ul class="rat">';
+    ks.forEach(k=>{{ h+='<li><b>'+esc(k)+'</b> '+esc(R[k])+(M[k]?' <i class="mis">误解：'+esc(M[k])+'</i>':"")+'</li>'; }});
+    h+="</ul>"; }}
+  if(q.source_quote) h+='<p class="quote">📖 原文：'+esc(q.source_quote)+'</p>';
+  return h;
+}}
 function loadState(){{try{{return JSON.parse(localStorage.getItem(KEY)||"null")}}catch(e){{return null}}}}
 function saveState(s){{try{{localStorage.setItem(KEY,JSON.stringify(s));}}catch(e){{}}}}
 function clearState(){{try{{localStorage.removeItem(KEY);}}catch(e){{}}}}
@@ -913,7 +963,7 @@ def _paper_js_grade() -> str:
       }}
     }});
     d.insertAdjacentHTML('beforeend',
-      '<p class="ans">✅ 答案 '+esc(q.answer)+' · 💡 '+esc(q.analysis)+'</p>');
+      '<p class="ans">✅ 答案 '+esc(q.answer)+' · 💡 '+esc(q.analysis)+'</p>'+ratHtml(q));
   }});
   if(wrong.length) syncWrong();   // 判分后自动回流错题本（幂等；按钮仅作手动兜底/重试）
 }}
@@ -1103,6 +1153,12 @@ details.q .qs:hover{color:var(--acc)}
 .qb ul{padding-left:22px}
 .ans{color:var(--good);font-size:13.5px}
 .ana{color:var(--dim);font-size:13px}
+/* v0.22 阶段 4：逐选项理由 / 原文引句 */
+.rat{margin:6px 0 4px;padding-left:18px;font-size:12.5px;color:var(--dim)}
+.rat li{margin:3px 0;line-height:1.5}
+.rat b{color:var(--fg)}
+.rat .mis{color:var(--warn,#b45309);font-style:normal}
+.quote{margin:4px 0 0;padding:6px 10px;border-left:3px solid var(--line,#334155);font-size:12.5px;color:var(--dim)}
 .opt{display:block;padding:8px 12px;margin:6px 0;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:14px}
 .opt:hover{border-color:var(--acc)}
 .opt.right{border-color:var(--good);background:rgba(52,211,153,.12)}

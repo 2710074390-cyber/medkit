@@ -12,6 +12,31 @@
 
 ### Added
 
+- **题目解析升级为逐选项 + 断言级溯源（v0.22 阶段 4）**。与 UWorld / AMBOSS 的差距从来不在题，
+  在**解析的教育密度**：它们让每个错选项都教一次（为什么错、人通常会怎么想错）。
+
+  - **契约扩展**（`core/schema.py::QuestionItem`）：`option_rationales`（选项字母 → 为什么对/错）、
+    `misconceptions`（只给错误选项的误解标签）、`source_quote`（支撑答案的教材原文那一句）、
+    `difficulty`（1..5，0 = 未标注）。全部可选——**旧产物照样过契约**，不是破坏性变更。
+    形状归一：键大写、丢空值、难度越界一律 0（把 9 截成 5 等于替模型编个「最难」，不如标未知）。
+  - **入库白名单同步**（`core/bank_iq.py::normalize_item`）：本函数是**白名单式**的，
+    漏一行 = 字段静默丢失（导入的题永远没有逐选项理由，而任何测试都不会红）。
+    已加并配注入验证：删掉这三行 ⇒ `/reveal` 契约用例立刻红（`KeyError: 'A'`）。
+  - **门禁：逐选项理由**（`gates/options_check.check_rationale_coverage`）：
+    **批次级 opt-in**——本批只要有一题带了理由，就要求每题每选项都有（缺 ⇒ `fail`）；
+    整批都没有 ⇒ 不判（否则「重跑旧项目」全红）。另加两条质量项：正确选项明显最长 ⇒ `warn`
+    （长度泄露答案）、答案位置分布失衡 ⇒ `warn`（非定向，样本 < 10 不判）。
+  - **门禁：断言级溯源**（`gates/trace_check.check_entailment`）：把 `source_quote` 拿到
+    **所引切片**里逐字核对（归一空白/标点；省略号分段逐段核，防「首尾真、中间编」）。
+    **默认 `warn`**，配置 `entailment_strict=true` 才 `fail`——默认 fail 会把一次 50 题
+    剔到空题库，那是把可选功能做成致命功能。另报 `F4`（`info`）：正确选项在「引文 + 解析」里
+    没有原样出现时提示人工确认。旧产物（无 `source_quote`）⇒ `available=false`、零 issue。
+  - **渲染**：押题卷 Markdown / 题库 HTML / 交互卷判分区都展示逐选项理由与原文引句；
+    **无字段 ⇒ 空串**，重新导出老题库的版式逐字节不变。背题模式 `/reveal` 与
+    `/grade` 响应同步返回四个字段。
+  - 守护：`tests/test_question_contract.py`（20 项）+ `tests/test_entailment_gate.py`（13 项）。
+
+
 - **作答真正进入学习者模型（v0.22 阶段 3 · 断点 A 根治）**。
   审计断点 A 是「答对 50 题，掌握度纹丝不动」——`bank_attempts` 只是流水，
   掌握度只由**错题**聚合（`_touch_knowledge_in` 记的 `correct` 是「错题后来被攻下」，
@@ -119,6 +144,20 @@
     （任意来源 vs 固定来源且保留上游字段）。
   - 科目候选从**文件名带「题库 / 押题卷」的兄弟 md** 推断——实测按「最短 md 名」会把整批科目
     认成 `AGENT4_修改声明`（修改声明/溯源表比 `ALL_questions_FIXED.md` 短），题库名跟着变脏。
+
+
+### Prompts
+
+- **`medkit/prompts/medgen.md`（v0.22 阶段 4）**：新增 HC-9「逐选项理由」与 HC-10「原文引句」。
+  HC-9 要求 `option_rationales` 覆盖**全部**选项（正确项写为什么对、干扰项写错在哪，
+  禁止「不正确答案」这类空话）并给 `misconceptions`（只给错误选项的误解标签，≤20 字）；
+  HC-10 要求 `source_quote` **逐字照抄**本切片原文、核不到就不出这道题（与 HC-5 同口径），
+  并给 `difficulty` 1..5。输出格式块与 A3 案例示例、B1 选项组示例同步补齐四个字段，
+  末尾加「缺任何一个即判定为不合格产物」。
+  影响：`/api/bank/grade`、`/api/bank/items/{iid}/reveal`、押题卷三种导出与
+  门禁①（`options_check` / `trace_check.check_entailment`）。
+  夹具同步：`tests/fixtures/llm_cases/medgen_a1.json` / `medgen_x.json` /
+  `medgen_case.json` / `medgen_image.json` 全部补四个字段（`tests/test_prompt_contracts.py` 校验）。
 
 ### Fixed
 

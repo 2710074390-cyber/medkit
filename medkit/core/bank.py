@@ -670,6 +670,11 @@ def grade(bid: str, item_id: str, user_answer: str, session_id: str = "",
         "source_type": str(item.get("source_type") or ""),
         "source_year": str(item.get("source_year") or ""),
         "synced_mistakes": synced,
+        # v0.22 阶段 4：逐选项解析随判分结果回传（旧题为空值；前端有才渲染）
+        "option_rationales": dict(item.get("option_rationales") or {}),
+        "misconceptions": dict(item.get("misconceptions") or {}),
+        "source_quote": str(item.get("source_quote") or ""),
+        "difficulty": int(item.get("difficulty") or 0),
         # v0.22 阶段 3：这道题影响了哪些知识点、各自掌握度怎么变（未映射则 mapped=false）
         "kc": wrote["kc"],
         "attempt_id": str(wrote["attempt"].get("id") or ""),

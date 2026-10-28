@@ -226,6 +226,11 @@ def reveal_item(iid: str) -> dict[str, Any]:
         "source_type": str(it.get("source_type") or ""),
         "source_year": str(it.get("source_year") or ""),
         "starred": bool(it.get("starred")),
+        # v0.22 阶段 4：背题模式也要看得到逐选项理由（旧题为空值，不影响既有前端）
+        "option_rationales": dict(it.get("option_rationales") or {}),
+        "misconceptions": dict(it.get("misconceptions") or {}),
+        "source_quote": str(it.get("source_quote") or ""),
+        "difficulty": int(it.get("difficulty") or 0),
     }
 
 

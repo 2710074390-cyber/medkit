@@ -126,9 +126,100 @@ def check_question(q: dict[str, Any], idx: str) -> list[dict[str, Any]]:
     return issues
 
 
+def check_rationale_coverage(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """**逐选项理由**完整性（v0.22 阶段 4 / G4）。
+
+    ## 判据是**批次级 opt-in**，不是全局强制
+
+    只要本批里有**任何一题**带了 `option_rationales`，就认为这批是新契约产物，
+    于是**每一题**的**每一个选项**都必须有理由（缺 ⇒ `fail`，进 MedFix / 人工复核）。
+    反过来，整批都没有这个字段 ⇒ 这是旧产物或旧提示词，**一律不判**。
+
+    为什么不做全局强制：历史项目与既有测试里的题都没有这个字段，
+    一刀切会让「重跑旧项目」全红——那是把可选升级做成破坏性变更。
+    """
+    if not any(q.get("option_rationales") for q in questions):
+        return []
+    issues: list[dict[str, Any]] = []
+    for i, q in enumerate(questions):
+        cid = str(q.get("id") or f"Q{i + 1:03d}")
+        opts = _effective_options(q)
+        if not opts:
+            continue
+        letters = list(LETTERS[:len(opts)])
+        have = q.get("option_rationales") or {}
+        have = have if isinstance(have, dict) else {}
+        missing = [L for L in letters if not str(have.get(L) or "").strip()]
+        if missing:
+            issues.append({
+                "q_id": cid, "code": "R20", "severity": "fail",
+                "reason": f"逐选项理由缺失：{'/'.join(missing)}"
+                          f"（每个选项都要说明为什么对/为什么错）"})
+        extra = [k for k in have if k not in letters]
+        if extra:
+            issues.append({
+                "q_id": cid, "code": "R20", "severity": "info",
+                "reason": f"逐选项理由存在超出本题选项的键：{'/'.join(sorted(extra))}"
+                          f"（本题只有 {'/'.join(letters)}）"})
+    return issues
+
+
+def check_option_length_clue(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """**正确选项是不是明显最长**（经典命题缺陷：长度泄露答案）。
+
+    只在「正确选项长度 ≥ 12 字且 > 其余选项长度的 1.6 倍」时告警——短选项
+    （「肺炎链球菌」）天然长短不一，卡它会制造噪声。`warn` 级：能改就改，改不了不剔除。
+    """
+    issues: list[dict[str, Any]] = []
+    for i, q in enumerate(questions):
+        opts = [_strip_prefix(o) for o in _effective_options(q)]
+        ans = str(q.get("answer") or "").strip().upper()
+        if len(ans) != 1 or ans not in LETTERS or len(opts) < 3:
+            continue
+        idx = LETTERS.index(ans)
+        if idx >= len(opts):
+            continue
+        mine = len(opts[idx])
+        others = [len(o) for j, o in enumerate(opts) if j != idx]
+        others.sort()
+        mid = others[len(others) // 2] or 0
+        if mine >= 12 and mid and mine > 1.6 * mid:
+            issues.append({
+                "q_id": str(q.get("id") or f"Q{i + 1:03d}"), "code": "R21",
+                "severity": "warn",
+                "reason": f"正确选项（{mine} 字）明显长于其余选项（中位 {mid} 字）"
+                          f"——长度泄露答案，建议改写为等长结构"})
+    return issues
+
+
+def check_answer_distribution(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """**答案位置分布**（批次级）：某个字母占比过高 ⇒ 猜题有便宜可占。
+
+    样本 < 10 题不判（小样本必然偏）。`warn` 级 + 非定向哨兵 `q_id="ANSWER_DIST"`：
+    它是**整批**属性，MedFix 按题号找不到原题，只能提醒人工/下一次生成调整。
+    """
+    answers = [str(q.get("answer") or "").strip().upper() for q in questions]
+    answers = [a for a in answers if len(a) == 1 and a in LETTERS]
+    if len(answers) < 10:
+        return []
+    counts = {L: answers.count(L) for L in LETTERS[:6]}
+    top_letter, top_n = max(counts.items(), key=lambda kv: kv[1])
+    share = top_n / len(answers)
+    if share < 0.5:
+        return []
+    dist = "、".join(f"{k} {v / len(answers):.0%}" for k, v in counts.items() if v)
+    return [{"q_id": "ANSWER_DIST", "code": "R22", "severity": "warn",
+             "reason": f"答案位置分布失衡：{dist}（{top_letter} 占 {share:.0%}，"
+                       f"共 {len(answers)} 题）——建议打散正确答案位置"}]
+
+
 def check_all(questions: list[dict[str, Any]]) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     for i, q in enumerate(questions):
         issues.extend(check_question(q, f"Q{i + 1:03d}"))
+    # v0.22 阶段 4：批次级质量项（逐选项理由 / 长度线索 / 答案分布）
+    issues.extend(check_rationale_coverage(questions))
+    issues.extend(check_option_length_clue(questions))
+    issues.extend(check_answer_distribution(questions))
     fails = [x for x in issues if x["severity"] == "fail"]
     return {"issues": issues, "fail_count": len(fails), "passed": len(fails) == 0}

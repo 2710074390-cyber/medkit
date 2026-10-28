@@ -369,6 +369,22 @@ def normalize_item(raw: dict[str, Any], *, bid: str, origin: str,
         except (TypeError, ValueError):
             return 0
 
+    def _map(key: str) -> dict[str, str]:
+        """选项字母 → 文本（逐选项理由 / 误解标签）。键大写、丢空值，与契约同口径。"""
+        src = raw.get(key)
+        if not isinstance(src, dict):
+            return {}
+        out: dict[str, str] = {}
+        for k, v in src.items():
+            letter = str(k or "").strip().upper()
+            letter = letter[-1:] if letter and letter[-1] in "ABCDEF" else ""
+            text = str(v or "").strip()
+            if letter and text:
+                out[letter] = text[:400]
+        return out
+
+    _diff = _i("difficulty")
+
     # 选项**剥掉字母前缀**入库：字母是渲染层的呈现职责（`LETTERS[i]`），不是数据的一部分。
     # 不剥的话「导出的 md 再导回来」会得到 `A. 吸烟`，而渲染层又补一次字母 → `A. A. 吸烟`。
     options = [_strip_letter(o) for o in (raw.get("options") or []) if str(o).strip()]
@@ -392,6 +408,13 @@ def normalize_item(raw: dict[str, Any], *, bid: str, origin: str,
         "group": raw.get("group") if isinstance(raw.get("group"), dict) else None,
         "image_ref": _s("image_ref"), "data_table": _s("data_table"),
         "source_type": _s("source_type"), "source_year": _s("source_year"),
+        # v0.22 阶段 4：逐选项解析 / 原文引句 / 难度。
+        # **必须显式搬运**——本函数是白名单式的，漏一行 = 字段静默丢失
+        # （导入的题永远没有逐选项理由，而任何测试都不会红）。
+        "option_rationales": _map("option_rationales"),
+        "misconceptions": _map("misconceptions"),
+        "source_quote": _s("source_quote")[:600],
+        "difficulty": _diff if 1 <= _diff <= 5 else 0,
         "origin": str(origin or "md_import"),
         "origin_ref": raw.get("origin_ref") or {},
         # 题库域独有：收藏（星标）与个人笔记。**只存在 data JSON 里，不加查询列**——

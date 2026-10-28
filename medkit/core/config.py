@@ -106,6 +106,12 @@ DEFAULTS: dict[str, Any] = {
     "scheduler": "fsrs",
     "fsrs_retention": 0.9,
     "fsrs_max_interval": 180,
+    # 断言级溯源（v0.22.0 阶段 4 · G5）：`source_quote` 核不到原文时怎么处置。
+    # - False（默认）：只 `warn` —— 进 MedFix 定向修复 + 人工复核清单，**不剔除题目**。
+    # - True：`fail` —— 修复轮用尽仍核不到就剔除。
+    # 为什么默认不 fail：提示词的「逐字引用」仍会被轻微改写；默认 fail 会把整批 50 题
+    # 剔到空题库——那是把可选功能做成致命功能。等实测误杀率稳定后再考虑打开。
+    "entailment_strict": False,
 }
 
 # v0.5：旧默认模型（deepseek 老一代 chat 模型）→ 现行模型自动迁移

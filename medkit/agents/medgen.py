@@ -134,6 +134,24 @@ def build_user_message(subject: str, exam: str, slice_: dict[str, Any],
             f"请输出 JSON：{{'questions': [...]}}，恰好 {count} 道题。")
 
 
+def _option_map(v: Any) -> dict[str, str]:
+    """选项字母 → 文本映射归一（v0.22 阶段 4：逐选项理由 / 误解标签）。
+
+    与 `core/schema.QuestionItem._word_option_map` 同口径（大写键、丢空值）；
+    这里再截断一次，避免单题把几千字塞进产物。
+    """
+    if not isinstance(v, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, val in v.items():
+        key = str(k or "").strip().upper()
+        key = key[-1:] if key and key[-1] in "ABCDEF" else ""
+        text = str(val or "").strip()
+        if key and text:
+            out[key] = text[:400]
+    return out
+
+
 def _parse_questions(data: Any, slice_: dict[str, Any],
                      contract_bad: Optional[list[int]] = None) -> list[dict[str, Any]]:
     raw = data.get("questions", []) if isinstance(data, dict) else data
@@ -178,6 +196,17 @@ def _parse_questions(data: Any, slice_: dict[str, Any],
         except (TypeError, ValueError):
             q["case_order"] = 0
         q["group_kind"] = str(q.get("group_kind") or "")
+        # v0.22 阶段 4（G4/G5）：逐选项解析 + 原文引句 + 难度。
+        # 缺失一律给空值（旧提示词产物 / 模型偷懒都不能让下游 KeyError）；
+        # 「必须有」这条内容要求在门禁里判，不在解析层判——解析层只负责形状。
+        q["option_rationales"] = _option_map(q.get("option_rationales"))
+        q["misconceptions"] = _option_map(q.get("misconceptions"))
+        q["source_quote"] = str(q.get("source_quote") or "").strip()[:600]
+        try:
+            _diff = int(float(q.get("difficulty") or 0))
+        except (TypeError, ValueError):
+            _diff = 0
+        q["difficulty"] = _diff if 1 <= _diff <= 5 else 0
         grp = q.get("group")
         if q["group_kind"] == "option_group" and isinstance(grp, dict):
             gopts = grp.get("options")
