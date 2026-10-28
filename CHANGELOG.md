@@ -10,6 +10,26 @@
 
 > 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
 
+### Prompts
+
+- **`medkit/prompts/medgen.md` + `medfix.md`（同步 MedAgentWork 生成链路规则）**：将上游
+  `pipeline.yaml` / `MedGen_current_prompt.md` / `MedFix` 修复执行者中**经实测有效且不破坏契约**的出题质量规则并入桌面版，
+  补齐此前过薄的选项/修复约束。
+  - `medgen.md` 新增「选项与题型设计强化」段：选项同质性结构模板 + 长度比 ≤1.5、**NBME 反线索**
+    （题干关键词不得只出现在正确选项 / 正确答案术语重叠度不得最高，对应 `medqc.md` 的 D18/D19）、
+    **干扰项科学设计**（有效干扰项 ≥3、数值干扰项与正确值差值 ≤50%、每干扰项可解释「学生为何会选」）、
+    禁止项（绝对化用语 / 括号后缀 / 模糊副词混用）、**Bloom 判定细化**（题干 >100 字且 3+ 变量不标记忆、
+    两步推理至少「应用」）、**否定词加粗**、**B1 专项强化**（共用选项 ≥4 字、组内答案覆盖 ≥3 字母、不靠换数值硬造子题）。
+    - 刻意**保留 MedKit 的 Bloom 口径「创造」**（非上游「分析」），不引入新输出字段，Schema 不变。
+  - `medfix.md` 补全修复纪律：结构化范围、禁暴力截断、禁 `(相关表现)`/`(见上文)` 等无意义后缀、
+    极性保护、全局一致性 diff、事实以切片为准、复检。
+  - **跳过项**（与 MedKit「本地优先·授人以渔·不出题自带真题」定位冲突，不搬）：考研真题配额 HC-18 / GoldenSet /
+    `kaoyan_origin`、完整 Schema 元数据块（`difficulty_index` 等，会打碎 Pydantic 契约）、复习资料视觉契约 HC-26、概念层 HC-27。
+  - 影响：出题工坊（MedGen→gates→MedQC→MedFix）产物质量；与既有 `options_check` / `trace_check` 门禁一致。
+  - 夹具同步：`tests/fixtures/llm_cases/medgen_rules_demo.json`（A1 否定词加粗 + 选项同质性 / B1 答案分布）、
+    `medfix_patch.json` 增一条「禁截断/极性保护」修复样本；`tests/test_prompt_contracts.py` 新增
+    `test_medgen_rules_demo_invariants` / `test_medfix_no_meaningless_suffix` 两条能证伪守卫。
+
 ## [0.22.0] - 2026-10-28
 
 > 主题：**学习者模型真正上线**——答题进模型、题目挂考点、解析逐选项教、复习用 FSRS。

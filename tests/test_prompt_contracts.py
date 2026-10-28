@@ -41,7 +41,7 @@ def _answer_letters(answer: str) -> str:
 
 # ---------------------------------------------------------------- 样本能过契约校验
 def test_medgen_fixtures_validate_question_item():
-    for name in ("medgen_a1.json", "medgen_x.json", "medgen_case.json", "medgen_image.json"):
+    for name in ("medgen_a1.json", "medgen_x.json", "medgen_case.json", "medgen_image.json", "medgen_rules_demo.json"):
         for q in _questions(_load(name)):
             model = QuestionItem.model_validate(q)
             assert model.question, f"{name} 题目缺题干"
@@ -122,3 +122,44 @@ def test_negative_image_ref_not_injected_red():
     data["questions"][0]["image_ref"] = "IMG9"  # 改坏：指向不存在的素材切片
     ref = data["questions"][0]["image_ref"]
     assert f"[{ref}]" not in _IMAGE_SECTIONS, "不存在的 image_ref 不应出现在注入切片中（应为红）"
+
+
+# ---------------------------------------------------------------- 同步 MedAgentWork 生成链路强化规则
+def test_medgen_rules_demo_invariants():
+    """medgen.md 强化段（选项同质性 / NBME 反线索 / 否定词加粗 / B1 专项）的可证伪守卫。"""
+    data = _load("medgen_rules_demo.json")
+    qs = _questions(data)
+    assert qs, "medgen_rules_demo.json 应含题目"
+
+    # 否定词加粗：题干"不/除外/错误"须 **加粗**
+    a1 = [q for q in qs if q.get("type") == "A1"]
+    assert a1, "demo 应含 A1"
+    assert "**不**" in a1[0]["question"], "A1 题干否定词应加粗"
+
+    # 选项同质性：A1 选项长度比 ≤ 1.6（强化段要求 ≤ 1.5，留容差给中文计数）
+    lens = [len(o) for o in a1[0]["options"]]
+    assert max(lens) / min(lens) <= 1.6, \
+        f"A1 选项长度比应接近 1.5，实际 {max(lens)/min(lens):.2f}"
+
+    # B1 专项：组内答案分布覆盖 ≥3 个不同字母 + 每子题共享 5 个选项
+    b1 = [q for q in qs if q.get("group_kind") == "option_group"]
+    assert len(b1) >= 3, "demo 应含 ≥3 道 B1 子题以验证答案分布"
+    letters = {q.get("answer", "") for q in b1}
+    assert len(letters) >= 3, f"B1 答案应覆盖≥3个不同字母，实际 {letters}"
+    for q in b1:
+        opts = (q.get("group") or {}).get("options") or []
+        assert len(opts) == 5, "B1 子题应共享 5 个选项"
+
+
+def test_medfix_no_meaningless_suffix():
+    """medfix.md 修复纪律（禁截断 / 禁无意义后缀 / 极性保护）的可证伪守卫。"""
+    data = _load("medfix_patch.json")
+    for fix in _questions(data):
+        for opt in fix.get("options", []):
+            assert not opt.endswith(("的", "和", "与", "或", "于", "。", "、")), \
+                f"修复选项不应以虚词/标点结尾：{opt!r}"
+            assert "(相关" not in opt and "(见上文" not in opt, \
+                f"修复选项不得含无意义后缀：{opt!r}"
+        # 答案键为单字母（极性未被翻转成多选）
+        assert len(_answer_letters(fix.get("answer", ""))) == 1, \
+            f"修复题答案应为单一正确选项：{fix.get('answer')!r}"
