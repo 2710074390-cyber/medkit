@@ -6,9 +6,11 @@
 > **规范（NX-06）**：凡 `medkit/prompts/*.md` 有改动，当版必须新增「`### Prompts`」小节
 > （列改动与影响），并同步 `tests/fixtures/llm_cases/` 对应样本——prompt 与契约、fixtures 三者一致才可合入。
 
-## [Unreleased]
+## [0.22.1] - 2026-10-28
 
-> 记录已合入但尚未正式发布（未 bump `__version__`）的变更。
+> 主题：**出题工坊提示词质量升级**——同步 MedAgentWork 生成链路规则（选项同质性 / NBME 反线索 /
+> 干扰项科学设计 / Bloom 判定细化 / 否定词加粗 / B1 专项 + MedFix 修复纪律），与既有
+> `options_check` / `trace_check` 门禁一致。无新功能面、无破坏性变更、Schema 不变。
 
 ### Prompts
 
