@@ -9,7 +9,7 @@
 
 ## 医学生快速上手（拿到安装包开始）
 
-1. **安装**：双击 `MedKit-Setup-0.20.0.exe` → 一路下一步（可选桌面图标）。
+1. **安装**：双击 `MedKit-Setup-0.22.0.exe` → 一路下一步（可选桌面图标）。
    或绿色版：解压 `MedKit` 文件夹到任意位置，双击 `MedKit.exe`，浏览器自动打开（无需安装 Python）。
 2. **首次启动**：直接进入「开始」页（无引导弹层）——点「去刷题」导入你自己的题库即可开练；想用 AI 从教材出题，再去「题库」页。
 3. **连接 AI**（只需一次）：推荐注册 [DeepSeek 开放平台](https://platform.deepseek.com) → 充值 ¥10 →
@@ -103,7 +103,7 @@ medkit/
 └── tests/                      # 1357 项（单元 1292 / 浏览器层 65，分进程跑）
 ```
 
-## 已实现功能（v0.20.0）
+## 已实现功能（v0.22.0）
 
 - **复习调度升级 FSRS（v0.22 阶段 1 · ADR-004 重新接线）**：`core/scheduler.py` 恢复——**全部复习调度数学的单一真相来源**，FSRS（默认，`fsrs==6.3.2` 依赖早就在 `requirements.txt` 里 ⇒ **零新依赖**）与 SM-2（legacy）并列，`/api/vault/scheduler` 可查可切。**为什么现在才接上**：ADR-004（2026-08-27）就决策了「FSRS 默认 / SM-2 可切」，但实现模块随 v0.15 精简（复习卡域实测零使用）一起被删，**FSRS 从未接到线上路径**，`core/bank.py` 至今仍把排期委托给已不存在的 `review`/`cards` 域（悬空引用）。**参数是实测标定的**（fsrs 库默认值不能照搬：学习步长以秒为单位、`maximum_interval=36500` 会把间隔排到几年后、`enable_fuzzing=True` 让同输入不同输出）：`learning_steps=(10 分钟, 1 天)` / `relearning_steps=(10 分钟,)` / `maximum_interval=180`（半年封顶）/ `desired_retention=0.9` / **关 fuzzing**。对照 SM-2 的 `1→6→15→38→95→238` 天，FSRS 是 `1→7→32→118→180→180` 天；失败后两者都**当天**重来。**切算法不丢卡数据**：两套字段并存于 front matter，各自只读自己的那套；历史 SM-2 卡切到 FSRS 时按 `interval→stability`、`ease→difficulty` **播种**（否则刚复习完的卡会被当全新卡）。vault 侧的老字段语义（`reps`/`lapses`/`state`/`status`）**跨算法完全一致**——「连续记住两次即已掌握」这条对用户的承诺不因换算法而变。守护：`tests/test_scheduler.py`（33 项，含**手写旧 SM-2 实现**逐值比对）；口径与踩坑记录见 `docs/adr/ADR-004-fsrs-scheduler.md`。
 - **知识点图谱与学习者模型（v0.22 阶段 2 · 新增）**：`core/kc.py` + `routers/kc.py` + 迁移 v11。补上两处结构性断点——**题目第一次有了稳定的知识点身份**、**学习者模型第一次看得见「对」**。  - **题目主键**：`item_kc` 把题挂到 `syllabus_items.id`（`sha1[:16]` 稳定哈希）上。此前 `bank_items.topic` 与 `QuestionItem.subtopic` 都是自由字符串，同一考点跨题库永远是几个不同字符串 ⇒ 做不了知识追踪、无法聚合、无法追溯前置知识。  - **映射是三段式 + 人工确认门**：规则精确匹配（归一后完全相等）⇒ **自动确认**；规则模糊匹配（字符 bigram Jaccard ≥ 0.45）⇒ **必须人工点确认**；LLM 兜底通道未实现 ⇒ **降级为规则并如实说明**，不报错。**为什么只让 exact 自动确认**：自动确认意味着「用户没看过、系统就认定挂对了」——而「诊断」与「治疗」字符上极像却是两个考点，挂错会让掌握度归到错的知识点，比不挂更糟。  - **学习者模型**：`kc_state` 承接全部作答（对与错），BKT 四参数（已掌握/学习/失误/猜测）+ 经验贝叶斯收缩（先验 0.30、权重 2 ⇒ 第一次观测只占 1/3、8 次后先验自动失效）。**为什么不上深度模型**：公开 benchmark 上 SAINT 比 BKT 高 0.06–0.09 AUC，但 SAINT 需要 1,000 万次交互，单用户本地永远到不了——**样本量决定选型，不是先进程度决定**。  - **`kc_state` 是读模型不是真相**：真相是 append-only 的 `bank_attempts`；状态可从 `bank_attempts ⋈ item_kc` 重放重建（与 vault 域「SQLite 只是可弃索引」同一原则，避免同一份作答有两个存储点）。  - **端点**（`/api/kc/*`，6 个）：`items`（题目 + 映射状态）、`items/{id}/map`（**唯一写入口**，覆盖式）、`backfill`（幂等可重入，默认 dry_run）、`state`（掌握概率 + 优先级）、`calibration`（自评 → 实际正确率 + Brier）、`overview`、`edges`。开关 `features.kc` 关闭时整组 404。  - 守护：`tests/test_kc.py`（32 项）——BKT 方向与黄金值、收缩冷启动/收敛、匹配三态、**exact 才自动确认而 fuzzy 必须人工确认**、`kc_state` 冗余列与 `data` 逐值一致（双写不变量）、接口契约。
