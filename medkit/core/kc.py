@@ -713,7 +713,7 @@ def backfill(bank_id: str = "", subject: str = "", method: str = "rule",
         for b in _bl.list_banks():
             items.extend(_bl.list_items(str(b.get("id") or "")))
     pool = kc_pool(subject=subject)
-    scanned = matched = unmatched = created = 0
+    scanned = matched = unmatched = created = would_confirm = 0
     for it in items:
         scanned += 1
         iid = str(it.get("id") or "")
@@ -726,12 +726,14 @@ def backfill(bank_id: str = "", subject: str = "", method: str = "rule",
             unmatched += 1
             continue
         matched += 1
+        # `dry_run` 也要能回答「正式跑会确认多少条」——否则预演报告没有决策价值
+        # （用户看不出「点了执行会发生什么」）。所以 existing 与计数都要在 dry 分支之前算。
+        existing = {m["kc_id"] for m in mappings_for_item(iid) if m["confirmed"]}
+        fresh = [c for c in cands if c["kc_id"] not in existing]
+        would_confirm += sum(1 for c in fresh if c["match_type"] == "exact")
         if dry_run:
             continue
-        existing = {m["kc_id"] for m in mappings_for_item(iid) if m["confirmed"]}
-        for c in cands:
-            if c["kc_id"] in existing:
-                continue
+        for c in fresh:
             confirmed = 1 if c["match_type"] == "exact" else 0
             if confirmed:
                 created += 1
@@ -745,7 +747,8 @@ def backfill(bank_id: str = "", subject: str = "", method: str = "rule",
                     " WHERE item_kc.confirmed = 0",
                     (iid, c["kc_id"], "rule", c["score"], confirmed, _now(), _now()))
     return {"scanned": scanned, "matched": matched, "unmatched": unmatched,
-            "created": created, "method": method, "dry_run": bool(dry_run),
+            "created": created, "would_confirm": would_confirm,
+            "method": method, "dry_run": bool(dry_run),
             "notes": notes}
 
 

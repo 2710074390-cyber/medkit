@@ -9,11 +9,11 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g,
 
 /* IMP-02：WP 级 feature flag（后端 /api/config `features` 节；缺省全开 = 现状兼容）。
    关闭后：学习中心「大纲覆盖」pill / 「⚡一键刷薄弱」/ 项目详情「图片素材」卡 / 真题考频卡 整体隐藏。 */
-const FEATURES = { syllabus: true, realexams: true, gap: true, image_q: true };
+const FEATURES = { syllabus: true, realexams: true, gap: true, image_q: true, kc: true };
 function applyFeatures(cfg) {
   Object.assign(FEATURES, (cfg && cfg.features) || {});
   // 防御：后端未下发某键（如旧 config 无 features 节）时保持默认开，避免「缺键=关闭」的隐性门禁
-  for (const k of ["syllabus", "realexams", "gap", "image_q", "cards"]) {
+  for (const k of ["syllabus", "realexams", "gap", "image_q", "cards", "kc"]) {
     if (FEATURES[k] === undefined) FEATURES[k] = true;
   }
   // v0.19：大纲管理从「学习中心」迁到「设置 → 进阶功能」，随工坊开关整块显隐
@@ -28,6 +28,11 @@ function applyFeatures(cfg) {
   if (gapBtn) gapBtn.style.display = (FEATURES.gap && genEnabled()) ? "" : "none";
   const assetBox = $("pd_assets_box");
   if (assetBox) assetBox.style.display = FEATURES.image_q ? "" : "none";
+  // v0.22 阶段 5：知识点模型整块随 flag 显隐（服务端 features.kc=false 时整组 404）
+  for (const id of ["kc_panel", "kc_map_card"]) {
+    const el = $(id);
+    if (el) el.style.display = FEATURES.kc ? "" : "none";
+  }
 }
 
 /* v0.5：轮询/项目状态声明提前（showTab 在初始化时即调用 stopPoll，需先于任何 IIFE 就绪） */
@@ -467,6 +472,7 @@ function showTab(name) {
        与 loadLibrary() → loadOverview() 完全重复。现在只走 loadLibrary 一路
        （loadOverview 同时渲染闭环总览与薄弱点诊断），首屏 dashboard 请求由 3 次降到 1 次。 */
     if (typeof loadLibrary === "function") loadLibrary();   // 内含 loadOverview（薄弱点诊断落在本页）
+    if (typeof kcPanelLoad === "function") kcPanelLoad();    // v0.22：知识点掌握 + 自评校准
   }
   if (name === "study") {   // 刷题页（做题子视图：我的题库 + 开始刷题）
     studyView();
@@ -478,6 +484,7 @@ function showTab(name) {
   }
   if (name === "mine") {
     loadPrompts(); loadDataMgmt(); themeStateRefresh();
+    if (typeof kcMapInit === "function") kcMapInit();          // v0.22：映射确认台（首进懒加载）
     // 大纲管理随「进阶功能」迁入本页：仅在工坊开启时预热（关闭时整块隐藏，白拉数据无意义）
     if (typeof sylLoad === "function" && FEATURES.syllabus && genEnabled()) sylLoad();
   }

@@ -54,7 +54,9 @@ JS_DIR = ROOT / "medkit" / "web" / "js"
 SHARED = ("md.js",)
 # 2026-10-13（奥卡姆精简 P2）：原 EP-01 归因域的三片（learn-meta / learn-meta-image /
 # learn-search）随功能删除；本域现为「学习中心 + 错题本」，改称 CORE。
-CORE = ("learn.js", "learn-study.js", "learn-vault.js", "learn-vault-chat.js")
+CORE = ("learn.js", "learn-study.js", "learn-vault.js", "learn-vault-chat.js",
+        # v0.22 阶段 5：知识点模型（kc-api 是接口层，learn-kc 是渲染层）
+        "kc-api.js", "learn-kc.js")
 # 2026-10-20（v0.19 S4）：命令面板是**外壳**的一部分（键盘优先的入口总览 + 导航兜底），
 # 与 app.js 同域——它引用的业务函数同样受「外壳 → 插件 / bank」登记制约束。
 # 2026-10-21：模态与焦点管理（Tab 陷阱 / 背景 inert / 焦点归还）从 app.js 抽出为独立外壳片
@@ -63,7 +65,9 @@ PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
 # 2026-10-10 题库刷题域（bank）：**核心侧**（与 EP-01 同级）——导入自备题库 + 应用内作答。
 # 剥离生成链后它也必须能独立工作 ⇒ 对它同样零容忍引用 PLUGIN 独有符号。
-BANK = ("bank.js", "bank-import.js", "bank-sync.js", "bank-drill.js")
+BANK = ("bank.js", "bank-import.js", "bank-sync.js", "bank-drill.js",
+        # v0.22 阶段 5：从 bank-drill.js 拆出（把握分 + 结果区三段）
+        "bank-drill-result.js")
 
 # 顶层声明（行首；与 eslint.config.js 的 TOP_LEVEL_RE 同口径）
 _TOP_DECL = re.compile(r"^(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)", re.M)

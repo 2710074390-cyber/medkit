@@ -113,6 +113,11 @@ try {
             <button class="act" id="btn_gap_paper" onclick="gapPaper()">⚡ 一键刷薄弱组卷</button>
           </div>
         </div>
+        <!-- v0.22 阶段 5：学习者模型（知识点掌握 + 自评校准）。只在 /api/kc/* 可用时显示 -->
+        <div class="card" id="kc_panel">
+          <div class="cardh"><h2>知识点掌握</h2><span class="hint" id="kc_meta"></span></div>
+          <div id="kc_state_box"><div class="hint">读取中…</div></div>
+        </div>
       </aside>
     </div>
   </section>
@@ -365,7 +370,28 @@ try {
     <h2 class="subh"><svg class="ic"><use href="#i-bank"></use></svg>进阶功能（可选 · 默认关）</h2>
     <p class="psub">用教材 + 教师重点让 AI 生成全新题库 / 押题卷 / 复习手册</p>
     <details class="adv">
-      <summary>展开进阶功能 · 出题工坊 / 大纲管理 / 真题考频</summary>
+      <summary>展开进阶功能 · 出题工坊 / 大纲管理 / 真题考频 / 知识点映射</summary>
+      <div class="card" id="kc_map_card">
+        <div class="cardh"><h3 style="margin:0">知识点映射</h3><span class="hint" id="kc_map_meta"></span></div>
+        <div class="hint" style="margin-bottom:var(--space-2)">
+          题目要挂到<b>稳定考点</b>上，掌握度才聚合得起来。规则匹配<b>只自动确认「归一后完全相等」</b>的那一种；
+          相似的（如「慢阻肺的诊断」与「慢阻肺的治疗」）<b>必须你点确认</b>——挂错比不挂更糟。
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:var(--space-2);align-items:center">
+          <label for="kc_map_status" style="flex:none">看</label>
+          <select id="kc_map_status" style="max-width:180px"
+            onchange="_kcMap.status=this.value;kcMapLoad(0)">
+            <option value="pending">待确认（有候选）</option>
+            <option value="unmapped">未映射</option>
+            <option value="mapped">已确认</option>
+            <option value="all">全部</option>
+          </select>
+          <button class="act gray" onclick="kcBackfillRun(true)">① 预演规则回填</button>
+          <button class="act gray" onclick="kcBackfillRun(false)">② 正式回填</button>
+        </div>
+        <div id="kc_map_body" style="margin-top:var(--space-3)"><div class="hint">展开后可点「预演」看能自动确认多少条</div></div>
+        <div class="btns" id="kc_map_pager" style="margin-top:var(--space-2)"></div>
+      </div>
       <div class="card">
         <h3>启用出题工坊</h3>
         <div class="hint" style="margin-bottom:var(--space-2)">
@@ -779,6 +805,9 @@ try {
 <script defer src="/assets/js/learn-study.js"></script>
 <script defer src="/assets/js/learn-vault.js"></script>
 <script defer src="/assets/js/learn-vault-chat.js"></script>
+<!-- v0.22 阶段 5：知识点模型（接口层 + 渲染层）——顺序：先接口后渲染 -->
+<script defer src="/assets/js/kc-api.js"></script>
+<script defer src="/assets/js/learn-kc.js"></script>
 <script defer src="/assets/js/review-desk.js"></script>
 <script defer src="/assets/js/review-desk-materials.js"></script>
 <script defer src="/assets/js/review-desk-project.js"></script>
@@ -792,6 +821,7 @@ try {
      ui-modal 的 confirmModal，属 bank 域核心侧（不引用生成链插件符号）。 -->
 <script defer src="/assets/js/bank-sync.js"></script>
 <script defer src="/assets/js/bank-drill.js"></script>
+<script defer src="/assets/js/bank-drill-result.js"></script>
 <!-- 命令面板（v0.19 S4）：只依赖 app.js 的 $ / esc / showTab / toast，
      命令的 run 里调用的业务函数一律"点时才解析"，故可放最后一片。 -->
 <script defer src="/assets/js/palette.js"></script>

@@ -1,4 +1,4 @@
-/* exported _bankDrill, bankDrillAutoCancel, bankDrillCardTgl, bankDrillExit, bankDrillFinish, bankDrillGoto, bankDrillHide,
+/* exported _bankDrill, bankDrillAutoCancel, bankDrillCardTgl, bankDrillConf, bankDrillExit, bankDrillFinish, bankDrillGoto, bankDrillHide,
    bankDrillMode, bankDrillNext, bankDrillNote, bankDrillPick, bankDrillPrev, bankDrillRender,
    bankDrillRetryWrong, bankDrillStar, bankDrillStart, bankDrillStartMistakes, bankDrillSubmit,
    bankDrillToggleRunmode */
@@ -25,6 +25,7 @@ let _bankDrill = {
   source: "bank",           // bank = 题库练习 / mistakes = 错题重练（判分端点不同，展示文案不同）
   marks: {},                // item_id -> {picked, graded, correct, answer, analysis, note, src…}（已作答记录）
   cardOpen: false,          // 答题卡是否展开
+  confidence: 0,            // v0.22：本题作答前的自评把握（1..5；0 = 未采集，可跳过）
   startedAt: 0, itemAt: 0, timerId: null,
   autoId: null,             // 自动跳题的倒计时句柄（选对后 N 秒进下一题）
 };
@@ -384,6 +385,7 @@ function bankDrillRender() {
     </div>
     ${it.case_stem ? `<div class="hint" style="margin-bottom:var(--space-2)">案例：${esc(it.case_stem)}</div>` : ""}
     <div class="bank-q">${esc(it.question || "")}</div>
+    ${recite ? "" : `<div id="bank_conf_box">${_bankConfHTML()}</div>`}
     <div id="bank_opts" role="${recite || multi ? "group" : "radiogroup"}"
       aria-label="${recite ? "选项（背题模式：只读）"
         : (multi ? "多选题：可选中多个选项后点「确认作答」" : "单选题：选中即判分")}">${opts.map((o, i) => `
@@ -399,9 +401,12 @@ function bankDrillRender() {
     <div id="bank_result" role="region" aria-label="判分结果"></div>
     <div id="bank_auto" class="drill-auto" style="display:none"></div>`;
   if (graded) {
+    d.confidence = m.confidence || 0;   // 回看时把握分显示当时的取值（不重新采集）
     _bankShowResult({
       correct: m.correct, answer: m.answer, analysis: m.analysis, note: m.note,
       source_type: m.source_type, source_year: m.source_year, synced_mistakes: m.synced,
+      option_rationales: m.option_rationales, misconceptions: m.misconceptions,
+      source_quote: m.source_quote, difficulty: m.difficulty, kc: m.kc,
     }, m.picked);
   } else if (recite) {
     _bankReciteReveal(it);
@@ -411,6 +416,9 @@ function bankDrillRender() {
   _bankDrillProgress();
   _bankDrillRenderCard();
 }
+
+/* 把握分（_bankConfHTML / bankDrillConf）与结果区三段（_bankRationalesHTML / _bankKcHTML）
+   已拆到 `bank-drill-result.js`（v0.22 阶段 5：本文件一度 835 行，超 U-17 的 800 行上限）。 */
 
 /* ---- 点选项：单选立即判分；多选切换选中 ---- */
 function bankDrillPick(i) {
@@ -463,11 +471,12 @@ async function bankDrillSubmit() {
     const r = d.source === "mistakes"
       ? await api(`/api/library/mistakes/${encodeURIComponent(it.id)}/retry`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_answer: ans }) })
+          body: JSON.stringify({ user_answer: ans, confidence: d.confidence || undefined }) })
       : await api("/api/bank/grade", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ bank_id: d.bid, item_id: it.id, user_answer: ans,
-                                 mode: "practice", secs: _bankItemSecs() }) });
+                                 mode: "practice", secs: _bankItemSecs(),
+                                 confidence: d.confidence || undefined }) });
     d.graded = true;
     d.last = r;
     d.marks[it.id] = {
@@ -475,6 +484,10 @@ async function bankDrillSubmit() {
       answer: r.answer, analysis: r.analysis, note: r.note,
       source_type: r.source_type, source_year: r.source_year,
       synced: r.synced_mistakes,
+      // v0.22 阶段 3/4：重渲染（翻页回来）时这些也要在，否则「回看」比刚判完少信息
+      option_rationales: r.option_rationales, misconceptions: r.misconceptions,
+      source_quote: r.source_quote, difficulty: r.difficulty, kc: r.kc,
+      confidence: d.confidence || 0,
     };
     _bankShowResult(r, ans);
     // 就地刷新操作栏：判分前这里是「跳过」，判分后必须变成「下一题 →」（否则用户看不到下一题）
@@ -505,6 +518,8 @@ async function _bankReciteReveal(it) {
     _bankShowResult({
       correct: null, answer: r.answer, analysis: r.analysis, note: r.note,
       source_type: r.source_type, source_year: r.source_year,
+      option_rationales: r.option_rationales, misconceptions: r.misconceptions,
+      source_quote: r.source_quote, difficulty: r.difficulty,
     }, "");
   } catch (e) {
     if (res) res.innerHTML = `<div class="hint">答案加载失败：${esc(e.message)}</div>`;
@@ -557,6 +572,9 @@ function _bankShowResult(r, userAns) {
         ${head}
         <div style="margin-top:6px">${recite ? "" : `你的作答：<b>${esc(userAns || "—")}</b> · `}正确答案：<b>${esc(r.answer || "—")}</b></div>
         ${r.analysis ? `<div style="margin-top:var(--space-2)"><b>解析</b>：${window.mdRender ? mdRender(r.analysis) : esc(r.analysis)}</div>` : ""}
+        ${_bankRationalesHTML(r)}
+        ${r.source_quote ? `<div class="bank-quote"><b>原文</b>：${esc(r.source_quote)}</div>` : ""}
+        ${_bankKcHTML(r)}
         ${_bankSrcLabel(r) ? `<div style="margin-top:6px"><b>出处</b>：${esc(_bankSrcLabel(r))}</div>` : ""}
         ${r.note ? `<div style="margin-top:var(--space-2)"><b>我的笔记</b>：${esc(r.note)}</div>` : ""}
         ${!recite && !r.correct && r.synced_mistakes ? '<div class="hint" style="margin-top:var(--space-2)">已自动加入错题本（可在「学习中心 → 错题本」查看与讲解）</div>' : ""}
@@ -575,6 +593,7 @@ function _bankDrillGoto(idx) {
   if (idx < 0 || idx >= d.items.length) return;
   _bankAutoCancel();          // 主动翻页 → 撤掉在途的自动跳题
   d.idx = idx; d.sel = new Set(); d.graded = false; d.last = null;
+  d.confidence = 0;            // v0.22：把握分是**每题**的，翻页必须重置
   bankDrillRender();
 }
 function bankDrillNext() {

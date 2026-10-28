@@ -8,6 +8,7 @@
 
 | 日期 | commit | 变更 |
 | - | - | - |
+| 2026-10-28 | `323b4ee`+ | **v0.22 阶段 1–5：复习调度重新接线 / 知识点图谱 / 学习者模型 / 逐选项解析 / 前端**。① **阶段 1** `core/scheduler.py` 恢复为复习调度数学的**单一真相来源**：FSRS（默认）+ SM-2（legacy），`/api/vault/scheduler` 可查可切；参数实测标定（`learning_steps=(10 分钟,1 天)` / `maximum_interval=180` / 关 fuzzing），并修掉前端复习按钮「糊=3 被判记住」的 off-by-one（改 4/2/0）。② **阶段 2** 迁移 v11（`item_kc` / `kc_state` / `kc_edges` + `bank_attempts.confidence`）+ `core/kc.py`：题挂到 `syllabus_items.id`（exact 自动确认、fuzzy 必须人工点）+ BKT（**先学后观测**次序）。③ **阶段 3** 断点 A 根治：`record_attempt_with_kc` **同事务**写流水与状态；`get_mastery_view` 改为「覆盖式」口径（kc 优先、legacy 兜底，带 `score_source`）；概览加 `readiness`；修 `sync_from_paper` **覆盖 `source_ref`** 导致「重练不算」的缺陷。④ **阶段 4** 契约四字段（`option_rationales`/`misconceptions`/`source_quote`/`difficulty`）+ 门禁（**批次级 opt-in** 的理由完整性、`check_entailment` 引文逐字核对、长度泄露/答案分布告警）+ 三种渲染。⑤ **阶段 5** `js/kc-api.js`（零映射接口层）+ `js/learn-kc.js`（知识点掌握/校准/映射台）、刷题页**把握分**与**逐选项解析**渲染、`features.kc` 降级隐藏。**关键陷阱（新增到 §4）**：`dbs.tx()` 不可重入（下层必须能接受外部游标）；路由层禁止 `dbs.tx(`（U-09）；`bank_iq.normalize_item` 是**白名单式**搬运（漏一行 = 字段静默丢失）；`fsrs.State` 枚举值非 1/2/3 顺序。真身：单元 **1291** / 浏览器层 **65** / 全量 **1356**。 |
 | 2026-10-02 | 本次 | **模型列表获取（最新可用模型）· 仿 Cherry Studio**：① **实测发现的真缺陷（三条）**——(a) 上游 `/v1/models` 返回的富元数据（`name`/`context_window`/`max_output_tokens`/`input_modalities`/`effort`）被 `llm.py` 的 `list_models` **整条丢弃**（只留 `id`）；(b) 界面与 README 都写「**默认选最新**」，实现却是 `value = saved \|\| list[0]`（**服务商返回的第一条，无任何排序**）——**两处声明、零处实现、零处守卫**；(c) 视觉能力靠**名字里有没有「v」/「vl」**猜，而**权威字段 `input_modalities` 就在手边**。② **方案**（采 Cherry Studio 三层合并）——新增 `core/modelcatalog.py`（**纯函数、零 IO、零 LLM、零状态**）：上游字段 → 内置目录 → 名称启发式**三层能力解析**，**`None`（未知）与 `False`（已知不具备）严格区分**（否则上层信息被下层降级覆盖）；`merge()` 合流（目录命中标 `catalog`＝★推荐 / 未收录标 `remote`＝⚡最新拉取）；`pick_default()` 返回三档理由（`已保存`/`推荐档`/`服务商列表首项`）**取代「默认选最新」的空头承诺**。③ **接线**——`core/llm.py` 新增 `list_models_detailed()`（`model_dump()` 保留全字段；`list_models()` 改为其薄封装，旧契约不破）；`routers/config.py::llm_models` 收 `provider` 入参 + 拉取失败**回落目录**（离线也有可选项，`source_ok` 与 `ok` 分离表达两件事）；`core/vision.py` 的 `looks_like_vision` 改为**先查目录、再退回名称启发式**并回填 `vision_source`；前端 `renderModelOptions` 用 `<optgroup>` 分组 + `title` 带 API ID。④ **顺手修的真不一致**——服务商 `default_model` 陈旧为 `deepseek-v4-flash`（API 现返回 `deepseek-flash`/`deepseek-v4-pro`）⇒ 自洽改名链 + 存量配置迁移（**未知/私有模型名不擅动**，按 A-新4）。⑤ **防复发守卫** `tests/test_model_catalog.py` **44 项**（含「UI 有『最新』承诺 ⇒ 必须真有排序/目录查序背书；撤下承诺 ⇒ 必须已上替代口径」**双向**判据，且**不 skip**——skip 会让用例静默消失）。⑥ **过程留档**：验证「该失败是不是既有」时误用 `git stash`（SIGTERM 打断 ⇒ `.git` 半删），按技能 `sandbox-git-rescue` 从远端重建，**工作树零损失**（reflog 末条 == 远端 master == `06b1865`）。真身：单元 **1413** / 浏览器层 **82** / 全量 **1495**。 |
 | 2026-10-02 | 本次 | **文档守卫扫描面扩到 README「仓库结构」代码块 + 修一条假红**：① **扫描面盲区**——README 里「同一组数字有两处写法」，「已实现功能」段有守卫，而「仓库结构」代码块注释里的  与 **在任何守卫的扫描面外**，实测已陈旧到 **1052/22**（真身 1228/30）而**无守卫报警**——与 2026-10-05 那次事故同源，根因是「扫描面写窄」而非「忘了加守卫」。⇒  新增 3 条（该文件 57→62 项）：两条判据取真身（ 三口径 /  装饰器数）+ 一条**元守卫**钉住扫描面不塌缩。**注入双向验证 7/7**（真 -1 红 ×3 / 判据形态改红 / 整行删红 ×2 / 锚点改名红（元守卫 3 failed）/ 等价改写**绿**）。② **顺手修掉一条老守卫的假红**—— 数的是（**只单元层** 1232），而 README「质量」行写的是**全量** 1314，差 82 项 = 6.7% **恰好越过 5% 容差** ⇒ **文档越准、守卫越红**。改为数全量（同总体）+ 容差5%→2%。③ 修掉一处 README 自相矛盾表述（：单元=总数却又另有浏览器层；实测三口径 1233/82/1315 ⇒ 改为「全量（单元+浏览器层）」）。总闸：单元 **1233 passed / 0 failed / 0 skip**（junit）+ 浏览器层 **82 passed** + ruff + mypy 84 文件 0 error + eslint 0 warning。|
 | 2026-10-02 | 本次 | **0.10.6 发布**：0.10.5 的产物（构建于 09-28）**早于** EP-01 图像录入 / 本地检索 / D2 / D6 / R12–R30 合入——**文件名对、内容旧**（9 处 `medkit/prompts/` 与 `medkit/web/` 下的文件与源码不一致，五件套 `--strict` 红）。原地重打包会让已分发 `SHA256SUMS.txt` 与线上包矛盾 ⇒ **走 0.10.6**。改动仅四处声明侧（`medkit/__init__.py` / `pack/version.iss` / `CHANGELOG` 收口 `[Unreleased]` → `## [0.10.6]` / `README` 安装包名）+ 重建产物；**无源码行为改动**。 |
@@ -172,6 +173,20 @@ add_teacher_items 幂等落库（source='teacher'，sha1 id 幂等）
     修复版写法写」，红都没红过就无法证明它在测缺陷。对关键接缝（去重锁、取消事件、门禁剔除、
     打包纯净）另加**结构性防丢断言**（断言源码里存在该结构，而非断言行为）：见
     `tests/test_stream_wiring.py`。反向验证同样适用于改进项：临时回退该修复，用例必须变红。
+
+16. **`dbs.tx()` 不可重入**（`BEGIN IMMEDIATE`）：在别人的写事务里再开一个会抛
+    `cannot start a transaction within a transaction`。⇒ 需要组合写入时，**下层函数必须能接受外部游标**
+    （`kc.put_state_in(cur, …)` / `kc.apply_attempt_in(cur, …)`），事务边界只留**一个**编排点。
+    连带结论：**U-09 守卫禁止路由层出现 `dbs.tx(`**，所以「同事务编排」只能放 core
+    （`bank.record_attempt_with_kc`），不是「写在 routers 层」就能原子。
+17. **白名单式搬运漏一行 = 字段静默丢失**：`core/bank_iq.normalize_item` 逐字段列名。
+    契约与提示词都加了字段、这里忘了加 ⇒ 题落库时被丢掉，**任何测试都不会红**，
+    而用户看到的是「模型明明输出了，界面上没有」。⇒ 凡白名单式搬运，必须配一条
+    「端到端读得到」的用例（`tests/test_question_contract.py::test_reveal_endpoint_exposes_rationales`）。
+18. **`fsrs.State` 的枚举值不是 1/2/3 顺序**：实测 `Learning=1 / Review=2 / Relearning=3`。
+    硬编码数值会让第二次复习被静默判成 lapse。⇒ 一律用枚举成员或 `.name`。
+19. **同事务只能靠「注入失败」验证**：成功路径上「两者都有」在两次独立写入时同样成立 ⇒ 测不出原子性。
+    必须让第二次写失败，再断言第一次也没留下（`tests/test_kc_state.py::test_grade_and_attempt_are_atomic`）。
 
 ## 5. 常用开发入口
 

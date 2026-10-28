@@ -36,7 +36,9 @@ FAMILIES: dict[str, list[str]] = {
                     "review-desk-project.js", "review-desk-review.js"],
     # 2026-10-10 题库刷题族（bank）：核心侧（错题模式）——导入自备题库 + 应用内作答。
     # 顺序 = 依赖顺序：列表/元操作 → 导入向导 → 作答引擎。
-    "bank": ["bank.js", "bank-import.js", "bank-drill.js"],
+    # 2026-10-28（v0.22 阶段 5）：bank-drill.js 一度 835 行（超 800 上限）⇒
+    #   拆出 bank-drill-result.js（把握分采集 + 结果区三段渲染）。
+    "bank": ["bank.js", "bank-import.js", "bank-drill.js", "bank-drill-result.js"],
 }
 
 DECL_RE = re.compile(r"(?:^|[;}])\s*(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)")
