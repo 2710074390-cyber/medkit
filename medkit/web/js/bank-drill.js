@@ -32,8 +32,9 @@ let _bankDrill = {
 
 const _BANK_LETTERS = "ABCDEFGHIJ";
 const _BANK_RECITE = "recite";
-/* 选对后自动跳下一题的等待秒数（0 = 关闭自动跳题）。 */
-const _BANK_AUTO_SECS = 3;
+/* 选对后自动跳下一题的等待秒数（0 = 关闭自动跳题）。
+ * 2026-10-30 用户要求「做对跳题的时间更短」：3 → 2 秒（与网页版默认同口径）。 */
+const _BANK_AUTO_SECS = 2;
 
 /* A-1 出处标签：`真题 · 2024`（缺项自动省略；两者都缺返回空串 ⇒ 不渲染该行） */
 function _bankSrcLabel(it) {
