@@ -310,7 +310,21 @@ _V11_DOWN: list[str] = [
     "DROP TABLE IF EXISTS item_kc",
 ]
 
-MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  # 版本列表（只增不改）
+# v12（题库标签补齐）：`banks.term` —— 学期（`大三下` / `大四上`）。
+# 动机（2026-10-28）：题库列表只有 `subject`，而同一科目跨学期存在多份
+# （`内科学` 在大三下是 364 题的 PDF 题库、大四上是合订本 + `内科教学题库`），
+# 只按科目看无法判断「这本题库是哪个学期的」。学期是**上游本来就有的信息**
+# （MedAgentWork 仓库顶层以 `大三下/`、`大四上/` 分目录），此前在同步时被丢掉。
+#
+# 回滚：ALTER 追加列，SQLite 旧版不支持 DROP COLUMN ⇒ 与 v6/v11 同口径，DOWN 留空，
+# 兜底仍是升级前全量自动备份（ADR-005）。空 term 只影响标签显示，不影响题目与作答流水。
+_V12_UP: list[str] = [
+    "ALTER TABLE banks ADD COLUMN term TEXT",
+]
+
+_V12_DOWN: list[str] = []
+
+MIGRATIONS: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # 版本列表（只增不改）
 
 
 def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
@@ -369,6 +383,16 @@ def _upgrade_to(cur: sqlite3.Cursor, ver: int) -> None:
         for stmt in _V11_UP:
             cur.execute(stmt)
         return
+    if ver == 12:
+        # 幂等防御（照 v6/v8 做法）：ALTER ADD COLUMN 重复执行会抛 duplicate column name，
+        # 而测试会模拟「旧库重升级」，列可能已存在。
+        cur.execute("PRAGMA table_info(banks)")
+        cols = {r[1] for r in cur.fetchall()}
+        for stmt in _V12_UP:
+            if stmt.startswith("ALTER TABLE banks ADD COLUMN") and "term" in cols:
+                continue
+            cur.execute(stmt)
+        return
     raise ValueError(f"未知迁移版本 {ver}")
 
 
@@ -416,6 +440,12 @@ def _downgrade_from(cur: sqlite3.Cursor, ver: int) -> None:
         return
     if ver == 11:
         for stmt in _V11_DOWN:
+            cur.execute(stmt)
+        return
+    if ver == 12:
+        # _V12_DOWN 为空（见上）：ALTER 追加列不可精确回滚，仅回退版本号，
+        # 结构保持——依赖升级前全量备份兜底（ADR-005）。
+        for stmt in _V12_DOWN:
             cur.execute(stmt)
         return
     raise ValueError(f"未知迁移版本 {ver}")

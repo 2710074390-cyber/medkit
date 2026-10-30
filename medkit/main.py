@@ -41,6 +41,7 @@ from .routers import gap as r_gap
 from .routers import kc as r_kc
 from .routers import library as r_library
 from .routers import ocr as r_ocr
+from .routers import palette as r_palette
 from .routers import parse as r_parse
 from .routers import pipeline as r_pipeline
 from .routers import presets as r_presets
@@ -337,6 +338,7 @@ app.include_router(r_gap.router)
 app.include_router(r_kc.router)
 app.include_router(r_library.router)
 app.include_router(r_ocr.router)
+app.include_router(r_palette.router)
 app.include_router(r_parse.router)
 app.include_router(r_projects.router)
 app.include_router(r_pipeline.router)

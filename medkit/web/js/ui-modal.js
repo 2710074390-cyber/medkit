@@ -1,5 +1,5 @@
 /* exported _openModal, anyOverlayOpen, askModal, closeModal, confirmModal, focusableIn,
-   modalOnCancel, setBackgroundInert, trapTabKey */
+   infoModal, modalOnCancel, setBackgroundInert, trapTabKey */
 /* ---- 模态与焦点管理（外壳层，2026-10-21 从 app.js 抽出） ----
  *
  * 为什么单独一片：全站三个浮层（通用模态 #modal_mask、命令面板 #palette_mask、
@@ -58,6 +58,11 @@ function closeModal() {
   const mask = $("modal_mask");
   if (!mask || mask.style.display !== "flex") return;
   mask.style.display = "none";
+  /* 「取消」按钮可能被 infoModal 临时藏起来 ⇒ **关闭时必须还原**。
+     不还原的话，下一次 confirmModal 会少一颗按钮——而这不会报错，
+     只会让用户遇到"确认框只剩一个确认键"的怪事。 */
+  const cancel = $("md_cancel");
+  if (cancel) cancel.style.display = "";
   if (!anyOverlayOpen()) setBackgroundInert(false);
   const back = _modalReturnFocus; _modalReturnFocus = null;
   if (back && document.contains(back) && typeof back.focus === "function") {
@@ -112,6 +117,22 @@ function askModal(title, label, placeholder, onOk, value = "") {
 
   input.onkeydown = e => { if (e.key === "Enter") submit(); };
   modalOnCancel = null;   // A-新14：askModal 不携带取消回调，防止 ESC 触发上一个 confirmModal 的残留 onCancel
+}
+/* 只读信息框：**只有「关闭」一颗按钮**。
+   为什么不复用 confirmModal：它恒定渲染「取消 + 确认」，而只读场景里点「取消」什么
+   也不会取消——用户会以为有未保存的改动。`body` 是 HTML（调用方保证已转义）。
+   用于 Ctrl+K 搜到题目后的预览（题目 / 选项 / 答案 / 解析 / 出处）。 */
+function infoModal(title, body) {
+  $("md_title").textContent = title;
+  $("md_body").innerHTML = body;
+  $("md_ok").textContent = "关闭";
+  $("md_ok").className = "act";
+  $("md_cancel").style.display = "none";   // closeModal 负责还原
+  _openModal();
+  modalOnCancel = null;
+  $("md_ok").onclick = () => closeModal();
+  $("md_cancel").onclick = () => closeModal();
+  $("md_ok").focus();
 }
 document.addEventListener("keydown", e => {
   const mask = $("modal_mask");

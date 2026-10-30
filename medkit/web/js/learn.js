@@ -157,7 +157,7 @@ async function sylRender(subject) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-target"></use></svg>
         <div class="sub">暂无${stdName}条目 — ${SYL_STD === "teacher"
           ? '在「新建课题」上传教师重点后自动同步；或下方「上传教师重点文件」/粘贴教师重点考点清单。'
-          : '点「导入官方306种子」加载教材/真题种子；或下方「上传官方大纲(md/txt)」一键导入官方条目。'}</div>
+          : '点「导入官方306种子」加载教材/真题种子；或下方「上传官方大纲(md/txt)」导入官方条目。'}</div>
         <button class="act gray" onclick="sylPaste()">粘贴/导入大纲 →</button>
       </div>`;
       return;

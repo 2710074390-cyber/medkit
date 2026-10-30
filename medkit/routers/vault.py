@@ -11,6 +11,8 @@
 - `/api/vault/import-from-library` —— 从旧错题本一键导出为 md
 - `/api/vault/ask` —— Agent 问答（SSE 流式，支持多轮 history）
 - `/api/vault/handbook` —— 按科目生成「薄弱点复习手册」（LLM，可缺席）
+- `/api/vault/variants/plan|generate|{set_id}/grade` —— 错点变式训练（选点 / 出题 / 判分）
+- `/api/vault/metrics` —— AI 调用本地指标（耗时 / 依据 / 引用剔除 / 失败；不上报）
 - `/api/vault/scheduler` —— 复习调度算法（FSRS 默认 / SM-2 legacy）查询与切换
 
 ## 红线
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -31,12 +34,16 @@ from urllib.parse import quote
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
+from ..agents import variant_agent as _variant_agent
 from ..agents.mistake_agent import ask as _agent_ask
 from ..agents.mistake_agent import handbook as _agent_handbook
+from ..core import ai_metrics as _metrics
 from ..core import config as cfg
 from ..core import library as lib
 from ..core import scheduler as _sched
+from ..core import variants as _variants
 from ..core import vault, vault_index
+from ..core.llm import LLMError
 
 router = APIRouter(tags=["vault"])
 
@@ -115,6 +122,20 @@ def mistakes(subject: str = "", status: str = "", q: str = "",
 @router.get("/api/vault/stats")
 def stats(subject: str = "") -> dict[str, Any]:
     return vault_index.stats(subject=subject)
+
+
+@router.get("/api/vault/mistakes/item")
+def get_mistake(path: str = "") -> dict[str, Any]:
+    """按索引相对路径取**一条**错题（卡片/引用跳转用）。
+
+    与 `/mistakes/{path}/download` 分开：这里返回结构化记录，供「点引用打开原题」使用，
+    不返回原始文件字节（原始文件仍走 download）。
+    """
+    rel = _safe_vault_rel(path)
+    row = vault_index.get_item(rel)
+    if not row:
+        raise HTTPException(status_code=404, detail="错题不存在（可能已删或未索引）")
+    return {"ok": True, **row}
 
 
 # ------------------------------------------------------------------ 下载（原始 md）
@@ -291,6 +312,63 @@ def review_grade(path: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="文件不存在（可能已删）")
 
 
+# ------------------------------------------------------------------ 错点变式训练
+@router.get("/api/vault/variants/plan")
+def variants_plan(subject: str = "", limit: int = 3) -> dict[str, Any]:
+    """选点（零 LLM）：按本地 priority/错题密度/近期失败规则选出最该练的错点。"""
+    return _variants.plan(subject=subject, limit=limit)
+
+
+@router.post("/api/vault/variants/generate")
+def variants_generate(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """围绕一条错题生成 1~5 道变式。**判分前不下发答案**。"""
+    rel = _safe_vault_rel(str(body.get("path") or ""))
+    try:
+        n = int(body.get("n") or _variants.DEFAULT_VARIANTS)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="n 必须是 1~5 的整数")
+    if not 1 <= n <= _variants.MAX_VARIANTS:
+        raise HTTPException(status_code=400, detail="n 必须是 1~5 的整数")
+    root = vault.vault_root()
+    path = root / rel
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="错题不存在（可能已删）")
+    rec = vault.read_record(path)
+    try:
+        generated = _variant_agent.generate(rec, n=n)
+    except _variant_agent.VariantError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LLMError as e:
+        raise HTTPException(status_code=502, detail=f"模型调用失败：{e}")
+    data = _variants.save_set(rel, rec, generated["items"])
+    return {"ok": True, "set": _variants.public_set(data),
+            "rejected": generated.get("rejected") or []}
+
+
+@router.get("/api/vault/variants/{set_id}")
+def variants_get(set_id: str) -> dict[str, Any]:
+    try:
+        data = _variants.load_set(set_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "set": _variants.public_set(data),
+            "attempts": len(data.get("attempts") or [])}
+
+
+@router.post("/api/vault/variants/{set_id}/grade")
+def variants_grade(set_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """判分 + 写回原错题：错则当天回流，对则记录迁移证据。"""
+    answers = body.get("answers")
+    if not isinstance(answers, dict):
+        raise HTTPException(status_code=400, detail="answers 必须是 {题号: 答案} 的对象")
+    try:
+        return {"ok": True, **_variants.grade(set_id, answers)}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ------------------------------------------------------------------ Agent 问答
 @router.post("/api/vault/ask")
 async def ask(body: dict[str, Any] = Body(...)) -> StreamingResponse:
@@ -313,16 +391,32 @@ async def ask(body: dict[str, Any] = Body(...)) -> StreamingResponse:
                 history.append({"role": str(h.get("role") or "user"),
                                 "content": str(h.get("content"))[:4000]})
     cancel = threading.Event()
+    started = time.monotonic()
 
     async def gen():
+        stats = {"grounded": False, "cites": 0, "dropped": 0, "tools": 0, "error": ""}
         try:
             async for ev in _agent_ask(question, scope=scope, path=path,
                                        history=history, cancel=cancel):
+                if ev.get("type") == "result":
+                    stats["grounded"] = bool(ev.get("grounded"))
+                    stats["cites"] = len(ev.get("citations") or [])
+                    stats["dropped"] = len(ev.get("dropped_citations") or [])
+                    stats["tools"] = len(ev.get("tools") or [])
+                elif ev.get("type") == "error":
+                    stats["error"] = str(ev.get("message") or "")
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001  工具失败必须让用户看见，不得静默
+            stats["error"] = str(e)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
         finally:
             cancel.set()
+            # 本地观测：不记问题原文、不记答复正文（只记耗时/依据/剔除/失败）
+            _metrics.record(
+                "ask", ms=int((time.monotonic() - started) * 1000),
+                grounded=stats["grounded"], cites=stats["cites"],
+                dropped=stats["dropped"], stopped=bool(cancel.is_set() and not stats["error"]),
+                error=stats["error"], tools=stats["tools"])
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
@@ -338,16 +432,37 @@ async def handbook(body: dict[str, Any] = Body(default_factory=dict)) -> Streami
     """
     subject = str(body.get("subject") or "").strip()
     cancel = threading.Event()
+    started = time.monotonic()
 
     async def gen():
+        grounded, err = False, ""
         try:
             async for ev in _agent_handbook(subject, cancel=cancel):
+                if ev.get("type") == "result":
+                    grounded = bool(ev.get("grounded"))
+                elif ev.get("type") == "error":
+                    err = str(ev.get("message") or "")
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001  模型/网络异常必须让用户看见原因
+            err = str(e)
             yield f"data: {json.dumps({'type': 'error', 'message': f'手册生成失败：{e}'}, ensure_ascii=False)}\n\n"
         finally:
             cancel.set()
+            _metrics.record("handbook", ms=int((time.monotonic() - started) * 1000),
+                            grounded=grounded, error=err)
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.get("/api/vault/metrics")
+def metrics_summary(days: int = 30) -> dict[str, Any]:
+    """AI 调用本地指标（只在本机记录，不上报）。样本 <10 时 `insufficient=true`。"""
+    return _metrics.summary(days=days)
+
+
+@router.delete("/api/vault/metrics")
+def metrics_clear() -> dict[str, Any]:
+    """清空本地指标（用户主动）。错题文件不受影响。"""
+    return {"ok": True, "removed": _metrics.clear()}
 

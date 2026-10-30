@@ -60,7 +60,7 @@ CORE = ("learn.js", "learn-study.js", "learn-vault.js", "learn-vault-chat.js",
 # 2026-10-20（v0.19 S4）：命令面板是**外壳**的一部分（键盘优先的入口总览 + 导航兜底），
 # 与 app.js 同域——它引用的业务函数同样受「外壳 → 插件 / bank」登记制约束。
 # 2026-10-21：模态与焦点管理（Tab 陷阱 / 背景 inert / 焦点归还）从 app.js 抽出为独立外壳片
-SHELL = ("app.js", "ui-modal.js", "palette.js")
+SHELL = ("app.js", "ui-modal.js", "today.js", "palette.js")
 PLUGIN = ("review-desk.js", "review-desk-materials.js",
           "review-desk-project.js", "review-desk-review.js")
 # 2026-10-10 题库刷题域（bank）：**核心侧**（与 EP-01 同级）——导入自备题库 + 应用内作答。
@@ -106,6 +106,17 @@ SHELL_TO_BANK: dict[tuple[str, str], tuple[str, str]] = {
     ("app.js", "bankDrillHide"): ("加 typeof 守卫",
                                   "切页签时收起沉浸式作答层（作答层是 body 级 fixed 覆盖层，"
                                   "切走页签必须收起，否则会挡住其它页面）"),
+    # 2026-10-29「书桌」今天页：三个直达入口都收在外壳包装里
+    ("today.js", "bankDrillStart"): ("加 typeof 守卫",
+                                   "今天页「练一组新的」直接开一张 20 题的卷子；"
+                                   "bank 域缺失时退回刷题页，不炸首屏"),
+    ("today.js", "bankDrillStartMistakes"): ("加 typeof 守卫",
+                                             "今天页「复习错题 / 过 5 道错题」——"
+                                             "复用 bank 域的错题重练引擎（带 limit）"),
+    ("today.js", "bankImportPick"): ("加 typeof 守卫",
+                                   "今天页首启「导入题库文件」——经 todayImport 包装"),
+    ("today.js", "bankPasteOpen"): ("加 typeof 守卫",
+                                  "今天页首启「粘贴一段题干」——经 todayPaste 包装"),
     # v0.19 S4 命令面板（同属外壳）：两条直达命令要跨到 bank 域
     ("palette.js", "bankImportPick"): ("已守卫",
                                        "命令面板「导入题库文件」——run 里有 typeof 守卫，"

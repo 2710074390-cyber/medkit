@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..core import bank as banklib
@@ -409,3 +410,22 @@ def subject_delete(body: SubjectDeleteBody) -> dict[str, Any]:
         raise HTTPException(400, str(e)) from e
     return {"ok": True, **res}
 
+
+
+# ---------------------------------------------------------------- 网页版迁移包（2026-10-29）
+@router.get("/api/library/migrate/export")
+def migrate_export() -> Response:
+    """桌面端 → medkit-web-contest（网页版）一键迁移包，JSON 附件下载。
+
+    纯本地只读（零 LLM、零网络）。携带题库 / 作答流水 / 错题（含自写文字与到期日）/
+    收藏 / 笔记 / 每日学习量；不携带 Key 与考试计划（后者在桌面端浏览器 localStorage，
+    后端读不到——网页版导入后手动重设一次）。口径见 `core/library.export_web_package`。
+    """
+    from datetime import date as _date
+
+    pkg = lib.export_web_package()
+    fname = f"medkit-web-migration-{_date.today().isoformat()}.json"
+    return Response(
+        content=json.dumps(pkg, ensure_ascii=False, indent=1),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})

@@ -26,7 +26,7 @@ async function kcPanelLoad() {
     if (meta) {
       meta.textContent = ov.total_kcs
         ? `已练 ${ov.tracked_kcs} / 考点 ${ov.total_kcs} · 今日到期 ${ov.due_today}`
-        : "";
+        : "练几道题再看";
     }
     box.innerHTML = _kcStateHTML(ov, st) + _kcCalHTML(cal);
   } catch (e) {

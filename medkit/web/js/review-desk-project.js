@@ -228,7 +228,7 @@ async function rerenderArtifact(pidOrEl, what) {
       } catch (e) { toast(e.message, false); }
     }, false);
 }
-const STEPS = [["websearch", "网络检索"], ["generating", "出题"], ["gate1", "门禁①"], ["qc", "质检"], ["fixing", "修复"],
+const STEPS = [["websearch", "网络检索"], ["generating", "出题"], ["gate1", "规则检查"], ["qc", "质检"], ["fixing", "修复"],
                ["finalizing", "汇总"], ["reviewing", "复习"], ["rendering", "产物"]];
 function stepIdx(stage) {
   if (stage === "done") return STEPS.length;
@@ -303,12 +303,12 @@ async function showProject(pid) {
   if (meta.image_warning) extra.push(`⚠️ 本轮未产出图题（已有图片素材可重试/加大题量）`);
   // W2（2026-10-02 二轮审计）：门禁① 有子项未跑成 → 必须与「通过」明确区分（非「无问题」）
   if ((meta.gate1_unverified || []).length) {
-    extra.push(`⛔ 门禁① 未校验：${esc((meta.gate1_unverified || []).join("、"))}（未跑成 ≠ 无问题，请人工复核）`);
+    extra.push(`⛔ 规则检查没跑成：${esc((meta.gate1_unverified || []).join("、"))}（未跑成 ≠ 无问题，请人工复核）`);
   }
   if (meta.exam_chars) extra.push(`自备真题 ${meta.exam_chars.toLocaleString()} 字（考点/风格校准，不照抄）`);
   if (meta.extra_chars) extra.push(`补充资料 ${meta.extra_chars.toLocaleString()} 字`);
   if ((meta.artifacts || []).some(n => /人工复核清单/.test(n))) {
-    extra.push("📋 人工复核清单：被门禁/质检/网络冲突拦截、需人工确认的题与原因（见下方产物卡片）");
+    extra.push("📋 人工复核清单：被检查/质检/网络冲突拦截、需人工确认的题与原因（见下方产物卡片）");
   }
   $("pd_body").innerHTML = `
     <div class="meta hint">${esc(meta.exam)} · 目标 ${meta.target} 题 · 阶段：<span id="pd_stage">${esc(meta.stage_label || meta.stage || "……")}</span><br>
@@ -374,7 +374,7 @@ async function pdAssetUp(input) {
   fd.append("caption", $("pd_asset_cap").value || "");
   try {
     const r = await api("/api/projects/" + currentPid + "/assets", { method: "POST", body: fd });
-    toast(`已上传素材 ${r.sid}（生成时出图/表题并做 image_ref 门禁）`);
+    toast(`已上传素材 ${r.sid}（出图/表题时校验图片引用）`);
     pdAssets();
   } catch (e) { toast(e.message, false); }
   finally { input.value = ""; }
@@ -497,7 +497,7 @@ $("btn_run").onclick = async () => {
         b.dataset.busy = "1";
         try {
           await api("/api/projects/" + pid + "/run", { method: "POST" });
-          toast("管线已启动：⓪网络检索(可选) → MedGen 出题 → 门禁① → MedQC 质检 → MedFix 修复 → 汇总 → MedReview 复习手册 → 渲染产物");
+          toast("管线已启动：⓪网络检索(可选) → MedGen 出题 → 规则检查 → MedQC 质检 → MedFix 修复 → 汇总 → MedReview 复习手册 → 渲染产物");
           startPoll(pid);
         } catch (e) { toast(e.message, false); }
         finally { b.dataset.busy = ""; }

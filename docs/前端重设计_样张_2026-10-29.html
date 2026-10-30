@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedKit · 前端重设计样张 · 书桌</title>
+<style>
+/* ============================================================
+   MedKit 前端重设计样张（静态）
+   目的：验证「书桌」方向的视觉与语气，不是产品代码。
+   零外部资源：无 Web Font、无图片、无 CDN。
+   ============================================================ */
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --ui:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  --read:"Songti SC","SimSun","STSong","Noto Serif CJK SC",serif;
+  --note:"Kaiti SC","KaiTi","STKaiti",serif;
+
+  --wall:#0E0D0B;
+  --wall-2:#141310;
+  --wall-line:#2A2721;
+  --wall-ink:#EDE6D6;
+  --wall-ink-2:#A69D89;
+  --wall-ink-3:#8A8272;
+  --wall-accent:#8FC3A9;
+  --wall-seal:#E08A72;
+}
+
+body{
+  font-family:var(--ui);
+  background:var(--wall);
+  color:var(--wall-ink);
+  line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+  padding:0 0 96px;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='64' height='64' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+  mix-blend-mode:soft-light;
+}
+body[data-board="day"]{
+  --wall:#EDE8DC;--wall-2:#F4EFE4;--wall-line:#D8CFBD;
+  --wall-ink:#1F1C17;--wall-ink-2:#5F594C;--wall-ink-3:#6F6858;
+  --wall-accent:#2B5C4B;--wall-seal:#A63D2C;
+}
+
+.board{max-width:1240px;margin:0 auto;padding:0 32px;position:relative;z-index:1}
+
+/* ---------------- 展板头 ---------------- */
+.board-head{padding:72px 0 44px;border-bottom:1px solid var(--wall-line);position:relative}
+.kicker{font-size:11px;letter-spacing:.18em;color:var(--wall-ink-3);text-transform:uppercase;margin-bottom:22px}
+.board-head h1{
+  font-family:var(--read);font-size:clamp(52px,7vw,86px);font-weight:400;
+  line-height:1.02;letter-spacing:-.02em;color:var(--wall-ink);
+}
+.board-head h1 em{font-style:normal;color:var(--wall-accent)}
+.board-head .lede{
+  max-width:640px;margin-top:22px;font-size:15.5px;line-height:1.85;color:var(--wall-ink-2);
+}
+.board-head .lede b{color:var(--wall-ink);font-weight:600}
+.head-row{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.head-meta{display:flex;gap:28px;flex-wrap:wrap;margin-top:34px}
+.head-meta div{font-size:11.5px;letter-spacing:.04em;color:var(--wall-ink-3)}
+.head-meta b{display:block;font-size:13px;color:var(--wall-ink-2);font-weight:500;margin-top:2px;letter-spacing:0}
+.seal-big{
+  position:absolute;right:8px;top:78px;width:92px;height:92px;border:1.5px solid var(--wall-seal);
+  color:var(--wall-seal);border-radius:6px;display:grid;place-items:center;transform:rotate(-8deg);
+  font-family:var(--note);font-size:22px;line-height:1.1;text-align:center;letter-spacing:.08em;
+  opacity:.9;
+}
+.seal-big span{display:block;font-size:10px;letter-spacing:.22em;margin-top:4px;font-family:var(--ui)}
+.board-tools{display:flex;gap:8px;align-items:center}
+.tool-btn{
+  font:inherit;font-size:11.5px;color:var(--wall-ink-2);background:transparent;
+  border:1px solid var(--wall-line);border-radius:4px;padding:7px 11px;cursor:pointer;
+}
+.tool-btn:hover{color:var(--wall-ink);border-color:var(--wall-ink-3)}
+
+/* ---------------- 章节 ---------------- */
+.section{padding:56px 0 8px;border-bottom:1px solid var(--wall-line)}
+.section:last-of-type{border-bottom:0}
+.sec-head{display:grid;grid-template-columns:56px 1fr;gap:14px;margin-bottom:28px}
+.sec-num{font-size:11px;letter-spacing:.16em;color:var(--wall-seal);padding-top:8px}
+.sec-head h2{font-family:var(--read);font-size:30px;font-weight:400;line-height:1.25;letter-spacing:-.01em}
+.sec-head p{grid-column:2;max-width:680px;font-size:13px;color:var(--wall-ink-2);margin-top:-4px}
+
+/* ---------------- 通用纸/灯主题（局部作用域） ---------------- */
+.theme-paper{
+  --bg:#F4EFE4;--sheet:#FFFCF5;--sheet-2:#FBF6EA;--sheet-3:#F6F0E2;
+  --ink:#1F1C17;--ink2:#5F594C;--ink3:#6F6858;
+  --rule:#E0D7C6;--rule-2:#EFE7D7;--rule-ctl:#8C8270;
+  --accent:#2B5C4B;--accent-soft:#E4EEE7;--accent-line:#B9D2C6;--on-accent:#FFFCF5;
+  --seal:#A63D2C;--seal-soft:#F6E3DC;--seal-line:#DDB3A7;
+  --hi:#F6E7A8;--amber:#8A5E16;
+  --shadow:0 1px 0 rgba(60,45,20,.04),0 12px 32px rgba(60,45,20,.07);
+}
+.theme-lamp{
+  --bg:#141311;--sheet:#1C1A16;--sheet-2:#221F1A;--sheet-3:#262219;
+  --ink:#EFE8D8;--ink2:#A69D89;--ink3:#8A8272;
+  --rule:#302D26;--rule-2:#26231D;--rule-ctl:#7C7464;
+  --accent:#8FC3A9;--accent-soft:#22332B;--accent-line:#3C5A4C;--on-accent:#12211A;
+  --seal:#E08A72;--seal-soft:#3A2620;--seal-line:#6B4438;
+  --hi:#3A3524;--amber:#D8B26A;
+  --shadow:none;
+}
+
+/* ---------------- 01 两套光 ---------------- */
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.lightcard{
+  border:1px solid var(--rule);border-radius:10px;padding:30px 30px 26px;background:var(--bg);
+  color:var(--ink);position:relative;overflow:hidden;min-height:330px;
+}
+.lightcard::after{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.03;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='64' height='64' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E");
+}
+.lightcard .lc-kicker{font-size:10.5px;letter-spacing:.16em;color:var(--ink3);text-transform:uppercase}
+.lightcard .lc-time{font-family:var(--read);font-size:32px;line-height:1.2;margin-top:18px;letter-spacing:-.01em}
+.lightcard .lc-sub{font-size:12.5px;color:var(--ink2);margin-top:6px}
+.lc-tasks{margin-top:22px;border-top:1px solid var(--rule)}
+.lc-task{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--rule);font-size:12.5px;color:var(--ink2)}
+.lc-task i{width:14px;height:14px;border:1px solid var(--rule-ctl);border-radius:50%;flex:none;display:block}
+.lc-task b{color:var(--ink);font-weight:600}
+.lc-task span{margin-left:auto;font-size:11px;color:var(--ink3)}
+.lc-task.now{color:var(--ink)}
+.lc-task.now i{border-color:var(--seal);box-shadow:inset 0 0 0 3px var(--bg)}
+.lc-task.now b{color:var(--seal)}
+.lc-foot{display:flex;align-items:center;justify-content:space-between;margin-top:18px;font-size:11px;color:var(--ink3)}
+.dots{display:flex;gap:5px;align-items:center}
+.dots i{width:6px;height:6px;border-radius:50%;background:var(--rule);display:block}
+.dots i.on{background:var(--accent)}
+.dots i.today{background:var(--seal)}
+.lamp-note{margin-top:20px;padding:14px 16px;border-left:2px solid var(--seal);background:var(--seal-soft);font-family:var(--note);font-size:13px;line-height:1.7;color:var(--ink)}
+.lightcard .lc-cap{margin-top:16px;font-size:10.5px;letter-spacing:.1em;color:var(--ink3)}
+
+/* ---------------- 02 视觉基因 ---------------- */
+.genes{display:grid;grid-template-columns:1.05fr .95fr;gap:20px}
+.panel{background:var(--wall-2);border:1px solid var(--wall-line);border-radius:10px;padding:26px}
+.panel h3{font-size:12px;letter-spacing:.12em;color:var(--wall-ink-3);font-weight:500;text-transform:uppercase;margin-bottom:18px}
+.swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.swatch{border:1px solid var(--wall-line);border-radius:6px;overflow:hidden}
+.swatch .chip{height:74px;display:block}
+.swatch .meta{padding:9px 10px;background:rgba(255,255,255,.015)}
+.swatch b{display:block;font-size:11.5px;color:var(--wall-ink);font-weight:500}
+.swatch span{display:block;font-size:9.5px;letter-spacing:.04em;color:var(--wall-ink-3);margin-top:2px;font-variant-numeric:tabular-nums}
+.swatch p{font-size:10.5px;line-height:1.55;color:var(--wall-ink-2);padding:0 10px 10px}
+.type-spec{background:var(--sheet);color:var(--ink);border-radius:8px;padding:24px 26px;border:1px solid var(--rule)}
+.type-spec .ts-label{font-size:9.5px;letter-spacing:.16em;color:var(--ink3);text-transform:uppercase}
+.type-spec .ts-read{font-family:var(--read);font-size:19px;line-height:1.9;margin-top:7px}
+.type-spec .ts-ui{font-size:13.5px;line-height:1.7;margin-top:15px;color:var(--ink2)}
+.type-spec .ts-note{font-family:var(--note);font-size:13px;color:var(--ink2);margin-top:12px}
+.type-spec .ts-num{font-size:30px;font-variant-numeric:tabular-nums;letter-spacing:-.01em;margin-top:14px}
+.type-spec .ts-num small{font-size:12px;color:var(--ink3);letter-spacing:0;margin-left:6px;font-family:var(--ui)}
+.type-spec hr{border:0;border-top:1px solid var(--rule);margin:16px 0}
+.artifacts{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:18px}
+.seal-demo{
+  width:52px;height:52px;border:1.5px solid var(--seal);color:var(--seal);border-radius:4px;
+  display:grid;place-items:center;font-family:var(--note);font-size:19px;transform:rotate(-7deg);
+  line-height:1;background:transparent;
+}
+.keycap-demo{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;
+  border:1px solid var(--rule-ctl);border-bottom-width:2px;border-radius:3px;font-size:10px;color:var(--ink2)}
+.tag-demo{font-size:10px;letter-spacing:.06em;border:1px solid var(--rule);border-radius:999px;padding:2px 8px;color:var(--ink2)}
+.spine-demo{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink2)}
+.spine-demo i{width:4px;height:22px;border-radius:2px;background:var(--accent);display:block}
+.mark-demo{font-family:var(--read);font-size:13.5px;background:linear-gradient(transparent 42%,var(--hi) 42%,var(--hi) 92%,transparent 92%);padding:0 2px;color:var(--ink)}
+.artifact-note{font-size:10.5px;color:var(--wall-ink-3);margin-top:14px;line-height:1.6}
+
+/* ---------------- 03+ 产品屏 ---------------- */
+.frame-wrap{margin-top:8px}
+.frame{
+  width:100%;max-width:1180px;margin:0 auto;border-radius:12px;overflow:hidden;
+  border:1px solid var(--wall-line);box-shadow:0 24px 60px rgba(0,0,0,.35);
+  display:grid;grid-template-columns:196px 1fr;min-height:660px;position:relative;
+  background:var(--bg);color:var(--ink);
+}
+.frame::after{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.022;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='64' height='64' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E");
+}
+.frame-caption{display:flex;align-items:baseline;gap:14px;margin:16px 2px 0;font-size:11px;color:var(--wall-ink-3)}
+.frame-caption b{font-size:12px;color:var(--wall-ink-2);font-weight:500;letter-spacing:.02em}
+.frame-caption span{margin-left:auto}
+
+/* 侧栏 */
+.app-side{border-right:1px solid var(--rule);background:var(--sheet-2);padding:20px 14px 16px;display:flex;flex-direction:column;position:relative;z-index:1}
+.app-logo{padding:0 6px 16px;border-bottom:1px solid var(--rule)}
+.app-logo b{font-size:17px;letter-spacing:.01em;color:var(--ink)}
+.app-logo span{display:block;font-size:10px;letter-spacing:.08em;color:var(--ink3);margin-top:3px}
+.app-date{padding:14px 6px 12px;font-size:10.5px;color:var(--ink3);letter-spacing:.04em}
+.app-date b{display:block;font-family:var(--read);font-size:16px;font-weight:400;color:var(--ink);letter-spacing:0;margin-bottom:1px}
+.app-nav{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.app-nav a{
+  display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:5px;
+  font-size:12.5px;color:var(--ink2);text-decoration:none;position:relative;width:100%;
+}
+.app-nav a svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none;opacity:.85}
+.app-nav a.on{background:var(--accent-soft);color:var(--ink);font-weight:600}
+.app-nav a.on::before{content:"";position:absolute;left:-14px;top:7px;bottom:7px;width:3px;background:var(--seal);border-radius:0 2px 2px 0}
+.app-nav a .badge{margin-left:auto;font-size:9.5px;color:var(--seal);font-variant-numeric:tabular-nums}
+.app-side .side-gap{height:1px;background:var(--rule);margin:14px 4px}
+.app-side .side-label{font-size:9px;letter-spacing:.14em;color:var(--ink3);padding:0 9px 6px;text-transform:uppercase}
+.app-nav a.minor{font-size:11px;color:var(--ink3)}
+.app-side .side-foot{margin-top:auto;padding:12px 6px 0;border-top:1px solid var(--rule);display:flex;align-items:center;gap:8px}
+.app-side .side-foot span{font-size:9.5px;color:var(--ink3);letter-spacing:.03em}
+.app-side .side-foot i{margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:.6}
+
+/* 主区 */
+.app-main{padding:32px 40px 36px;position:relative;z-index:1;min-width:0}
+.app-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+.app-date-line{font-size:11px;letter-spacing:.1em;color:var(--ink3)}
+.app-h1{font-family:var(--read);font-size:34px;font-weight:400;line-height:1.2;letter-spacing:-.01em;margin-top:8px}
+.app-sub{font-size:13.5px;color:var(--ink2);margin-top:7px;line-height:1.7}
+.app-h1 .accent{color:var(--seal)}
+.app-grid{display:grid;grid-template-columns:1fr 238px;gap:26px;margin-top:24px;align-items:start}
+
+.sheet{background:var(--sheet);border:1px solid var(--rule);border-radius:9px;box-shadow:var(--shadow)}
+.sheet-h{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--rule)}
+.sheet-h h2{font-family:var(--read);font-size:16px;font-weight:500;letter-spacing:.01em}
+.sheet-h .hint{margin-left:auto;font-size:10.5px;color:var(--ink3);letter-spacing:.03em}
+.sheet-b{padding:6px 20px 10px}
+.task{display:flex;align-items:center;gap:13px;padding:16px 0;border-bottom:1px solid var(--rule-2)}
+.task:last-child{border-bottom:0}
+.task .circ{width:17px;height:17px;border:1px solid var(--rule-ctl);border-radius:50%;flex:none}
+.task .tx{min-width:0}
+.task .tx b{display:block;font-size:14.5px;font-weight:600;color:var(--ink);letter-spacing:.01em}
+.task .tx span{display:block;font-size:11.5px;color:var(--ink3);margin-top:3px;letter-spacing:.02em}
+.task .go{margin-left:auto;flex:none}
+.task.first .circ{border-color:var(--seal);box-shadow:inset 0 0 0 3px var(--sheet)}
+.task.first .tx b{color:var(--seal)}
+.btn{
+  font:inherit;font-size:12px;border-radius:5px;padding:6px 12px;cursor:pointer;
+  border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font-weight:600;
+  white-space:nowrap;
+}
+.btn.ghost{background:transparent;color:var(--ink2);border-color:var(--rule-ctl);font-weight:500}
+.btn.quiet{background:transparent;border-color:transparent;color:var(--ink3);text-decoration:underline;text-underline-offset:3px;padding-left:0;padding-right:0}
+.btn.sm{font-size:10.5px;padding:5px 10px}
+.sheet-f{padding:12px 18px;border-top:1px solid var(--rule);display:flex;align-items:center;gap:12px}
+.sheet-f .meta{font-size:10px;color:var(--ink3)}
+.sheet-f .btn{margin-left:auto}
+
+.rail{display:flex;flex-direction:column;gap:14px}
+.rail-card{background:var(--sheet);border:1px solid var(--rule);border-radius:9px;padding:16px 16px 14px;box-shadow:var(--shadow)}
+.rail-card h3{font-size:10px;letter-spacing:.14em;color:var(--ink3);font-weight:500;text-transform:uppercase}
+.week{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin:12px 0 9px}
+.week span{display:flex;flex-direction:column;align-items:center;gap:4px}
+.week i{width:100%;height:6px;border-radius:2px;background:var(--rule);display:block}
+.week i.on{background:var(--accent)}
+.week i.today{background:var(--seal)}
+.week em{font-style:normal;font-size:8.5px;color:var(--ink3);letter-spacing:0}
+.rail-card .big{font-family:var(--read);font-size:24px;line-height:1.2;margin-top:2px}
+.rail-card p{font-size:11.5px;line-height:1.7;color:var(--ink2);margin-top:6px}
+.rail-card .link{font-size:10.5px;color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent-line);padding-bottom:1px}
+.rail-note{border-left:2px solid var(--seal);padding:2px 0 2px 10px;margin-top:12px;font-family:var(--note);font-size:12px;line-height:1.7;color:var(--ink2)}
+.rail-note b{color:var(--ink);font-weight:400}
+
+/* 刷题屏 */
+.drill-top{display:flex;align-items:center;gap:16px;padding-bottom:14px;border-bottom:1px solid var(--rule)}
+.drill-top .bk{font-size:11.5px;color:var(--ink2);letter-spacing:.02em}
+.drill-top .bk i{display:inline-block;width:3px;height:14px;background:var(--accent);border-radius:2px;vertical-align:-2px;margin-right:7px}
+.prog{display:flex;align-items:center;gap:2px;margin-left:auto}
+.prog i{width:5px;height:10px;border-radius:1px;background:var(--rule);display:block}
+.prog i.done{background:var(--accent)}
+.prog i.now{background:var(--seal);height:14px}
+.prog em{font-style:normal;font-size:10.5px;color:var(--ink3);margin-left:8px;font-variant-numeric:tabular-nums}
+.drill-top .save{font-size:10.5px;color:var(--ink3);background:none;border:0;font-family:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.drill-body{max-width:700px;margin:26px auto 0}
+.qtag{display:inline-block;font-size:9.5px;letter-spacing:.08em;color:var(--ink3);border:1px solid var(--rule);border-radius:999px;padding:1px 8px}
+.stem{font-family:var(--read);font-size:17.5px;line-height:1.95;color:var(--ink);margin-top:12px;letter-spacing:.01em}
+.opts{margin-top:18px;border:1px solid var(--rule);border-radius:8px;overflow:hidden;background:var(--sheet)}
+.opt{display:flex;gap:12px;padding:13px 15px;border-bottom:1px solid var(--rule-2);font-size:13.5px;line-height:1.6;color:var(--ink);position:relative}
+.opt:last-child{border-bottom:0}
+.opt .let{width:22px;height:22px;border:1px solid var(--rule-ctl);border-radius:4px;display:grid;place-items:center;font-size:10.5px;color:var(--ink2);flex:none;margin-top:1px}
+.opt .txt{min-width:0}
+.opt .why{display:block;font-size:10px;color:var(--ink3);margin-top:3px;letter-spacing:.02em}
+.opt.wrong{background:var(--seal-soft);border-left:3px solid var(--seal);padding-left:12px}
+.opt.wrong .let{border-color:var(--seal);color:var(--seal)}
+.opt.wrong .why{color:var(--seal)}
+.opt.right{background:var(--accent-soft)}
+.opt.right .let{border-color:var(--accent);color:var(--accent);font-weight:700}
+.opt.right .seal{
+  margin-left:auto;width:26px;height:26px;border:1.2px solid var(--seal);color:var(--seal);
+  border-radius:3px;display:grid;place-items:center;font-family:var(--note);font-size:12px;
+  transform:rotate(-8deg);flex:none;align-self:flex-start;
+}
+.verdict{margin:12px 0 0;border:1px solid var(--rule);border-left:3px solid var(--seal);border-radius:6px;background:var(--sheet);padding:14px 16px}
+.verdict .v1{font-size:12.5px;color:var(--ink);font-weight:600;letter-spacing:.01em}
+.verdict .v1 b{color:var(--seal)}
+.verdict p{font-family:var(--read);font-size:13.5px;line-height:1.9;color:var(--ink2);margin-top:8px}
+.verdict .quote{font-family:var(--read);font-size:13px;line-height:1.85;margin-top:10px;color:var(--ink)}
+.verdict .quote mark{background:linear-gradient(transparent 35%,var(--hi) 35%,var(--hi) 92%,transparent 92%);color:inherit;padding:0 2px}
+.verdict .src{font-family:var(--note);font-size:11.5px;color:var(--ink3);margin-top:5px}
+.drill-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--rule)}
+.drill-foot .keys{margin-left:auto;font-size:9.5px;color:var(--ink3);letter-spacing:.04em;display:flex;align-items:center;gap:5px}
+.k{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;border:1px solid var(--rule-ctl);border-bottom-width:2px;border-radius:3px;font-size:9px;color:var(--ink2)}
+
+/* 批改/空态双栏 */
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+.score{background:var(--bg);border:1px solid var(--rule);border-radius:10px;padding:28px 28px 22px;color:var(--ink);position:relative;overflow:hidden;min-height:420px}
+.score::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.025;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='64' height='64' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E")}
+.score-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.score-head .t{font-family:var(--read);font-size:22px;line-height:1.3}
+.score-head .d{font-size:10.5px;color:var(--ink3);margin-top:5px;letter-spacing:.03em}
+.score .big{font-family:var(--read);font-size:56px;line-height:1;letter-spacing:-.02em;margin-top:18px}
+.score .big span{font-size:20px;color:var(--ink3);letter-spacing:0}
+.score .diag{font-size:13px;line-height:1.8;color:var(--ink);margin-top:12px}
+.score .diag b{color:var(--seal);font-weight:600}
+.score .sub{font-size:11.5px;color:var(--ink2);margin-top:4px}
+.score-list{margin-top:16px;border-top:1px solid var(--rule)}
+.score-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--rule-2);font-size:11.5px;color:var(--ink2)}
+.score-row .n{font-variant-numeric:tabular-nums;color:var(--ink3);width:18px;flex:none}
+.score-row .q{min-width:0}
+.score-row .pick{display:block;font-size:10px;color:var(--seal);margin-top:2px}
+.score-btns{display:flex;gap:8px;align-items:center;margin-top:16px}
+.score-btns .quiet{margin-left:auto}
+.stamp{
+  position:absolute;right:26px;top:22px;width:64px;height:64px;border:1.5px solid var(--seal);border-radius:5px;
+  color:var(--seal);display:grid;place-items:center;transform:rotate(-9deg);font-family:var(--note);
+  font-size:17px;line-height:1.1;text-align:center;opacity:.9;
+}
+.stamp span{display:block;font-size:8px;letter-spacing:.18em;font-family:var(--ui);margin-top:3px}
+
+.shelf{background:var(--bg);border:1px solid var(--rule);border-radius:10px;padding:28px;color:var(--ink);min-height:420px;display:flex;flex-direction:column}
+.shelf-art{margin:8px 0 24px;height:86px;width:168px;position:relative;
+  border-left:1px solid var(--rule-ctl);border-right:1px solid var(--rule-ctl);
+  border-bottom:1px solid var(--rule-ctl);border-radius:0 0 3px 3px;opacity:.85}
+.shelf-art::before{content:"";position:absolute;left:9%;right:9%;top:45%;height:1px;background:var(--rule-ctl);opacity:.55}
+.shelf-art .pencil{position:absolute;left:16px;bottom:9px;width:52px;height:3px;border-radius:1px;background:var(--seal);opacity:.55;transform:rotate(-2deg)}
+.shelf-art .pencil::after{content:"";position:absolute;right:-6px;top:-1px;border-left:6px solid var(--seal);border-top:2.5px solid transparent;border-bottom:2.5px solid transparent;opacity:.55}
+.shelf h3{font-family:var(--read);font-size:24px;font-weight:400;letter-spacing:-.01em}
+.shelf p{font-size:12.5px;line-height:1.8;color:var(--ink2);margin-top:8px;max-width:34em}
+.shelf .btns{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap}
+.shelf .tiny{font-size:10.5px;color:var(--ink3);margin-top:14px}
+.shelf .tiny a{color:var(--ink3);text-decoration:underline;text-underline-offset:3px}
+
+/* 导入校对 */
+.proof{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:22px;color:var(--ink);margin-top:20px}
+.proof-h{display:flex;align-items:center;gap:10px}
+.proof-h .t{font-family:var(--read);font-size:18px}
+.proof-h .steps{margin-left:auto;font-size:9.5px;color:var(--ink3);letter-spacing:.04em}
+.proof-h .steps b{color:var(--seal);font-weight:600}
+.proof .note{font-size:11px;color:var(--seal);margin-top:10px}
+.proof-table{margin-top:12px;border:1px solid var(--rule);border-radius:6px;overflow:hidden;font-size:10.5px}
+.proof-row{display:grid;grid-template-columns:22px 1fr 52px;gap:8px;padding:8px 10px;border-bottom:1px solid var(--rule-2);align-items:center}
+.proof-row:last-child{border-bottom:0}
+.proof-row .idx{color:var(--ink3);font-variant-numeric:tabular-nums}
+.proof-row .txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink2)}
+.proof-row .ans{text-align:right;font-size:9.5px;color:var(--ink3)}
+.proof-row.bad{background:var(--seal-soft)}
+.proof-row.bad .ans{color:var(--seal)}
+.proof-foot{display:flex;align-items:center;gap:10px;margin-top:14px}
+.proof-foot .meta{font-size:10px;color:var(--ink3)}
+.proof-foot .btn{margin-left:auto}
+
+/* 文案对照 */
+.copy-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.copy-card{background:var(--wall-2);border:1px solid var(--wall-line);border-radius:8px;padding:18px 20px}
+.copy-card .ctx{font-size:9.5px;letter-spacing:.14em;color:var(--wall-ink-3);text-transform:uppercase;margin-bottom:10px}
+.copy-card .old{font-size:12px;line-height:1.7;color:var(--wall-ink-3);text-decoration:line-through;text-decoration-color:rgba(224,138,114,.45)}
+.copy-card .new{font-size:13.5px;line-height:1.75;color:var(--wall-ink);margin-top:7px}
+.copy-card .new::before{content:"→ ";color:var(--wall-accent)}
+.copy-card .why{font-size:10.5px;color:var(--wall-ink-3);margin-top:8px;line-height:1.6}
+
+/* 页脚 */
+.board-foot{padding:52px 0 0;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.board-foot .q{font-family:var(--read);font-size:19px;line-height:1.7;color:var(--wall-ink-2);max-width:640px}
+.board-foot .q b{color:var(--wall-ink);font-weight:400}
+.board-foot .meta{font-size:10.5px;color:var(--wall-ink-3);letter-spacing:.04em;text-align:right}
+
+@media (max-width:1000px){
+  .duo,.genes,.pair,.copy-grid{grid-template-columns:1fr}
+  .frame{grid-template-columns:1fr;min-height:0}
+  .app-side{flex-direction:row;align-items:center;padding:12px 16px;border-right:0;border-bottom:1px solid var(--rule);gap:12px;overflow-x:auto}
+  .app-logo{border:0;padding:0 12px 0 0;flex:none}
+  .app-date{display:none}
+  .app-nav{flex-direction:row;margin:0;gap:2px}
+  .app-nav a{padding:6px 9px;white-space:nowrap}
+  .app-nav a.on::before{display:none}
+  .app-nav a.minor,.app-side .side-gap,.app-side .side-label,.app-side .side-foot{display:none}
+  .app-grid{grid-template-columns:1fr}
+  .rail{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .app-main{padding:22px 20px 28px}
+  .board-head h1{font-size:52px}
+  .seal-big{display:none}
+}
+@media (max-width:640px){
+  .board{padding:0 18px}
+  .board-head{padding:44px 0 30px}
+  .section{padding:38px 0 6px}
+  .rail{grid-template-columns:1fr}
+  .swatches{grid-template-columns:1fr 1fr}
+  .frame{border-radius:8px}
+  .drill-body{margin-top:18px}
+  .stem{font-size:16px}
+  .score,.shelf{padding:20px}
+  .score .big{font-size:44px}
+}
+</style>
+</head>
+<body data-board="night">
+
+<div class="board">
+
+  <!-- ================= 展板头 ================= -->
+  <header class="board-head">
+    <div class="kicker">MedKit · Frontend Redesign · 2026-10-29</div>
+    <div class="head-row">
+      <div>
+        <h1>书桌 <em>·</em> The Desk</h1>
+        <p class="lede">
+          把五个页签从「功能面板的集合」改回<b>一个人坐下来的地方</b>：纸、墨、红笔，
+          题干用宋体，界面用黑体；一次只给一个动作，答错就把解析放到手边，
+          深夜不劝学，做完允许停下。
+        </p>
+      </div>
+      <div class="board-tools">
+        <button class="tool-btn" id="boardTheme">展厅：暗</button>
+      </div>
+    </div>
+    <div class="head-meta">
+      <div>方向<b>纸与阅读 + 平静 + 临床严谨</b></div>
+      <div>主色<b>墨绿 #2B5C4B</b></div>
+      <div>阅读字<b>宋体 17px / 1.9</b></div>
+      <div>原则<b>一屏一任务 · 反馈在手边 · 允许停下</b></div>
+    </div>
+    <div class="seal-big">重设计<span>REV. 01</span></div>
+  </header>
+
+  <!-- ================= 01 两套光 ================= -->
+  <section class="section" id="sec-light">
+    <div class="sec-head">
+      <div class="sec-num">01</div>
+      <h2>两套光，一张桌子</h2>
+      <p>白天是摊开的教材，晚上是台灯下的桌面。不是两个主题皮肤，是两种使用时刻：一个适合开始，一个适合收尾。</p>
+    </div>
+    <div class="duo">
+      <article class="lightcard theme-paper">
+        <div class="lc-kicker">日间 · 纸张</div>
+        <div class="lc-time">晚上好。</div>
+        <div class="lc-sub">今天还剩 13 道错题，6 个知识点没掌握。</div>
+        <div class="lc-tasks">
+          <div class="lc-task now"><i></i><b>复习错题</b><span>13 道 · 约 9 分钟</span></div>
+          <div class="lc-task"><i></i>练一组新的<span>20 道 · 约 14 分钟</span></div>
+          <div class="lc-task"><i></i>看一眼薄弱点<span>6 个 · 2 分钟</span></div>
+        </div>
+        <div class="lc-foot">
+          <span>这周练了 4 天。断一天不算断。</span>
+          <span class="dots"><i class="on"></i><i class="on"></i><i></i><i class="on"></i><i class="today"></i><i></i><i></i></span>
+        </div>
+        <div class="lc-cap">纸色不是米黄复古，是为了让 40 分钟的阅读不刺眼。</div>
+      </article>
+
+      <article class="lightcard theme-lamp">
+        <div class="lc-kicker">夜间 · 台灯</div>
+        <div class="lc-time">快 12 点了。</div>
+        <div class="lc-sub">今天不开始新题。过 5 道错题就睡。</div>
+        <div class="lc-tasks">
+          <div class="lc-task now"><i style="border-color:var(--seal)"></i><b>过 5 道错题</b><span>约 4 分钟</span></div>
+          <div class="lc-task"><i></i>看看明天的安排<span>1 分钟</span></div>
+        </div>
+        <div class="lamp-note">「题不会跑。明天早上再看，效果比现在硬撑好。」</div>
+        <div class="lc-cap" style="color:var(--ink3)">深夜模式不是彩蛋，是软件知道现在几点。</div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ================= 02 视觉基因 ================= -->
+  <section class="section" id="sec-genes">
+    <div class="sec-head">
+      <div class="sec-num">02</div>
+      <h2>视觉基因：纸、墨、红笔、荧光</h2>
+      <p>只引入四样「物」，每屏最多出现一个。材质停在纸的粒度：不做皮革、木纹、胶带，也不让手写体满屏跑。</p>
+    </div>
+
+    <div class="genes">
+      <div class="panel">
+        <h3>四色 · 亮 / 暗</h3>
+        <div class="swatches">
+          <div class="swatch">
+            <span class="chip" style="background:#F4EFE4"></span>
+            <div class="meta"><b>纸</b><span>#F4EFE4 / #141311</span></div>
+            <p>页面底。亮色偏米，暗色偏暖黑；都不使用纯白/纯黑。</p>
+          </div>
+          <div class="swatch">
+            <span class="chip" style="background:#2B5C4B"></span>
+            <div class="meta"><b>墨绿</b><span>#2B5C4B / #8FC3A9</span></div>
+            <p>主色。沿用既有品牌色相，只把它降为「墨」，不抢红笔。</p>
+          </div>
+          <div class="swatch">
+            <span class="chip" style="background:#A63D2C"></span>
+            <div class="meta"><b>红笔</b><span>#A63D2C / #E08A72</span></div>
+            <p>只做批改语义：对/错、日期戳、批注。不用于删除。</p>
+          </div>
+          <div class="swatch">
+            <span class="chip" style="background:#F6E7A8"></span>
+            <div class="meta"><b>荧光</b><span>#F6E7A8 / #3A3524</span></div>
+            <p>教材原句与出处引文。是产品动作，不是装饰。</p>
+          </div>
+        </div>
+        <div class="artifacts">
+          <span class="seal-demo">对</span>
+          <span class="keycap-demo">Enter</span>
+          <span class="tag-demo">A1 型题</span>
+          <span class="spine-demo"><i></i>内科学 · 呼吸</span>
+          <span class="mark-demo">持续气流受限</span>
+        </div>
+        <div class="artifact-note">印章、键帽、标签、书脊、荧光笔——五个可复用的「物」。<br>全部 CSS 实现，零图片、零请求。</div>
+      </div>
+
+      <div class="panel" style="padding:0;background:transparent;border:0">
+        <div class="type-spec theme-paper">
+          <div class="ts-label">Reading / 题干与解析</div>
+          <div class="ts-read">男，68 岁。慢性咳嗽、咳痰 20 年，活动后气短 5 年。今晨受凉后咳黄脓痰，呼吸困难加重。最可能的诊断是？</div>
+          <hr>
+          <div class="ts-label">Interface / 界面</div>
+          <div class="ts-ui">选一份题库，开始一张卷子。做错的会自动进错题本。</div>
+          <div class="ts-label" style="margin-top:14px">Margin note / 页边注</div>
+          <div class="ts-note">——《内科学》第 9 版 · 呼吸系统</div>
+          <hr>
+          <div class="ts-num">18<span style="color:var(--ink2)">/</span>20 <small>错的 2 道都是心衰用药</small></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 03 今天 ================= -->
+  <section class="section" id="sec-today">
+    <div class="sec-head">
+      <div class="sec-num">03</div>
+      <h2>今天：一张任务单，不是四块表</h2>
+      <p>首屏只回答「现在做什么」。统计退到右栏；没有数据时不显示 0，只给一个可以开始的邀请。</p>
+    </div>
+
+    <div class="frame-wrap">
+      <div class="frame theme-paper">
+        <aside class="app-side">
+          <div class="app-logo"><b>MedKit</b><span>本地医学题库工坊</span></div>
+          <div class="app-date"><b>10 月 29 日</b>周四 · 距考研 52 天</div>
+          <nav class="app-nav">
+            <a class="on" href="#">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/></svg>
+              今天
+            </a>
+            <a href="#"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>刷题<span class="badge">13</span></a>
+            <a href="#"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/></svg>错题</a>
+            <a href="#"><svg viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M9 7h7M9 11h7"/></svg>题库</a>
+            <a href="#"><svg viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h6l2 2h8a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>设置</a>
+          </nav>
+          <div class="side-gap"></div>
+          <div class="side-label">其他</div>
+          <nav class="app-nav">
+            <a class="minor" href="#"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/></svg>题库与手册站</a>
+            <a class="minor" href="#"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z"/></svg>出题工坊</a>
+          </nav>
+          <div class="side-foot"><span>v0.22.1</span><i></i></div>
+        </aside>
+
+        <main class="app-main">
+          <div class="app-top">
+            <div>
+              <div class="app-date-line">10 月 29 日 · 周四 · 距考研 52 天</div>
+              <h1 class="app-h1">晚上好。</h1>
+              <p class="app-sub">今天还剩 <b>13 道错题</b>，6 个知识点没掌握。</p>
+            </div>
+          </div>
+
+          <div class="app-grid">
+            <div>
+              <div class="sheet">
+                <div class="sheet-h"><h2>今天这一页</h2><span class="hint">3 件 · 约 25 分钟</span></div>
+                <div class="sheet-b">
+                  <div class="task first">
+                    <i class="circ"></i>
+                    <div class="tx"><b>复习错题</b><span>13 道 · 约 9 分钟 · 心衰用药 5 道</span></div>
+                    <button class="btn sm go">开始</button>
+                  </div>
+                  <div class="task">
+                    <i class="circ"></i>
+                    <div class="tx"><b>练一组新的</b><span>20 道 · 约 14 分钟 · 内科学 · 呼吸</span></div>
+                    <button class="btn ghost sm go">选题库</button>
+                  </div>
+                  <div class="task">
+                    <i class="circ"></i>
+                    <div class="tx"><b>看一眼薄弱点</b><span>6 个 · 约 2 分钟 · 先看「心衰的用药禁忌」</span></div>
+                    <button class="btn ghost sm go">看看</button>
+                  </div>
+                </div>
+                <div class="sheet-f">
+                  <span class="meta">做完这一页，今天就够了。</span>
+                  <button class="btn quiet">今天到这儿</button>
+                </div>
+              </div>
+
+              <div style="margin-top:14px;padding:12px 16px;border:1px dashed var(--rule-ctl);border-radius:7px;display:flex;align-items:center;gap:10px">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink3)" stroke-width="1.7"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>
+                <span style="font-size:11px;color:var(--ink3)">连续 3 天做完这一页了。今天不勉强也行。</span>
+                <button class="btn quiet" style="margin-left:auto;font-size:10.5px">安静模式</button>
+              </div>
+            </div>
+
+            <aside class="rail">
+              <div class="rail-card">
+                <h3>这周</h3>
+                <div class="big">4 天</div>
+                <div class="week">
+                  <span><i class="on"></i><em>一</em></span>
+                  <span><i class="on"></i><em>二</em></span>
+                  <span><i class="on"></i><em>三</em></span>
+                  <span><i class="today"></i><em>四</em></span>
+                  <span><i></i><em>五</em></span>
+                  <span><i></i><em>六</em></span>
+                  <span><i></i><em>日</em></span>
+                </div>
+                <p>断一天不算断，周日照常算这周。</p>
+              </div>
+              <div class="rail-card">
+                <h3>昨天你错在哪</h3>
+                <p style="margin-top:8px">5 道错题，4 道都在「心衰的用药禁忌」。同一个知识点，换个问法还是会错。</p>
+                <div class="rail-note">要不要先把这 4 道过一遍？<br><b>大约 3 分钟。</b></div>
+                <div style="margin-top:10px"><a class="link" href="#">过一遍这 4 道 →</a></div>
+              </div>
+              <div class="rail-card">
+                <h3>下次考试</h3>
+                <div style="display:flex;align-items:baseline;gap:6px;margin-top:6px"><span style="font-family:var(--read);font-size:22px">52</span><span style="font-size:10.5px;color:var(--ink3)">天后 · 考研西综</span></div>
+                <p>按每天 40 题，还能把现在的题库过两遍。</p>
+              </div>
+            </aside>
+          </div>
+        </main>
+      </div>
+      <div class="frame-caption"><b>今天 · 亮色</b><span>首屏只有一个主行动；右栏是 periphery，不是第二个仪表盘</span></div>
+    </div>
+  </section>
+
+  <!-- ================= 04 刷题 ================= -->
+  <section class="section" id="sec-drill">
+    <div class="sec-head">
+      <div class="sec-num">04</div>
+      <h2>刷题：判分在选项上，解析在手边</h2>
+      <p>不跳页、不摇屏、不红闪。你选了 B，就把「为什么不是 B」放在 B 下面；教材原句用荧光笔，出处用页边注。</p>
+    </div>
+
+    <div class="frame-wrap">
+      <div class="frame theme-lamp">
+        <aside class="app-side">
+          <div class="app-logo"><b>MedKit</b><span>本地医学题库工坊</span></div>
+          <div class="app-date"><b>10 月 29 日</b>周四 · 23:41</div>
+          <nav class="app-nav">
+            <a href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>今天</a>
+            <a class="on" href="#"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>刷题</a>
+            <a href="#"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z"/></svg>错题</a>
+            <a href="#"><svg viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/></svg>题库</a>
+            <a href="#"><svg viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h6l2 2h8a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>设置</a>
+          </nav>
+          <div class="side-gap"></div>
+          <div class="side-label">其他</div>
+          <nav class="app-nav">
+            <a class="minor" href="#"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/></svg>题库与手册站</a>
+          </nav>
+          <div class="side-foot"><span>v0.22.1</span><i></i></div>
+        </aside>
+
+        <main class="app-main">
+          <div class="drill-top">
+            <div class="bk"><i></i>内科学 · 呼吸与循环</div>
+            <div class="prog">
+              <i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              <em>7 / 20</em>
+            </div>
+            <button class="save">先存着</button>
+          </div>
+
+          <div class="drill-body">
+            <span class="qtag">A1 型题 · 呼吸系统</span>
+            <div class="stem">男，68 岁。慢性咳嗽、咳痰 20 年，活动后气短 5 年。今晨受凉后咳黄脓痰，呼吸困难加重。最可能的诊断是？</div>
+
+            <div class="opts">
+              <div class="opt">
+                <span class="let">A</span>
+                <span class="txt">支气管哮喘急性发作</span>
+              </div>
+              <div class="opt wrong">
+                <span class="let">B</span>
+                <span class="txt">慢性阻塞性肺疾病急性加重<span class="why">你选的是 B</span></span>
+              </div>
+              <div class="opt right">
+                <span class="let">C</span>
+                <span class="txt">慢性阻塞性肺疾病<span class="why" style="color:var(--accent)">正确答案</span></span>
+                <span class="seal">对</span>
+              </div>
+              <div class="opt">
+                <span class="let">D</span>
+                <span class="txt">支气管扩张</span>
+              </div>
+            </div>
+
+            <div class="verdict">
+              <div class="v1">你选的是 <b>B</b>。正确答案是 <b>C</b>。</div>
+              <p>哮喘的气流受限是可逆的，多有发作性喘息；这例是 20 年慢咳、逐年加重的气短，更像 COPD。急性加重要有脓痰增多、呼吸困难加重，但诊断的底子还是 COPD。</p>
+              <div class="quote">「COPD 的诊断需要<mark>持续气流受限</mark>，且呈<mark>进行性发展</mark>。」</div>
+              <div class="src">——《内科学》第 9 版 · 呼吸系统</div>
+            </div>
+
+            <div class="drill-foot">
+              <button class="btn">下一题 · 还剩 13 道</button>
+              <button class="btn ghost">看这题的出处</button>
+              <span class="keys"><span class="k">1</span>–<span class="k">4</span> 选择 <span class="k">↵</span> 下一题</span>
+            </div>
+          </div>
+        </main>
+      </div>
+      <div class="frame-caption"><b>刷题 · 暗色</b><span>错误用「红笔 + 文字」两重信号，不只靠颜色；解析不遮住题干</span></div>
+    </div>
+  </section>
+
+  <!-- ================= 05 批改 & 空态 ================= -->
+  <section class="section" id="sec-end">
+    <div class="sec-head">
+      <div class="sec-num">05</div>
+      <h2>收尾与开始：都要有台阶</h2>
+      <p>做完一张卷子，先给情绪，再给诊断，最后只给一个台阶。书架空的时候，不报零，给一个可以放书进来的动作。</p>
+    </div>
+
+    <div class="pair">
+      <article class="score theme-paper">
+        <div class="stamp">已批<span>10.29</span></div>
+        <div class="score-head">
+          <div>
+            <div class="t">这张卷子批完了</div>
+            <div class="d">10 月 29 日 · 20 题 · 14 分 20 秒</div>
+          </div>
+        </div>
+        <div class="big">18<span> / 20</span></div>
+        <div class="diag">错的 2 道，<b>都是心衰的用药禁忌</b>。</div>
+        <div class="sub">比上次多对了 3 道。这个知识点再稳一点，就差不多了。</div>
+        <div class="score-list">
+          <div class="score-row"><span class="n">12</span><span class="q">洋地黄中毒最常见的心律失常是…<span class="pick">你选了 B · 正确答案 D</span></span></div>
+          <div class="score-row"><span class="n">17</span><span class="q">心衰患者使用 ACEI 的禁忌证是…<span class="pick">你选了 A · 正确答案 C</span></span></div>
+        </div>
+        <div class="score-btns">
+          <button class="btn sm">过一遍这两道</button>
+          <button class="btn quiet">今天到这儿</button>
+        </div>
+      </article>
+
+      <article class="shelf theme-paper">
+        <div class="shelf-art">
+          <span class="pencil"></span>
+        </div>
+        <h3>书架是空的</h3>
+        <p>导入老师发的 .md，或者先粘一段题干试试。软件不自带题库，题目版权归你。</p>
+        <div class="btns">
+          <button class="btn sm">导入题库文件</button>
+          <button class="btn ghost sm">粘贴一段题干</button>
+        </div>
+        <div class="tiny">或者，<a href="#">先做 3 道示例题</a> 看看合不合手。</div>
+      </article>
+    </div>
+
+    <div class="proof theme-paper">
+      <div class="proof-h">
+        <div class="t">导入校对</div>
+        <div class="steps"><b>② 核对</b> · 1 / 3 步</div>
+      </div>
+      <div class="note">这 128 题里，有 3 题没读到答案（标黄）。先核对，再入库。</div>
+      <div class="proof-table">
+        <div class="proof-row"><span class="idx">1</span><span class="txt">COPD 最主要的病因是…</span><span class="ans">A · 已读到</span></div>
+        <div class="proof-row bad"><span class="idx">2</span><span class="txt">男，68 岁，突发胸痛 2 小时…</span><span class="ans">⚠ 缺答案</span></div>
+        <div class="proof-row"><span class="idx">3</span><span class="txt">心衰患者使用 ACEI 的禁忌证是…</span><span class="ans">C · 已读到</span></div>
+        <div class="proof-row bad"><span class="idx">4</span><span class="txt">洋地黄中毒最常见的心律失常是…</span><span class="ans">⚠ 缺答案</span></div>
+      </div>
+      <div class="proof-foot">
+        <span class="meta">入库到：内科学 · 呼吸　科目：内科学　学期：大三下</span>
+        <button class="btn">入库 128 题</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 06 文案 ================= -->
+  <section class="section" id="sec-copy">
+    <div class="sec-head">
+      <div class="sec-num">06</div>
+      <h2>语气：具体、克制、允许停下</h2>
+      <p>不说「一键」「全新」「智能」；先事实，后判断，再动作。每句状态文案至少含一个具体名词或数字。</p>
+    </div>
+
+    <div class="copy-grid">
+      <div class="copy-card">
+        <div class="ctx">首启 · 没有数据</div>
+        <div class="old">0 今日待复习 · 0 新卡待学 · 0% 掌握率</div>
+        <div class="new">还没有可以统计的东西。先做 5 道，这里就会有数。</div>
+        <div class="why">不把「你什么都没有」当第一印象。</div>
+      </div>
+      <div class="copy-card">
+        <div class="ctx">答错</div>
+        <div class="old">✗ 答错了 | 你的作答：B · 正确答案：A | 解析：</div>
+        <div class="new">你选的是 B。正确答案是 C。</div>
+        <div class="why">先给结论，再给原因；不安慰过度，也不评判。</div>
+      </div>
+      <div class="copy-card">
+        <div class="ctx">中途离开</div>
+        <div class="old">退出 / 已保存</div>
+        <div class="new">存好了，回来接着做。</div>
+        <div class="why">把「退出」变成「先存着」，降低中断的负罪感。</div>
+      </div>
+      <div class="copy-card">
+        <div class="ctx">深夜</div>
+        <div class="old">今天要复习的、最薄弱的知识点，都在这一页。</div>
+        <div class="new">快 12 点了。今天不开始新题，过 5 道错题就睡。</div>
+        <div class="why">软件知道现在几点，比任何「贴心文案」都更像人。</div>
+      </div>
+      <div class="copy-card">
+        <div class="ctx">统计失败</div>
+        <div class="old">加载数据统计失败：HTTP 500</div>
+        <div class="new">这页数字没读到。题库和错题都还在，点「再试一次」。</div>
+        <div class="why">三段式：发生了什么 / 什么还安全 / 下一步。</div>
+      </div>
+      <div class="copy-card">
+        <div class="ctx">做完</div>
+        <div class="old">已完成今日目标 · 正确率 90%</div>
+        <div class="new">今天的 20 题做完了。到这儿就很好。</div>
+        <div class="why">给一个结束的台阶，不自动续下一张。</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="board-foot">
+    <div class="q">先把「今天」做成一张纸，再把「刷题」做成一张卷子。<br>其余的页面，照着这两件事的语气改。</div>
+    <div class="meta">MEDKIT · DESIGN SPECIMEN<br>2026-10-29 · 零外部资源<br>详细方案见同名 .md</div>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var btn = document.getElementById('boardTheme');
+  var body = document.body;
+  btn.addEventListener('click', function(){
+    var day = body.getAttribute('data-board') === 'day';
+    body.setAttribute('data-board', day ? 'night' : 'day');
+    btn.textContent = day ? '展厅：暗' : '展厅：亮';
+  });
+})();
+</script>
+</body>
+</html>

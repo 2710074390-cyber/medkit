@@ -62,8 +62,10 @@ MAX_TOKENS = 3000        # 推理模型会把预算烧在 reasoning 上（实测
 PROMPT_NAME = "mistake_agent.md"
 
 _FINALIZE = {"role": "user", "content":
-             "停止调用任何工具。现在直接输出 final JSON，基于上面已经取到的证据作答"
-             "（证据不足就照实说没有相关记录）。"}
+             "停止调用任何工具。现在直接输出 final JSON："
+             "`answer` 写有错题本依据的部分（个人事实没依据就照实说没有）；"
+             "`general` 写通用医学知识（用户问的是概念/机制/鉴别时，这里要把道理讲清楚）。"
+             "`general` 没有内容就留空串。"}
 
 _TOOLS = {
     "search_my_mistakes",
@@ -384,16 +386,22 @@ async def ask(question: str, *, scope: str = "", path: str = "",
             cancel.set()
 
     answer = str(final.get("answer") or "").strip()
+    general = str(final.get("general") or "").strip()
     cites, dropped = _validate_citations(final.get("citations"))
     stats_ok = any(t["tool"] == "get_topic_stats" and t["ok"] for t in tool_log)
     grounded = bool(cites) or stats_ok
     note = str(final.get("note") or "")
-    if not grounded:
-        # **硬约束 2**：没有任何可验证依据时，不许用通识补全。
-        # 这是本 Agent 与通用聊天机器人唯一的分界线——宁少答，不乱答。
+    if not grounded and not general:
+        # 个人事实无依据、且模型没有提供通用知识 ⇒ 才拒答。
+        # 历史实现对「任何没有引用的答复」都替换成"没有相关记录"，
+        # 结果把「甲氨蝶呤药理机制是什么」这类纯知识问题也堵死了——
+        # 那是把「可信」误做成「不敢说」。见 prompts/mistake_agent.md 的两类内容规则。
         answer = _ungrounded_message(tool_log)
-        note = (note + " " if note else "") + "（结论因缺少可验证依据被拦下）"
-    if not answer:
+        note = (note + " " if note else "") + "（个人事实缺少可验证依据，已拦下）"
+    elif general and not grounded:
+        # 纯通用知识：保留答复，但如实标注「不来自错题本」。
+        note = (note + " " if note else "") + "（通用知识，未引用你的错题本）"
+    if not answer and not general:
         # 兜底：即便取到了依据，模型也可能返回空答复（预算截断/未收敛）——
         # **不许把空白丢给用户**（实测：推理模型 + 轮数用尽即此形）。
         tools = "、".join(sorted({str(t["tool"]) for t in tool_log})) or "无"
@@ -401,9 +409,9 @@ async def ask(question: str, *, scope: str = "", path: str = "",
                   "请换个问法，或直接在文件夹里打开那条错题看原文。")
     if dropped:
         answer += "\n\n（已剔除无效引用：" + "、".join(dropped[:3]) + "）"
-    yield {"type": "result", "answer": answer, "citations": cites,
-           "dropped_citations": dropped, "tools": tool_log,
-           "grounded": grounded, "note": note}
+    yield {"type": "result", "answer": answer, "general": general,
+           "citations": cites, "dropped_citations": dropped, "tools": tool_log,
+           "grounded": grounded, "has_general": bool(general), "note": note}
 
 
 # ------------------------------------------------------------------ 薄弱点复习手册

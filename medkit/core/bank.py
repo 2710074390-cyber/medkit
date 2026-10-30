@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import itertools
+import re
 import time
 from datetime import datetime
 from typing import Any, Optional
@@ -34,7 +35,7 @@ from . import config as cfg
 from . import db as dbs
 from .fsutil import write_json_atomic
 
-_BANK_COLS = ("name", "subject", "source", "created_at", "updated_at")
+_BANK_COLS = ("name", "subject", "term", "source", "created_at", "updated_at")
 _ITEM_COLS = ("bank_id", "qtype", "topic", "answer", "origin", "created_at")
 _ATT_COLS = ("bank_id", "item_id", "session_id", "correct", "mode", "occurred_at",
              "confidence")
@@ -117,13 +118,18 @@ def get_bank(bid: str) -> Optional[dict[str, Any]]:
 
 def create_bank(name: str, subject: str = "", source: str = "",
                 items: Optional[list[dict[str, Any]]] = None,
-                origin: str = "manual") -> dict[str, Any]:
-    """建题库（可同时灌入题目）。返回落库后的题库记录（含 items 计数）。"""
+                origin: str = "manual", term: str = "") -> dict[str, Any]:
+    """建题库（可同时灌入题目）。返回落库后的题库记录（含 items 计数）。
+
+    `term` = 学期（`大三下` / `大四上`）：同一科目跨学期常有多份题库，只凭 `subject`
+    分不清「这本题库属于哪个学期」。空串表示未知（用户可后续手工补）。
+    """
     ensure_ready()
     name = (name or "").strip() or "未命名题库"
     bid = _new_id("bk")
     now = _now()
     rec = {"id": bid, "name": name, "subject": (subject or "").strip(),
+           "term": (term or "").strip(),
            "source": (source or "").strip(), "created_at": now, "updated_at": now}
     with dbs.tx(write=True) as cur:
         dbs.put_row(cur, "banks", rec, _BANK_COLS)
@@ -134,7 +140,7 @@ def create_bank(name: str, subject: str = "", source: str = "",
 
 def update_bank(bid: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
     ensure_ready()
-    allowed = {"name", "subject", "source"}
+    allowed = {"name", "subject", "term", "source"}
     with dbs.tx(write=True) as cur:
         rec = _row_bank(cur, bid)
         if rec is None:
@@ -282,6 +288,134 @@ def get_item(iid: str) -> Optional[dict[str, Any]]:
         cur.close()
 
 
+# ---- 跨题库搜题（本地、零 LLM） ----
+
+# 关键词上限：词越多结果越少（多词 = AND），且每个词都要在 Python 里扫一遍。
+_SEARCH_MAX_TOKENS = 8
+# 参与匹配的字段与命中徽标文案（顺序 = 徽标优先级：题干 > 选项 > 考点 > 解析 > 答案）
+_SEARCH_FIELDS: tuple[tuple[str, str], ...] = (
+    ("question", "题干"), ("options", "选项"), ("subtopic", "考点"),
+    ("analysis", "解析"), ("answer", "答案"),
+)
+_SEARCH_LIMIT_MAX = 50
+# 分析原文上限：30 条结果 × 千字解析会把响应撑到 MB 级，而搜题只需要看一眼
+_SEARCH_ANALYSIS_MAX = 1200
+
+
+def _like_escape(s: str) -> str:
+    """转义 LIKE 通配符。
+
+    **必须做**：不转义时搜 `%` 会命中全库、搜 `_` 会退化成单字符通配——
+    在「题目里含 5% 这种数字」的医学题库里这不是假想。
+    """
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _search_text(it: dict[str, Any]) -> dict[str, str]:
+    """把一条题摊成「字段 → 小写文本」。纯函数（可单测）。
+
+    `options` 归一后是 `list[str]`，但第三方题库与老数据里也有 `{"A": "…"}` 的写法——
+    两种都收，否则「选项里明明有这词却搜不到」。
+    """
+    opts = it.get("options")
+    if isinstance(opts, dict):
+        opt = " ".join(f"{k} {v}" for k, v in opts.items())
+    elif isinstance(opts, (list, tuple)):
+        opt = " ".join(str(x) for x in opts if x is not None)
+    else:
+        opt = str(opts or "")
+    return {
+        "question": str(it.get("question") or "").lower(),
+        "options": opt.lower(),
+        "subtopic": str(it.get("subtopic") or it.get("topic") or "").lower(),
+        "analysis": str(it.get("analysis") or "").lower(),
+        "answer": str(it.get("answer") or "").lower(),
+    }
+
+
+def _search_rank(it: dict[str, Any], tokens: list[str]) -> Optional[dict[str, Any]]:
+    """命中判定 + 排序键。纯函数（可单测）；返回 None 表示不命中。
+
+    **多词 = AND**：每个词都得在某个字段里出现。只命中一部分说明不相关
+    （搜「慢阻肺 诊断」时，「慢阻肺」在题干、「诊断」在别处的题不该混进来）。
+    """
+    text = _search_text(it)
+    joined = "\n".join(text[f] for f, _ in _SEARCH_FIELDS)
+    if any(t not in joined for t in tokens):
+        return None
+    counts = {f: sum(1 for t in tokens if t in text[f]) for f, _ in _SEARCH_FIELDS}
+    counts = {f: n for f, n in counts.items() if n}
+    # 同分取靠前的字段（dict 保持 _SEARCH_FIELDS 顺序 ⇒ max 返回第一个最大值）
+    best = max(counts, key=lambda f: counts[f])
+    all_in_q = counts.get("question") == len(tokens)
+    return {
+        "field": dict(_SEARCH_FIELDS)[best],
+        # 题干全中 > 题干部分命中 > 只命中其它字段；
+        # 同档按命中词数多的在前，再按题干短的在前（词占题干比例越高，越像「就是问这个」）
+        "key": (0 if all_in_q else 1 if "question" in counts else 2,
+                -sum(counts.values()), len(text["question"])),
+    }
+
+
+def search_items(q: str = "", limit: int = 30, bank_id: str = "") -> dict[str, Any]:
+    """跨题库搜题：**本地子串匹配，不联网、不调模型**。
+
+    口径边界（说清楚，免得被当成同义词搜索）：「慢阻肺」**搜不到**只写
+    「慢性阻塞性肺疾病」的题——那需要一份医学别名词典，而 `bank_iq` 的归一只动格式
+    不动语义，替代不了它。词表方案见 ADR-002（FTS5 + jieba，千题级以上再上）。
+    """
+    q = (q or "").strip()
+    tokens = [t for t in re.split(r"\s+", q.lower()) if t][:_SEARCH_MAX_TOKENS]
+    if not tokens:
+        return {"q": q, "tokens": [], "total": 0, "items": []}
+    try:
+        limit = int(limit or 30)
+    except (TypeError, ValueError):
+        limit = 30
+    limit = max(1, min(limit, _SEARCH_LIMIT_MAX))
+    ensure_ready()
+    conn = dbs.get_conn()
+    cur = conn.cursor()
+    try:
+        # SQL 侧只用**最长那个词**预筛（选择性最好，也省掉拼一长串 LIKE）；
+        # 其余词在 Python 里做 AND——反正都要扫，SQL 里多拼几个 LIKE 没有收益。
+        where = "WHERE data LIKE ? ESCAPE '\\'"
+        params: list[Any] = ["%" + _like_escape(max(tokens, key=len)) + "%"]
+        if bank_id:
+            where += " AND bank_id=?"
+            params.append(str(bank_id))
+        rows = dbs.list_rows(cur, "bank_items", where + " ORDER BY created_at, id",
+                            tuple(params))
+    finally:
+        cur.close()
+    banks = {str(b.get("id") or ""): b for b in list_banks()}
+    scored: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    for it in rows:
+        r = _search_rank(it, tokens)
+        if r is None:
+            continue
+        bid = str(it.get("bank_id") or "")
+        b = banks.get(bid) or {}
+        scored.append((r["key"] + (str(it.get("created_at") or ""), str(it.get("id") or "")), {
+            "item_id": str(it.get("id") or ""),
+            "bank_id": bid,
+            "bank_name": str(b.get("name") or ""),
+            "bank_subject": str(b.get("subject") or ""),
+            "bank_term": str(b.get("term") or ""),
+            "question": str(it.get("question") or ""),
+            "type": str(it.get("type") or ""),
+            "subtopic": str(it.get("subtopic") or ""),
+            "answer": str(it.get("answer") or ""),
+            "options": list(it.get("options") or []) if isinstance(it.get("options"), list) else [],
+            "analysis": str(it.get("analysis") or "")[:_SEARCH_ANALYSIS_MAX],
+            "starred": bool(it.get("starred")),
+            "hit": r["field"],
+        }))
+    scored.sort(key=lambda x: x[0])
+    return {"q": q, "tokens": tokens, "total": len(scored),
+            "items": [rec for _, rec in scored[:limit]]}
+
+
 def _prepare_items(bid: str, items: list[dict[str, Any]], origin: str,
                    dedupe: str, existing: list[dict[str, Any]]
                    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -307,6 +441,11 @@ def _prepare_items(bid: str, items: list[dict[str, Any]], origin: str,
             # 任何 `WHERE topic = ?` 都查不到东西（2026-10-27 实施 v0.22 阶段 2 时发现）。
             if rec is not None:
                 rec["topic"] = rec.get("subtopic") or ""
+                # 同族的第二处：`bank_items.qtype` 也是冗余查询列，而记录里的字段名是
+                # `type`（`bank_iq.normalize_item` 的契约）⇒ 不补同样恒为 NULL。
+                # 目前没有查询依赖它，但「列名与 data 对不上」正是 topic 那次的失效形态，
+                # 一并纠正，免得下次有人信了这列。
+                rec["qtype"] = rec.get("type") or ""
             if rec is None:
                 stats["skipped"] += 1
                 stats["errors"].append(f"#{i}: 缺题干或答案，已跳过")

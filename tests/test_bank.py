@@ -717,3 +717,95 @@ def test_delete_bank_also_removes_source(client):
     assert bank.get_source(bid) is not None
     client.delete(f"/api/bank/banks/{bid}")
     assert bank.get_source(bid) is None
+
+
+# ---------------------------------------------------------------- 跨题库搜题（Ctrl+K 第二段）
+def test_search_finds_question_and_reports_hit_field(client):
+    """搜题干里的词必须命中，并回报**命中字段**（前端徽标「题干 / 选项 / 考点…」的取值）。"""
+    _make_bank(client)
+    r = client.get("/api/bank/search", params={"q": "慢阻肺"}).json()
+    assert r["ok"] is True and r["total"] == 1
+    hit = r["items"][0]
+    assert "慢阻肺" in hit["question"]
+    assert hit["hit"] == "题干"
+    assert hit["bank_subject"] == "内科学"
+    assert hit["answer"] == "A"
+
+
+def test_search_multi_token_requires_every_token(client):
+    """多词 = AND。只命中一部分的题不该混进来——否则搜两个词等于搜并集，结果没有价值。"""
+    _make_bank(client)
+    assert client.get("/api/bank/search", params={"q": "慢阻肺 吸烟"}).json()["total"] == 1
+    # 「慢阻肺」在 q1、「心衰」在 q2：没有一道题同时含这两个词
+    assert client.get("/api/bank/search", params={"q": "慢阻肺 心衰"}).json()["total"] == 0
+
+
+def test_search_reaches_options_not_just_question(client):
+    """命中不该只在题干：选项里的词也要搜得到（「利尿」只在 q2 的选项/解析里）。"""
+    _make_bank(client)
+    r = client.get("/api/bank/search", params={"q": "利尿"}).json()
+    assert r["total"] == 1
+    assert r["items"][0]["hit"] == "选项"
+
+
+def test_search_orders_question_hits_first(client):
+    """题干命中排在「只在选项里出现」之前——搜题时题干命中才是用户要的。"""
+    _make_bank(client, items=[
+        {"question": "利尿剂的不良反应", "options": ["低钾", "高钾"], "answer": "A"},
+        {"question": "心衰的用药原则", "options": ["限盐", "利尿"], "answer": "AB",
+         "analysis": "利尿是关键"},
+    ])
+    items = client.get("/api/bank/search", params={"q": "利尿"}).json()["items"]
+    assert [i["hit"] for i in items] == ["题干", "选项"]
+
+
+def test_search_empty_query_returns_nothing(client):
+    """空/纯空白输入返回空 —— 搜题入口不该在用户还没输入时把千题撑到前端。"""
+    _make_bank(client)
+    for q in ("", "   "):
+        r = client.get("/api/bank/search", params={"q": q}).json()
+        assert r["total"] == 0 and r["items"] == []
+
+
+def test_search_limit_truncates_items_but_not_total(client):
+    """`limit` 只截结果，`total` 仍是命中总数（否则前端没法说「共 N 条，显示前 M 条」）。"""
+    _make_bank(client)
+    r = client.get("/api/bank/search", params={"q": "是", "limit": 1}).json()
+    assert r["total"] == 2 and len(r["items"]) == 1
+
+
+def test_search_can_be_scoped_to_one_bank(client):
+    """限定单库（题库内搜索复用同一实现）。"""
+    b1 = _make_bank(client, name="库一")
+    _make_bank(client, name="库二")
+    assert client.get("/api/bank/search", params={"q": "慢阻肺"}).json()["total"] == 2
+    one = client.get("/api/bank/search", params={"q": "慢阻肺", "bank_id": b1}).json()
+    assert one["total"] == 1 and one["items"][0]["bank_id"] == b1
+
+
+def test_like_escape_neutralizes_wildcards():
+    """LIKE 预筛的通配符必须转义。
+
+    不转义时搜 `%` 会变成「命中全库」、搜 `_` 会变成单字符通配——在「题目里含 50%」
+    的医学题库里这不是假想。预筛只是**优化**（真正的判定在 `_search_rank`），
+    但预筛退化成全表扫会让每次敲键都扫一遍题库。
+    """
+    assert bank._like_escape("50%") == "50\\%"
+    assert bank._like_escape("a_b") == "a\\_b"
+    assert bank._like_escape("c\\d") == "c\\\\d"
+    # 反斜杠必须先转义，否则 `\%` 会被二次解读
+    assert bank._like_escape("\\%") == "\\\\\\%"
+
+
+def test_qtype_query_column_is_populated(client):
+    """`bank_items.qtype` 是冗余查询列，而 data 里的字段名是 `type` ⇒ 必须真的写进去。
+
+    同族前科：`topic` 曾因字段名是 `subtopic` 而恒为 NULL（索引白建、`WHERE topic=?`
+    永远查不到），当时**没有任何测试会红**。`qtype` 是同一形态——本次一并纠正并钉住。
+    """
+    bid = _make_bank(client)
+    rows = dbs.get_conn().execute(
+        "SELECT qtype FROM bank_items WHERE bank_id=?", (bid,)).fetchall()
+    assert rows, "测试前提不成立：该题库没有题目"
+    assert all(r[0] for r in rows), f"qtype 列恒为空：{[r[0] for r in rows]}"
+    assert {r[0] for r in rows} == {it["type"] for it in bank.list_items(bid)}

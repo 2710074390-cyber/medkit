@@ -139,6 +139,10 @@ function themeStateRefresh() {
 window.themeFollowSystem = themeFollowSystem;
 (function initTheme() {
   try {
+    const qp = new URLSearchParams(location.search).get("theme");
+    if (qp === "light" || qp === "dark") state.theme = qp;   // ?theme=... 仅当次生效，不落盘
+  } catch (e) { /* 老浏览器：跳过参数读取 */ }
+  try {
     const saved = localStorage.getItem("medkit-theme");
     if (saved === "dark" || saved === "light") state.theme = saved;
   } catch (e) { /* 隐私模式：跳过偏好读取，不中断脚本 */ }
@@ -334,7 +338,7 @@ async function loadDataMgmt() {
       backups.textContent = (r.backups_count > r.backups.length
         ? `最近 ${r.backups.length} 份（共 ${r.backups_count} 份 / ${fmtBytes(r.backups_total)}）：`
         : "最近备份：") + r.backups.map(b => `${b.name}（${fmtBytes(b.size)}）`).join("，");
-    else backups.textContent = "暂无备份——建议先「一键备份」留存数据。";
+    else backups.textContent = "暂无备份——建议先备份一份。";
   } catch (e) {
     sizes.innerHTML = "加载数据统计失败：" + esc(e.message || e);
   }
@@ -500,7 +504,13 @@ function initTab() {
   applyGenFlag();   // 出题工坊开关（默认关 → 隐藏「题库」tab / 「大纲管理」/「网络检索」）
   const h = (location.hash || "").replace("#", "");
   if (TABS_ALL.includes(h)) showTab(h);
-  else loadStart();   // 无 hash → 默认落地「开始」仪表盘（此时各脚本已就绪）
+  else {
+    loadStart();   // 无 hash → 默认落地「今天」（此时各脚本已就绪）
+    // 首开不走 showTab，右栏的概览/薄弱点/知识点要在这里显式拉一次；
+    // 否则折叠卡的摘要永远空白（2026-10-29 实测）。
+    if (typeof loadLibrary === "function") loadLibrary();
+    if (typeof kcPanelLoad === "function") kcPanelLoad();
+  }
   initDataMgmt();   // U-20：绑定数据管理区按钮（元素为静态 HTML，可安全绑定）
 }
 /* 初始化时机：**必须等 DOMContentLoaded**，不能按 readyState 立刻执行。
@@ -533,91 +543,6 @@ function openDrillFor(focusId) {
 }
 window.openDrillFor = openDrillFor;
 
-/* ---- ① 开始（仪表盘 · PRD 6.1）：今日任务 + 开始学习 + 考试倒计时 + 最近项目 ---- */
-async function loadStart() {
-  const box = $("start_body");
-  if (!box) return;
-  try {
-    const [d, projs] = await Promise.all([
-      // 与右栏「掌握度诊断」共用同一份 dashboard 响应（缓存命中时不发请求）
-      (typeof cachedDashboard === "function" ? cachedDashboard("") : api("/api/library/dashboard")),
-      api("/api/projects").catch(() => ({ projects: [] })),
-    ]);
-    const rv = d.review || {};
-    const my = d.mastery || {};
-    const recent = (projs.projects || []).slice(0, 3);
-    const genOn = genEnabled();   // 出题工坊开关（P4）：关闭时不展示生成向内容
-    /* v0.10.5：新手上手卡——尚无任何课题时展示（checklist 式空状态引导）；
-       本会话内点过「先逛逛」则不再显示；有课题后自然消失。
-       v0.15：两条路——① 导入题库刷题（默认路径）②（可选）用教材生成新题（仅在出题工坊开启时）。 */
-    let ob = "";
-    try {
-      if (!sessionStorage.getItem("medkit-ob-dismiss")) {
-        const projCount = (projs.projects || []).length;
-        if (projCount === 0) {
-          ob = `<div class="onboard" id="onboard_card">
-            <div class="ob-head">
-              <div><b>开始用 Med<b>Kit</b></b><span>${genOn
-                ? "两条路：导入你自己的题库刷题，或用教材让 AI 出新题"
-                : "导入你自己的题库，马上开始刷题"}</span></div>
-              <button class="mini-btn" onclick="obDismiss()">先逛逛</button>
-            </div>
-            <div class="ob-steps">
-              <div class="ob-step">
-                <span class="ob-n">1</span>
-                <div class="ob-t"><b>导入题库，马上刷题</b><span>md / txt / json / csv 都行——本地解析，不联网、不需要 API Key</span></div>
-                <button class="act ob-btn" onclick="showTab('study')">去导入</button>
-              </div>
-              ${genOn ? `<div class="ob-step">
-                <span class="ob-n">2</span>
-                <div class="ob-t"><b>（可选）用教材生成新题</b><span>上传教材 + 老师重点 → AI 出全新题库 / 押题卷 / 复习手册</span></div>
-                <button class="act ob-btn" onclick="showTab('bank')">去生成</button>
-              </div>` : ""}
-            </div>
-          </div>`;
-        }
-      }
-    } catch (e) { /* ignore */ }
-    box.innerHTML = `${ob}
-      <div class="start-stats">
-        <div class="start-stat"><b>${rv.due || 0}</b><span>今日待复习</span></div>
-        <div class="start-stat"><b>${rv.new || 0}</b><span>新卡待学</span></div>
-        <div class="start-stat"><b>${rv.done || 0}</b><span>已完成（总卡 ${rv.total || 0}）</span></div>
-        <div class="start-stat"><b>${my.mastered_rate || 0}%</b><span>掌握率（${my.total_knowledge || 0} 知识点）</span></div>
-      </div>
-      <button class="big-start" onclick="showTab('study')">去刷题 →</button>
-      <p class="hint" style="text-align:center;margin:var(--space-2) 0 var(--space-1)">导入你的题库开始刷题${genOn ? "；需要新题时再去「题库」生成" : ""}</p>
-      <div class="card" style="margin-top:14px">
-        <div class="cardh"><h2>考试计划</h2><span class="hint">支持多场：期末 / 考研 / 执业</span></div>
-        <div id="exam_box"></div>
-      </div>
-      ${genOn ? `<div class="card" style="margin-top:14px">
-        <div class="cardh"><h2>最近项目</h2><span class="hint">点击进入项目详情</span></div>
-        ${recent.length ? recent.map(p => `
-          <button class="start-proj" data-pid="${esc(p.pid)}" onclick="openRecentProject(this)">
-            <span class="proj-stage">${esc(p.stage_label)}</span>
-            <span class="proj-name">${esc(p.subject || "未命名课题")} · ${esc(p.exam || "未设考试")}${p.target ? " · " + esc(p.target) + " 题" : ""}</span>
-            ${p.running ? '<span class="spin"></span>' : ""}
-          </button>`).join("")
-        : `<div class="hint">还没有课题——去「题库」上传教材，AI 帮你生成题库</div>`}
-      </div>` : ""}`;
-    renderExamPlans();
-    /* 侧栏待办徽章：今日到期复习 → 刷题；进行中提问 → 学习中心（learn.js 实现） */
-    if (typeof setLearnNavBadge === "function") {
-      setLearnNavBadge((rv.due || 0) + ((d.tutor && d.tutor.in_progress) || 0),
-                       { due: rv.due || 0, tutor: (d.tutor && d.tutor.in_progress) || 0 });
-    }
-  } catch (e) {
-    box.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
-  }
-}
-/* v0.10.5：三步卡「先逛逛」——本会话不再显示（隐藏卡片 + sessionStorage 标记） */
-function obDismiss() {
-  const el = $("onboard_card");
-  if (el) el.style.display = "none";
-  try { sessionStorage.setItem("medkit-ob-dismiss", "1"); } catch (e) { /* ignore */ }
-}
-window.obDismiss = obDismiss;
 /* v0.10.5：三步卡/空状态「载入示例体验」——无 Key 先定向连接页，有 Key 直达示例试出题 */
 function loadSample() {
   if (!(state.cfg && state.cfg.api_key_masked)) {

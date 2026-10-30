@@ -1,7 +1,7 @@
 """IMP-05：薄弱组卷（WP-03）浏览器用例（Playwright，零 LLM）。
 
 覆盖「无来源/无科目」的稳定失败路径（以至少 1 条稳定断言为准）：
-- UI：概览「⚡ 一键刷薄弱组卷」在科目范围未选（#dash_subject 为空）时点击 →
+- UI：概览「按薄弱点组一套卷」在科目范围未选（#dash_subject 为空）时点击 →
   弹出 toast「请先在上方选择科目范围」（不触发任何生成请求）；
 - API：直接 POST /api/library/gap-paper 且 subject 为空 → 200 + ok:false + 明确 msg
   （当前没有可刷的薄弱知识点……），验证后端空输入是「软失败」，不会报 5xx 或空转 LLM。
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 
 def _open_overview(page, server_url: str):
-    # v0.19 IA 收敛：原「学习中心 → 概览」并入「今天」页，「⚡ 一键刷薄弱组卷」随迁至此
+    # v0.19 IA 收敛：原「学习中心 → 概览」并入「今天」页，「按薄弱点组一套卷」随迁至此
     page.goto(f"{server_url}/#start")
     page.wait_for_selector("#tab-start.show", timeout=15000)
 
@@ -40,7 +40,7 @@ def _cleanup(page, subject: str, tag: str) -> None:
 
 
 def test_gap_paper_no_subject_autopicks_first(page, server_url):
-    """科目范围未选（全部科目）时点「一键刷薄弱组卷」：
+    """科目范围未选（全部科目）时点「按薄弱点组一套卷」：
     A. 无任何可选科目 → 提示「暂无可选科目…」（新文案，不再报「科目范围」错）；
     B. 有科目 → 自动选中第一个科目并进入组卷流程（不再要求用户先手选）。"""
     _open_overview(page, server_url)

@@ -41,10 +41,22 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
+# 2026-10-28：README「已实现功能」按「用户能得到什么」压缩到 10 余条，技术细节与
+# 逐文件测试项数整体迁到这份展开版。**计数守卫的扫描面随之扩到这里**——否则数字
+# 换个文件就没人管了（本文件开头记的就是"陈旧到 1052/22 而无人报警"那类事故）。
+FEATURE_LEDGER = ROOT / "docs" / "features.md"
 
 
 def _readme_text() -> str:
     return README.read_text(encoding="utf-8")
+
+
+def _ledger_text() -> str:
+    assert FEATURE_LEDGER.is_file(), (
+        "README 的「已实现功能」指向 docs/features.md（技术细节与逐文件测试项数），"
+        "但该文件不存在——要么补上，要么把逐文件计数搬回 README 并同步本守卫。"
+    )
+    return FEATURE_LEDGER.read_text(encoding="utf-8")
 
 
 def _current_feature_section() -> str:
@@ -262,6 +274,17 @@ _PATH_EXEMPT = {
     "tests/browser/test_mistakes_batch.py": "错题本批量/迁移守卫，随聊天单界面精简删除（2026-10-16 第三轮）",
     "tests/browser/test_site_import.py": "站点数据导入守卫，随导入导出入口删除（2026-10-16 第三轮）",
     "tests/browser/test_study_subjects.py": "科目管理弹层守卫，随错题本精简删除（2026-10-16 第三轮）",
+    # ---- 2026-10-30：草案引用了**参赛版仓**（../medkit-web-contest）的文件 ----
+    # docs/superpowers/plans/*、docs/竞品设计分析与改进方案_2026-10-29.md、
+    # docs/全面优化改进清单_2026-10-29.md 写的是网页版（参赛版）的改造计划——
+    # 那里确实有这些文件，但它们在**兄弟仓**，不在本仓的扫描面里。
+    # 判据（"活跃文档引用的仓内路径必须真实存在"）对跨仓引用是误报；
+    # 不改写成 `../medkit-web-contest/...` 是因为绝对跨仓路径迁到 CI 就失效。
+    "docs/体验测试_2026-10-29.md": "在参赛版仓 medkit-web-contest/docs/（本仓只留桌面版文档）",
+    "tests/copy-tone.test.mjs": "在参赛版仓 medkit-web-contest/tests/（本仓对应守卫是 tests/test_copy_tone.py）",
+    "tests/design-tokens.test.mjs": "在参赛版仓 medkit-web-contest/tests/（本仓无等价文件）",
+    "tests/test_server.py": "在参赛版仓 medkit-web-contest/tests/（网页版账号服务测试）",
+    "tests/ai-channel.test.mjs": "在参赛版仓 medkit-web-contest/tests/（BYOK 通道守卫）",
 }
 
 
@@ -887,19 +910,26 @@ def test_readme_per_file_test_counts_match_reality():
 
     ## 判据（两侧都要，避免误伤与漏检）
 
-    - **正面**：README 里每处 `` `test_xxx` N `` 的 N == `pytest --collect-only`
+    - **正面**：文档里每处 `` `test_xxx` N `` 的 N == `pytest --collect-only`
       该文件的收集数；
-    - **反**：README 提到的 `test_xxx` 必须**真实存在**，否则是"文档写了测试没有"。
+    - **反**：文档提到的 `test_xxx` 必须**真实存在**，否则是"文档写了测试没有"。
+
+    ### 扫描面（2026-10-28 扩到 `docs/features.md`）
+
+    README 原来把 40 多条实现细节（含全部逐文件项数）当首屏内容，故这批数字长在 README 里。
+    2026-10-28 按「首屏只写用户能得到什么」把它压缩到 10 余条，细节整体迁到
+    `docs/features.md`。**数字跟着内容走**，所以扫描面同时读这两份文件：只读 README
+    会让这批计数从"有人管"变成"没人管"——那比原来更糟。
 
     扫描面用正则 `` `(test_[a-z0-9_]+)`\\s*\\*{0,2}(\\d+) `` —— 只认**全小写下划线**
     的文件名形态，避免把散文里偶然出现的「test 5」当成登记。
-    扫描面非空由本用例末段的自证钉住（`>= 20`，实测 39）。
+    扫描面非空由本用例末段的自证钉住（`>= 20`，实测 40 处）。
     """
-    text = _readme_text()
+    text = _readme_text() + "\n" + _ledger_text()
     pats = re.findall(r"`(test_[a-z0-9_]+)`\s*\*{0,2}(\d+)", text)
     assert len(pats) >= 20, (
-        f"README 里只扫到 {len(pats)} 处「`test_xxx` N」登记（下限 20）——"
-        "扫描面疑似被写窄或这条守卫的正则失效了。实测应为 39 处。"
+        f"README + docs/features.md 里只扫到 {len(pats)} 处「`test_xxx` N」登记（下限 20）——"
+        "扫描面疑似被写窄（漏读其中一份文件）或这条守卫的正则失效了。实测应为 40 处。"
     )
 
     def _file_collected(rel_path: str) -> int:
@@ -922,7 +952,7 @@ def test_readme_per_file_test_counts_match_reality():
         # 先按根目录找，找不到再全 tests/ 递归找（找多个即歧义，报错而非猜）。
         cands = sorted((ROOT / "tests").rglob(f"{mod}.py"))
         if not cands:
-            bad.append(f"README 提到 `{mod}` 但 tests/**/{mod}.py 不存在（文档写了测试没有）")
+            bad.append(f"文档提到 `{mod}` 但 tests/**/{mod}.py 不存在（文档写了测试没有）")
             continue
         if len(cands) > 1:
             bad.append(
@@ -933,11 +963,36 @@ def test_readme_per_file_test_counts_match_reality():
         rel = cands[0].relative_to(ROOT).as_posix()
         actual = _file_collected(rel)
         if int(n) != actual:
-            bad.append(f"{mod}：README 声称 {n}，实际 {actual}（{rel}）")
+            bad.append(f"{mod}：文档声称 {n}，实际 {actual}（{rel}）")
     assert not bad, (
-        "README 的文件级测试计数与真身不符：\n  " + "\n  ".join(bad)
+        "文件级测试计数与真身不符（README + docs/features.md）：\n  " + "\n  ".join(bad)
         + "\n真身：pytest --collect-only <file>。"
-        "新增/删除用例后请同步 README「已实现功能」段那处数字。"
+        "新增/删除用例后请同步 docs/features.md 里那处数字。"
+    )
+
+
+def test_feature_ledger_is_where_the_numbers_live():
+    """元守卫：`docs/features.md` 必须真的承载那批逐文件计数，且 README 必须指向它。
+
+    为什么单开一条：上一条守卫读「README + features.md」。若有人把 features.md 删了、
+    或把 README 里指向它的链接去掉（数字从此没人核对），上一条的扫描面会**悄悄缩水**
+    而仍可能过线（README 自己还留着几处）。这条独立钉住两件事：
+    ① 两处链接真的在；② 账本里的登记数量确实达到下限。
+    """
+    readme = _readme_text()
+    assert "docs/features.md" in readme, (
+        "README 不再指向 docs/features.md——技术细节与逐文件计数的落点必须写在文档里，"
+        "否则下一个人不知道那些数字去哪了。"
+    )
+    ledger = _ledger_text()
+    pats = re.findall(r"`(test_[a-z0-9_]+)`\s*\*{0,2}(\d+)", ledger)
+    assert len(pats) >= 20, (
+        f"docs/features.md 里只有 {len(pats)} 处「`test_xxx` N」登记（下限 20）——"
+        "逐文件计数被搬走了？搬去哪就请把上一条守卫的扫描面一起改过去。"
+    )
+    assert len(ledger) > 8000, (
+        f"docs/features.md 只有 {len(ledger)} 字符——功能清单被掏空了？"
+        "它是 README 的展开版，不是占位文件。"
     )
 
 

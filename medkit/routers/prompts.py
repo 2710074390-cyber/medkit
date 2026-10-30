@@ -17,6 +17,7 @@ PROMPT_ROLES = {"medgen.md": "MedGen · 出题", "medqc.md": "MedQC · 质检",
                "medfix.md": "MedFix · 修复", "medreview.md": "MedReview · 复习手册",
                "syllabus_extract.md": "SyllabusExtract · 官方大纲抽取",
                "mistake_agent.md": "MistakeAgent · 错题助手（只引用用户自己的 vault）",
+               "variant_gen.md": "VariantGen · 错点变式训练出题",
                "vault_handbook.md": "VaultHandbook · 薄弱点复习手册（按科目归纳你的错题库）"}
 
 

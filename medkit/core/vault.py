@@ -51,6 +51,8 @@ SECTION_TITLES: dict[str, str] = {
 FM_ORDER = ("id", "subject", "chapter", "topic", "tags", "status", "created",
             "source", "source_type", "source_year", "bloom", "miss_count",
             "last_tried", "due", "state", "ease", "interval", "reps", "lapses",
+            # 错点变式训练（v0.24.0）：迁移证据，不直接决定「已掌握」。
+            "variant_pass", "variant_fail", "variant_last",
             # FSRS 字段（v0.22.0 · ADR-004 重新接线）：切到 SM-2 时原样保留不参与计算。
             "stability", "difficulty", "fsrs_state", "fsrs_step", "last_review")
 
@@ -193,6 +195,17 @@ def write_record(rec: dict[str, Any], root: Optional[Path] = None) -> Path:
     return path
 
 
+def write_record_at(path: Path, rec: dict[str, Any]) -> Path:
+    """写到**指定文件**（原子）。用于「原错题已存在，只改字段」的场景。
+
+    为什么需要它：`write_record()` 会按题干/created 重新算文件名，
+    用户手改过文件名或题干时会把原文件写成另一份，等于悄悄复制出一条错题。
+    """
+    path = Path(path)
+    _write_atomic(path, serialize(rec))
+    return path
+
+
 def mirror_record(rec: dict[str, Any]) -> Optional[Path]:
     """把一条「库内错题记录」自动补写成 vault 的 md 文件。返回路径；空题干返回 None。
 
@@ -268,6 +281,13 @@ def serialize(rec: dict[str, Any]) -> str:
         _mc = 0
     if _mc > 1:
         raw["miss_count"] = _mc
+    # 错点变式训练（v0.24.0）：只记录迁移证据，不改变 status。
+    for _k in ("variant_pass", "variant_fail"):
+        _iv = _as_int(rec.get(_k))
+        if _iv:
+            raw[_k] = _iv
+    if rec.get("variant_last"):
+        raw["variant_last"] = str(rec.get("variant_last"))
     # 复习排程字段（SM-2，v2 新增）：`last_tried` 让薄弱项的「最近一次」= 上次复习时间而非入库时间；
     # `due/state/ease/interval/reps/lapses` 是「错题→复习→掌握」闭环的状态，评分时写回。
     for _k in ("last_tried", "due", "state"):
@@ -392,6 +412,9 @@ def to_record(fm: dict[str, Any], sec: dict[str, str]) -> dict[str, Any]:
         "source_year": str(fm.get("source_year") or ""),
         "bloom": str(fm.get("bloom") or ""),
         "miss_count": fm.get("miss_count") or 1,
+        "variant_pass": _as_int(fm.get("variant_pass")),
+        "variant_fail": _as_int(fm.get("variant_fail")),
+        "variant_last": str(fm.get("variant_last") or ""),
         "last_tried": str(fm.get("last_tried") or ""),
         "due": str(fm.get("due") or ""),
         "state": str(fm.get("state") or ""),

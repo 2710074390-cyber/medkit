@@ -76,7 +76,7 @@
   /* 分组标签：描述的是一组控件（如「产物开关」含 3 个复选框）或纯说明，
      不该用 <label for> 硬绑到其中某一个 input 上（那会让读屏念错名字）。 */
   .flabel{display:block;font-size:var(--fs-2);color:var(--text-2);margin:12px 0 4px}
-  input[type=text],input[type=password],input[type=number],select,textarea{
+  input[type=text],input[type=password],input[type=number],input[type=search],select,textarea{
     width:100%;background:var(--surface-2);border:1px solid var(--line-ctl);color:var(--text-1);
     border-radius:var(--radius-2);padding:8px 12px;font-size:var(--fs-3);font-family:inherit;outline:none;
     font-variant-numeric:tabular-nums;
@@ -312,7 +312,11 @@
     border-radius:var(--radius-2);background:none;color:var(--text-1);cursor:pointer;
     font-family:inherit;font-size:var(--fs-3);text-align:left}
   .palette-item:hover,.palette-item.on{background:var(--accent-soft);color:var(--accent-strong)}
+  .palette-item>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .palette-item .hint{flex-shrink:0;max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .palette-item .pk{margin-left:auto;color:var(--text-2);font-size:var(--fs-1)}
+  /* 分段标题（命令 / 题目）：两段混排时"Enter 是执行动作还是看题"必须一眼分得清 */
+  .palette-sec{padding:8px 12px 0;color:var(--text-2);font-size:var(--fs-1)}
   .palette-empty{padding:var(--space-6) var(--space-4);text-align:center;color:var(--text-2);font-size:var(--fs-2)}
   .ankifaces{display:flex;flex-direction:column;gap:12px;max-height:56vh;overflow:auto;padding-right:4px}
   .ankiface{border:1px solid var(--line-hair);border-radius:var(--radius-3);overflow:hidden;font-size:var(--fs-2)}
@@ -491,6 +495,48 @@
   .chat-tools{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
   .chat-input{display:flex;gap:8px;align-items:flex-end;margin-top:12px}
   .chat-input textarea{flex:1;resize:vertical;min-height:42px;max-height:160px}
+  /* 引用 chip：点一下打开原错题；长路径只显示文件名，title 里给全路径 */
+  .chat-cite{display:inline-block;max-width:100%;margin:2px 2px 0 0;padding:2px 8px;
+    border:1px solid var(--line-ctl);border-radius:var(--radius-2);background:var(--surface-2);
+    color:var(--text-1);font:inherit;font-size:var(--fs-1);line-height:1.6;cursor:pointer;
+    text-align:left;overflow-wrap:anywhere}
+  .chat-cite:hover{border-color:var(--accent);color:var(--accent-strong)}
+  .chat-cite:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .chat-context{display:inline-block;margin-bottom:2px;padding:2px 8px;border-left:3px solid var(--accent);
+    background:var(--accent-soft);border-radius:0 var(--radius-2) var(--radius-2) 0;
+    color:var(--text-1);max-width:100%;overflow-wrap:anywhere}
+  .variant-card{max-width:100%;width:100%;align-self:stretch;background:var(--surface-2);
+    border:1px solid var(--line-ctl)}
+  .variant-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+    font-weight:700;color:var(--text-1);margin-bottom:8px}
+  .variant-q{padding:8px 0;border-top:1px dashed var(--line-hair)}
+  .variant-q:first-of-type{border-top:0}
+  .variant-stem{font-size:var(--fs-2);line-height:1.7;color:var(--text-1);margin-bottom:8px}
+  .variant-opts{display:flex;flex-direction:column;gap:4px}
+  .variant-opt{padding:8px 12px;border:1px solid var(--line-ctl);border-radius:var(--radius-2);
+    background:var(--surface-1);color:var(--text-1);font:inherit;font-size:var(--fs-2);
+    text-align:left;cursor:pointer;line-height:1.55;overflow-wrap:anywhere}
+  .variant-opt:hover:not(:disabled){border-color:var(--accent);color:var(--accent-strong)}
+  .variant-opt:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .variant-opt.sel{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-strong);font-weight:600}
+  .variant-opt.ok{border-color:var(--good-line);background:var(--good-bg);color:var(--good);font-weight:600}
+  .variant-opt.bad{border-color:var(--bad-line);background:var(--bad-bg);color:var(--bad);font-weight:600}
+  .variant-opt.ans{border-color:var(--good-line);border-style:dashed;color:var(--good)}
+  .variant-opt:disabled{cursor:default;opacity:.92}
+  .variant-feedback{margin-top:8px;font-size:var(--fs-2);line-height:1.65;font-weight:600}
+  .variant-feedback.ok{color:var(--good)}
+  .variant-feedback.bad{color:var(--bad)}
+  .variant-analysis{margin-top:4px;font-size:var(--fs-2);line-height:1.7;color:var(--text-2)}
+  .variant-rats{margin-top:8px;font-size:var(--fs-1);color:var(--text-2)}
+  .variant-rats summary{cursor:pointer;color:var(--text-1)}
+  .variant-rats ul{margin:4px 0 0;padding-left:16px}
+  .variant-quote{margin-top:8px;padding:4px 8px;border-left:2px solid var(--accent);
+    background:var(--surface-1);font-size:var(--fs-1);color:var(--text-2);line-height:1.6}
+  .variant-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .variant-sum{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line-hair);
+    font-size:var(--fs-2);font-weight:600}
+  .variant-sum.ok{color:var(--good)}
+  .variant-sum.bad{color:var(--bad)}
   /* 薄弱项表：点一行 = 把这组错题筛出来（可点行给出视觉提示） */
   .vault-statrow{cursor:pointer}
   .vault-statrow:hover{background:var(--surface-2)}
@@ -547,21 +593,6 @@
   /* v0.8.1：开始仪表盘 + 我的/题库 tab 分区标题 */
   h2.subh{display:flex;align-items:center;gap:8px;margin:24px 0 8px;font-size:var(--fs-4);font-weight:600;line-height:var(--lh-tight);color:var(--text-1)}
   h2.subh .ic{width:16px;height:16px;color:var(--text-2)}
-  .start-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px}
-  .start-stat{background:var(--surface-1);border:1px solid var(--line-hair);border-radius:var(--radius-3);padding:16px 12px;text-align:center}
-  .start-stat b{display:block;font-size:var(--fs-4);font-weight:700;color:var(--text-1);line-height:1.2}
-  .start-stat span{display:block;margin-top:4px;font-size:var(--fs-2);color:var(--text-2)}
-  .big-start{display:block;width:min(360px,100%);margin:24px auto 0;padding:16px 24px;border:none;border-radius:var(--radius-4);
-    background:var(--accent);color:var(--on-accent);font-size:var(--fs-4);font-weight:700;font-family:inherit;cursor:pointer;
-    transition:transform var(--dur-1) var(--ease-out),filter var(--dur-1) var(--ease-out)}
-  .big-start:hover{filter:brightness(1.08)}
-  .big-start:active{transform:scale(.97)}
-  .start-proj{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;
-    border:1px solid var(--line-ctl);border-radius:var(--radius-3);padding:8px 12px;margin-top:8px;cursor:pointer;font-family:inherit}
-  .start-proj:hover{border-color:var(--accent-strong)}
-  .start-proj .proj-stage{font-size:var(--fs-1);color:var(--text-2);border:1px solid var(--line-hair);border-radius:var(--radius-1);padding:1px 8px;white-space:nowrap}
-  .start-proj .proj-name{flex:1;font-size:var(--fs-2);color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  @media (max-width:640px){.start-stats{grid-template-columns:repeat(2,1fr)}}
   #exam_date_input{border:1px solid var(--line-ctl);background:var(--surface-2);color:var(--text-1);
     border-radius:var(--radius-2);padding:4px 8px;font-size:var(--fs-2);font-family:inherit}
   /* v0.10.0：多场考试计划卡片 */
@@ -617,22 +648,6 @@
     .chip:active,.mini-btn:active,.themeBtn:active{background:var(--surface-3)}
   }
 
-  /* v0.10.5：新手三步上手卡（开始页空状态引导） */
-  .onboard{border:1px solid var(--line-hair);border-radius:var(--radius-4);background:var(--surface-2);padding:16px 16px;margin-bottom:16px}
-  .ob-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-  .ob-head b{font-size:var(--fs-3)}
-  .ob-head span{font-size:var(--fs-2);color:var(--text-2);margin-left:8px;flex:1;min-width:200px}
-  .ob-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
-  .ob-step{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line-hair);border-radius:var(--radius-3);padding:12px;background:var(--surface-1)}
-  .ob-step.done{border-color:var(--good-line)}
-  .ob-n{width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:var(--fs-2);font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
-  .ob-step.done .ob-n{background:var(--good)}
-  .ob-t{flex:1;min-width:0}
-  .ob-t b{display:block;font-size:var(--fs-2)}
-  .ob-t span{display:block;font-size:var(--fs-1);color:var(--text-2);margin-top:2px;line-height:1.55}
-  /* .act 提供外观/交互态，这里只收小一档以适配步骤卡 */
-  .ob-btn{margin-top:8px;padding:4px 12px;font-size:var(--fs-2);font-weight:500}
-  @media (max-width:720px){.ob-steps{grid-template-columns:1fr}}
 
   /* ---- 题库练习（bank 域） ---- */
   .bank-item{display:flex;align-items:center;gap:12px;padding:12px 12px;border:1px solid var(--line-hair);
@@ -793,3 +808,123 @@
 .bank-mis{color:var(--warn);font-style:normal;font-size:var(--fs-1)}
 .bank-quote{margin-top:var(--space-2);padding:var(--space-2) var(--space-3);border-left:3px solid var(--line-ctl);
   font-size:var(--fs-2);color:var(--text-2)}
+
+/* ============================================================
+   2026-10-29「书桌」：纸、墨、红笔 + 一屏一任务
+   —— 只消费 tokens.css 的角色；不新增颜色字面量。
+   —— 先覆盖全局外壳，再给「今天」页任务单。其他页沿用旧结构，
+      下一批再逐页换（见 docs/0.23.0-前端重设计_活人感_2026-10-29.md）。
+   ============================================================ */
+body{
+  background:var(--surface-0);
+  background-image:radial-gradient(1200px 600px at 80% -10%,var(--surface-1),transparent 70%);
+  background-attachment:fixed;
+}
+:focus-visible{outline:2px solid var(--seal);outline-offset:2px}
+
+/* 侧栏：日期行 + 书脊式选中（红笔书签，不再整块主色） */
+.sideDate{padding:var(--space-3) var(--space-2) var(--space-2);border-bottom:1px solid var(--line-hair)}
+.sideDate b{display:block;font-family:var(--font-read);font-size:var(--fs-3);font-weight:500;line-height:var(--lh-tight);color:var(--text-1)}
+.sideDate span{display:block;margin-top:2px;font-size:var(--fs-1);color:var(--text-2)}
+aside.side nav button.active{background:var(--accent-soft);color:var(--text-1);font-weight:600;
+  box-shadow:inset 3px 0 0 var(--seal)}
+aside.side nav button.active .ic{color:var(--seal)}
+
+/* 页面标题：衬线只给「读」的地方 */
+.ptitle{font-family:var(--font-read);font-weight:400;letter-spacing:-.01em}
+.ptitle .ic{color:var(--seal);opacity:.85}
+.psub{line-height:1.7}
+h2.subh,.card h2,.card h3,.cardh h2,.cardh h3{font-family:var(--font-read);font-weight:500}
+.card{border-radius:var(--radius-3)}
+
+/* 按钮：三档 × 五态；按下有 1px 下沉 */
+button.act{border-radius:var(--radius-1);font-size:var(--fs-2);padding:8px 16px;
+  transition:transform var(--dur-1) var(--ease-out),background-color var(--dur-1) var(--ease-out),
+             border-color var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out)}
+button.act:hover{filter:none;background:var(--accent-strong)}
+button.act.gray{background:var(--surface-1);border-color:var(--line-ctl);color:var(--text-1)}
+button.act.gray:hover{background:var(--surface-2);border-color:var(--accent)}
+button.act:active{transform:translateY(1px)}
+button.act.quiet{background:transparent;border-color:transparent;color:var(--text-2);
+  padding:8px 0;text-decoration:underline;text-underline-offset:3px;font-weight:500}
+button.act.quiet:hover{background:transparent;color:var(--text-1)}
+button.act:focus-visible,button.act.quiet:focus-visible{outline:2px solid var(--seal);outline-offset:2px}
+
+/* 今天页抬头：日期 / 问候 / 一句现状 */
+.today-head{padding-top:var(--space-6)}
+.today-date{font-family:var(--font-note);font-size:var(--fs-2);color:var(--text-2);letter-spacing:.02em}
+.today-hello{font-family:var(--font-read);font-size:2rem;font-weight:400;line-height:var(--lh-tight);
+  letter-spacing:-.01em;margin-top:var(--space-2);color:var(--text-1)}
+.today-sub{font-size:var(--fs-3);color:var(--text-2);line-height:var(--lh-read);margin-top:var(--space-2);max-width:56ch}
+.today-grid{margin-top:var(--space-5)}
+
+/* 纸面 + 任务单 */
+.sheet{background:var(--surface-1);border:1px solid var(--line-hair);border-radius:var(--radius-3);
+  box-shadow:var(--shadow-1);animation:sheetIn var(--dur-stamp) var(--ease-stamp) both}
+@keyframes sheetIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.sheet-h{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-4) var(--space-5);
+  border-bottom:1px solid var(--line-hair)}
+.sheet-h h2{font-family:var(--font-read);font-size:var(--fs-3);font-weight:500;letter-spacing:.01em}
+.sheet-h .hint{margin-left:auto;white-space:nowrap}
+.sheet-b{padding:var(--space-1) var(--space-5) var(--space-2)}
+.task{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-4) 0;
+  border-bottom:1px solid var(--line-hair);transition:background-color var(--dur-1) var(--ease-out)}
+.task:last-child{border-bottom:0}
+.task .circ{width:18px;height:18px;border:1px solid var(--line-ctl);border-radius:50%;flex:none}
+.task .tx{min-width:0}
+.task .tx b{display:block;font-size:var(--fs-3);font-weight:600;color:var(--text-1);letter-spacing:.01em}
+.task .tx span{display:block;margin-top:2px;font-size:var(--fs-2);color:var(--text-2)}
+.task .go{margin-left:auto;flex:none}
+.task:hover{background:var(--surface-2)}
+.task.first{background:var(--surface-2);border-radius:var(--radius-2);
+  margin:0 calc(-1 * var(--space-3));padding-left:var(--space-3);padding-right:var(--space-3)}
+.task.first .circ{border-color:var(--seal);box-shadow:inset 0 0 0 3px var(--seal-soft)}
+.task.first .tx b{color:var(--seal)}
+.sheet-f{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-5);
+  border-top:1px solid var(--line-hair)}
+.sheet-f .meta{font-size:var(--fs-2);color:var(--text-2)}
+.sheet-f .act.quiet{margin-left:auto}
+
+/* 首启：一张便签，不给四个 0 */
+.firstrun{padding:var(--space-5)}
+.firstrun h2{font-family:var(--font-read);font-size:var(--fs-4);font-weight:500;line-height:var(--lh-tight)}
+.firstrun p{margin-top:var(--space-2);font-size:var(--fs-3);color:var(--text-2);line-height:var(--lh-read);max-width:52ch}
+.firstrun .btns{margin-top:var(--space-5)}
+.firstrun .tiny{margin-top:var(--space-3);font-size:var(--fs-2);color:var(--text-2)}
+
+/* 今天页的旁注：红笔虚线 + 淡红底 */
+.today-note{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-3);
+  padding:var(--space-3) var(--space-4);border:1px dashed var(--seal-line);border-radius:var(--radius-2);
+  background:var(--seal-soft);font-size:var(--fs-2);color:var(--text-2);line-height:1.6}
+.today-note b{color:var(--text-1);font-weight:600}
+.today-note .act.quiet{margin-left:auto;white-space:nowrap;color:var(--seal)}
+
+/* 右栏：折叠成三张窄卡；默认只露一行摘要 */
+.today-side{display:flex;flex-direction:column;gap:var(--space-3)}
+.today-side .card{margin-top:0}
+.card.fold{padding:0;overflow:hidden}
+.fold>summary{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-4);
+  list-style:none;cursor:pointer;font-size:var(--fs-2);font-weight:600;color:var(--text-1)}
+.fold>summary::-webkit-details-marker{display:none}
+.fold>summary .hint{margin-left:auto;font-weight:400;white-space:nowrap;font-size:var(--fs-1)}
+.fold>summary::after{content:"+";margin-left:var(--space-2);color:var(--text-2);font-weight:400}
+.fold[open]>summary{border-bottom:1px solid var(--line-hair)}
+.fold[open]>summary::after{content:"−"}
+.fold .fold-body{padding:var(--space-4)}
+.fold .fold-body>.hint:first-child{margin-top:0}
+
+@media (prefers-reduced-motion:reduce){
+  .sheet{animation:none}
+  button.act{transition:none}
+}
+
+/* 侧栏条目铺满：否则选中底色只包住文字，像一颗药片 */
+aside.side nav button,a.navext{width:100%}
+
+/* 首启：右栏不占位；任务单限宽 720，像一张便签而不是空仪表盘 */
+.today-grid.is-firstrun{grid-template-columns:minmax(0,560px);justify-content:start}
+.today-grid.is-firstrun .today-side{display:none}
+
+/* 折叠卡的默认三角在 Edge 里仍会露出来，盖掉我们自己的 +/- */
+.fold>summary::marker{content:""}
+.fold>summary::-webkit-details-marker{display:none}

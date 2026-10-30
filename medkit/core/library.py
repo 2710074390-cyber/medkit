@@ -1718,3 +1718,219 @@ def _heal_recs(recs: list[dict[str, Any]], healed: int, flagged: int) -> tuple[i
             rec["data_broken"] = True
             flagged += 1
     return healed, flagged
+
+
+# ---------------------------------------------------------------- 网页版迁移包（2026-10-29）
+# 目标：把桌面端的题库 + 作答流水 + 错题（含「我的理解·我的疑问」）整体搬进
+# medkit-web-contest（纯前端网页版，数据在 localStorage）。导出口径见
+# 该仓库 `js/store.js` 的 `_norm` / `addMistake` / `recordAttempt` —— id 必须在
+# 这里算好（`科目名#序号`），网页端只落位、不重算，避免两边漂移。
+def _as_int(v: Any) -> int:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(v: Any) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _web_options(v: Any) -> list[str]:
+    out = v if isinstance(v, list) else []
+    return [str(x) for x in out]
+
+
+def _web_item(it: dict[str, Any]) -> dict[str, Any]:
+    """桌面端 bank_items 记录 → 网页版题目形状（store.js `_norm` 的输出字段）。"""
+    return {
+        "question": str(it.get("question") or ""),
+        "options": _web_options(it.get("options")),
+        "answer": str(it.get("answer") or "").upper(),
+        "type": str(it.get("type") or ""),
+        "subtopic": str(it.get("subtopic") or ""),
+        "topic": str(it.get("subtopic") or it.get("topic") or ""),
+        "bloom": str(it.get("bloom") or ""),
+        "analysis": str(it.get("analysis") or ""),
+        "source_type": str(it.get("source_type") or ""),
+        "source_year": str(it.get("source_year") or ""),
+        "option_rationales": it.get("option_rationales") or {},
+        "misconceptions": it.get("misconceptions") or {},
+        "source_quote": str(it.get("source_quote") or ""),
+        "difficulty": str(it.get("difficulty") or ""),
+    }
+
+
+def _iso_to_ms(iso: Optional[str]) -> int:
+    try:
+        from datetime import datetime as _dt
+        return int(_dt.fromisoformat(str(iso)).timestamp() * 1000)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _web_mistake(rec: dict[str, Any], item_web_id: str, bank_name: str) -> dict[str, Any]:
+    """vault/错题记录 → 网页版错题形状（store.js `addMistake` 的字段 + 保留自写文字）。
+
+    SM-2 三参数（interval/ease/reps）桌面端已迁 FSRS、无可映射的存量 ⇒ 回默认值，
+    但 **due 日期原样保留**（复习队列的时间顺序不丢）；`my_reasoning` /
+    `understanding` / `doubts` 是用户自己写的话，作为额外字段随身携带，绝不丢。
+    """
+    due = str(rec.get("due") or "")
+    due_ms = 0
+    if due:
+        try:
+            from datetime import datetime as _dt
+            due_ms = int(_dt.fromisoformat(due).timestamp() * 1000)
+        except (TypeError, ValueError):
+            due_ms = 0
+    learned = bool(rec.get("learned")) or str(rec.get("status") or "") == "learned"
+    return {
+        "id": "M:" + (item_web_id or str(rec.get("id") or "")),
+        "itemId": item_web_id,
+        "bid": bank_name,
+        "question": str(rec.get("question") or ""),
+        "options": _web_options(rec.get("options")),
+        "answer": str(rec.get("answer") or "").upper(),
+        "type": str(rec.get("type") or ""),
+        "subtopic": str(rec.get("topic") or rec.get("chapter") or ""),
+        "source_type": str(rec.get("source_type") or ""),
+        "source_year": str(rec.get("source_year") or ""),
+        "option_rationales": {},
+        "misconceptions": {},
+        "source_quote": "",
+        "analysis": str(rec.get("analysis") or ""),
+        "wrong": _as_int(rec.get("miss_count") or 1),
+        "due": due_ms or int(time.time() * 1000),
+        "interval": 0, "ease": 2.5, "reps": 0,
+        "learned": learned,
+        "created": _iso_to_ms(rec.get("created_at") or rec.get("created")),
+        # —— 用户自己写的字（网页版当前不展示，但先带上：丢字比多字段严重） ——
+        "my_reasoning": str(rec.get("my_reasoning") or ""),
+        "understanding": str(rec.get("understanding") or ""),
+        "doubts": str(rec.get("doubts") or ""),
+    }
+
+
+def export_web_package() -> dict[str, Any]:
+    """桌面端 → 网页版（medkit-web-contest）一键迁移包。
+
+    携带：全部题库（网页版字段形状）+ 作答流水（item_id 映射为网页版 `科目名#序号`，
+    对不上的剔除并如实计数）+ 错题（vault 真身，含 due 与用户自写文字）+
+    收藏 / 笔记 / 每日学习量（从作答流水合成，口径与网页版 `toISOString` 日期一致）。
+    **不携带**：服务商 Key（桌面端加密存放，网页版 BYOK 需重新填）、考试计划与
+    每日目标（存在桌面端浏览器 localStorage，后端读不到——迁移后手动重设一次）。
+    """
+    from .. import __version__
+    from . import bank as banklib  # 局部导入：避免 core 模块间循环依赖
+    from . import vault as _vault
+
+    banks_out: list[dict[str, Any]] = []
+    stars: dict[str, int] = {}
+    notes: dict[str, str] = {}
+    item_to_web: dict[str, tuple[str, str, str]] = {}   # 桌面 item_id -> (web_id, bank_name, subtopic)
+
+    for bank in banklib.list_banks():
+        bid = str(bank.get("id") or "")
+        name = str(bank.get("name") or bid)
+        items = banklib.list_items(bid)
+        web_items: list[dict[str, Any]] = []
+        for idx, it in enumerate(items):
+            web_id = f"{name}#{idx}"
+            web_items.append(_web_item(it))
+            item_to_web[str(it.get("id") or "")] = (web_id, name, str(it.get("subtopic") or ""))
+            if it.get("starred"):
+                stars[web_id] = 1
+            if str(it.get("note") or "").strip():
+                notes[web_id] = str(it.get("note"))
+        banks_out.append({"name": name, "subject": str(bank.get("subject") or ""),
+                          "term": str(bank.get("term") or ""), "items": web_items})
+
+    # —— 作答流水：映射到网页版 id；对不上的（题目已删/重解析过）剔除并计数 ——
+    attempts_out: list[dict[str, Any]] = []
+    dropped = 0
+    for at in banklib.list_attempts():
+        ref = item_to_web.get(str(at.get("item_id") or ""))
+        if not ref:
+            dropped += 1
+            continue
+        web_id, bank_name, subtopic = ref
+        attempts_out.append({
+            "id": web_id, "bid": bank_name, "sub": subtopic,
+            "correct": bool(at.get("correct")),
+            "conf": _as_float(at.get("confidence") or 0),
+            "secs": 0,
+            "ts": _iso_to_ms(at.get("occurred_at")),
+            "source": "bank",
+        })
+
+    # —— 每日学习量：与网页版口径一致（UTC 日期键，toISOString().slice(0,10)） ——
+    daily: dict[str, dict[str, int]] = {}
+    for at in attempts_out:
+        ts = at.get("ts") or 0
+        if not ts:
+            continue
+        day = time.strftime("%Y-%m-%d", time.gmtime(ts / 1000))
+        d = daily.setdefault(day, {"count": 0, "secs": 0})
+        d["count"] += 1
+
+    # —— 错题：vault md 是真身（含 due / understanding / doubts）；库里找不到的兜底 mistakes 表 ——
+    vault_recs: dict[str, dict[str, Any]] = {}
+    try:
+        for p in _vault.iter_mistake_files():
+            rec = _vault.read_record(p)
+            if rec.get("id"):
+                vault_recs[str(rec["id"])] = rec
+    except Exception:      # noqa: BLE001 - vault 缺失/损坏时迁移包仍要能出，错题降级为空并计数
+        vault_recs = {}
+    mistakes_out: list[dict[str, Any]] = []
+    unlinked = 0
+    seen: set[str] = set()
+
+    def _emit(rec: dict[str, Any]) -> None:
+        nonlocal unlinked
+        ref = item_to_web.get(str((rec.get("source_ref") or {}).get("question_id") or ""))
+        if ref is None and rec.get("source") == "bank":
+            unlinked += 1          # 原题已不在任何题库里：错题内容仍带走，但不再挂到题库
+        mistakes_out.append(_web_mistake(rec, ref[0] if ref else "", ref[1] if ref else str(rec.get("subject") or "")))
+
+    for rec in list_mistakes():    # mistakes 表为主：带 source_ref / my_reasoning
+        mid = str(rec.get("id") or "")
+        seen.add(mid)
+        vrec = vault_recs.get(mid) or {}
+        # vault 是真身：手写复盘 / 疑问 / 到期 / 状态以 md 为准（表里可能缺）。
+        # 注意 md 的「我的理解」段落解析后键是 my_reasoning（不是 understanding）——
+        # 它要盖过表里的录入快照（用户后来在错题本里手写的才是最新的）。
+        for k in ("my_reasoning", "understanding", "doubts", "due", "status"):
+            if vrec.get(k) not in (None, ""):
+                rec[k] = vrec[k]
+        _emit(rec)
+    for mid, rec in vault_recs.items():   # 只在 vault 里的（归档 / 未入表）兜底
+        if mid not in seen:
+            _emit(rec)
+
+    return {
+        "app": "medkit-web",
+        "kind": "migration",
+        "exported_at": _now(),
+        "from": f"medkit-desktop {__version__}",
+        "banks": banks_out,
+        "data": {
+            "mk_web_attempts": attempts_out,
+            "mk_web_mistakes": mistakes_out,
+            "mk_web_stars": stars,
+            "mk_web_notes": notes,
+            "mk_web_daily": daily,
+            "mk_web_exams": [],    # 桌面端考试计划在浏览器 localStorage，后端读不到 ⇒ 网页版重设
+        },
+        "stats": {
+            "banks": len(banks_out),
+            "items": sum(len(b["items"]) for b in banks_out),
+            "attempts": len(attempts_out), "attempts_dropped": dropped,
+            "mistakes": len(mistakes_out), "mistakes_unlinked": unlinked,
+            "stars": len(stars), "notes": len(notes), "daily_days": len(daily),
+        },
+    }

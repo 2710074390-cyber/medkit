@@ -1,8 +1,9 @@
-/* exported _bankState, bankCreateOpen, bankDelete, bankExportPaper, bankGoalLoad, bankGoalRefresh,
-   bankGoalSave, bankImportPick, bankItemCancel, bankItemDel, bankItemEdit, bankItemNew, bankItemSave,
+/* exported _bankState, bankBackfillTopic, bankCreateOpen, bankDelete, bankExportPaper,
+   bankFilterApply, bankGoalLoad, bankGoalRefresh, bankGoalSave, bankImportPick, bankInsights,
+   bankItemCancel, bankItemDel, bankItemEdit, bankItemFilterApply, bankItemNew, bankItemSave,
    bankItemStar, bankManageClose, bankManageOpen, bankManageRender, bankPasteClose, bankPasteOpen,
-   bankPreviewPaste, bankRename, bankReparse, bankRetryStart, bankRowHTML, bankStartDrill, bankStats,
-   loadBankHome */
+   bankPreviewPaste, bankEdit, bankReparse, bankRetryStart, bankRowHTML, bankStartDrill,
+   bankStats, loadBankHome */
 /* ---- 题库域（bank）：我的题库列表 / 新建 / 重命名 / 删除 / 进入练习 ----
  *
  * 定位：**管理与练习已有题**（零 LLM）。与「题库」页签（出题工坊，烧 LLM token 生成新题）是两件事。
@@ -33,16 +34,39 @@ async function loadBankHome(keepDrill) {
     const total = _bankState.banks.reduce((n, b) => n + (b.items || 0), 0);
     const meta = $("bank_meta");
     if (meta) meta.textContent = `${_bankState.banks.length} 个题库 · ${total} 道题`;
-    box.innerHTML = _bankState.banks.length
-      ? _bankState.banks.map(bankRowHTML).join("")
-      : `<div class="empty">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-doc"></use></svg>
-          <div class="sub">还没有题库<br>点上方「导入题库文件」或「粘贴文本导入」，把你自备的 md 题库收进来</div>
-        </div>`;
+    _bankListRender();
   } catch (e) {
     box.innerHTML = `<div class="hint">题库加载失败：${esc(e.message)}</div>`;
   }
 }
+
+/* ---- 题库搜索（本地过滤） ----
+ * 题库到几千题时，翻列表找某一本不现实；题干/考点搜索在「题目管理」里（同样是本地过滤）。
+ * 过滤只作用于已加载的列表，不新增请求——题库元数据本来就一次全量返回。
+ */
+function _bankListRender() {
+  const box = $("bank_list");
+  if (!box) return;
+  const all = _bankState.banks || [];
+  if (!all.length) {
+    box.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-doc"></use></svg>
+      <div class="sub">还没有题库<br>点上方「导入题库文件」或「粘贴文本导入」，把你准备的 md 题库收进来</div>
+    </div>`;
+    return;
+  }
+  const q = (($("bank_filter") || {}).value || "").trim().toLowerCase();
+  const list = q
+    ? all.filter(b => `${b.name || ""} ${b.subject || ""} ${b.term || ""} ${b.source || ""}`
+        .toLowerCase().includes(q))
+    : all;
+  box.innerHTML = list.length
+    ? list.map(bankRowHTML).join("")
+    : `<div class="hint">没有匹配「${esc(q)}」的题库。</div>`;
+}
+
+function bankFilterApply() { _bankListRender(); }
+window.bankFilterApply = bankFilterApply;
 
 /* ---- 让「题库」相关界面全部跟上（修「点了要刷新浏览器才生效」） ----
  *
@@ -64,7 +88,9 @@ function bankRowHTML(b) {
   return `<div class="bank-item${on ? " on" : ""}">
     <div class="bank-item-main">
       <div class="bank-item-name">${esc(b.name || "未命名题库")}
-        <span class="tag">${esc(b.subject || "未分类")}</span>
+        ${b.subject ? `<span class="tag">${esc(b.subject)}</span>`
+    : `<span class="tag" title="可在「更多 → 编辑信息」里补上">科目未填</span>`}
+        ${b.term ? `<span class="tag">${esc(b.term)}</span>` : ""}
         ${b.source ? `<span class="tag">${esc(b.source)}</span>` : ""}
       </div>
       <div class="bank-item-meta">
@@ -82,9 +108,10 @@ function bankRowHTML(b) {
         <summary class="mini-btn" title="更多操作" aria-label="更多操作">⋯</summary>
         <div class="bank-more-menu">
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankStats(this)">统计</button>
+          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankInsights(this)">解析覆盖</button>
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankExportPaper(this)">导出押题卷</button>
           ${b.has_source ? `<button class="mini-btn" data-id="${esc(b.id)}" onclick="bankReparse(this)" title="用保存的导入原文重新解析（解析器升级后可修旧数据）">重新解析${b.parser_stale ? " ⟳" : ""}</button>` : ""}
-          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankRename(this)">重命名</button>
+          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankEdit(this)">编辑信息</button>
           <button class="mini-btn danger" data-id="${esc(b.id)}" onclick="bankDelete(this)">删除</button>
         </div>
       </details>
@@ -106,19 +133,49 @@ function bankCreateOpen() {
   });
 }
 
-async function bankRename(btn) {
+/* ---- 编辑题库信息（名称 / 科目 / 学期） ----
+ *
+ * 为什么不是一个「重命名」输入框：同步来的题库科目/学期是**推断**的（上游目录与索引），
+ * 推断不出来时留空是对的——但用户得能自己补。只改名称会逼他为了改科目去改文件名。
+ * `term` 用 datalist 给常见取值，同时允许手填（有人按「大三上」而不是「大四上」记）。
+ */
+async function bankEdit(btn) {
   const bid = btn && btn.dataset ? btn.dataset.id : btn;
   const cur = (_bankState.banks.find(b => String(b.id) === String(bid)) || {});
-  askModal("重命名题库", "新名称", cur.name || "", async (name) => {
-    try {
-      await api(`/api/bank/banks/${encodeURIComponent(bid)}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, subject: cur.subject || "", source: cur.source || "" }),
-      });
-      toast("已重命名");
-      refreshBankSurfaces();
-    } catch (e) { toast(e.message, false); }
-  }, cur.name || "");
+  const val = (k) => esc(cur[k] || "");
+  confirmModal("编辑题库信息",
+    `<label for="be_name">名称</label>
+     <input type="text" id="be_name" maxlength="60" value="${val("name")}" style="width:100%;margin-bottom:var(--space-2)">
+     <label for="be_subject">科目</label>
+     <input type="text" id="be_subject" maxlength="40" value="${val("subject")}"
+            placeholder="如 内科学" style="width:100%;margin-bottom:var(--space-2)">
+     <label for="be_term">学期</label>
+     <input type="text" id="be_term" maxlength="12" value="${val("term")}" list="be_term_opts"
+            placeholder="如 大四上" style="width:100%">
+     <datalist id="be_term_opts">
+       <option value="大三上"></option><option value="大三下"></option>
+       <option value="大四上"></option><option value="大四下"></option>
+     </datalist>`,
+    "保存", async () => {
+      // 名称清空不阻断保存：`confirmModal` 在回调前已关闭浮层，此时再报错用户看不到；
+      // 退回原名比「静默丢掉一次编辑」更可控（科目/学期照常保存）。
+      const name = (($("be_name") || {}).value || "").trim() || cur.name || "";
+      try {
+        await api(`/api/bank/banks/${encodeURIComponent(bid)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            subject: (($("be_subject") || {}).value || "").trim(),
+            term: (($("be_term") || {}).value || "").trim(),
+            source: cur.source || "",
+          }),
+        });
+        toast("已保存");
+        refreshBankSurfaces();
+      } catch (e) { toast(e.message, false); }
+    }, false);
+  const nameEl = $("be_name");
+  if (nameEl) { nameEl.focus(); nameEl.select(); }
 }
 
 /* ---- 重新解析（解析器改进后修旧数据；需要导入时保存了原文） ---- */
@@ -190,6 +247,73 @@ async function bankStats(btn) {
   } catch (e) { toast(e.message, false); }
 }
 
+/* ---- 解析覆盖（知识点身份 + 逐选项解析 + 原文引句 + 难度）----
+   为什么不并进「统计」：统计讲的是「做对没有」，覆盖率讲的是「这题有没有得讲」。
+   合成一个百分比会把「有理由但没引句」掩掉，所以逐字段独立显示。 */
+function _covBar(n, total) {
+  const p = total ? Math.round((n / total) * 100) : 0;
+  return `<div style="display:flex;gap:8px;align-items:center;padding:4px 0">
+    <span style="flex:1;font-size:var(--fs-2)">${n} / ${total}</span>
+    <div class="stack-bar" style="width:110px"><i class="ok" style="width:${p}%"></i></div>
+    <b style="font-size:var(--fs-2);min-width:42px;text-align:right">${p}%</b>
+  </div>`;
+}
+
+async function bankInsights(btn) {
+  const bid = btn && btn.dataset ? btn.dataset.id : btn;
+  try {
+    const r = await api(`/api/bank/insights/coverage?bank_id=${encodeURIComponent(bid)}`);
+    const t = r.total || {};
+    const total = Number(t.items || 0);
+    const body = `<p class="hint" style="margin:0 0 8px">这一页回答「这些题有没有得讲」。四个字段各自独立，不合成一个百分比。</p>
+      <div style="font-size:var(--fs-2);font-weight:600;margin:6px 0 2px">知识点身份</div>
+      ${_covBar(Number(t.topic || 0), total)}
+      <div style="font-size:var(--fs-2);font-weight:600;margin:10px 0 2px">逐选项理由</div>
+      ${_covBar(Number(t.rationales || 0), total)}
+      <div style="font-size:var(--fs-2);font-weight:600;margin:10px 0 2px">误解标签</div>
+      ${_covBar(Number(t.misconceptions || 0), total)}
+      <div style="font-size:var(--fs-2);font-weight:600;margin:10px 0 2px">原文引句</div>
+      ${_covBar(Number(t.source_quote || 0), total)}
+      <div style="font-size:var(--fs-2);font-weight:600;margin:10px 0 2px">难度标注</div>
+      ${_covBar(Number(t.difficulty || 0), total)}
+      <p class="hint" style="margin-top:10px">缺知识点身份会让掌握度停在科目粒度；缺逐选项理由时，判分只给整题解析。</p>
+      <div class="btns" style="margin-top:10px">
+        <button class="act gray" data-id="${esc(bid)}" onclick="bankBackfillTopic(this)">补知识点（先预演）</button>
+      </div>`;
+    confirmModal("解析覆盖", body, "关闭", () => {}, false);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function bankBackfillTopic(btn) {
+  const bid = btn && btn.dataset ? btn.dataset.id : btn;
+  try {
+    const r = await api("/api/bank/insights/backfill-topic", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bank_id: bid, dry_run: true }) });
+    const src = Object.entries(r.by_source || {}).map(([k, v]) => `${k} ${v}`).join(" · ") || "—";
+    const sample = (r.samples || []).slice(0, 5).map(s =>
+      `<div class="hint" style="font-size:var(--fs-1)">${esc(s.question)} → <b>${esc(s.topic)}</b>（${esc(s.source)}）</div>`).join("");
+    const body = `<p class="hint" style="margin:0 0 6px">这是**预演**，还没有改任何题。确认后再写库。</p>
+      <div class="dash-metrics">
+        <div class="dash-metric"><b>${r.scanned}</b><span>扫描</span></div>
+        <div class="dash-metric"><b>${r.filled}</b><span>可补</span></div>
+        <div class="dash-metric"><b>${r.skipped}</b><span>补不了</span></div>
+      </div>
+      <p class="hint" style="margin:8px 0 4px">来源：${esc(src)}</p>${sample}
+      <p class="hint" style="margin-top:8px">只补空值，不改已有考点；写库后会自动跑一次知识点映射（精确匹配自动确认，相似项留给你点）。</p>`;
+    confirmModal("补知识点 · 预演", body, r.filled ? "写入" : "关闭", async () => {
+      if (!r.filled) return;
+      try {
+        const w = await api("/api/bank/insights/backfill-topic", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bank_id: bid, dry_run: false }) });
+        toast(`已补 ${w.filled} 条考点${w.mapping ? `，映射 ${w.mapping.matched} 条` : ""}`);
+        refreshBankSurfaces();
+      } catch (e) { toast("写入失败：" + e.message, false); }
+    }, false);
+  } catch (e) { toast(e.message, false); }
+}
+
 /* ---- 题目管理（F2 编辑 / F9 收藏·笔记）----
    导入的题库常有解析偏差（答案错位、选项切分不对）。不给编辑通道，用户只能删库重导——
    而重导要重新解析整份 md，代价远大于改一个字段。故与导入**共用同一条归一通道**
@@ -200,6 +324,7 @@ function bankManageOpen(btn) {
   _bankState.current = String(bid);
   const card = $("bank_manage_card");
   const list = $("bank_item_list");
+  const f = $("bank_item_filter"); if (f) f.value = "";
   if (card) card.style.display = "";
   if (list) list.innerHTML = `<div class="hint"><span class="spin"></span>加载题目…</div>`;
   const dc = $("bank_drill_card"); if (dc) dc.style.display = "none";
@@ -220,7 +345,13 @@ function bankManageRender() {
   const list = $("bank_item_list");
   const meta = $("bank_manage_meta");
   const bank = (_bankState.banks || []).find(b => String(b.id) === String(m.bid)) || {};
-  if (meta) meta.textContent = `${bank.name || ""} · ${m.items.length} 道`;
+  const q = (($("bank_item_filter") || {}).value || "").trim().toLowerCase();
+  const items = q
+    ? m.items.filter(it => `${it.question || ""} ${(it.options || []).join(" ")} ${it.subtopic || ""} ${it.analysis || ""} ${it.type || ""} ${it.answer || ""}`.toLowerCase().includes(q))
+    : m.items;
+  if (meta) meta.textContent = q
+    ? `${bank.name || ""} · ${items.length}/${m.items.length} 道`
+    : `${bank.name || ""} · ${m.items.length} 道`;
   if (!list) return;
   if (!m.items.length) {
     list.innerHTML = `<div class="empty">
@@ -228,9 +359,13 @@ function bankManageRender() {
       <div class="sub">这个题库还没有题目<br>点上方「手动加题」，或回列表用「导入题库文件」</div></div>`;
     return;
   }
+  if (!items.length) {
+    list.innerHTML = `<div class="hint">没有匹配「${esc(q)}」的题目。</div>`;
+    return;
+  }
   list.innerHTML = `<table class="bank-preview-table">
     <thead><tr><th>★</th><th>题干</th><th>题型</th><th>答案</th><th>笔记</th><th></th></tr></thead>
-    <tbody>${m.items.map(it => `<tr>
+    <tbody>${items.map(it => `<tr>
       <td><button class="mini-btn" data-id="${esc(it.id)}" onclick="bankItemStar(this)"
             title="收藏（练习时可用「只练收藏」）">${it.starred ? "★" : "☆"}</button></td>
       <td>${esc((it.question || "").slice(0, 70))}</td>
@@ -243,6 +378,9 @@ function bankManageRender() {
       </td>
     </tr>`).join("")}</tbody></table>`;
 }
+
+function bankItemFilterApply() { bankManageRender(); }
+window.bankItemFilterApply = bankItemFilterApply;
 
 function _bankItemFormHTML(it) {
   it = it || {};
@@ -417,7 +555,7 @@ function bankStartDrill(btn) {
 }
 window.loadBankHome = loadBankHome;
 window.bankCreateOpen = bankCreateOpen;
-window.bankRename = bankRename;
+window.bankEdit = bankEdit;
 window.bankDelete = bankDelete;
 window.bankReparse = bankReparse;
 window.bankStats = bankStats;
@@ -478,7 +616,7 @@ async function loadDoEntry() {
       const cur = sel.value || _bankState.current || "";
       sel.innerHTML = '<option value="">— 选择题库 —</option>'
         + _bankState.banks.map(b =>
-            `<option value="${esc(b.id)}">${esc(b.name)}（${b.items || 0} 题）</option>`).join("");
+            `<option value="${esc(b.id)}">${esc(b.name)}${b.term ? " · " + esc(b.term) : ""}（${b.items || 0} 题）</option>`).join("");
       if (cur && _bankState.banks.some(b => String(b.id) === String(cur))) sel.value = cur;
       _bankState.current = sel.value;
     }
@@ -508,7 +646,7 @@ function _doQuickRender() {
       <button class="do-quick-card" data-id="${esc(b.id)}" onclick="doStartFrom(this)"
               title="开始刷「${esc(b.name)}」">
         <b>${esc(b.name)}</b>
-        <span class="hint">${b.items || 0} 题 · 已练 ${b.attempted || 0} · 掌握 ${_pct(b.mastery)}%</span>
+        <span class="hint">${b.term ? esc(b.term) + " · " : ""}${b.items || 0} 题 · 已练 ${b.attempted || 0} · 掌握 ${_pct(b.mastery)}%</span>
       </button>`).join("") + `</div>`;
 }
 

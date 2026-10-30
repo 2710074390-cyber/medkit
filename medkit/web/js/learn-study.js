@@ -117,24 +117,32 @@ async function loadDashboard(keepSubject) {
 }
 function renderDashboard(d) {
   const m = d.mastery || {}, loop = d.loop || {};
-  $("dash_scope").textContent = `${d.subject_label} · 闭环 ${loop.mastered || 0}/${m.total_knowledge || 0} 已掌握`;
+  // 没有知识点时不报 0/0：折叠卡摘要是「第一眼」，不该是判决。
+  $("dash_scope").textContent = m.total_knowledge
+    ? `${d.subject_label} · 已掌握 ${loop.mastered || 0}/${m.total_knowledge}`
+    : "练几道题再看";
   updateLearnBadges();
   // 闭环流转：错题沉淀 → 已掌握
   const stages = [
-    ["错题沉淀", loop.mistakes || 0, ""], ["已掌握", loop.mastered || 0, "mastered"],
+    ["错题", loop.mistakes || 0, ""], ["已掌握", loop.mastered || 0, "mastered"],
   ];
   const dBanner = (d.corrupted || 0) > 0
     ? `<div class="databanner"><span>⚠ 检测到 <b>${d.corrupted}</b> 条历史记录存在编码损坏（显示为 ????，多为早期导入所致）</span>
-       <button class="mini-btn primary" onclick="healLibrary()">一键修复（先备份）</button>
+       <button class="mini-btn primary" onclick="healLibrary()">修复（先备份）</button>
        <span class="hint">可逆的自动还原；不可逆的仅做标记，不删除数据</span></div>`
     : "";
   // NX-03（R-2）：契约告警可见化——最近一轮生成有输出未通过契约校验
   const cw = d.contract_warnings || {};
   const cwBanner = (cw.total || 0) > 0
-    ? `<div class="databanner"><span>⚠ 最近一轮生成有 <b>${cw.total}</b> 条输出未通过契约校验`
+    ? `<div class="databanner"><span>⚠ 最近一轮生成有 <b>${cw.total}</b> 条输出未通过字段校验`
       + `（${Object.entries(cw.by_subject || {}).map(([k, v]) => `${esc(k)} ${v}`).join("、") || "未分类"}）`
-      + `——不影响最终门禁兜底，详见项目「质检报告」与「人工复核清单」</span></div>`
+      + `——不影响最终检查，详见项目「质检报告」与「人工复核清单」</span></div>`
     : "";
+  if (!m.total_knowledge) {
+    $("dash_loop").innerHTML = dBanner + cwBanner
+      + '<div class="hint">还没有可统计的练习。做几道题，这里会按知识点汇总。</div>';
+    return;
+  }
   $("dash_loop").innerHTML = dBanner + cwBanner + '<div class="loop-flow">' + stages.map(([k, v, cls], i) =>
       (i ? '<div class="loop-arrow">→</div>' : "") +
       `<div class="loop-node ${cls}"><b>${v}</b><span>${k}</span></div>`).join("") +
@@ -172,7 +180,11 @@ function appliedSubject() {
 /* 概览下半区：薄弱点诊断 + 待学优先级（错题列表已由「错题本」视图统一承载） */
 function renderLibrary(my, recm) {
   const stats = (my && my.stats) || {};
-  $("learn_stats").innerHTML = `共 <b>${stats.total_knowledge || 0}</b> 个知识点 · 薄弱 <b style="color:var(--bad)">${stats.weak || 0}</b> · 错题 <b>${stats.total_mistakes || 0}</b>`;
+  const bits = [];
+  if (stats.total_knowledge) bits.push(`共 ${stats.total_knowledge} 个知识点`);
+  if (stats.weak) bits.push(`薄弱 ${stats.weak}`);
+  if (stats.total_mistakes) bits.push(`错题 ${stats.total_mistakes}`);
+  $("learn_stats").textContent = bits.length ? bits.join(" · ") : "练几道题再看";
   const kps = (my && my.knowledge) || [];
   $("learn_kp").innerHTML = kps.length
       ? renderMasteryDashboard(kps, stats)

@@ -90,7 +90,8 @@ PAPER_ITEM = {
 
 
 def _blob(obj: Any) -> dict[str, Any]:
-    raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    """JSON 对象 → blob 响应；**`str` 按原文编码**（markdown 索引不是 JSON）。"""
+    raw = obj.encode("utf-8") if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False).encode("utf-8")
     return {"content": base64.b64encode(raw).decode("ascii"), "size": len(raw),
             "encoding": "base64", "sha": "x"}
 
@@ -235,6 +236,126 @@ def test_subject_inference_from_sibling_markdown():
     assert bs._clean_subject("ALL_questions_FIXED") == "ALL_questions_FIXED"
     assert bs._subject_from_paths("最终产物/batch099/ALL_questions_FIXED.json",
                                   ["最终产物/batch099/ALL_questions_FIXED.json"]) == ""
+
+
+# ---------------------------------------------------------------- 学期与科目兜底
+#
+# 用户反馈（2026-10-28）：「有的题库显示没有科目，题库需要显示学期」。
+# 两件事都源于同步时丢了上游已有的信息，而不是数据本身缺失：
+#   · 科目：`_subject_from_paths` 只认同目录带「题库/押题卷」的 md；batch035/038 没有 ⇒ 空；
+#   · 学期：仓顶层用 `大三下/`、`大四上/` 分目录，同步时根本没看。
+# 下面三条各自钉住一个分支，且都**注入坏样本会红**（改成恒返回常量即失败）。
+def test_term_inferred_from_semester_folder():
+    paths = [
+        "最终产物/batch040/ALL_questions_FIXED.json",
+        "最终产物/batch040/耳鼻咽喉头颈外科学·期末题库.md",
+        "大四上/题库/耳鼻咽喉头颈外科学·期末题库.pdf",
+        "大三下/题库/内科学题库_364题.pdf",
+    ]
+    idx = bs._term_index(paths)
+    stems = bs._sibling_stems(paths[0], paths)
+    assert stems == ["耳鼻咽喉头颈外科学·期末题库"]
+    assert bs._term_of("耳鼻咽喉头颈外科学", stems, idx) == "大四上"
+
+
+def test_term_left_empty_when_same_file_name_exists_in_two_semesters():
+    """同名文件跨两个学期 ⇒ **有歧义就不猜**（猜错比留空更糟：用户会按错的学期复习）。"""
+    paths = [
+        "最终产物/batch099/ALL_questions_FIXED.json",
+        "最终产物/batch099/内科教学题库.md",
+        "大三下/题库/内科教学题库.pdf",
+        "大四上/题库/内科教学题库.pdf",
+    ]
+    idx = bs._term_index(paths)
+    assert bs._term_of("内科学", bs._sibling_stems(paths[0], paths), idx) == ""
+
+
+def test_subject_and_term_fall_back_to_moc_index(monkeypatch):
+    """同目录没有「题库」md 时（batch038），靠 `_MOC` 表格拿到科目，再据此定学期。"""
+    moc = ("# 题库与真题 · 图谱\n\n"
+           "| 批次 | 科目 | 题库 |\n|---|---|---|\n"
+           "| batch038 | 传染病学 | [[最终产物/batch038/ALL_questions_FIXED\\|传染病学题库]] |\n")
+    remote = FakeRemote(
+        {
+            "最终产物/batch038/ALL_questions_FIXED.json": "s38",
+            "最终产物/batch038/ALL_questions_FIXED.md": "m38",
+            "_MOC/题库与真题.md": "moc",
+            "大四上/题库/传染病学教学题库.pdf": "p38",
+        },
+        {"s38": [V2_ITEM], "m38": "# 题库\n", "moc": moc, "p38": "pdf"},
+    )
+    monkeypatch.setattr(bs, "_http_json", remote)
+    src = {s["path"]: s for s in bs.list_sources()["sources"]}["最终产物/batch038/ALL_questions_FIXED.json"]
+    assert src["subject"] == "传染病学"
+    assert src["term"] == "大四上"
+
+
+def test_moc_index_wins_over_abbreviated_markdown_subject(monkeypatch):
+    """md 里的简称（`耳鼻喉教学题库.md` ⇒「耳鼻喉」）必须让位给索引的规范名。
+
+    否则同一科目会出现两个标签（「耳鼻喉」与「耳鼻咽喉头颈外科学」），
+    既看着像两门课，搜索也搜不全。
+    """
+    moc = ("## 耳鼻咽喉头颈外科学 · 专项题库\n\n"
+           "- [[最终产物/batch039/耳鼻喉教师重点版题库|batch039 教师重点版题库]]\n")
+    remote = FakeRemote(
+        {
+            "最终产物/batch039/ALL_questions_FIXED.json": "s39",
+            "最终产物/batch039/耳鼻喉教师重点版题库.md": "m39",
+            "_MOC/题库与真题.md": "moc",
+            "大四上/题库/耳鼻喉教师重点版题库.pdf": "p39",
+        },
+        {"s39": [V2_ITEM], "m39": "# 题库\n", "moc": moc, "p39": "pdf"},
+    )
+    monkeypatch.setattr(bs, "_http_json", remote)
+    src = {s["path"]: s for s in bs.list_sources()["sources"]}["最终产物/batch039/ALL_questions_FIXED.json"]
+    assert src["subject"] == "耳鼻咽喉头颈外科学"
+    assert src["term"] == "大四上"
+
+
+def test_moc_missing_does_not_block_listing(monkeypatch):
+    """索引取不到 ⇒ 退回 md 推断，**不能因此让整个清单失败**。"""
+    remote = FakeRemote(
+        {
+            "最终产物/batch038/ALL_questions_FIXED.json": "s38",
+            "最终产物/batch038/ALL_questions_FIXED.md": "m38",
+        },
+        {"s38": [V2_ITEM], "m38": "# 题库\n"},
+    )
+    monkeypatch.setattr(bs, "_http_json", remote)
+    src = {s["path"]: s for s in bs.list_sources()["sources"]}["最终产物/batch038/ALL_questions_FIXED.json"]
+    assert src["subject"] == ""
+    assert src["term"] == ""
+
+
+def test_sync_persists_term_and_backfills_legacy_bank(monkeypatch):
+    """同步要写入 term；**远端未变**时也要把老库缺的标签补齐（否则必须强制重同步）。"""
+    remote = FakeRemote(
+        {
+            "最终产物/batch040/ALL_questions_FIXED.json": "s40",
+            "最终产物/batch040/耳鼻咽喉头颈外科学·期末题库.md": "m40",
+            "大四上/题库/耳鼻咽喉头颈外科学·期末题库.pdf": "p40",
+            "question_bank/registry_meta.json": "meta",
+        },
+        {"s40": [V2_ITEM, V2_ITEM_B], "m40": "# 题库\n", "p40": "pdf",
+         "meta": {"updated_at": "2026-10-27T00:27:02",
+                  "stats": {"total": 2, "by_batch": {"batch040": 2}}}},
+    )
+    monkeypatch.setattr(bs, "_http_json", remote)
+    first = bs.sync()
+    bid = next(b["bank_id"] for b in first["banks"] if b["subject"] == "耳鼻咽喉头颈外科学")
+    assert bank.get_bank(bid)["term"] == "大四上"
+
+    # 模拟「v0.22.1 之前同步进来的老库」：没有 term（subject 也可能为空）
+    bank.update_bank(bid, {"term": "", "subject": ""})
+
+    # 远端 sha 未变 ⇒ 走 unchanged 分支，不重新下载题目
+    again = bs.sync()
+    assert again["unchanged"] == 1
+    assert again["added"] == 0
+    rec = bank.get_bank(bid)
+    assert rec["term"] == "大四上"
+    assert rec["subject"] == "耳鼻咽喉头颈外科学"
 
 
 def test_non_bank_json_files_are_excluded():

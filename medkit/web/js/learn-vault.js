@@ -1,7 +1,7 @@
 /* exported vaultRebuild, vaultSearch, vaultSearchClear, vaultAsk, vaultAskGlobal,
    vaultClose, vaultEdit, vaultOpen, vaultFilter, vaultFilterClear, vaultNewToggle,
    vaultPickPhoto, vaultPhotoPick, vaultCreate, vaultNewClear, vaultGrade,
-   vaultReviewLoad, vaultLoad */
+   vaultReviewLoad, vaultLoad, vaultMetricsLoad, vaultMetricsClear */
 
 /* ---- 本地错题（vault）视图：读文件索引 + 薄弱项 + Agent 问答 ----
  *
@@ -59,6 +59,8 @@ async function vaultLoad() {
     const box = $("vault_stats");
     if (!box) return;
     const g = (st.groups || []).filter(x => x.total > 0);
+    window._vaultSummary = { total: Number(st.total || 0), weak: g.length,
+                             due: Number((window._vaultSummary || {}).due || 0) };
     if (!st.total) {
       // 空态统一为「图标 + 为什么空 + 一个动作」：不停在"还没有错题"这句话上，直接给下一步
       box.innerHTML = `<div class="empty">
@@ -152,9 +154,15 @@ function vaultFilterClear() {
 
 async function vaultOpen(rel) {
   _vaultCur = rel;
-  const it = _vaultItems.find(x => x.path === rel) || {};
+  let it = _vaultItems.find(x => x.path === rel) || {};
+  if (rel && !it.question) {
+    // 引用跳转时这条可能不在当前筛选/列表里——按路径取单条，而不是「打不开」。
+    try { it = await api("/api/vault/mistakes/item?path=" + encodeURIComponent(rel)); }
+    catch (e) { /* 文件已删/未索引：下面按空记录显示，不阻断 */ }
+  }
   const box = $("vault_detail");
   if (!box) return;
+  const vp = Number(it.variant_pass || 0), vf = Number(it.variant_fail || 0);
   box.style.display = "";
   box.innerHTML = `
     <div class="cardh"><h2>${_esc(it.question) || "（无题干）"}</h2>
@@ -162,12 +170,15 @@ async function vaultOpen(rel) {
     <div class="hint" style="margin-bottom:var(--space-2)">${_esc(it.analysis || "（无解析）")}</div>
     <details style="margin:6px 0"><summary class="hint">答案（默认收起，防剧透）</summary>
       <div class="hint">${_esc(it.answer || "（无答案）")}</div></details>
+    <div class="hint" style="margin:6px 0">变式训练：通过 ${vp} 次 · 未通过 ${vf} 次
+      ${it.variant_last ? " · 最近 " + _esc(it.variant_last) : ""}</div>
     <label for="vlt_und">我的理解（你自己写，可空）</label>
     <textarea id="vlt_und" rows="3" placeholder="当时为什么选错？现在怎么理解？">${_esc(it.understanding || "")}</textarea>
     <label for="vlt_doubts" style="margin-top:var(--space-2)">我的疑问（Agent 会逐条回应）</label>
     <textarea id="vlt_doubts" rows="3" placeholder="哪里还不确定？">${_esc(it.doubts || "")}</textarea>
     <div class="btns" style="margin-top:var(--space-2)">
       <button class="act" onclick="vaultEdit()">保存理解与疑问</button>
+      <button class="act gray" data-path="${_esc(_vaultCur)}" onclick="vaultVariantStart(this)">练 3 道变式</button>
       <button class="act gray" onclick="vaultClose()">收起</button>
     </div>
     <label for="vlt_q" style="margin-top:var(--space-3)">问错题助手（只依据你这个文件夹作答，答不出就说不知道）</label>
@@ -260,6 +271,9 @@ async function vaultReviewLoad() {
     // 排期口径必须可见——换了算法，复习节奏就变了，用户有权知道。
     const alg = r.scheduler === "sm2" ? "SM-2" : "FSRS";
     if (meta) meta.textContent = `到期 ${r.stats.due} / 共 ${r.stats.total} · ${alg}`;
+    window._vaultSummary = { total: Number((window._vaultSummary || {}).total || 0),
+                             weak: Number((window._vaultSummary || {}).weak || 0),
+                             due: Number(r.stats.due || 0) };
     const items = r.items || [];
     box.innerHTML = items.length ? items.slice(0, 20).map(it => `
       <div class="vault-duerow">
@@ -273,6 +287,47 @@ async function vaultReviewLoad() {
         </span>
       </div>`).join("") : `<div class="hint">今天没有到期的错题。</div>`;
   } catch (e) { box.innerHTML = `<div class="hint">读取失败：${_esc(e.message)}</div>`; }
+}
+
+/* ---- 助手运行状况（本地指标，不上报） ---- */
+async function vaultMetricsLoad() {
+  const box = $("vault_metrics_body"), meta = $("vault_metrics_meta");
+  if (!box) return;
+  try {
+    const r = await api("/api/vault/metrics?days=30");
+    if (meta) {
+      meta.textContent = r.calls
+        ? `近 30 天 ${r.calls} 次` + (r.insufficient ? " · 样本不足" : "")
+        : "";
+    }
+    if (!r.calls) {
+      box.innerHTML = `<div class="hint">近 30 天还没有调用记录。用一次「提问」或「生成复习手册」后再来看。</div>`;
+      return;
+    }
+    const pct = v => (v == null ? "—" : `${Math.round(v * 100)}%`);
+    box.innerHTML = `<div class="dash-metrics">
+        <div class="dash-metric"><b>${r.calls}</b><span>调用</span></div>
+        <div class="dash-metric"><b>${pct(r.grounded_rate)}</b><span>有依据</span></div>
+        <div class="dash-metric"><b>${r.avg_ms}</b><span>平均毫秒</span></div>
+        <div class="dash-metric"><b>${r.p95_ms}</b><span>P95 毫秒</span></div>
+      </div>
+      <div class="hint" style="margin-top:8px">
+        引用剔除 ${r.dropped} 条 · 中途停止 ${r.stopped} 次 · 失败 ${r.errors} 次
+      </div>
+      ${r.insufficient
+        ? `<div class="hint" style="margin-top:6px">样本不到 10 次，比率只作参考，不下结论。</div>`
+        : ""}`;
+  } catch (e) {
+    box.innerHTML = `<div class="hint">读取失败：${_esc(e.message)}</div>`;
+  }
+}
+
+async function vaultMetricsClear() {
+  try {
+    const r = await api("/api/vault/metrics", { method: "DELETE" });
+    toast(`已清空 ${r.removed || 0} 条本地记录（错题文件不受影响）`);
+    await vaultMetricsLoad();
+  } catch (e) { toast("清空失败：" + e.message, false); }
 }
 
 async function vaultGrade(rel, quality) {

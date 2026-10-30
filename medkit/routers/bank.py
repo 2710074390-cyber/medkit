@@ -18,13 +18,15 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..core import bank as banklib
 from ..core import bank_iq
 from ..core import config as cfg
+from ..core import insights as insightslib
+from ..core import kc as kclib
 from ._common import MAX_FILE_SIZE, _safe_pid, read_upload_capped
 
 router = APIRouter()
@@ -72,6 +74,9 @@ class BankBody(BaseModel):
     name: str = ""
     subject: str = ""
     source: str = ""
+    # 学期（`大三下` / `大四上`）。**默认 None 而非 ""**：PUT 是局部更新语义，
+    # 老前端不带这个字段时不能把它清空（与 ItemBody 的 exclude_unset 同口径）。
+    term: Optional[str] = None
 
 
 class ItemBody(BaseModel):
@@ -136,7 +141,8 @@ def list_banks() -> dict[str, Any]:
 def create_bank(body: BankBody) -> dict[str, Any]:
     if not body.name.strip():
         raise HTTPException(400, "题库名称不能为空")
-    return {"ok": True, "bank": banklib.create_bank(body.name, body.subject, body.source)}
+    return {"ok": True, "bank": banklib.create_bank(body.name, body.subject, body.source,
+                                                    term=body.term or "")}
 
 
 @router.get("/api/bank/banks/{bid}")
@@ -149,7 +155,10 @@ def get_bank(bid: str) -> dict[str, Any]:
 
 @router.put("/api/bank/banks/{bid}")
 def update_bank(bid: str, body: BankBody) -> dict[str, Any]:
-    rec = banklib.update_bank(bid, {"name": body.name, "subject": body.subject, "source": body.source})
+    patch: dict[str, Any] = {"name": body.name, "subject": body.subject, "source": body.source}
+    if body.term is not None:      # 未传 = 不改（避免老前端把学期清空）
+        patch["term"] = body.term
+    rec = banklib.update_bank(bid, patch)
     if rec is None:
         raise HTTPException(404, "题库不存在")
     return {"ok": True, "bank": rec}
@@ -329,10 +338,49 @@ def stats(bid: str) -> dict[str, Any]:
     return {"ok": True, "stats": banklib.bank_stats(bid)}
 
 
+@router.get("/api/bank/insights/coverage")
+def insights_coverage(bank_id: str = "") -> dict[str, Any]:
+    """题库身份与解析覆盖率（零 LLM）：知识点 / 逐选项理由 / 误解 / 引句 / 难度。
+
+    逐字段独立统计——「有逐选项理由」不等于「有原文引句」，合成一个百分比会掩盖真实缺口。
+    """
+    return insightslib.coverage(bank_id=bank_id)
+
+
+@router.post("/api/bank/insights/backfill-topic")
+def insights_backfill_topic(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """把空的 `subtopic` 按 origin_ref.module / 关键词补上。**默认 dry-run**。"""
+    bank_id = str(body.get("bank_id") or "").strip()
+    try:
+        limit = int(body.get("limit") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="limit 必须是整数（0 = 全部）")
+    if limit < 0:
+        raise HTTPException(status_code=400, detail="limit 不能为负")
+    dry = body.get("dry_run")
+    dry_run = True if dry is None else bool(dry)
+    out = insightslib.backfill_topics(bank_id=bank_id, dry_run=dry_run, limit=limit)
+    if not dry_run and out["filled"]:
+        # 补完考点后把题挂到知识点（exact 自动确认、fuzzy 留待人工点）——
+        # 不自动跑这一步，用户会看到「有考点但掌握度仍是 0」的割裂。
+        out["mapping"] = kclib.backfill(bank_id=bank_id, dry_run=False)
+    return out
+
+
 @router.get("/api/bank/today")
 def today(date: str = "") -> dict[str, Any]:
     """今日作答汇总（每日目标进度；date 为空取本地今天）。"""
     return {"ok": True, **banklib.today_attempts(date)}
+
+
+@router.get("/api/bank/search")
+def search(q: str = "", limit: int = 30, bank_id: str = "") -> dict[str, Any]:
+    """跨题库搜题（Cmd/Ctrl+K 的第二段结果）。本地匹配，**不联网、不调模型**。
+
+    `q` 为空返回空结果而不是全库——搜题入口不该在用户还没输入时就把千题撑到前端。
+    `bank_id` 非空则限定单库（题库内搜索也走这里，将来换 FTS5 只改 core）。
+    """
+    return {"ok": True, **banklib.search_items(q, limit=limit, bank_id=bank_id)}
 
 
 # ---------------------------------------------------------------- 从出题工坊导入（F11）

@@ -239,12 +239,14 @@ def _tree(refresh: bool = False) -> dict[str, Any]:
 
 
 def _reset_cache() -> None:
-    """清空 tree / meta 缓存（测试 / 「刷新」按钮用）。"""
+    """清空 tree / meta / MOC 缓存（测试 / 「刷新」按钮用）。"""
     with _tree_lock:
         _tree_cache["data"] = None
         _tree_cache["at"] = 0.0
     with _meta_lock:
         _meta_cache.update({"sha": "", "at": 0.0, "data": None})
+    with _moc_lock:
+        _moc_cache.update({"sha": "", "at": 0.0, "data": None})
 
 
 # ---------------------------------------------------------------- 源发现
@@ -325,6 +327,137 @@ def _batch_of(path: str) -> str:
     return m.group("dir") if m else ""
 
 
+# ---------------------------------------------------------------- 学期与科目兜底
+#
+# ## 为什么需要「学期」
+#
+# 题库列表原本只有 `subject`。实测同一科目跨学期有多份：`内科学` 在大三下是
+# `内科学题库_364题.pdf`，大四上是 `内科教学题库.pdf`（+ 合订本复习资料）。
+# 只按科目看，用户分不清手上这本是哪个学期的。学期信息**上游本来就有**——
+# 仓顶层以 `大三下/`、`大四上/` 分目录存放题库/押题卷——只是同步时被丢了。
+#
+# ## 为什么用「文件名主干」而不是科目名直接对
+#
+# 科目名在两个学期会重名（内科学/外科学），而**文件名主干是唯一的**：
+# 批次产物叫 `内科教学题库.md`，学期目录里正有 `大四上/题库/内科教学题库.pdf`。
+# 所以先按主干精确命中；命中不了再退回「科目名在该学期里唯一出现」——后者专门
+# 兜住没有 md 线索的批次（batch035 急诊与灾难医学 / batch038 传染病学）。
+_TERM_DIR_RE = re.compile(r"^(?P<term>大[一二三四五六][上下])/(?P<sub>[^/]+)/(?P<name>[^/]+)\.(?:pdf|md|html)$")
+
+# `_MOC/题库与真题.md` 里的表格行：`| batch035 | 急诊与灾难医学 | [[…]] |`
+_MOC_INDEX_PATH = "_MOC/题库与真题.md"
+_MOC_ROW_RE = re.compile(r"^\|\s*(?P<batch>batch\d+)\s*\|\s*(?P<subject>[^|]+?)\s*\|")
+# 小节标题（`## 耳鼻咽喉头颈外科学 · 专项题库`）+ 其下的 `[[最终产物/batchNNN/…]]` 链接
+_MOC_HEAD_RE = re.compile(r"^#{2,4}\s*(?P<subject>[^#]+?)\s*$")
+_MOC_LINK_RE = re.compile(r"\[\[\s*(?P<path>最终产物/[^\]|]+)")
+# 链接目标可能不带扩展名（`最终产物/batch039/耳鼻喉教师重点版题库`）⇒ 不能复用 `_batch_of`
+_MOC_BATCH_DIR_RE = re.compile(r"^最终产物/(?P<batch>batch\d+)/")
+
+_moc_cache: dict[str, Any] = {"sha": "", "at": 0.0, "data": None}
+_moc_lock = threading.Lock()
+
+
+def _term_index(paths: list[str]) -> dict[str, set[str]]:
+    """文件名主干 → 学期集合（来自 `大四上/题库/内科教学题库.pdf` 这类路径）。"""
+    index: dict[str, set[str]] = {}
+    for p in paths:
+        m = _TERM_DIR_RE.match(p)
+        if m:
+            index.setdefault(m.group("name").strip(), set()).add(m.group("term"))
+    return index
+
+
+def _sibling_stems(path: str, tree_paths: list[str]) -> list[str]:
+    """同目录下的 `.md` 文件名主干（用来对学期目录里的同名产物）。
+
+    只取 `.md`：批次目录里的 `ALL_questions_FIXED.json` 在学期目录里不存在同名文件，
+    而科目 md（`内科教学题库.md` ↔ `大四上/题库/内科教学题库.pdf`）才是稳定的锚点。
+    """
+    m = _BATCH_FILE_RE.match(path) or _PAPER_FILE_RE.match(path)
+    if not m:
+        return []
+    d = m.group("dir")
+    prefix = f"最终产物/{d}/"
+    return [p[len(prefix):-3].strip() for p in tree_paths
+            if p.startswith(prefix) and p.count("/") == 2 and p.endswith(".md")
+            and p[len(prefix):-3].strip() != "ALL_questions_FIXED"]
+
+
+def _term_of(subject: str, stems: list[str], index: dict[str, set[str]]) -> str:
+    """反推学期：① 文件名主干精确命中；② 科目名唯一命中；③ 都对不上 → 空串（不猜）。
+
+    ⚠️ 「同名文件出现在两个学期」（`len(terms) > 1`）**不提前 return**：继续看下一个
+    md——一个歧义锚点不该盖掉后面本来能定的唯一锚点。全都没命中就落到末尾的空串。
+    """
+    for stem in stems:
+        terms = index.get(stem) or set()
+        if len(terms) == 1:
+            return next(iter(terms))
+    if subject:
+        cands: set[str] = set()
+        for stem, terms in index.items():
+            if subject in stem:
+                cands |= terms
+        if len(cands) == 1:
+            return next(iter(cands))
+    return ""
+
+
+def _moc_batch_subjects(entries: list[dict[str, Any]]) -> dict[str, str]:
+    """`batch → 科目` 兜底表（`_MOC/题库与真题.md` 的「批次 | 科目」表格）。
+
+    ## 为什么需要它
+
+    `_subject_from_paths()` 只认带「题库/押题卷」的**同目录 md**。实测 batch035 /
+    batch038 目录里只有 `ALL_questions_FIXED.md` + 修改声明 ⇒ 科目推断为空，
+    题库名退化成「MedAgentWork · batch035」，列表里显示「未分类」。
+    而 `_MOC/题库与真题.md` 明确写着 `batch035 | 急诊与灾难医学`。
+
+    **取不到就不兜底**（返回空 dict）：这是补充线索，不是必需品——网络/改名都不该
+    让同步失败。按 sha 缓存，与 tree 同寿命，避免每次开面板多烧一次额度。
+    """
+    sha = next((str(t.get("sha") or "") for t in entries
+                if str(t.get("path") or "") == _MOC_INDEX_PATH), "")
+    if not sha:
+        return {}
+    with _moc_lock:
+        if (_moc_cache.get("sha") == sha
+                and (time.time() - float(_moc_cache.get("at") or 0)) < TREE_TTL):
+            return _moc_cache.get("data") or {}
+    out: dict[str, str] = {}
+    try:
+        text = _blob_text(sha, "题库索引（_MOC）")
+    except SyncError as e:
+        errs.record("banksync.moc", "读取 _MOC 索引失败，科目按空处理", kind=e.kind, detail=e.message)
+        text = ""
+    for line in text.splitlines():
+        m = _MOC_ROW_RE.match(line.strip())
+        if m:
+            out.setdefault(m.group("batch"), m.group("subject").strip())
+    # 第二节：小节标题下的 `最终产物/batchNNN/…` 链接。表格里没有的批次（039-042 的
+    # 耳鼻咽喉专项）靠这一段才拿到**规范科目名**——否则只能取同目录 md 的简称
+    # （`耳鼻喉教学题库.md` ⇒ 「耳鼻喉」），与同科的「耳鼻咽喉头颈外科学」并存。
+    head = ""
+    for line in text.splitlines():
+        s = line.strip()
+        m = _MOC_HEAD_RE.match(s)
+        if m:
+            # `耳鼻咽喉头颈外科学 · 专项题库` ⇒ 取「·」前的科目名；
+            # 含「题库/真题/归档」一类标题不是科目（`大四上 batch 题库（按学科）`），跳过
+            raw = m.group("subject").split("·")[0].strip()
+            head = "" if any(w in raw for w in ("题库", "真题", "GoldenSet", "归档")) else raw
+            continue
+        if not head:
+            continue
+        for lm in _MOC_LINK_RE.finditer(s):
+            bm = _MOC_BATCH_DIR_RE.match(lm.group("path"))
+            if bm:
+                out.setdefault(bm.group("batch"), head)
+    with _moc_lock:
+        _moc_cache.update({"sha": sha, "at": time.time(), "data": out})
+    return out
+
+
 def _meta(tree_paths: list[dict[str, Any]]) -> dict[str, Any]:
     """`question_bank/registry_meta.json`：只用来给 UI 报「远端共 N 题 / 各批多少题」。
 
@@ -351,8 +484,8 @@ def _meta(tree_paths: list[dict[str, Any]]) -> dict[str, Any]:
     return data
 
 
-def _blob_json(sha: str, what: str) -> Any:
-    """取 Blob → JSON。**字节数对不上就重取**（见下）。
+def _blob_bytes(sha: str, what: str) -> bytes:
+    """取 Blob → 原始字节。**字节数对不上就重取**（见下）。
 
     ⚠️ `_http_json` 的重试只管「HTTP/传输层报错」。实测还有一种**不报错**的截断：
     响应 200、`content` 是一段合法 base64，但解出来比 `size` 短——直接 `json.loads`
@@ -374,11 +507,26 @@ def _blob_json(sha: str, what: str) -> Any:
                 time.sleep(0.3 * (attempt + 1))
                 continue
             raise SyncError("network", last)
-        try:
-            return json.loads(raw.decode("utf-8-sig"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            raise SyncError("format", f"{what}不是合法 UTF-8 JSON：{e}")
+        return raw
     raise SyncError("network", last or f"{what}下载失败")
+
+
+def _blob_json(sha: str, what: str) -> Any:
+    """取 Blob → JSON（截断校验见 `_blob_bytes`）。"""
+    raw = _blob_bytes(sha, what)
+    try:
+        return json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise SyncError("format", f"{what}不是合法 UTF-8 JSON：{e}")
+
+
+def _blob_text(sha: str, what: str) -> str:
+    """取 Blob → 文本（markdown 索引用；截断校验同上）。"""
+    raw = _blob_bytes(sha, what)
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise SyncError("format", f"{what}不是合法 UTF-8 文本：{e}")
 
 
 # ---------------------------------------------------------------- 对外：源列表
@@ -390,16 +538,24 @@ def list_sources(refresh: bool = False) -> dict[str, Any]:
     by_path = {str(t.get("path")): t for t in entries}
     meta = _meta(entries)
     by_batch = (((meta.get("stats") or {}).get("by_batch")) or {}) if isinstance(meta, dict) else {}
+    tindex = _term_index(paths)
+    moc_subjects = _moc_batch_subjects(entries)
     sources: list[dict[str, Any]] = []
     for p in paths:
         if not _is_bank_file(p):
             continue
         t = by_path.get(p) or {}
         batch = _batch_of(p)
+        # 科目优先级：上游索引（`_MOC` 表格/小节标题）> 同目录 md 反推。
+        # 理由：md 名常是简称（`外科教学题库.md` ⇒ 「外科」），而索引写的是规范名
+        # 「外科学」；同科两份题库若一份叫「外科」一份叫「耳鼻咽喉头颈外科学」，
+        # 列表里既看着像两个科目、搜索也搜不到。索引取不到时才退回 md（不猜）。
+        subject = moc_subjects.get(batch, "") or _subject_from_paths(p, paths)
         sources.append({
             "path": p,
             "batch": batch,
-            "subject": _subject_from_paths(p, paths),
+            "subject": subject,
+            "term": _term_of(subject, _sibling_stems(p, paths), tindex),
             "sha": str(t.get("sha") or ""),
             "size": int(t.get("size") or 0),
             # 预估题数：registry_meta 按批次聚合，未必与文件逐题对齐 ⇒ 只作量级提示
@@ -426,6 +582,33 @@ def _bank_exists(bid: str) -> bool:
         return False
 
 
+def _backfill_labels(bid: str, subject: str, term: str) -> None:
+    """把上游算出的科目/学期补到**已有**题库上——只填空值，绝不覆盖用户改过的。
+
+    动机：v0.22.1 之前同步进来的题库，subject 可能是空（`_subject_from_paths` 取不到
+    线索的批次）且一律没有 term。用户不该为了一个标签去「删库重同步」，
+    而重新同步正是唯一会走到这里的路径。
+    """
+    if not bid:
+        return
+    try:
+        bank = banklib.get_bank(bid) or {}
+    except Exception as e:  # noqa: BLE001  读失败不影响同步主流程
+        errs.record("banksync.backfill", "读取题库失败，跳过标签回填", e=e, bank_id=bid)
+        return
+    patch: dict[str, Any] = {}
+    if subject.strip() and not str(bank.get("subject") or "").strip():
+        patch["subject"] = subject.strip()
+    if term.strip() and not str(bank.get("term") or "").strip():
+        patch["term"] = term.strip()
+    if not patch:
+        return
+    try:
+        banklib.update_bank(bid, patch)
+    except Exception as e:  # noqa: BLE001  同上：标签是增强，不该让同步失败
+        errs.record("banksync.backfill", "回填科目/学期失败", e=e, bank_id=bid)
+
+
 def status(refresh: bool = False) -> dict[str, Any]:
     """远端清单 + 本地同步状态（**只读**，不建库、不写文件）。
 
@@ -442,7 +625,9 @@ def status(refresh: bool = False) -> dict[str, Any]:
             if not isinstance(rec, dict):
                 continue
             local.append({"path": path, "batch": rec.get("batch") or "",
-                          "subject": rec.get("subject") or "", "sha": rec.get("sha") or "",
+                          "subject": rec.get("subject") or "",
+                          "term": rec.get("term") or "",
+                          "sha": rec.get("sha") or "",
                           "size": 0, "est_count": int(rec.get("count") or 0),
                           "state": "offline", "bank_id": rec.get("bank_id") or "",
                           "synced_at": rec.get("synced_at") or "",
@@ -636,8 +821,14 @@ def sync(paths: Optional[list[str]] = None, *, dedupe: str = "update", force: bo
                 prev = {}
             if (not force and prev.get("sha") == src["sha"]
                     and _bank_exists(str(prev.get("bank_id") or ""))):
+                # 存量库的标签修补：老版本同步进来的题库没有 term、部分没有 subject。
+                # 走到这里说明**远端未变**，但本地标签可能仍是空的——顺手补齐，
+                # 否则用户必须「强制重同步」才能看到学期（等于白等一次全量下载）。
+                _backfill_labels(str(prev.get("bank_id") or ""), src["subject"],
+                                 src.get("term") or "")
                 totals["unchanged"] += 1
                 results.append({"path": path, "batch": src["batch"], "subject": src["subject"],
+                                "term": src.get("term") or "",
                                 "status": "unchanged", "bank_id": prev.get("bank_id") or "",
                                 "count": int(prev.get("count") or 0),
                                 "synced_at": prev.get("synced_at") or ""})
@@ -665,12 +856,16 @@ def sync(paths: Optional[list[str]] = None, *, dedupe: str = "update", force: bo
                 bid = str(prev.get("bank_id") or "")
                 if not _bank_exists(bid):
                     bank = banklib.create_bank(_bank_name(src), src["subject"],
-                                               source=f"medagentwork:{src['batch'] or 'paper'}")
+                                               source=f"medagentwork:{src['batch'] or 'paper'}",
+                                               term=src.get("term") or "")
                     bid = str(bank.get("id") or "")
+                else:
+                    _backfill_labels(bid, src["subject"], src.get("term") or "")
                 stats = banklib.add_items(bid, items, origin="medagentwork",
                                           dedupe=dedupe if dedupe in ("update", "skip", "new") else "update")
                 rec = {"sha": src["sha"], "bank_id": bid, "batch": src["batch"],
-                       "subject": src["subject"], "count": len(items),
+                       "subject": src["subject"], "term": src.get("term") or "",
+                       "count": len(items),
                        "synced_at": _now(), "added": stats["added"],
                        "updated": stats["updated"], "skipped": stats["skipped"]}
                 state["sources"][path] = rec
@@ -686,7 +881,8 @@ def sync(paths: Optional[list[str]] = None, *, dedupe: str = "update", force: bo
                                 "skipped": stats["skipped"] + bad,
                                 "errors": list(stats.get("errors") or [])[:5]})
                 banks.append({"bank_id": bid, "name": _bank_name(src),
-                              "subject": src["subject"], "count": len(items)})
+                              "subject": src["subject"], "term": src.get("term") or "",
+                              "count": len(items)})
             except SyncError as e:
                 totals["failed"] += 1
                 if e.kind == "ratelimit":

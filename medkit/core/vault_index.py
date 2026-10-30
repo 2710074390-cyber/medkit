@@ -43,11 +43,14 @@ _ITEM_COLS = (
     "id TEXT, subject TEXT, chapter TEXT, topic TEXT, tags TEXT, status TEXT, "
     "created TEXT, source TEXT, source_type TEXT, source_year TEXT, bloom TEXT, "
     "miss_count INTEGER, last_tried TEXT, due TEXT, question TEXT, options TEXT, "
-    "answer TEXT, analysis TEXT, understanding TEXT, doubts TEXT, reply TEXT"
+    "answer TEXT, analysis TEXT, understanding TEXT, doubts TEXT, reply TEXT, "
+    "variant_pass INTEGER, variant_fail INTEGER, variant_last TEXT"
 )
 
 # v2 新增列（旧库补列用；`CREATE TABLE IF NOT EXISTS` 不会给已存在的表加列）
-_ADD_COLS = (("last_tried", "TEXT"), ("due", "TEXT"))
+_ADD_COLS = (("last_tried", "TEXT"), ("due", "TEXT"),
+             ("variant_pass", "INTEGER"), ("variant_fail", "INTEGER"),
+             ("variant_last", "TEXT"))
 
 _ENSURE = (
     "CREATE TABLE IF NOT EXISTS vault_items (\n    " + _ITEM_COLS + "\n)",
@@ -94,6 +97,9 @@ def _flatten(rec: dict[str, Any]) -> dict[str, Any]:
         "answer": rec.get("answer", ""), "analysis": rec.get("analysis", ""),
         "understanding": rec.get("my_reasoning", ""), "doubts": rec.get("doubts", ""),
         "reply": rec.get("agent_reply", ""), "fwarn": rec.get("_warn", ""),
+        "variant_pass": int(rec.get("variant_pass") or 0),
+        "variant_fail": int(rec.get("variant_fail") or 0),
+        "variant_last": rec.get("variant_last", ""),
     }
 
 

@@ -1,0 +1,3196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedKit 网页版竞品设计分析与改进方案 · 2026-10-29</title>
+<meta name="description" content="MedKit 网页版竞品设计分析、美术方向研究与结构化改进清单。">
+<style>
+:root{
+  --paper:#f4efe4; --sheet:#fffcf5; --sheet-2:#f1eadd; --ink:#1f1c17; --ink-2:#5f594c;
+  --accent:#2b5c4b; --accent-soft:#e4eee7; --seal:#a63d2c; --seal-soft:#f6e3dc;
+  --highlight:#f6e7a8; --rule:#e0d7c6; --rule-2:#d8cdb9; --good:#1f6f38; --info:#1d5b92;
+  --serif:"Songti SC","SimSun","STSong","Noto Serif CJK SC",serif;
+  --sans:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  --mono:"Consolas","Courier New",monospace;
+  --shadow:0 1px 2px rgba(60,45,20,.06);
+  --read:860px;
+}
+:root[data-theme="dark"]{
+  --paper:#141311; --sheet:#1c1a16; --sheet-2:#221f1a; --ink:#efe8d8; --ink-2:#a69d89;
+  --accent:#8fc3a9; --accent-soft:#22332b; --seal:#e08a72; --seal-soft:#3a2620;
+  --highlight:#3a3524; --rule:#302d26; --rule-2:#3a352d; --good:#86d489; --info:#79b8ed;
+  --shadow:none;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:
+    radial-gradient(1200px 520px at 50% -10%, rgba(246,231,168,.20), transparent 60%),
+    var(--paper);
+  color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.8;
+}
+body:before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.025;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='64' height='64' filter='url(%23n)' opacity='.7'/%3E%3C/svg%3E");
+}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{color:var(--seal)}
+.topbar{
+  position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:14px;
+  padding:10px 22px; background:color-mix(in srgb, var(--paper) 88%, transparent);
+  border-bottom:1px solid var(--rule); backdrop-filter:blur(10px);
+}
+.topbar .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.02em}
+.topbar .mw{
+  width:28px;height:28px;border-radius:7px;display:grid;place-items:center;
+  background:linear-gradient(135deg,#2dd4bf,#0d9488 60%,#134e4a);color:#f5faf8;
+  font-size:12px;font-weight:800;letter-spacing:-.03em;
+}
+.topbar .meta{color:var(--ink-2);font-size:13px}
+.topbar .spacer{flex:1}
+.btn{
+  border:1px solid var(--rule-2); background:var(--sheet); color:var(--ink);
+  border-radius:8px; padding:7px 12px; font:inherit; font-size:13px; cursor:pointer;
+}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+a.btn{text-decoration:none;line-height:1.4}
+#progress{position:fixed;top:0;left:0;height:3px;width:0;background:var(--seal);z-index:30}
+.wrap{max-width:1220px;margin:0 auto;padding:0 22px;position:relative;z-index:1}
+.hero{
+  display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:36px;
+  padding:56px 0 34px; border-bottom:1px solid var(--rule);
+}
+.hero .kicker{color:var(--seal);font-size:12px;letter-spacing:.22em;font-weight:700}
+.hero h1{
+  margin:12px 0 10px; font-family:var(--serif); font-weight:700;
+  font-size:clamp(30px,4.4vw,48px); line-height:1.2; letter-spacing:.01em;
+}
+.hero .lead{margin:0;color:var(--ink-2);font-size:17px;max-width:720px}
+.hero .byline{margin-top:18px;color:var(--ink-2);font-size:13px;display:flex;flex-wrap:wrap;gap:8px 18px}
+.hero-card{
+  align-self:start; background:var(--sheet); border:1px solid var(--rule);
+  border-radius:14px; padding:18px 18px 14px; box-shadow:var(--shadow); position:relative;
+  transform:rotate(.6deg);
+}
+.hero-card:after{
+  content:"分析"; position:absolute; top:12px; right:12px; padding:2px 7px;
+  border:1px solid var(--seal); color:var(--seal); border-radius:4px;
+  font-family:var(--serif); font-size:11px; letter-spacing:.18em; transform:rotate(-7deg);
+}
+.hero-card h2{margin:0 0 6px;font-family:var(--serif);font-size:18px}
+.hero-card p{margin:0;color:var(--ink-2);font-size:13px}
+.hero-card .rule{height:1px;background:var(--rule);margin:12px 0}
+.hero-card dl{display:grid;grid-template-columns:78px 1fr;gap:6px 10px;margin:0;font-size:13px}
+.hero-card dt{color:var(--ink-2)}
+.hero-card dd{margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
+.chip{
+  display:inline-flex;align-items:center;padding:4px 9px;border:1px solid var(--rule-2);
+  border-radius:999px;background:var(--sheet);font-size:12px;color:var(--ink-2)
+}
+.metrics{
+  display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;
+  padding:18px 0 8px;
+}
+.metric{
+  background:var(--sheet);border:1px solid var(--rule);border-radius:12px;
+  padding:12px 13px;box-shadow:var(--shadow)
+}
+.metric b{display:block;font-family:var(--serif);font-size:26px;line-height:1.1;color:var(--accent)}
+.metric span{display:block;margin-top:4px;font-size:12px;font-weight:600}
+.metric small{display:block;margin-top:2px;color:var(--ink-2);font-size:11px;line-height:1.5}
+.layout{
+  display:grid;grid-template-columns:250px minmax(0,1fr);gap:40px;
+  padding:26px 0 80px;align-items:start;
+}
+.toc{
+  position:sticky;top:62px;max-height:calc(100vh - 78px);overflow:auto;
+  border-right:1px solid var(--rule);padding-right:16px;
+}
+.toc h3{margin:0 0 10px;font-size:12px;letter-spacing:.16em;color:var(--ink-2)}
+.toc a{
+  display:block;padding:4px 0 4px 10px;color:var(--ink-2);text-decoration:none;
+  font-size:13px;line-height:1.45;border-left:2px solid transparent
+}
+.toc a:hover{color:var(--accent)}
+.toc .toc-l2{font-weight:600;color:var(--ink);margin-top:8px}
+.toc .toc-l3{padding-left:20px;font-size:12px}
+.toc a.active{color:var(--accent);border-left-color:var(--seal);background:var(--accent-soft)}
+.report{max-width:calc(var(--read) + 120px);min-width:0}
+.report h1,.report h2,.report h3,.report h4{font-family:var(--serif);line-height:1.35;color:var(--ink)}
+.report h2{
+  font-size:28px;margin:54px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--rule);
+  scroll-margin-top:78px;
+}
+.report h3{font-size:20px;margin:32px 0 10px;scroll-margin-top:78px}
+.report h4{font-size:17px;margin:24px 0 8px}
+.report p{margin:10px 0}
+.report strong{font-weight:700}
+.report blockquote{
+  margin:18px 0;padding:12px 16px;border-left:3px solid var(--seal);
+  background:var(--seal-soft);color:var(--ink);border-radius:0 8px 8px 0
+}
+.report blockquote p{margin:0;font-size:14px;color:var(--ink-2)}
+.report ul,.report ol{padding-left:24px}
+.report li{margin:4px 0}
+.report code{font-family:var(--mono);font-size:.88em;background:var(--sheet-2);padding:1px 5px;border-radius:4px}
+.report pre{background:var(--sheet-2);border:1px solid var(--rule);border-radius:10px;padding:14px;overflow:auto}
+.report pre code{background:none;padding:0}
+.table-wrap{overflow:auto;margin:14px 0 22px;border:1px solid var(--rule);border-radius:10px;background:var(--sheet)}
+.report table{width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.65;min-width:620px}
+.table-wrap.cols-6 table{min-width:820px}
+.table-wrap.cols-7 table{min-width:920px}
+.table-wrap.cols-8 table{min-width:1020px}
+.table-wrap.cols-9 table{min-width:1120px}
+.table-wrap.cols-10 table,.table-wrap.cols-11 table{min-width:1240px}
+.report th,.report td{padding:10px 12px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+.report th{background:var(--sheet-2);font-weight:700;white-space:nowrap}
+.report tr:last-child td{border-bottom:0}
+.report tbody tr:hover td{background:color-mix(in srgb,var(--accent-soft) 55%, transparent)}
+.report hr{border:0;border-top:1px solid var(--rule);margin:36px 0}
+.viz-card{
+  margin:26px 0 8px;background:var(--sheet);border:1px solid var(--rule);
+  border-radius:14px;padding:18px 18px 10px;box-shadow:var(--shadow)
+}
+.viz-head h3{margin:0 0 2px;font-size:17px}
+.viz-head p{margin:0 0 10px;color:var(--ink-2);font-size:12px}
+.quadrant svg{width:100%;height:auto}
+.note{font-size:12px;color:var(--ink-2)}
+.footer{border-top:1px solid var(--rule);padding:22px 0 40px;color:var(--ink-2);font-size:12px}
+@media (max-width:980px){
+  .hero{grid-template-columns:1fr;gap:22px;padding-top:36px}
+  .hero-card{max-width:420px}
+  .metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .layout{grid-template-columns:1fr;gap:20px}
+  .toc{position:relative;top:0;max-height:none;border-right:0;border-bottom:1px solid var(--rule);padding:0 0 12px}
+  .toc a{display:inline-block;border-left:0;padding:3px 8px;border-radius:6px}
+  .toc .toc-l3{display:none}
+  .toc a.active{background:var(--accent-soft)}
+}
+@media (max-width:560px){
+  .topbar{padding:8px 12px;gap:8px}
+  .topbar .meta{display:none}
+  .wrap{padding:0 14px}
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .report h2{font-size:24px}
+  .report table{font-size:12px}
+}
+@media print{
+  body{background:#fff;color:#111;font-size:10.5pt}
+  body:before,#progress,.topbar,.toc,.viz-card{display:none!important}
+  .wrap{max-width:none;padding:0}
+  .hero{display:block;border:0;padding:0 0 12pt}
+  .hero-card{display:none}
+  .metrics{display:none}
+  .layout{display:block;padding:0}
+  .report{max-width:none}
+  .report h2{page-break-before:always;font-size:18pt;border-bottom:1pt solid #999}
+  .report h3{font-size:13pt}
+  .table-wrap{overflow:visible;border:1pt solid #999}
+  .report table,.table-wrap.cols-6 table,.table-wrap.cols-7 table,.table-wrap.cols-8 table,.table-wrap.cols-9 table,.table-wrap.cols-10 table,.table-wrap.cols-11 table{min-width:0!important;font-size:9pt}
+  .report th,.report td{border-bottom:1pt solid #bbb}
+  a{color:#111;text-decoration:none}
+}
+</style>
+</head>
+<body>
+<div id="progress" aria-hidden="true"></div>
+<div class="topbar">
+  <div class="brand"><span class="mw">MW</span><span>MedKit</span></div>
+  <div class="meta">竞品设计与改进方案 · 2026-10-29</div>
+  <div class="spacer"></div>
+  <a class="btn" href="竞品设计分析与改进方案_2026-10-29.md" download>Markdown</a>
+  <button class="btn" id="themeBtn" type="button">暗色</button>
+  <button class="btn" id="printBtn" type="button">打印 / PDF</button>
+</div>
+
+<div class="wrap">
+  <header class="hero">
+    <div>
+      <div class="kicker">COMPETITIVE DESIGN REVIEW</div>
+      <h1>MedKit 网页版<br>竞品设计分析与改进方案</h1>
+      <p class="lead">8 款竞品的产品设计、交互逻辑、架构与美术方向对照；现版 2350 题的真实基线；一份按「品牌美术优先」排序的可落地清单。</p>
+      <div class="byline">
+        <span>对象：medkit-web-contest v1.0.0</span>
+        <span>日期：2026-10-29</span>
+        <span>证据：官方资料 + 本仓代码 / 截图 / 测试</span>
+      </div>
+      <div class="chips"><span class="chip">混合定位</span>
+<span class="chip">书桌深化</span>
+<span class="chip">品牌美术优先</span>
+<span class="chip">体验 + 数据层</span>
+<span class="chip">不做社区</span>
+<span class="chip">不做模考</span>
+<span class="chip">AI 稳定性 + 引用</span>
+<span class="chip">同步冲突修复</span></div>
+    </div>
+    <aside class="hero-card">
+      <h2>这份报告怎么读</h2>
+      <p>先看第 0 节结论，再看第 5 节清单；要做开发，直接看第 7 节路线图。</p>
+      <div class="rule"></div>
+      <dl>
+        <dt>决策</dt><dd>已按你的 11 组选择写入第 9 节</dd>
+        <dt>不做什么</dt><dd>社区、模考、排行榜、分数预测</dd>
+        <dt>第一优先</dt><dd>书桌视觉地基 2.0</dd>
+        <dt>最大内容债</dt><dd>逐项解析仅 20.8%</dd>
+      </dl>
+    </aside>
+  </header>
+
+  <div class="metrics"><div class="metric"><b>8</b><span>竞品样本</span><small>医学考试 · 记忆算法 · 学习激励</small></div>
+<div class="metric"><b>2350</b><span>题 / 11 库</span><small>校内大纲全量题库</small></div>
+<div class="metric"><b>20.8%</b><span>逐项解析覆盖</span><small>488 / 2350；核心教学版 0–6%</small></div>
+<div class="metric"><b>8000</b><span>作答上限</span><small>localStorage 截断，待迁 IndexedDB</small></div>
+<div class="metric"><b>59+8</b><span>Node + pytest</span><small>现有守卫，尚无视觉回归</small></div>
+<div class="metric"><b>0</b><span>社区 / 模考</span><small>本轮明确不做</small></div></div>
+
+  <div class="layout">
+    <nav class="toc" aria-label="目录">
+      <h3>目录</h3>
+      <a class="toc-l2" href="#0.-结论先行">0. 结论先行</a>
+<a class="toc-l3" href="#0.1-一句话判断">0.1 一句话判断</a>
+<a class="toc-l3" href="#0.2-三个战略判断">0.2 三个战略判断</a>
+<a class="toc-l3" href="#0.3-本轮已确认的决策">0.3 本轮已确认的决策</a>
+<a class="toc-l3" href="#0.4-明确不做">0.4 明确不做</a>
+<a class="toc-l2" href="#1.-调研方法与证据边界">1. 调研方法与证据边界</a>
+<a class="toc-l3" href="#1.1-方法">1.1 方法</a>
+<a class="toc-l3" href="#1.2-边界">1.2 边界</a>
+<a class="toc-l2" href="#2.-竞品深描">2. 竞品深描</a>
+<a class="toc-l3" href="#2.1-UWorld：把练习做成考试，把解析做成教材">2.1 UWorld：把练习做成考试，把解析做成教材</a>
+<a class="toc-l3" href="#2.2-AMBOSS：一个连通的系统，而不是五个订阅">2.2 AMBOSS：一个连通的系统，而不是五个订阅</a>
+<a class="toc-l3" href="#2.3-Osmosis：视觉优先，把机制讲成画面">2.3 Osmosis：视觉优先，把机制讲成画面</a>
+<a class="toc-l3" href="#2.4-医考帮：把「考点」做成可检索、可讨论、可模考的内容体系">2.4 医考帮：把「考点」做成可检索、可讨论、可模考的内容体系</a>
+<a class="toc-l3" href="#2.5-蓝基因：错题闭环-+-高频考点-+-离线/夜间">2.5 蓝基因：错题闭环 + 高频考点 + 离线/夜间</a>
+<a class="toc-l3" href="#2.6-Anki：算法可信，界面不必可爱">2.6 Anki：算法可信，界面不必可爱</a>
+<a class="toc-l3" href="#2.7-Quizlet：把「学习路径」做成可解释的进度">2.7 Quizlet：把「学习路径」做成可解释的进度</a>
+<a class="toc-l3" href="#2.8-Duolingo：把「开始」做得比「学」更容易">2.8 Duolingo：把「开始」做得比「学」更容易</a>
+<a class="toc-l3" href="#viz-quadrant-title">竞品定位示意</a>
+<a class="toc-l2" href="#3.-横向对照与美术专项">3. 横向对照与美术专项</a>
+<a class="toc-l3" href="#3.1-产品能力矩阵">3.1 产品能力矩阵</a>
+<a class="toc-l3" href="#3.2-视觉-DNA-矩阵">3.2 视觉 DNA 矩阵</a>
+<a class="toc-l3" href="#3.3-十二条经市场验证的最佳实践">3.3 十二条经市场验证的最佳实践</a>
+<a class="toc-l3" href="#3.4-美术专项：从竞品视觉-DNA-到-MedKit-的书桌">3.4 美术专项：从竞品视觉 DNA 到 MedKit 的书桌</a>
+<a class="toc-l2" href="#4.-现版基线">4. 现版基线</a>
+<a class="toc-l3" href="#4.1-已经做对的事">4.1 已经做对的事</a>
+<a class="toc-l3" href="#4.2-量化基线（本仓统计，证据等级-D）">4.2 量化基线（本仓统计，证据等级 D）</a>
+<a class="toc-l3" href="#4.3-六屏视觉审计">4.3 六屏视觉审计</a>
+<a class="toc-l3" href="#4.4-设计规格与实现漂移">4.4 设计规格与实现漂移</a>
+<a class="toc-l3" href="#4.5-痛点排序">4.5 痛点排序</a>
+<a class="toc-l2" href="#5.-结构化改进点清单">5. 结构化改进点清单</a>
+<a class="toc-l3" href="#5.1-A-·-品牌与美术（P0）">5.1 A · 品牌与美术（P0）</a>
+<a class="toc-l3" href="#5.2-B-·-信息架构与交互（P1）">5.2 B · 信息架构与交互（P1）</a>
+<a class="toc-l3" href="#5.3-C-·-学习科学与内容（P1）">5.3 C · 学习科学与内容（P1）</a>
+<a class="toc-l3" href="#5.4-D-·-数据与架构（P2）">5.4 D · 数据与架构（P2）</a>
+<a class="toc-l3" href="#5.5-E-·-AI（P2）">5.5 E · AI（P2）</a>
+<a class="toc-l3" href="#5.6-F-·-性能与可访问性（P2）">5.6 F · 性能与可访问性（P2）</a>
+<a class="toc-l2" href="#6.-成本—收益—可行性评估">6. 成本—收益—可行性评估</a>
+<a class="toc-l3" href="#6.1-评分方法">6.1 评分方法</a>
+<a class="toc-l3" href="#6.2-先做：高收益-/-低成本（Quick-Wins）">6.2 先做：高收益 / 低成本（Quick Wins）</a>
+<a class="toc-l3" href="#6.3-战略投入：高收益-/-高成本">6.3 战略投入：高收益 / 高成本</a>
+<a class="toc-l3" href="#6.4-不值得做：低收益-/-高成本">6.4 不值得做：低收益 / 高成本</a>
+<a class="toc-l3" href="#6.5-依赖关系">6.5 依赖关系</a>
+<a class="toc-l2" href="#7.-分阶段路线图">7. 分阶段路线图</a>
+<a class="toc-l3" href="#Phase-0-·-视觉地基-2.0（P0，先做）">Phase 0 · 视觉地基 2.0（P0，先做）</a>
+<a class="toc-l3" href="#Phase-1-·-学习闭环（P1）">Phase 1 · 学习闭环（P1）</a>
+<a class="toc-l3" href="#Phase-2-·-数据与架构（P2）">Phase 2 · 数据与架构（P2）</a>
+<a class="toc-l2" href="#8.-验收与度量">8. 验收与度量</a>
+<a class="toc-l3" href="#8.1-品牌/美术">8.1 品牌/美术</a>
+<a class="toc-l3" href="#8.2-学习效果">8.2 学习效果</a>
+<a class="toc-l3" href="#8.3-数据/信任">8.3 数据/信任</a>
+<a class="toc-l3" href="#8.4-体验">8.4 体验</a>
+<a class="toc-l2" href="#9.-关键决策记录">9. 关键决策记录</a>
+<a class="toc-l2" href="#10.-参考来源">10. 参考来源</a>
+<a class="toc-l2" href="#11.-本轮实施记录（2026-10-29）">11. 本轮实施记录（2026-10-29）</a>
+<a class="toc-l3" href="#11.1-已落地">11.1 已落地</a>
+<a class="toc-l3" href="#11.2-本轮验证">11.2 本轮验证</a>
+<a class="toc-l3" href="#11.3-未在本轮完成（需要下一轮或内容生产）">11.3 未在本轮完成（需要下一轮或内容生产）</a>
+<a class="toc-l2" href="#附录-A-·-逐选项解析覆盖明细">附录 A · 逐选项解析覆盖明细</a>
+<a class="toc-l2" href="#附录-B-·-设计规格落地检查">附录 B · 设计规格落地检查</a>
+    </nav>
+    <article class="report" id="report">
+      <h2 id="0.-结论先行" class="section-h">0. 结论先行</h2>
+<h3 id="0.1-一句话判断">0.1 一句话判断</h3>
+<p><strong>MedKit 网页版已经是一条能跑通的学习闭环，但它的「书桌」目前只换了桌布，还没换陈设；学习深度也只到「做完对答案」，还没到「知道为什么错、下次什么时候再错」。</strong></p>
+<p>现版的真实资产是：11 个题库 2350 题、点选判分、答题卡、断点续做、错题回流、SM-2 复习、可选账号同步、390px 无横向溢出、44px 触控目标、零构建零 CDN。它的问题不是「功能太少」，而是<strong>视觉概念没有落到组件、学习闭环没有形成诊断、数据层还撑不住长期使用</strong>。</p>
+<h3 id="0.2-三个战略判断">0.2 三个战略判断</h3>
+<ol>
+<li>
+<p><strong>不要选单一竞品当母本。</strong><br />
+   UWorld/AMBOSS 的深度、医考帮/蓝基因的组织、Anki 的调度、Duolingo 的启动，是四种不同能力。MedKit 该走「轻量入口 + 临床严谨解析 + 记忆算法」的混合路线，而不是把自己做成任何一家的缩小版。</p>
+</li>
+<li>
+<p><strong>品牌与美术必须先做，但美术不是贴纸。</strong><br />
+   你的选择是「书桌深化」。正确做法是把纸、墨、红笔、荧光笔、书脊做成<strong>组件语义</strong>，而不是加木纹、胶带、手绘小人。书桌是底，不是装饰。</p>
+</li>
+<li>
+<p><strong>学习效果的核心不是「更多题」，而是「更准的复习」。</strong><br />
+   当前复习卡直接显示答案，用户只能自评「记住/模糊/忘记」；这不是主动回忆。逐选项解析覆盖率只有 20.8%，大多数题仍然只给整题解析。先把这两件事修好，比加模考、加社区更值。</p>
+</li>
+</ol>
+<h3 id="0.3-本轮已确认的决策">0.3 本轮已确认的决策</h3>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>决策点</th>
+<th>你的选择</th>
+<th>对方案的影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>竞品范围</td>
+<td>推荐组合 8 款</td>
+<td>医学考试、记忆算法、学习激励三类都有对照</td>
+</tr>
+<tr>
+<td>分析对象</td>
+<td>网页版 <code>medkit-web-contest</code></td>
+<td>本地桌面版只作为能力参照，不纳入改造成本</td>
+</tr>
+<tr>
+<td>交付形式</td>
+<td>HTML 报告 + Markdown 清单</td>
+<td>HTML 用于评审，MD 用于后续任务拆分</td>
+</tr>
+<tr>
+<td>产品定位</td>
+<td>混合路线</td>
+<td>不追求单一竞品全量复制，按能力分层借鉴</td>
+</tr>
+<tr>
+<td>美术方向</td>
+<td>书桌深化</td>
+<td>继续纸/墨/红笔/宋体，补组件与插图系统</td>
+</tr>
+<tr>
+<td>投入范围</td>
+<td>体验 + 数据层</td>
+<td>不新建内容生产链，但要把 IndexedDB、同步、导出修到可用</td>
+</tr>
+<tr>
+<td>优先级</td>
+<td>品牌与美术优先</td>
+<td>P0 先做视觉地基，P1 学习闭环，P2 数据与架构</td>
+</tr>
+<tr>
+<td>社区/UGC</td>
+<td>不做</td>
+<td>不引入评论、审核、运营成本</td>
+</tr>
+<tr>
+<td>模考</td>
+<td>不做</td>
+<td>不把「全真模考/排名」纳入本轮</td>
+</tr>
+<tr>
+<td>AI</td>
+<td>稳定性 + 引用校验</td>
+<td>不做云端额度与教学式 AI 大改</td>
+</tr>
+<tr>
+<td>账号</td>
+<td>修同步冲突与数据安全</td>
+<td>不做邮件找回/删除账号等完整生命周期</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="0.4-明确不做">0.4 明确不做</h3>
+<ul>
+<li>题目评论区、学习社区、排行榜、组队。</li>
+<li>全真模考、万人排名、分数预测。</li>
+<li>吉祥物、角色立绘、惩罚式连胜、满屏手写体。</li>
+<li>Web Font、CDN、构建步骤。</li>
+<li>为「像竞品」而增加的功能；每一项改动都要能回答「解决谁的什么问题」。</li>
+</ul>
+<hr />
+<h2 id="1.-调研方法与证据边界" class="section-h">1. 调研方法与证据边界</h2>
+<h3 id="1.1-方法">1.1 方法</h3>
+<ul>
+<li><strong>外部</strong>：阅读 8 款产品的官方功能页、官方帮助中心、官方博客与公开品牌资料；辅以应用商店/第三方介绍，仅用于补充功能维度。</li>
+<li><strong>内部</strong>：读 <code>medkit-web-contest</code> 的 <code>index.html</code>、<code>js/</code>、<code>css/</code>、<code>server.py</code>、<code>tests/</code>、<code>docs/体验测试_2026-10-29.md</code>；用脚本统计题库字段覆盖率；用 8 张真实截图做视觉审计。</li>
+<li><strong>证据分级</strong>：</li>
+<li><strong>A</strong> 官方产品文档/帮助中心/官方博客；</li>
+<li><strong>B</strong> 官方营销页上的数字与能力声明（未独立验证）；</li>
+<li><strong>C</strong> 第三方测评、应用商店介绍；</li>
+<li><strong>D</strong> 本仓代码、测试、截图与脚本统计（可直接复核）。</li>
+</ul>
+<h3 id="1.2-边界">1.2 边界</h3>
+<ul>
+<li>没有登录竞品的付费题库做逐题实操；交互结论来自公开页面、演示视频与官方说明。</li>
+<li>竞品的内部架构不可见，文中「架构推断」标注为推断，不作为事实。</li>
+<li>营销页数字可能随时间变化；本报告只取「设计选择」和「能力维度」，不把数字当疗效证据。</li>
+<li>本报告不复制任何竞品的受版权保护内容或界面资产。</li>
+</ul>
+<hr />
+<h2 id="2.-竞品深描" class="section-h">2. 竞品深描</h2>
+<h3 id="2.1-UWorld：把练习做成考试，把解析做成教材">2.1 UWorld：把练习做成考试，把解析做成教材</h3>
+<p><strong>一句话定位</strong>：高利害医学考试的「考试仿真 + 深度解析」工具。<br />
+<strong>证据等级</strong>：A（官方功能页、官方 flashcards 说明）；B（官方学生数量声明）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>Create Test（按学科/系统组卷）→ Tutor 或 Timed 作答 → 逐题解析 → Performance 报告 → Previous Tests 回看/重做 → 自评考试估分</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>Tutor / Timed 双模式</strong>：Tutor 每答一题立即给解析；Timed 更接近真实考试，交卷后再看。这个分离非常重要——学习和检测不能混在同一个节奏里。</li>
+<li><strong>Create Test</strong>：按 subject/system 组卷，支持自定义题量；Previous Tests 可恢复未完成测试、回看已完成测试。</li>
+<li><strong>逐选项解析</strong>：每个选项都解释为什么对/错，配插图、图表、临床场景；官方明确说「explains why answer options are right or wrong」。</li>
+<li><strong>Performance 三层</strong>：Overall（总量/正确率）、Reports（按 subject/system/topic 拆）、Graphs（按日期/测试的进展）。</li>
+<li><strong>Peer 比较</strong>：提交后显示每个选项的选择比例；Performance 里有 percentile 与平均用时。</li>
+<li><strong>Self-assessment</strong>：四段 60 分钟、每段 40 题，交卷后给解析、排名、估算分数。</li>
+<li><strong>SmartCards / ReadyDecks</strong>：题目可转卡片，卡片按自评难度做间隔重复；有 Flashcards 进度与统计。</li>
+<li><strong>My Notebook / Dynamic Study Planner</strong>：可把题面与图形摘到笔记；按可用时间生成每日计划。</li>
+<li><strong>跨设备</strong>：桌面/平板/手机，进度自动保存并同步；需要联网。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>中央内容库 + 组卷引擎 + 作答/判分 + 性能分析 + 跨设备同步。</li>
+<li>内容（题、解析、插图、统计口径）是护城河；界面只是内容的外壳。</li>
+<li>题库元数据（subject/system/topic）是报告与组卷的前提。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>考试软件式布局：题号、计时、选项、Next/Previous、Lab 值表；蓝白为主，信息密度高但分区明确。</li>
+<li>解析页像教材：题干、选项、正确项、逐项解释、插图/表格；视觉重点在「读」，不在「装饰」。</li>
+<li>品牌色（Brandfetch 公开资料）为棕金 <code>#B37E56</code> 与亮黄 <code>#FACC34</code>；产品内界面以蓝白为主，品牌色更多出现在品牌资产上。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>Tutor / Timed 的双节奏（即使不做模考，也可以做「练习/检测」切换）。</li>
+<li>逐选项解析、Previous Tests 回看、Performance 三层报告。</li>
+<li>选项选择分布（没有用户规模时，可先用「班级/小组」或本地统计替代）。</li>
+<li>题目 → 卡片 → 复习的衔接。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>依赖大规模用户才能成立的 percentile 与 peer 比较。</li>
+<li>高成本的内容生产与插图团队。</li>
+<li>把界面做成「医院考试系统」的冷。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版已经有「练习/背题」，但缺少「检测」节奏；解析只有整题 + 部分逐项；报告只有单库正确率。<strong>先把「逐选项解析 + 单卷报告 + 题目转复习」做扎实</strong>，比做排名更实际。</p>
+<hr />
+<h3 id="2.2-AMBOSS：一个连通的系统，而不是五个订阅">2.2 AMBOSS：一个连通的系统，而不是五个订阅</h3>
+<p><strong>一句话定位</strong>：医学图书馆 + QBank + 学习计划 + 分析 + AI，全部互链。<br />
+<strong>证据等级</strong>：A（官方 features / USMLE 页）；B（官方数字）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>设定考试目标/日期 → Study Plan → Adaptive Session（按掌握度与难度出题）→ 作答 → Key Info + Attending Tip + 图像标注 → 链接到 Library 文章 → Readiness/Score 更新 → 下一轮补弱</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>Library 与 QBank 互链</strong>：每道题的解析都能跳到对应 Library 文章；文章里也能回到题。题目不是孤岛。</li>
+<li><strong>Key Info / Attending Tip / 图像标注</strong>：解析分层——先给考点，再给临床推理提示，再给影像/心电图/病理标注。</li>
+<li><strong>难度 1–5 hammers</strong>：每题有难度，Adaptive Session 会按表现调整难度曲线。</li>
+<li><strong>Adaptive Session</strong>：按「你会的、考试考的、难度曲线」选未做题；不是随机抽题。</li>
+<li><strong>Study Plan</strong>：按考试日期与可用时间生成每日高产出计划；有 200 Concepts、High-Yield 等主题计划。</li>
+<li><strong>Readiness 三件套</strong>：Equated Percent Correct（答 40 题后开始估计）、Self-Assessment（计时模拟）、Score Predictor（输入练习考试结果，给分数区间与通过概率）。</li>
+<li><strong>AI Mode</strong>：只从 AMBOSS Library 取答案，并链接到源文章；明确区别于开放网络聊天。</li>
+<li><strong>Anki 插件</strong>：卡片里的术语悬停可看 Library 定义/图片；题目与卡片双向连接。</li>
+<li><strong>App 离线</strong>：App 可离线看 Library；QBank 利用碎片时间；Web/App 进度同步。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>内容图谱：文章、题目、概念、图像、考试大纲之间有多对多关系。</li>
+<li>事件流：每道题的作答、用时、难度、考试相关性进入模型，驱动 Adaptive Session 与 Readiness。</li>
+<li>集成层：Anki、Chrome 扩展、移动 App、AI Mode 都读同一份内容图谱。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>青绿 + 黑为品牌基调（公开 logo 资料）；产品内是临床信息密度：细规则线、标签、表格、图像标注。</li>
+<li>「High-Yield」把长文压成考点；「Key Info」把解析压成可扫读块。</li>
+<li>视觉服务于「快速定位」，不是「氛围」。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>题目 ↔ 知识点/教材原文的双向链接。</li>
+<li>解析分层：结论 → 逐项 → 临床提示 → 原文。</li>
+<li>难度标定与自适应选州题（可先做规则版）。</li>
+<li>Readiness 概念：没有数据时明确说「样本不足」，不编分数。</li>
+<li>AI 只依据本地题库/教材，并给可核对引用。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>自建完整医学图书馆。</li>
+<li>没有足够样本时做「分数预测」。</li>
+<li>过度密集的临床后台感。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版有 <code>source_ref</code>（教材页码）但没有 <code>source_quote</code>，也没有知识点映射。<strong>先把「题 → 考点 → 原文 → 掌握度」这条链打通</strong>，比增加题库更接近 AMBOSS 的真正价值。</p>
+<hr />
+<h3 id="2.3-Osmosis：视觉优先，把机制讲成画面">2.3 Osmosis：视觉优先，把机制讲成画面</h3>
+<p><strong>一句话定位</strong>：用插画/视频 + 测验 + 卡片，把复杂机制讲清楚。<br />
+<strong>证据等级</strong>：A（官方 flashcards / 制作说明 / App Map）；B（官方学生规模声明）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>看视频/图文 → 做 Case Questions → 闪卡自评 → 每日重复测验 → 掌握度报告 → 学习计划调整</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>视觉优先</strong>：官方说视频「uniquely-illustrated, concise」；插画卡通但要求准确，先脚本再分镜再绘制。</li>
+<li><strong>闪卡 + 间隔重复</strong>：按「快要忘记前」重复；每张卡自评信心。</li>
+<li><strong>每日重复测验</strong>：当天做过的题会进入 daily repetition quiz；系统按到期时间安排卡片。</li>
+<li><strong>Study Schedule 拖拽</strong>：可把 Case Questions / Flashcards 排进日程，按天执行。</li>
+<li><strong>Mastery 报告</strong>：Dashboard 显示理解如何随时间增长、下一步该补哪里。</li>
+<li><strong>High-Yield Notes</strong>：图文、表格、示意图并置，服务视觉学习者。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>视频/图文内容库 + 题目 + 闪卡调度 + 学习计划 + 掌握度分析。</li>
+<li>内容生产是重资产；调度与计划是轻资产。</li>
+<li>视觉不是装饰，是解释机制的主要载体。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>插画/动画为主，色彩明快；用画面建立「机制记忆」，文字做辅助。</li>
+<li>学习路径以「主题 → 视频 → 题 → 卡」组织，而不是以「题库列表」组织。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>机制类题目配一张「解释图」，而不是只有文字解析。</li>
+<li>每日重复队列、信心自评、学习计划拖拽。</li>
+<li>掌握度报告用「趋势 + 下一步」而不是「总正确率」。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>自建视频/动画生产线。</li>
+<li>用可爱插画消解医学严肃性。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版没有任何题目图片字段（统计为 0），解析全靠文字。<strong>至少给高频/机制题补「一张解释图 + 图注」</strong>，比全站插图更有效。</p>
+<hr />
+<h3 id="2.4-医考帮：把「考点」做成可检索、可讨论、可模考的内容体系">2.4 医考帮：把「考点」做成可检索、可讨论、可模考的内容体系</h3>
+<p><strong>一句话定位</strong>：面向中国医学考试的大体量题库与备考社区。<br />
+<strong>证据等级</strong>：A（官方功能介绍）；B（官方数字：360 万题、300+ 考试学科、500 万用户、30 万 DAU）；C（应用商店描述）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>选考试/学科 → 章节练习 → 作答 → 考点还原 + 全选项解析 → 错题/收藏/笔记 → 模考 → 题目评论/论坛</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>按学科、年份、系统、题型、考频筛题</strong>：题库不是平铺，而是多维索引。</li>
+<li><strong>四种刷题模式</strong>：练习、快刷、测试、背题；不同场景不同节奏。</li>
+<li><strong>考点还原</strong>：把题目考点还原到教材/大纲位置，减少「做了不知道考什么」。</li>
+<li><strong>全选项标准解析</strong>：官方称为业内首创；每个选项都有解释。</li>
+<li><strong>题目评论区</strong>：每道题是一个独立主题，用户可看学霸口诀、名师解析；学习与社区混合。</li>
+<li><strong>错题、收藏、笔记、AI 自助组题、刷题统计</strong>：围绕「查缺补漏」组织。</li>
+<li><strong>万人模考</strong>：定期组织，模拟考试环境。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>大内容 CMS + 多维题目元数据（考试/学科/章节/年份/题型/考频）+ 作答流水 + 错题本 + 模考 + UGC 评论 + 账号。</li>
+<li>内容规模与元数据粒度是壁垒；社区是留存层。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>蓝白主色、入口密集、章节/考点/评论/打卡同屏；效率优先，情绪其次。</li>
+<li>题目页信息密度高：题干、选项、答案、解析、考点、评论、纠错入口。</li>
+<li>移动端优先，桌面像「放大版手机」。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>多维筛选（学科/章节/题型/考频/年份）。</li>
+<li>考点还原、全选项解析、错题按章节归集。</li>
+<li>练习/快刷/测试/背题四种节奏。</li>
+<li>刷题统计「查缺补漏」而不是「炫成绩」。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>把社区、广告、打卡塞进做题主路径。</li>
+<li>用体量代替结构；题库大不等于好复习。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版题库只有「科目 → 题库」两层，题目有 <code>topic/subtopic</code> 但没用于筛选。<strong>先把 <code>topic/subtopic</code> 变成可筛选、可统计、可组卷的维度</strong>，再谈更大的题库。</p>
+<hr />
+<h3 id="2.5-蓝基因：错题闭环-+-高频考点-+-离线/夜间">2.5 蓝基因：错题闭环 + 高频考点 + 离线/夜间</h3>
+<p><strong>一句话定位</strong>：300+ 医学考试题库，强调真题乱序、错题闭环、必背考点。<br />
+<strong>证据等级</strong>：B/C（官方商品页、第三方应用介绍）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>选考试 → 章节真题（顺序/乱序）→ 作答 → 错题自动归集 → 错题组卷 → 模考 → 必背考点（高/中/低频）</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>真题乱序</strong>：章节内智能乱序，打破「记住题号」的虚假掌握。</li>
+<li><strong>真题评论</strong>：题目下挂大量口诀、思路、方法。</li>
+<li><strong>随机组题 / 错题组卷</strong>：按章节、题量、难度、题型自由组卷。</li>
+<li><strong>必背考点分层</strong>：高/中/低频一目了然，支持背诵、自测、听题、做题。</li>
+<li><strong>错题闭环</strong>：错题自动同步错题本，按章节归集；一键组卷。</li>
+<li><strong>模考测试</strong>：考前密卷、考后估分、分数排名。</li>
+<li><strong>离线下载、夜间模式</strong>：移动场景友好。</li>
+<li><strong>3D 解剖</strong>：第三方介绍提到，作为差异化内容。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>内容库 + 真题元数据 + 错题本 + 组卷 + 模考 + 离线包 + 账号。</li>
+<li>「乱序/组卷/高频」都是元数据与规则驱动的，不是纯 UI。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>蓝色品牌（官方品牌释义明确「蓝色代表纯净、智慧、希望」）。</li>
+<li>第三方称其「界面清爽如医学版 INS」；整体偏轻、碎片化。</li>
+<li>夜间模式与离线是移动端体验的一部分，不是附加功能。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>错题按章节归集 + 一键错题组卷。</li>
+<li>高频/中频/低频考点标签，用于排序与降权。</li>
+<li>真题乱序，避免题号记忆。</li>
+<li>离线与夜间模式。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>分数排名带来的焦虑。</li>
+<li>用 3D/视觉噱头替代内容结构。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版错题本只有「全部/待巩固/已掌握」+ 搜索，没有按章节归集、没有错题组卷、没有高频标签。<strong>错题组卷是低成本高收益的改进</strong>。</p>
+<hr />
+<h3 id="2.6-Anki：算法可信，界面不必可爱">2.6 Anki：算法可信，界面不必可爱</h3>
+<p><strong>一句话定位</strong>：本地优先的间隔重复工具，算法与可定制性是核心。<br />
+<strong>证据等级</strong>：A（官方手册、FAQ、Stats 文档）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>建卡/导入 → 每日到期队列 → 看正面 → 回忆 → 翻面 → 评分 → 调度下一日</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>FSRS</strong>：以 Stability/Difficulty/Retrievability 建模；可设 Desired Retention；可优化参数。</li>
+<li><strong>Daily Limits</strong>：每日新卡/复习上限；可按 deck 设限；Easy Days 调整负载。</li>
+<li><strong>Leeches</strong>：反复失败的卡会被标记/暂停，避免无限循环。</li>
+<li><strong>Learning/Relearning Steps</strong>：学习步长、毕业间隔、最小间隔。</li>
+<li><strong>Stats</strong>：到期预测、复习时间、稳定性/难度分布、遗忘曲线。</li>
+<li><strong>Add-ons</strong>：FSRS Helper 等可做 postpone/advance/load balance/disperse siblings。</li>
+<li><strong>本地优先 + 同步</strong>：集合是本地 SQLite；AnkiWeb 同步；可导出。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>本地集合（cards/notes/reviews）+ 调度器 + 同步服务 + 插件 API。</li>
+<li>数据模型围绕「卡片状态」而不是「题库」；复习历史是核心资产。</li>
+<li>算法可替换（SM-2 → FSRS），但数据字段要能并存/迁移。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>功能主义、灰白、密集表单；第三方评价「nobody falls in love with Anki's looks」。</li>
+<li>复习界面只有卡片正反面 + 评分按钮；把配置项当界面是它的问题。</li>
+<li>用户自定义卡片模板，视觉不统一。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>FSRS 默认、Desired Retention、每日上限、Leech、Easy Days。</li>
+<li>复习历史是核心数据，要可导出、可重建。</li>
+<li>键盘效率、算法诚实、明确显示间隔。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>把配置项当界面。</li>
+<li>让用户先学一套调度术语。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版 SM-2 的 <code>reviewCard</code> 只有三档，且「连续 2 次记住」才掌握；没有每日上限、没有 leech、没有间隔预览。<strong>FSRS + 队列上限 + leech 是复习模块的三件基础设施</strong>。</p>
+<hr />
+<h3 id="2.7-Quizlet：把「学习路径」做成可解释的进度">2.7 Quizlet：把「学习路径」做成可解释的进度</h3>
+<p><strong>一句话定位</strong>：卡片集合 + Learn 个性化路径 + 多活动进度。<br />
+<strong>证据等级</strong>：A（官方帮助中心）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>选 set → 设目标 → Learn 逐步加难 → 答题/书写 → 进度可视化 → Test</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>Learn</strong>：基于熟悉度生成个性化学习路径；答对越多，题目越难/越少提示。</li>
+<li><strong>Answer Streaks</strong>：连续答对形成 streak，属于 Learn 的一部分。</li>
+<li><strong>Write 模式</strong>：第一轮每词答一次；错过的词进入第二轮；要完成整轮，每个词要答对两次。</li>
+<li><strong>进度可视化</strong>：按熟悉度分组，显示哪些已掌握、哪些还需练。</li>
+<li><strong>多活动</strong>：Learn / Test / Write / Spell / Flashcards，同一份内容不同练法。</li>
+<li><strong>班级</strong>：教师可建 class、加 set，班级成员免费使用 Learn/Test。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>以 set 为内容单位，多个活动共享同一份熟悉度状态。</li>
+<li>机器学习排序 + 活动结果回写进度。</li>
+<li>订阅制 gate 高级模式。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>亮蓝 <code>#4255FF</code> 为主色，扁平卡片、圆角、轻松；学习路径用进度条与分组呈现。</li>
+<li>视觉不追求临床严肃，追求「低门槛开始」。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>「答对两次才算过」的掌握口径。</li>
+<li>同一内容多活动：看卡、选择题、书写、测试。</li>
+<li>进度按熟悉度分组，而不是一个总百分比。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>订阅 gate 把核心学习能力锁住。</li>
+<li>过度简化医学内容。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版「答对一次即归档已掌握」过于宽松；可以借「连续两次正确」+「错题回到第二轮」的口径，但不要做成订阅制。</p>
+<hr />
+<h3 id="2.8-Duolingo：把「开始」做得比「学」更容易">2.8 Duolingo：把「开始」做得比「学」更容易</h3>
+<p><strong>一句话定位</strong>：用路径、连胜、提醒与游戏化把学习变成日常习惯。<br />
+<strong>证据等级</strong>：A（官方博客/帮助中心）；C（第三方设计分析）。</p>
+<p><strong>核心闭环</strong>：<br />
+<code>打开 → 一条路径上的下一课 → 2–5 分钟练习 → 即时反馈 → 连胜/XP → 明天再来</code></p>
+<p><strong>关键交互</strong></p>
+<ul>
+<li><strong>Path</strong>：把课程排成一条可见的路径，永远知道「下一课在哪」。</li>
+<li><strong>Streak</strong>：连续天数；<strong>Streak Freeze</strong> 可提前购买，漏一天不清零。</li>
+<li><strong>Friend Streak / 社交</strong>：与朋友一起保持连续；也有排行榜/联盟。</li>
+<li><strong>Notifications</strong>：用 bandit 算法优化提醒时间；提醒文案个性化。</li>
+<li><strong>小步课</strong>：每课 2–5 分钟，降低开始门槛。</li>
+<li><strong>失败反馈</strong>：先接住情绪，再讲内容；角色出现在失败/成功/离开时刻。</li>
+</ul>
+<p><strong>架构推断</strong></p>
+<ul>
+<li>路径图（课程单元依赖）+ 练习类型库 + 事件流 + 通知/实验平台 + 游戏化状态。</li>
+<li>A/B 测试驱动；提醒时间是算法问题，不是文案问题。</li>
+</ul>
+<p><strong>视觉 DNA</strong></p>
+<ul>
+<li>饱和绿、圆角、角色 Duo、大按钮、路径节点；视觉语言统一且高识别。</li>
+<li>字体：Feather Bold（标题）+ DIN Next Rounded（正文），圆润、友好。</li>
+<li>动效与角色承担情绪，不靠文案堆感叹号。</li>
+</ul>
+<p><strong>该借</strong></p>
+<ul>
+<li>首启「先体验，后建档」；分布式引导。</li>
+<li>一条可见的「今天下一件事」路径。</li>
+<li>连胜宽限/冻结，而不是惩罚。</li>
+<li>2 分钟小步启动。</li>
+</ul>
+<p><strong>不该借</strong></p>
+<ul>
+<li>排行榜、联盟、 hearts 惩罚。</li>
+<li>角色抢内容焦点。</li>
+<li>用愧疚感驱动通知。</li>
+</ul>
+<p><strong>对 MedKit 的启示</strong>：<br />
+现版有「今天任务单」和「宽容连续天数」，方向对；但任务只有固定 20 题 + 复习，缺少「早上 10 分钟」「考前 7 天」这类时间窗规则。<strong>把任务单做成规则引擎，而不是模板文案</strong>。</p>
+<hr />
+
+<section class="viz-card" aria-labelledby="viz-quadrant-title">
+  <div class="viz-head">
+    <h3 id="viz-quadrant-title">竞品定位示意</h3>
+    <p>横轴：轻量日常 ↔ 临床严谨；纵轴：工具理性 ↔ 游戏化/陪伴。坐标为分析判断，不是产品评分。</p>
+  </div>
+  <div class="quadrant">
+    <svg viewBox="0 0 760 440" role="img" aria-label="竞品定位示意图：UWorld、AMBOSS 偏临床严谨；Anki 偏工具理性；Duolingo、Quizlet 偏游戏化；医考帮、蓝基因偏日常备考；MedKit 目标在中间偏书桌。">
+      <defs>
+        <linearGradient id="qbg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" style="stop-color:var(--sheet)"/>
+          <stop offset="1" style="stop-color:var(--sheet-2)"/>
+        </linearGradient>
+      </defs>
+      <rect x="60" y="30" width="660" height="360" rx="16" fill="url(#qbg)" stroke="var(--rule)"/>
+      <line x1="390" y1="30" x2="390" y2="390" stroke="var(--rule-2)" stroke-dasharray="3 5"/>
+      <line x1="60" y1="210" x2="720" y2="210" stroke="var(--rule-2)" stroke-dasharray="3 5"/>
+      <text x="390" y="18" text-anchor="middle" fill="var(--ink-2)" font-size="13">临床严谨 / 信息密度</text>
+      <text x="390" y="418" text-anchor="middle" fill="var(--ink-2)" font-size="13">轻量日常 / 低门槛</text>
+      <g font-size="13" font-weight="600">
+        <circle cx="560" cy="92" r="7" fill="var(--accent)"/><text x="574" y="97" fill="var(--ink)">UWorld</text>
+        <circle cx="610" cy="132" r="7" fill="var(--accent)"/><text x="624" y="137" fill="var(--ink)">AMBOSS</text>
+        <circle cx="520" cy="168" r="7" fill="var(--accent)"/><text x="534" y="173" fill="var(--ink)">Osmosis</text>
+        <circle cx="300" cy="250" r="7" fill="var(--seal)"/><text x="314" y="255" fill="var(--ink)">医考帮</text>
+        <circle cx="255" cy="282" r="7" fill="var(--seal)"/><text x="269" y="287" fill="var(--ink)">蓝基因</text>
+        <circle cx="205" cy="330" r="7" fill="var(--ink-2)"/><text x="219" y="335" fill="var(--ink)">Anki</text>
+        <circle cx="300" cy="338" r="7" fill="var(--info)"/><text x="314" y="343" fill="var(--ink)">Quizlet</text>
+        <circle cx="430" cy="350" r="7" fill="var(--good)"/><text x="444" y="355" fill="var(--ink)">Duolingo</text>
+      </g>
+      <g>
+        <rect x="350" y="190" width="132" height="44" rx="22" fill="var(--accent)" opacity=".12" stroke="var(--accent)"/>
+        <text x="416" y="217" text-anchor="middle" fill="var(--accent)" font-size="14" font-weight="700">MedKit 目标</text>
+      </g>
+    </svg>
+  </div>
+</section>
+<h2 id="3.-横向对照与美术专项" class="section-h">3. 横向对照与美术专项</h2>
+<h3 id="3.1-产品能力矩阵">3.1 产品能力矩阵</h3>
+<blockquote>
+<p>✅ 具备 ｜ ⚠️ 部分 ｜ ❌ 不具备 ｜ ？推断</p>
+</blockquote>
+<div class="table-wrap cols-11" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>维度</th>
+<th>UWorld</th>
+<th>AMBOSS</th>
+<th>Osmosis</th>
+<th>医考帮</th>
+<th>蓝基因</th>
+<th>Anki</th>
+<th>Quizlet</th>
+<th>Duolingo</th>
+<th>MedKit 现版</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内容粒度：学科/章节/考点/考频</td>
+<td>⚠️ 学科/系统</td>
+<td>✅ 图谱</td>
+<td>⚠️ 主题</td>
+<td>✅ 多维</td>
+<td>✅ 多维</td>
+<td>❌ 自定义</td>
+<td>⚠️ set</td>
+<td>⚠️ 课程</td>
+<td>⚠️ 科目/题库，考点未用于筛选</td>
+</tr>
+<tr>
+<td>练习模式</td>
+<td>✅ Tutor/Timed</td>
+<td>✅ Adaptive</td>
+<td>✅ Quiz</td>
+<td>✅ 4 种</td>
+<td>✅ 多种</td>
+<td>✅ 复习</td>
+<td>✅ 多活动</td>
+<td>✅ 课程</td>
+<td>⚠️ 练习/背题</td>
+</tr>
+<tr>
+<td>逐选项解析</td>
+<td>✅</td>
+<td>✅</td>
+<td>⚠️</td>
+<td>✅</td>
+<td>⚠️</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>⚠️ 20.8% 覆盖</td>
+</tr>
+<tr>
+<td>原文/出处引用</td>
+<td>✅ 插图/表格</td>
+<td>✅ Library 链接</td>
+<td>⚠️</td>
+<td>✅ 考点还原</td>
+<td>⚠️</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>⚠️ 页码，无原句</td>
+</tr>
+<tr>
+<td>间隔重复</td>
+<td>✅ 卡片</td>
+<td>✅ 集成</td>
+<td>✅ 卡片</td>
+<td>⚠️ 复习</td>
+<td>⚠️ 复习</td>
+<td>✅ FSRS</td>
+<td>⚠️ Learn</td>
+<td>❌</td>
+<td>⚠️ SM-2</td>
+</tr>
+<tr>
+<td>每日队列/上限</td>
+<td>⚠️</td>
+<td>✅</td>
+<td>✅</td>
+<td>⚠️</td>
+<td>⚠️</td>
+<td>✅</td>
+<td>⚠️</td>
+<td>✅</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>掌握度/准备度</td>
+<td>✅ 报告</td>
+<td>✅ Readiness</td>
+<td>✅ Mastery</td>
+<td>✅ 统计</td>
+<td>✅ 统计</td>
+<td>✅ Stats</td>
+<td>✅ 进度</td>
+<td>⚠️</td>
+<td>⚠️ 单库正确率</td>
+</tr>
+<tr>
+<td>学习计划</td>
+<td>✅ 动态</td>
+<td>✅ Study Plan</td>
+<td>✅ Schedule</td>
+<td>⚠️</td>
+<td>⚠️</td>
+<td>✅ 每日</td>
+<td>⚠️</td>
+<td>✅ Path</td>
+<td>⚠️ 每日目标</td>
+</tr>
+<tr>
+<td>错题组卷/诊断</td>
+<td>⚠️</td>
+<td>⚠️</td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>社区/UGC</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+<td>⚠️ 班级</td>
+<td>⚠️</td>
+<td>❌（本轮不做）</td>
+</tr>
+<tr>
+<td>离线</td>
+<td>❌ 需联网</td>
+<td>✅ App</td>
+<td>⚠️</td>
+<td>⚠️</td>
+<td>✅</td>
+<td>✅ 本地</td>
+<td>⚠️</td>
+<td>✅ App</td>
+<td>❌ 无 SW</td>
+</tr>
+<tr>
+<td>AI</td>
+<td>⚠️</td>
+<td>✅ 引用</td>
+<td>⚠️</td>
+<td>✅ 组题</td>
+<td>⚠️</td>
+<td>❌</td>
+<td>✅</td>
+<td>⚠️</td>
+<td>⚠️ BYOK 问答/出题</td>
+</tr>
+<tr>
+<td>跨设备同步</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>⚠️ 整包快照</td>
+</tr>
+<tr>
+<td>视觉识别度</td>
+<td>✅ 考试蓝白</td>
+<td>✅ 青绿临床</td>
+<td>✅ 插画</td>
+<td>✅ 蓝白高密度</td>
+<td>✅ 蓝色清爽</td>
+<td>❌ 工具感</td>
+<td>✅ 亮蓝卡片</td>
+<td>✅ 绿色角色</td>
+<td>⚠️ 纸墨方向对，执行弱</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="3.2-视觉-DNA-矩阵">3.2 视觉 DNA 矩阵</h3>
+<div class="table-wrap cols-8" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>产品</th>
+<th>第一眼印象</th>
+<th>色彩</th>
+<th>字体/排版</th>
+<th>图像</th>
+<th>材质/动效</th>
+<th>语气</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UWorld</td>
+<td>考试软件</td>
+<td>蓝白 + 品牌棕金</td>
+<td>密集表格、题号/计时</td>
+<td>临床插图、图表</td>
+<td>功能优先、少装饰</td>
+<td>严肃、权威</td>
+</tr>
+<tr>
+<td>AMBOSS</td>
+<td>临床工作台</td>
+<td>青绿 + 黑</td>
+<td>细规则线、标签、表格</td>
+<td>影像/心电图标注</td>
+<td>高密度、低情绪</td>
+<td>专业、直接</td>
+</tr>
+<tr>
+<td>Osmosis</td>
+<td>视觉教材</td>
+<td>明快插画色</td>
+<td>图文并置、短视频</td>
+<td>手绘/动画机制图</td>
+<td>轻动效、叙事</td>
+<td>友好、解释性</td>
+</tr>
+<tr>
+<td>医考帮</td>
+<td>备考信息流</td>
+<td>蓝白</td>
+<td>多入口、密集列表</td>
+<td>题目/评论/考点</td>
+<td>高频操作、少留白</td>
+<td>热闹、功利</td>
+</tr>
+<tr>
+<td>蓝基因</td>
+<td>清爽题库</td>
+<td>蓝色</td>
+<td>列表 + 标签</td>
+<td>3D 解剖（第三方）</td>
+<td>夜间/离线</td>
+<td>轻、效率</td>
+</tr>
+<tr>
+<td>Anki</td>
+<td>工具表单</td>
+<td>灰白</td>
+<td>三栏、密集表单</td>
+<td>无</td>
+<td>几乎无</td>
+<td>冷静、门槛高</td>
+</tr>
+<tr>
+<td>Quizlet</td>
+<td>卡片学习</td>
+<td>亮蓝 #4255FF</td>
+<td>大圆角、卡片</td>
+<td>扁平插画</td>
+<td>轻快</td>
+<td>轻松、鼓励</td>
+</tr>
+<tr>
+<td>Duolingo</td>
+<td>游戏路径</td>
+<td>饱和绿</td>
+<td>圆角大字、路径</td>
+<td>角色</td>
+<td>弹跳/庆祝</td>
+<td>陪伴、调侃</td>
+</tr>
+<tr>
+<td>MedKit 现版</td>
+<td>纸感后台</td>
+<td>米纸 + 墨绿 + 红笔</td>
+<td>宋体阅读 + 黑体界面</td>
+<td>几乎无</td>
+<td>批改印章</td>
+<td>克制、像同桌</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="3.3-十二条经市场验证的最佳实践">3.3 十二条经市场验证的最佳实践</h3>
+<ol>
+<li><strong>先给价值，再要承诺</strong>：Duolingo 首课在注册前；MedKit 已有「先做 3 道示例题」，应保留并强化。</li>
+<li><strong>一屏一个主动作</strong>：Duolingo 每屏一个绿色按钮；MedKit 今天页方向对，但刷题页仍有三块入口。</li>
+<li><strong>学习节奏与检测节奏分离</strong>：UWorld Tutor/Timed；MedKit 可做「练习/检测」而非全真模考。</li>
+<li><strong>逐选项解释</strong>：UWorld/AMBOSS/医考帮都做；MedKit 只有 20.8% 覆盖，是最大内容债。</li>
+<li><strong>结论先行 + 依据可查</strong>：医疗产品的三条硬约束；MedKit 已有 <code>source_ref</code>，但缺原句。</li>
+<li><strong>难度标定</strong>：AMBOSS 1–5 hammers；MedKit <code>difficulty</code> 字段全为 0。</li>
+<li><strong>自适应/补弱</strong>：AMBOSS Adaptive、Osmosis daily repetition、Quizlet Learn；MedKit 仍是随机/全量。</li>
+<li><strong>准备度而非预测分</strong>：AMBOSS Readiness 明确样本门槛；MedKit 没有准备度，也不该编分数。</li>
+<li><strong>主动回忆优先</strong>：Anki/Osmosis 先回忆再翻面；MedKit 复习卡直接给答案。</li>
+<li><strong>算法诚实 + 队列上限</strong>：Anki FSRS/leech/daily limits；MedKit SM-2 无上限无 leech。</li>
+<li><strong>连胜可断，习惯不断</strong>：Duolingo streak freeze；MedKit 已有宽容口径，可补「本周目标」。</li>
+<li><strong>跨设备可续</strong>：UWorld/AMBOSS 进度同步；MedKit 有账号快照，但冲突未解。</li>
+</ol>
+<h3 id="3.4-美术专项：从竞品视觉-DNA-到-MedKit-的书桌">3.4 美术专项：从竞品视觉 DNA 到 MedKit 的书桌</h3>
+<blockquote>
+<p>这一节回答「美术到底学什么」。不是学配色，是学<strong>每种视觉选择在解决什么问题</strong>。</p>
+</blockquote>
+<h4 id="3.4.1-七种视觉谱系">3.4.1 七种视觉谱系</h4>
+<div class="table-wrap cols-7" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>谱系</th>
+<th>代表</th>
+<th>第一眼印象</th>
+<th>它真正解决的问题</th>
+<th>可借的视觉手法</th>
+<th>不借</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>考试仿真</strong></td>
+<td>UWorld</td>
+<td>蓝白、题号、计时、考试软件</td>
+<td>让练习接近真实考试，降低考场陌生感</td>
+<td>题号/进度/计时的稳定位置；结果页表格；选项分布；临床插图</td>
+<td>医院系统的冷、密集到压抑</td>
+</tr>
+<tr>
+<td><strong>临床编辑</strong></td>
+<td>AMBOSS</td>
+<td>青绿 + 黑、细规则线、标签、图像标注</td>
+<td>在高密度信息里快速定位</td>
+<td>Key Info 分层；Attending Tip；影像/心电图标注；题目 ↔ 文章互链</td>
+<td>把每屏都塞满</td>
+</tr>
+<tr>
+<td><strong>视觉叙事</strong></td>
+<td>Osmosis</td>
+<td>插画/动画、明快、图文并置</td>
+<td>用画面解释机制，降低记忆负担</td>
+<td>机制图；图注；视频/图文与题卡联动；每日重复</td>
+<td>重资产视频线、卡通化过度</td>
+</tr>
+<tr>
+<td><strong>高密度备考</strong></td>
+<td>医考帮 / 蓝基因</td>
+<td>蓝白、入口密集、章节/考点/评论</td>
+<td>让备考信息「都在手边」</td>
+<td>考频标签；章节/考点树；错题组卷；真题乱序；夜间/离线</td>
+<td>社区、广告、打卡塞进主路径</td>
+</tr>
+<tr>
+<td><strong>工具理性</strong></td>
+<td>Anki</td>
+<td>灰白、三栏、密集表单</td>
+<td>算法可信、长期可维护</td>
+<td>间隔可见；统计诚实；键盘效率；数据可导出</td>
+<td>把配置项当界面</td>
+</tr>
+<tr>
+<td><strong>卡片社交</strong></td>
+<td>Quizlet</td>
+<td>亮蓝 <code>#4255FF</code>、圆角卡片、进度分组</td>
+<td>降低开始门槛，让进度可解释</td>
+<td>熟悉度分组；多活动进度；答对两次才算过</td>
+<td>订阅 gate、过度简化</td>
+</tr>
+<tr>
+<td><strong>游戏化</strong></td>
+<td>Duolingo</td>
+<td>饱和绿、圆角、角色、路径</td>
+<td>让「开始」比「学」更容易</td>
+<td>小步课；可见路径；完成动效；连胜宽限</td>
+<td>排行榜、hearts、愧疚通知、角色抢内容</td>
+</tr>
+</tbody>
+</table></div>
+<h4 id="3.4.2-MedKit-的美术定位">3.4.2 MedKit 的美术定位</h4>
+<p><strong>一句话：纸张编辑部 + 临床图表 + 手作痕迹。</strong></p>
+<ul>
+<li><strong>纸张编辑部</strong>（Readwise / Bear / iA）：米纸、宋体、窄阅读列、单一强调色。解决「读得下去」。</li>
+<li><strong>临床图表</strong>（UWorld / AMBOSS）：对齐、单位、出处、考频、细规则线。解决「数据可信」。</li>
+<li><strong>手作痕迹</strong>（红笔 / 荧光笔 / 印章 / 页边注）：只在判分、批改、出处、笔记这些语义时刻出现。解决「有人批改过」。</li>
+</ul>
+<p><strong>不是</strong>：游戏化角色、医院信息系统、文创贴纸、满屏手写体。</p>
+<h4 id="3.4.3-十条美术规则">3.4.3 十条美术规则</h4>
+<ol>
+<li><strong>纸是底，不是贴纸。</strong> 噪点只铺页面底，不铺卡片；纹理透明度 ≤ 3%；不用木纹、胶带、拍立得。</li>
+<li><strong>三种字，各司其职。</strong> 界面黑体、阅读宋体、页边注楷体；衬线只出现在「读」的地方，按钮/标签/导航不碰。</li>
+<li><strong>三色语义，不扩充。</strong> 墨绿 = 主行动；红笔 = 批改/错误；荧光黄 = 原文/出处。其余颜色只做数据与科目识别。</li>
+<li><strong>12 栏 + 8px 栅格。</strong> 阅读列 720–840px；数字右对齐 + <code>tabular-nums</code>；表格用规则线，不用大圆角卡片。</li>
+<li><strong>一屏最多两张纸。</strong> 一张主纸（任务/题目/批改），一张副纸（统计/列表）；其余收进折叠或抽屉。</li>
+<li><strong>书脊认书，不靠封面装饰。</strong> 每个科目一个低饱和色，4px 书脊 + 书封 + 进度书边；用户能「认出内科学那本」。</li>
+<li><strong>插图解释机制，不做吉祥物。</strong> 空态/首启用桌面物件线稿；题目优先补「一张机制图 + 图注」，而不是全站插画。</li>
+<li><strong>数据图像账簿。</strong> 细规则线、右对齐、单位、<code>n=</code>、参考线、小倍数图；不用通用圆角进度条。</li>
+<li><strong>动效像纸，不像弹球。</strong> 90ms 按下、140ms 红笔描边、220ms 解析展开、240ms 盖章；只动 <code>transform/opacity</code>；<code>prefers-reduced-motion</code> 归零。</li>
+<li><strong>暗色是台灯，不是反色。</strong> 暖黑页面底 + 暖光池 + 纸面提暖；不用纯黑 + 纯白文字；对比度仍要 ≥ AA。</li>
+</ol>
+<h4 id="3.4.4-视觉资产清单">3.4.4 视觉资产清单</h4>
+<div class="table-wrap cols-5" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>资产</th>
+<th>用途</th>
+<th>形式</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MW 字标 + MedKit 字标</td>
+<td>品牌识别</td>
+<td>inline SVG</td>
+<td>侧栏、登录卡、报告、PWA 同源</td>
+</tr>
+<tr>
+<td>图标组</td>
+<td>导航/动作</td>
+<td>24px、1.5px stroke</td>
+<td>语义一致；无 emoji 替代</td>
+</tr>
+<tr>
+<td>科目书脊色</td>
+<td>认书</td>
+<td>8 个低饱和色 + 4px 竖条</td>
+<td>亮/暗都 ≥3:1；不用于状态</td>
+</tr>
+<tr>
+<td>题库书封</td>
+<td>书架</td>
+<td>CSS 3:4 封面</td>
+<td>长名截断 + title 全称</td>
+</tr>
+<tr>
+<td>空态线稿</td>
+<td>首启/空态/完成</td>
+<td>5 张 inline SVG</td>
+<td>无外部请求；有可访问名称</td>
+</tr>
+<tr>
+<td>批改印章</td>
+<td>完成/判分</td>
+<td>CSS + SVG</td>
+<td>只出现一次；不用于 logo</td>
+</tr>
+<tr>
+<td>荧光笔</td>
+<td>原文/出处</td>
+<td>CSS <code>background</code> + <code>box-decoration-break</code></td>
+<td>只在 <code>source_quote</code> 出现</td>
+</tr>
+<tr>
+<td>键帽</td>
+<td>快捷键</td>
+<td>CSS</td>
+<td>三次后淡出；可关闭</td>
+</tr>
+<tr>
+<td>图表原语</td>
+<td>掌握度/节奏/校准</td>
+<td>SVG/CSS</td>
+<td>单位、n、参考线齐全</td>
+</tr>
+<tr>
+<td>打印题册</td>
+<td>离线/纸质</td>
+<td>print CSS</td>
+<td>A4 分页；答案页独立</td>
+</tr>
+<tr>
+<td>OG 分享图</td>
+<td>外部分享</td>
+<td>1200×630 PNG</td>
+<td>纸底 + 字标 + 一句价值</td>
+</tr>
+</tbody>
+</table></div>
+<h4 id="3.4.5-五个反常识">3.4.5 五个反常识</h4>
+<ol>
+<li><strong>视觉识别不靠插画多，靠一个可重复的语义。</strong> MedKit 的红笔与书脊，比十张插画更像品牌。</li>
+<li><strong>信息密度不是敌人，无层级才是。</strong> AMBOSS 很密，但每块都有标签与对齐；现版不密，却每张卡一样重。</li>
+<li><strong>完成感来自动效与节奏，不来自徽章。</strong> 批改页的印章 + 停住，比彩带更符合备考场景。</li>
+<li><strong>专业感来自对齐与单位，不来自冷色。</strong> 冷白不等于临床；数据右对齐、单位、出处才是。</li>
+<li><strong>纸感来自 1px 规则线与留白，不来自纹理图。</strong> 纹理只是 3% 的底，结构才是纸。</li>
+</ol>
+<h4 id="3.4.6-参照组：不进入主竞品矩阵，但进入美术/交互参照">3.4.6 参照组：不进入主竞品矩阵，但进入美术/交互参照</h4>
+<div class="table-wrap cols-5" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>产品</th>
+<th>看什么</th>
+<th>借什么</th>
+<th>不借</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>丁香医考</td>
+<td>医学考试的分层信息架构</td>
+<td>分层标签、考试/学科组织</td>
+<td>广告与课程销售入口</td>
+</tr>
+<tr>
+<td>粉笔</td>
+<td>题库 + 课程 + 模考的组织方式</td>
+<td>解析结构、错题本、模考入口的分层</td>
+<td>把课程销售塞进做题路径</td>
+</tr>
+<tr>
+<td>RemNote</td>
+<td>题目永远带着笔记上下文</td>
+<td>题 ↔ 笔记 ↔ 卡片双向链接</td>
+<td>让用户先学编辑器</td>
+</tr>
+<tr>
+<td>Readwise</td>
+<td>纸感、衬线、荧光笔</td>
+<td>720–840px 阅读列、单一强调色、高亮即动作</td>
+<td>营销页式巨大标题</td>
+</tr>
+<tr>
+<td>Bear</td>
+<td>写作与排版的安静感</td>
+<td>宋体/留白/轻描边</td>
+<td>过度极简导致操作不可见</td>
+</tr>
+<tr>
+<td>Things 3</td>
+<td>完成感与一屏一任务</td>
+<td>轻微下沉、完成动效、今天只放今天</td>
+<td>依赖苹果生态与手势</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p>参照组只用于「美术与交互手法」；不把它们的能力全部搬进 MedKit。</p>
+</blockquote>
+<hr />
+<h2 id="4.-现版基线" class="section-h">4. 现版基线</h2>
+<h3 id="4.1-已经做对的事">4.1 已经做对的事</h3>
+<ul>
+<li><strong>数据资产</strong>：11 个题库、2350 题、7 个科目组；A1/A2/X/B1/A3/A4/判断/案例多种题型。</li>
+<li><strong>作答闭环</strong>：点选判分、集合判分、答题卡、键盘、计时、断点续做、错题自动回流。</li>
+<li><strong>复习</strong>：SM-2、今日到期、三档自评、错题本筛选/搜索/重练。</li>
+<li><strong>账号</strong>：可选 FastAPI 服务，PBKDF2 200k、HMAC cookie、每用户 SQLite、4.5MB 快照上限。</li>
+<li><strong>工程</strong>：零构建、零 CDN、1 CSS + 1 JS、59 项 Node 测试 + 8 项 pytest、390px 无溢出、44px 触控目标。</li>
+<li><strong>设计令牌</strong>：OKLCH 双主题、5 档字号、语义色、焦点环、骨架屏、错误态三段式。</li>
+<li><strong>语气</strong>：首启单动作、深夜模式、允许停下、不排名、不惩罚断签。</li>
+</ul>
+<h3 id="4.2-量化基线（本仓统计，证据等级-D）">4.2 量化基线（本仓统计，证据等级 D）</h3>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>题库</td>
+<td>11 库 / 2350 题</td>
+<td><code>data/index.json</code> + <code>data/subjects/*.json</code></td>
+</tr>
+<tr>
+<td>含逐选项理由的题</td>
+<td>488 / 2350 = <strong>20.8%</strong></td>
+<td>386 题五项齐全（16.4%），102 题部分</td>
+</tr>
+<tr>
+<td>核心教学版覆盖</td>
+<td>0%–6%</td>
+<td>外/内/妇/急诊/耳鼻喉/口腔/传染教学版几乎为 0</td>
+</tr>
+<tr>
+<td>期末/押题/教师重点覆盖</td>
+<td>73%–100%</td>
+<td>解析债集中在最该用的教学版</td>
+</tr>
+<tr>
+<td><code>source_quote</code></td>
+<td>0</td>
+<td>有教材页码，无原句</td>
+</tr>
+<tr>
+<td><code>difficulty</code></td>
+<td>0</td>
+<td>难度字段未标注</td>
+</tr>
+<tr>
+<td>题目图片字段</td>
+<td>0</td>
+<td>无影像/图表/解剖图</td>
+</tr>
+<tr>
+<td>作答上限</td>
+<td>8000 条</td>
+<td><code>recordAttempt</code> 截断</td>
+</tr>
+<tr>
+<td>账号快照上限</td>
+<td>4.5 MB</td>
+<td><code>MAX_STATE_BYTES</code></td>
+</tr>
+<tr>
+<td>静态资源</td>
+<td>1 CSS 103.8KB + 1 JS 194.7KB</td>
+<td>未压缩；零构建</td>
+</tr>
+<tr>
+<td>线上 DCL</td>
+<td>历史实测 6.5–13.9s</td>
+<td>合并资源前；合并后未复测，瓶颈仍在网关/单 worker</td>
+</tr>
+<tr>
+<td>测试</td>
+<td>59 Node + 8 pytest</td>
+<td>另有 32 张截图基线</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="4.3-六屏视觉审计">4.3 六屏视觉审计</h3>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>屏幕</th>
+<th>现状</th>
+<th>问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>今天</td>
+<td>任务单 + 右栏四个折叠卡</td>
+<td>任务行像后台 checklist；右侧四卡等权；大片空白无「桌面」物件；「今天到这儿」是灰按钮，结束感弱</td>
+</tr>
+<tr>
+<td>刷题</td>
+<td>续做条 + 内置题库 + 快捷开始 + 今日进度</td>
+<td>三块入口重复决策；题库卡是米色块，无书封/书脊；卡片高度参差；右侧空</td>
+</tr>
+<tr>
+<td>答题</td>
+<td>顶部工具条 + 题干 + 5 选项 + 底部按钮</td>
+<td>选项是普通描边矩形；下半屏大空白；无红笔/荧光笔/页边注；工具条密</td>
+</tr>
+<tr>
+<td>错题</td>
+<td>左聊天 + 右复习/薄弱/全部</td>
+<td>聊天抢了「今天该复习」的主位；助手气泡像通用客服；错题条目没有章节/考频</td>
+</tr>
+<tr>
+<td>书架</td>
+<td>一行一本 + 题库管理 + 出题工坊</td>
+<td>没有「书架」隐喻；没有书封/科目色；管理区与书架并列，主次不清</td>
+</tr>
+<tr>
+<td>设置</td>
+<td>长页，账号/数据/外观/BYOK/模型/危险区</td>
+<td>原生文件选择器破坏质感；无子导航；危险操作与普通卡片同权重</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="4.4-设计规格与实现漂移">4.4 设计规格与实现漂移</h3>
+<p><code>docs/0.23.0-前端重设计_活人感_2026-10-29.md</code> §4 定义了完整的书桌系统，但实现只落地了一部分：</p>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>规格</th>
+<th>实现状态</th>
+<th>证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>纸面噪点 <code>feTurbulence</code></td>
+<td>未实现</td>
+<td>CSS 中无 <code>feTurbulence</code></td>
+</tr>
+<tr>
+<td>荧光笔 <code>--highlight</code></td>
+<td>未实现</td>
+<td>tokens 无该变量；<code>source_quote</code> 为 0</td>
+</tr>
+<tr>
+<td>书脊 <code>Spine</code></td>
+<td>未实现</td>
+<td>无科目色/书脊组件</td>
+</tr>
+<tr>
+<td><code>Seal</code> 印章</td>
+<td>部分</td>
+<td>仅批改页 <code>.finish-seal</code></td>
+</tr>
+<tr>
+<td><code>Keycap</code> 键帽</td>
+<td>未实现</td>
+<td>底部只有一行 hint</td>
+</tr>
+<tr>
+<td>红笔描边从左到右</td>
+<td>未实现</td>
+<td>无 <code>scaleX</code> 判分动效</td>
+</tr>
+<tr>
+<td>页面切换 200ms</td>
+<td>未实现/部分</td>
+<td>需核查</td>
+</tr>
+<tr>
+<td>卡片圆角 10px</td>
+<td>未实现</td>
+<td>tokens 仍 12/16px</td>
+</tr>
+<tr>
+<td>宋体阅读面</td>
+<td>已实现</td>
+<td><code>--font-read</code> 用于题干/解析</td>
+</tr>
+<tr>
+<td>双主题对比度</td>
+<td>已实现</td>
+<td>tokens 行尾有实测对比度</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>结论</strong>：不是没有设计，而是<strong>设计没有变成组件</strong>。这就是为什么截图看起来仍像「后台」。</p>
+<h3 id="4.5-痛点排序">4.5 痛点排序</h3>
+<p><strong>P0 品牌与美术</strong></p>
+<ol>
+<li>书桌概念未组件化：纸、红笔、荧光笔、书脊、键帽大多停留在文档里。</li>
+<li>题库/科目没有视觉身份：书架没有书，卡片没有封面，用户无法「认书」。</li>
+<li>空态/首启/批改页缺少插图与情绪锚点；完成页是一张孤立小卡。</li>
+<li>暗色主题是反色，不是「台灯下的桌面」；缺少暖光池与材质层次。</li>
+<li>移动底栏拥挤：5 个导航 + 命令面板/主题/反馈/版本，图标与文字挤在一行。</li>
+<li>设置页原生控件与长页破坏质感；BYOK/危险操作与普通卡片同权重。</li>
+<li>数据图表缺少临床语言：进度条是通用 UI，不是病历/账簿式对齐。</li>
+</ol>
+<p><strong>P1 学习闭环与信息架构</strong></p>
+<ol start="8">
+<li>复习不是主动回忆：先给答案，再自评；无法检验「是否真的想起」。</li>
+<li>逐选项解析覆盖 20.8%，核心教学版 0–6%；「逐项」目前是局部卖点，不是普遍能力。</li>
+<li>没有知识点掌握度/准备度；薄弱项按 <code>subtopic</code> 聚合，未映射时为「未分类」。</li>
+<li>没有错因分类、错题组卷、同类题推荐；错题本只是列表。</li>
+<li>没有 FSRS、每日上限、leech、间隔预览、撤销。</li>
+<li>今天任务单只认第一个题库；无「早上 10 分钟」「考前 7 天」规则；「今天到这儿」只是 toast。</li>
+<li>刷题页三块入口重复；错题页聊天优先于复习；书架与管理重复；设置页过长。</li>
+<li>没有跨题目/错题/考点的内容搜索；命令面板只搜动作。</li>
+</ol>
+<p><strong>P2 数据与架构</strong></p>
+<ol start="16">
+<li>localStorage 5MB/8000 条上限；无 IndexedDB。</li>
+<li>题目 id 是 <code>题库名#序号</code>，导出丢 id，导入静默去重；内容更新会让历史作答错位。</li>
+<li>账号同步是整包 last-write-wins；无版本号/墓碑/冲突 UI；4.5MB 上限。</li>
+<li>无 Service Worker/离线；PWA 只有 manifest。</li>
+<li>BYOK Key 明文存 localStorage；CSP 允许 <code>unsafe-inline</code>；XSS 面需再评估。</li>
+<li>AI 无流式/取消/超时/成本预估/引用校验。</li>
+<li>性能与可访问性只做了局部验证：无视觉回归、无 WCAG 全量审计、无 CI 守卫。</li>
+</ol>
+<hr />
+<h2 id="5.-结构化改进点清单" class="section-h">5. 结构化改进点清单</h2>
+<blockquote>
+<p>成本口径：<strong>S</strong> 单组件/文案；<strong>M</strong> 2–4 模块；<strong>L</strong> 跨层/加字段/迁移；<strong>XL</strong> 架构级/内容生产。<br />
+收益口径：1–5 分，按本轮权重「品牌 35 / 学习 30 / 留存 20 / 信任 15」加权。<br />
+可行性：高（现有栈可做）、中（需迁移/新依赖）、低（需外部资源或规模）。</p>
+</blockquote>
+<h3 id="5.1-A-·-品牌与美术（P0）">5.1 A · 品牌与美术（P0）</h3>
+<div class="table-wrap cols-9" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>ID</th>
+<th>改进项</th>
+<th>现状/证据</th>
+<th>改法</th>
+<th>成本</th>
+<th>收益</th>
+<th>可行性</th>
+<th>依赖/风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A1</td>
+<td>品牌资产统一</td>
+<td>图标是亮青绿 <code>#2dd4bf</code>，UI 是墨绿 <code>#2b5c4b</code>；manifest <code>theme_color</code> 又是 <code>#2a6b5a</code>；侧栏无 MW 图标</td>
+<td>以 <code>pack/make_icon.py</code> 为唯一源，统一 icon/字标/主题色/OG/PWA；侧栏放 MW 标记 + MedKit 字标</td>
+<td>S</td>
+<td>5 品牌</td>
+<td>高</td>
+<td>无；注意暗色图标对比</td>
+</tr>
+<tr>
+<td>A2</td>
+<td>设计令牌扩展</td>
+<td>无科目色、无 highlight、无纸纹、无灯光梯度</td>
+<td>新增 <code>--highlight</code>、<code>--paper-grain</code>、<code>--lamp-pool</code>、<code>--subject-1..8</code>；全部带 sRGB 注释</td>
+<td>S</td>
+<td>5 品牌</td>
+<td>高</td>
+<td>需 CSS 孤儿守卫</td>
+</tr>
+<tr>
+<td>A3</td>
+<td>组件语言落地</td>
+<td>规格有 Sheet/Seal/Highlight/Spine/Rule/Tag/Keycap，实际只有部分 Seal</td>
+<td>建组件类并登记消费者；每类只做一件事</td>
+<td>M</td>
+<td>5 品牌</td>
+<td>高</td>
+<td>改动面广；需截图基线</td>
+</tr>
+<tr>
+<td>A4</td>
+<td>题库书封/书脊</td>
+<td>书架是纯文本行，无「认书」线索</td>
+<td>CSS-only 书封：科目色书脊 + 题库名 + 版本标签 + 进度书边；3:4 封面</td>
+<td>M</td>
+<td>5 品牌/留存</td>
+<td>高</td>
+<td>长题库名截断 + title</td>
+</tr>
+<tr>
+<td>A5</td>
+<td>空态/首启/批改插图</td>
+<td>空态只有文字；首启是便签卡；批改页孤立</td>
+<td>5 张 inline SVG 线稿（台灯/题册/红笔/听诊器/书堆）；只用于空态/首启/完成</td>
+<td>M</td>
+<td>4 品牌/留存</td>
+<td>高</td>
+<td>零外部图片；SVG 可访问名称</td>
+</tr>
+<tr>
+<td>A6</td>
+<td>暗色「台灯」</td>
+<td>暗色是黑底 + 亮绿，平</td>
+<td>页面底加暖光池 radial-gradient；纸面提暖；降低纯黑面积；保留对比度</td>
+<td>S</td>
+<td>4 品牌</td>
+<td>高</td>
+<td>需对比度复测</td>
+</tr>
+<tr>
+<td>A7</td>
+<td>移动底栏减负</td>
+<td>5 导航 + 3 工具 + 版本号，拥挤</td>
+<td>底栏只留 5 导航；工具/版本收进设置或「更多」；标签 12px；安全区</td>
+<td>S</td>
+<td>4 体验/品牌</td>
+<td>高</td>
+<td>需 390/844 复测</td>
+</tr>
+<tr>
+<td>A8</td>
+<td>设置页子导航</td>
+<td>长页，账号/数据/外观/BYOK/模型/危险区同权重</td>
+<td>左侧/顶部子导航；高级项折叠；危险区单独视觉层级</td>
+<td>M</td>
+<td>4 体验/信任</td>
+<td>高</td>
+<td>保持 hash 路由</td>
+</tr>
+<tr>
+<td>A9</td>
+<td>字体与数据排版</td>
+<td>12px 元信息偏小；数字未统一 tabular</td>
+<td>元信息 ≥13.5px；数据右对齐 + tabular-nums；阅读面 17px/1.9</td>
+<td>S</td>
+<td>4 品牌/信任</td>
+<td>高</td>
+<td>需 5 档字号守卫</td>
+</tr>
+<tr>
+<td>A10</td>
+<td>临床图表语言</td>
+<td>进度条是通用圆角条；无单位/n</td>
+<td>账簿式细规则线、右对齐数字、参考线、n= 标注；小倍数图</td>
+<td>M</td>
+<td>4 信任/学习</td>
+<td>高</td>
+<td>不引图表库；SVG/CSS</td>
+</tr>
+<tr>
+<td>A11</td>
+<td>图标系统</td>
+<td>线稿图标混用，部分语义弱</td>
+<td>24px/1.5px 统一图标；补 book/stethoscope/pen/pill/clipboard</td>
+<td>S</td>
+<td>3 品牌</td>
+<td>高</td>
+<td>零 CDN；inline SVG</td>
+</tr>
+<tr>
+<td>A12</td>
+<td>打印/试卷</td>
+<td>无打印样式</td>
+<td>A4 题册 + 答题卡 + 红笔批改；打印隐藏导航/工具</td>
+<td>M</td>
+<td>3 学习/品牌</td>
+<td>高</td>
+<td>分页与长题干</td>
+</tr>
+<tr>
+<td>A13</td>
+<td>分享/OG 图</td>
+<td>OG 用 512 PNG，无版式</td>
+<td>生成 1200×630 分享图：纸底 + 字标 + 一句价值</td>
+<td>S</td>
+<td>3 品牌</td>
+<td>高</td>
+<td>静态资产</td>
+</tr>
+<tr>
+<td>A14</td>
+<td>动效「纸的物理」</td>
+<td>只有批改印章；无选项描边/页面切换</td>
+<td>90/140/220/240ms 四档；只动 transform/opacity；reduced-motion 归零</td>
+<td>M</td>
+<td>4 品牌</td>
+<td>高</td>
+<td>需降低动效守卫</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="5.2-B-·-信息架构与交互（P1）">5.2 B · 信息架构与交互（P1）</h3>
+<div class="table-wrap cols-9" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>ID</th>
+<th>改进项</th>
+<th>现状/证据</th>
+<th>改法</th>
+<th>成本</th>
+<th>收益</th>
+<th>可行性</th>
+<th>依赖/风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>B1</td>
+<td>今天任务单规则化</td>
+<td>只从第一个题库取题；无早间/考前规则</td>
+<td>规则引擎：时间窗（早 10 分钟/深夜/考前 7 天）+ 到期 + 新题 + 科目轮换；输出 1 主 2 次</td>
+<td>M</td>
+<td>5 学习/留存</td>
+<td>高</td>
+<td>需要考试日期与科目权重</td>
+</tr>
+<tr>
+<td>B2</td>
+<td>刷题页入口收敛</td>
+<td>题库卡 + 快捷开始 + 今日进度三块重复</td>
+<td>首屏只留「题库卡 + 继续/开始」；快捷开始与范围收进「更多」；今日进度并入今天</td>
+<td>M</td>
+<td>4 体验</td>
+<td>高</td>
+<td>保留深链</td>
+</tr>
+<tr>
+<td>B3</td>
+<td>错题页重排</td>
+<td>聊天主位，复习在右栏</td>
+<td>首屏「今日复习」主位；聊天第二；全部错题第三；薄弱项折叠</td>
+<td>M</td>
+<td>4 学习</td>
+<td>高</td>
+<td>需要复习卡组件</td>
+</tr>
+<tr>
+<td>B4</td>
+<td>书架与管理分层</td>
+<td>书架与题库管理并列</td>
+<td>书架为主；管理进抽屉/子页；出题工坊独立入口</td>
+<td>M</td>
+<td>4 体验</td>
+<td>高</td>
+<td>保持导入出口</td>
+</tr>
+<tr>
+<td>B5</td>
+<td>设置页分层</td>
+<td>长页同权重</td>
+<td>子导航 + 折叠高级项 + 危险区独立</td>
+<td>M</td>
+<td>4 体验</td>
+<td>高</td>
+<td>同 A8</td>
+</tr>
+<tr>
+<td>B6</td>
+<td>全局内容搜索</td>
+<td>只有命令面板动作</td>
+<td>搜题/错题/考点；结果分组；无结果给替代词</td>
+<td>M</td>
+<td>4 学习/留存</td>
+<td>高</td>
+<td>需索引；localStorage 可先做</td>
+</tr>
+<tr>
+<td>B7</td>
+<td>复习卡主动回忆</td>
+<td>直接显示答案 + 三档</td>
+<td>先题干/选项 → 自评/翻面 → 答案 + 解析 → 四档评分</td>
+<td>M</td>
+<td>5 学习</td>
+<td>高</td>
+<td>需要改复习流程</td>
+</tr>
+<tr>
+<td>B8</td>
+<td>错题组卷</td>
+<td>只有单题重练</td>
+<td>按章节/考点/错因/题量组卷；一键开始</td>
+<td>M</td>
+<td>5 学习</td>
+<td>高</td>
+<td>需要 topic 归集</td>
+</tr>
+<tr>
+<td>B9</td>
+<td>错题批量操作</td>
+<td>逐条操作</td>
+<td>多选：标记掌握/删除/导出/组卷</td>
+<td>S</td>
+<td>4 效率</td>
+<td>高</td>
+<td>需确认与撤销</td>
+</tr>
+<tr>
+<td>B10</td>
+<td>章节/考点浏览</td>
+<td>只有科目/题库</td>
+<td>科目 → 章节 → 考点树；点击即筛题/组卷</td>
+<td>L</td>
+<td>5 学习</td>
+<td>中</td>
+<td>需要 topic 清洗/映射</td>
+</tr>
+<tr>
+<td>B11</td>
+<td>键盘帮助层</td>
+<td>只有底部 hint</td>
+<td><code>?</code> 打开快捷键面板；可关闭</td>
+<td>S</td>
+<td>3 效率</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>B12</td>
+<td>完成页升级</td>
+<td>一张小卡 + 分数</td>
+<td>批改单：分数、用时、考点分布、信心校准、下一步</td>
+<td>M</td>
+<td>4 学习/品牌</td>
+<td>高</td>
+<td>需要聚合数据</td>
+</tr>
+<tr>
+<td>B13</td>
+<td>断点/历史列表</td>
+<td>只有一个 resume</td>
+<td>最近 3 张卷子/未完成列表；可删除</td>
+<td>M</td>
+<td>4 留存</td>
+<td>高</td>
+<td>存储小；需冲突处理</td>
+</tr>
+<tr>
+<td>B14</td>
+<td>题目报错/纠错</td>
+<td>无入口</td>
+<td>「这题有问题」→ 本地标记 + 导出反馈包</td>
+<td>S</td>
+<td>3 信任</td>
+<td>高</td>
+<td>无后端；不自动上传</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="5.3-C-·-学习科学与内容（P1）">5.3 C · 学习科学与内容（P1）</h3>
+<div class="table-wrap cols-9" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>ID</th>
+<th>改进项</th>
+<th>现状/证据</th>
+<th>改法</th>
+<th>成本</th>
+<th>收益</th>
+<th>可行性</th>
+<th>依赖/风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C1</td>
+<td>FSRS 替换 SM-2</td>
+<td>SM-2 三档；无上限/leech</td>
+<td>接 FSRS（可先本地轻量实现或引 <code>fsrs</code> 逻辑）；保留 SM-2 兼容字段</td>
+<td>L</td>
+<td>5 学习</td>
+<td>中</td>
+<td>数据迁移；需黄金值测试</td>
+</tr>
+<tr>
+<td>C2</td>
+<td>每日复习上限</td>
+<td>到期全量</td>
+<td>每日新卡/复习上限；Easy Days；超出顺延</td>
+<td>S</td>
+<td>4 学习/留存</td>
+<td>高</td>
+<td>需队列</td>
+</tr>
+<tr>
+<td>C3</td>
+<td>Leech 机制</td>
+<td>反复错仍反复出现</td>
+<td>错 ≥N 次标记 leech；暂停/转专项；提示「先看解析」</td>
+<td>S</td>
+<td>4 学习</td>
+<td>高</td>
+<td>需计数</td>
+</tr>
+<tr>
+<td>C4</td>
+<td>知识点掌握度</td>
+<td>薄弱项按 subtopic，未映射为未分类</td>
+<td>本地 <code>item_kc</code> 映射 + BKT/简化贝叶斯；掌握度条 + 样本数</td>
+<td>L</td>
+<td>5 学习</td>
+<td>中</td>
+<td>需 topic 清洗；可先规则映射</td>
+</tr>
+<tr>
+<td>C5</td>
+<td>逐选项解析覆盖</td>
+<td>20.8%；核心教学版 0–6%</td>
+<td>内容管线：优先高频/错题多的题；全选项理由 + 误解标签；门禁</td>
+<td>XL</td>
+<td>5 学习</td>
+<td>中</td>
+<td>内容生产；成本最高</td>
+</tr>
+<tr>
+<td>C6</td>
+<td>原文引句</td>
+<td><code>source_quote</code> 0</td>
+<td>从教材切片抽原句；无原文时明说「暂无原句」</td>
+<td>L</td>
+<td>4 学习/信任</td>
+<td>中</td>
+<td>需要教材切片</td>
+</tr>
+<tr>
+<td>C7</td>
+<td>难度标定</td>
+<td><code>difficulty</code> 0</td>
+<td>1–5 难度；用于选卷/排序；无标注不猜</td>
+<td>M</td>
+<td>4 学习</td>
+<td>高</td>
+<td>需内容标注</td>
+</tr>
+<tr>
+<td>C8</td>
+<td>考频标签</td>
+<td>无</td>
+<td>高/中/低频；来自上游或本地统计；用于排序/降权</td>
+<td>M</td>
+<td>4 学习</td>
+<td>中</td>
+<td>数据来源</td>
+</tr>
+<tr>
+<td>C9</td>
+<td>错因分类</td>
+<td>只知对错</td>
+<td>作答后一键选：概念/审题/记忆/计算/蒙对；用于错题组卷</td>
+<td>S</td>
+<td>4 学习</td>
+<td>高</td>
+<td>不强制；可跳过</td>
+</tr>
+<tr>
+<td>C10</td>
+<td>同类题推荐</td>
+<td>无</td>
+<td>按 topic/subtopic + 题干相似度推荐 3 题；本地计算</td>
+<td>M</td>
+<td>4 学习</td>
+<td>高</td>
+<td>需题干索引</td>
+</tr>
+<tr>
+<td>C11</td>
+<td>延迟后测</td>
+<td>无</td>
+<td>错题 1/3/7 天后自动进「检测」小卷；与复习队列分开</td>
+<td>M</td>
+<td>4 学习</td>
+<td>高</td>
+<td>需调度</td>
+</tr>
+<tr>
+<td>C12</td>
+<td>信心校准图</td>
+<td>采集了 1–5，但无展示</td>
+<td>自评 vs 实际正确率；样本 &lt;10 显示「样本不足」</td>
+<td>S</td>
+<td>3 学习</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>C13</td>
+<td>题目质量门禁</td>
+<td>有测试但运行时无</td>
+<td>导入/重解析时查重复、短题干、答案分布、选项长度泄露</td>
+<td>M</td>
+<td>4 信任</td>
+<td>高</td>
+<td>会拦现有数据；先 warn</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="5.4-D-·-数据与架构（P2）">5.4 D · 数据与架构（P2）</h3>
+<div class="table-wrap cols-9" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>ID</th>
+<th>改进项</th>
+<th>现状/证据</th>
+<th>改法</th>
+<th>成本</th>
+<th>收益</th>
+<th>可行性</th>
+<th>依赖/风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1</td>
+<td>IndexedDB 迁移</td>
+<td>localStorage 5MB/8000 条</td>
+<td>attempts/mistakes 分库；游标/索引；配额提示；迁移脚本</td>
+<td>L</td>
+<td>5 信任/留存</td>
+<td>中</td>
+<td>迁移失败需回滚</td>
+</tr>
+<tr>
+<td>D2</td>
+<td>稳定题目 id</td>
+<td><code>题库名#序号</code>；导出丢 id</td>
+<td>内容生成稳定 hash/qid；导出保留 id；导入按 id 对齐</td>
+<td>L</td>
+<td>5 信任</td>
+<td>中</td>
+<td>上游需配合；历史数据迁移</td>
+</tr>
+<tr>
+<td>D3</td>
+<td>导入预览/重复题</td>
+<td>静默去重</td>
+<td>预览重复/冲突；三选一（更新/跳过/新建）</td>
+<td>M</td>
+<td>4 信任</td>
+<td>高</td>
+<td>需 UI</td>
+</tr>
+<tr>
+<td>D4</td>
+<td>增量同步</td>
+<td>整包 LWW；4.5MB</td>
+<td>版本号 + 墓碑 + 按记录合并；冲突 UI</td>
+<td>L</td>
+<td>5 信任</td>
+<td>中</td>
+<td>服务端改；需测试</td>
+</tr>
+<tr>
+<td>D5</td>
+<td>数据结构版本</td>
+<td>无 schema 版本</td>
+<td>本地 <code>schema_version</code> + 迁移；备份前自动快照</td>
+<td>M</td>
+<td>4 信任</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>D6</td>
+<td>BYOK 加密</td>
+<td>明文 localStorage</td>
+<td>WebCrypto AES-GCM 加密；密钥派生；CSP 收紧</td>
+<td>M</td>
+<td>4 信任</td>
+<td>中</td>
+<td>浏览器兼容</td>
+</tr>
+<tr>
+<td>D7</td>
+<td>Service Worker/离线</td>
+<td>无 SW</td>
+<td>预缓存外壳 + 分科包；同步失败提示；离线队列</td>
+<td>L</td>
+<td>5 留存/信任</td>
+<td>中</td>
+<td>缓存版本管理</td>
+</tr>
+<tr>
+<td>D8</td>
+<td>性能/懒加载</td>
+<td>194.7KB JS 单包</td>
+<td>按视图拆包（仍经典脚本）；题库/图表延迟；缓存头</td>
+<td>M</td>
+<td>4 体验</td>
+<td>中</td>
+<td>零构建约束；需加载顺序守卫</td>
+</tr>
+<tr>
+<td>D9</td>
+<td>可访问性审计</td>
+<td>44px/焦点已做，未全量</td>
+<td>WCAG AA：对比度、ARIA、焦点陷阱、200% 缩放、颜色非唯一信号</td>
+<td>M</td>
+<td>4 信任</td>
+<td>高</td>
+<td>需浏览器测试</td>
+</tr>
+<tr>
+<td>D10</td>
+<td>视觉回归/CI</td>
+<td>只有截图基线</td>
+<td>Playwright 截图 diff + axe；CI 跑 bundle/questions/tests</td>
+<td>M</td>
+<td>4 信任</td>
+<td>中</td>
+<td>需依赖</td>
+</tr>
+<tr>
+<td>D11</td>
+<td>错误监控</td>
+<td>只有 toast</td>
+<td>本地错误日志环形缓冲；导出诊断包；不上传</td>
+<td>S</td>
+<td>3 信任</td>
+<td>高</td>
+<td>隐私</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="5.5-E-·-AI（P2）">5.5 E · AI（P2）</h3>
+<div class="table-wrap cols-9" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>ID</th>
+<th>改进项</th>
+<th>现状/证据</th>
+<th>改法</th>
+<th>成本</th>
+<th>收益</th>
+<th>可行性</th>
+<th>依赖/风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>E1</td>
+<td>流式输出</td>
+<td><code>stream: false</code></td>
+<td>SSE/ReadableStream；逐字显示；可取消</td>
+<td>M</td>
+<td>4 体验</td>
+<td>中</td>
+<td>CORS/端点差异</td>
+</tr>
+<tr>
+<td>E2</td>
+<td>超时/取消/重试</td>
+<td>无</td>
+<td>AbortController；30–60s；一次重试；错误分类</td>
+<td>S</td>
+<td>4 稳定</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>E3</td>
+<td>成本预估/用量</td>
+<td>无</td>
+<td>发前估 token/参考价；返回 usage 展示</td>
+<td>M</td>
+<td>4 信任</td>
+<td>中</td>
+<td>各家 usage 字段不同</td>
+</tr>
+<tr>
+<td>E4</td>
+<td>引用校验</td>
+<td>AI 只依据 vault；无引用核对</td>
+<td>回答附 <code>[来源: 题号/字段]</code>；无法核对就标「模型推断」</td>
+<td>L</td>
+<td>5 信任/学习</td>
+<td>中</td>
+<td>需本地检索</td>
+</tr>
+<tr>
+<td>E5</td>
+<td>提示词版本/评测</td>
+<td>无</td>
+<td>提示词注册 + 版本号 + 10 条黄金样本</td>
+<td>M</td>
+<td>3 信任</td>
+<td>高</td>
+<td>需维护</td>
+</tr>
+<tr>
+<td>E6</td>
+<td>生成题门禁</td>
+<td>生成即可存错题</td>
+<td>生成题先过字段/重复/答案检查；标注「AI 生成请核对」</td>
+<td>M</td>
+<td>4 信任</td>
+<td>高</td>
+<td>已有文案</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="5.6-F-·-性能与可访问性（P2）">5.6 F · 性能与可访问性（P2）</h3>
+<div class="table-wrap cols-9" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>ID</th>
+<th>改进项</th>
+<th>现状/证据</th>
+<th>改法</th>
+<th>成本</th>
+<th>收益</th>
+<th>可行性</th>
+<th>依赖/风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F1</td>
+<td>首屏复测</td>
+<td>合并后未复测</td>
+<td>线上/本地瀑布图；目标 DCL &lt;3s（本地）/记录网关基线</td>
+<td>S</td>
+<td>4 体验</td>
+<td>高</td>
+<td>宿主网关不可控</td>
+</tr>
+<tr>
+<td>F2</td>
+<td>渲染性能</td>
+<td>长列表全量 DOM</td>
+<td>错题/题库列表分页/虚拟滚动（先分页）</td>
+<td>M</td>
+<td>3 体验</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>F3</td>
+<td>对比度/焦点</td>
+<td>tokens 有实测，局部未审</td>
+<td>自动 axe + 手工键盘；hint 12px 提升</td>
+<td>S</td>
+<td>3 信任</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>F4</td>
+<td>颜色非唯一信号</td>
+<td>对/错靠颜色</td>
+<td>加图标/文字/描边；色盲模拟</td>
+<td>S</td>
+<td>3 信任</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>F5</td>
+<td>200% 缩放</td>
+<td>未测</td>
+<td>390/768/1280 + 200% zoom；表格横向滚动</td>
+<td>S</td>
+<td>3 信任</td>
+<td>高</td>
+<td>无</td>
+</tr>
+<tr>
+<td>F6</td>
+<td>打印样式</td>
+<td>无</td>
+<td>A4 分页、隐藏导航、答案页</td>
+<td>M</td>
+<td>3 学习</td>
+<td>高</td>
+<td>同 A12</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="6.-成本—收益—可行性评估" class="section-h">6. 成本—收益—可行性评估</h2>
+<h3 id="6.1-评分方法">6.1 评分方法</h3>
+<ul>
+<li><strong>成本</strong>：S=1、M=2、L=4、XL=8（相对单位，不是工期）。</li>
+<li><strong>收益</strong>：按本轮权重计算：品牌 35% + 学习 30% + 留存 20% + 信任 15%。表中「收益」是加权后的 1–5 分。</li>
+<li><strong>ROI</strong>：收益 / 成本；只用于排序，不替代判断。</li>
+<li><strong>可行性</strong>：高=现有栈可做；中=需迁移/新依赖/内容配合；低=需外部资源或规模。</li>
+</ul>
+<h3 id="6.2-先做：高收益-/-低成本（Quick-Wins）">6.2 先做：高收益 / 低成本（Quick Wins）</h3>
+<div class="table-wrap cols-6" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>排名</th>
+<th>改进项</th>
+<th>为什么先做</th>
+<th>成本</th>
+<th>收益</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>A1 品牌资产统一</td>
+<td>一次改动，立刻解决「品牌不一致」；成本最低</td>
+<td>S</td>
+<td>5</td>
+</tr>
+<tr>
+<td>2</td>
+<td>A2 令牌扩展</td>
+<td>后续所有美术组件的依赖</td>
+<td>S</td>
+<td>5</td>
+</tr>
+<tr>
+<td>3</td>
+<td>A6 暗色台灯</td>
+<td>现有暗色太平；一个渐变就能提升「夜间书桌」</td>
+<td>S</td>
+<td>4</td>
+</tr>
+<tr>
+<td>4</td>
+<td>A7 移动底栏减负</td>
+<td>390px 第一眼体验；去掉拥挤</td>
+<td>S</td>
+<td>4</td>
+</tr>
+<tr>
+<td>5</td>
+<td>A9 字体/数字排版</td>
+<td>阅读面已有，补齐元信息与数字对齐</td>
+<td>S</td>
+<td>4</td>
+</tr>
+<tr>
+<td>6</td>
+<td>B7 复习主动回忆</td>
+<td>学习效果最大杠杆之一；改动只在复习卡</td>
+<td>M</td>
+<td>5</td>
+</tr>
+<tr>
+<td>7</td>
+<td>B8 错题组卷</td>
+<td>错题本从「列表」变「可练」；复用现有引擎</td>
+<td>M</td>
+<td>5</td>
+</tr>
+<tr>
+<td>8</td>
+<td>C2 每日上限</td>
+<td>防积压；小改动</td>
+<td>S</td>
+<td>4</td>
+</tr>
+<tr>
+<td>9</td>
+<td>C3 Leech</td>
+<td>防反复错；小改动</td>
+<td>S</td>
+<td>4</td>
+</tr>
+<tr>
+<td>10</td>
+<td>D3 导入预览</td>
+<td>信任修复；避免静默丢题</td>
+<td>M</td>
+<td>4</td>
+</tr>
+<tr>
+<td>11</td>
+<td>B11 键盘帮助</td>
+<td>低成本可发现性</td>
+<td>S</td>
+<td>3</td>
+</tr>
+<tr>
+<td>12</td>
+<td>A11 图标统一</td>
+<td>视觉一致性；低成本</td>
+<td>S</td>
+<td>3</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="6.3-战略投入：高收益-/-高成本">6.3 战略投入：高收益 / 高成本</h3>
+<div class="table-wrap cols-6" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>改进项</th>
+<th>为什么值得</th>
+<th>成本</th>
+<th>收益</th>
+<th>风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A3/A4/A5 组件 + 书封 + 插图</td>
+<td>书桌从概念变产品；品牌差异化的核心</td>
+<td>M</td>
+<td>5</td>
+<td>改动面广，需截图基线</td>
+</tr>
+<tr>
+<td>C1 FSRS</td>
+<td>复习从「能排」到「排得准」</td>
+<td>L</td>
+<td>5</td>
+<td>迁移/测试</td>
+</tr>
+<tr>
+<td>C4 知识点掌握度</td>
+<td>从「错题列表」到「学习者模型」</td>
+<td>L</td>
+<td>5</td>
+<td>topic 清洗</td>
+</tr>
+<tr>
+<td>C5 逐选项解析覆盖</td>
+<td>最大内容债；直接提升学习效果</td>
+<td>XL</td>
+<td>5</td>
+<td>内容生产</td>
+</tr>
+<tr>
+<td>D1/D2/D4 数据层</td>
+<td>长期使用的地基</td>
+<td>L</td>
+<td>5</td>
+<td>迁移/兼容</td>
+</tr>
+<tr>
+<td>E4 引用校验</td>
+<td>AI 可信度的分水岭</td>
+<td>L</td>
+<td>5</td>
+<td>检索质量</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="6.4-不值得做：低收益-/-高成本">6.4 不值得做：低收益 / 高成本</h3>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>项</th>
+<th>判断</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>题目评论/社区</td>
+<td>不做</td>
+<td>你已确认；需要审核/运营，且会把主路径变吵</td>
+</tr>
+<tr>
+<td>全真模考/万人排名</td>
+<td>不做</td>
+<td>你已确认；需要组卷、计时、反作弊、规模数据</td>
+</tr>
+<tr>
+<td>分数预测</td>
+<td>不做</td>
+<td>没有足够样本，预测会变成误导</td>
+</tr>
+<tr>
+<td>3D 解剖/视频生产</td>
+<td>不做</td>
+<td>重资产；不是当前差异化</td>
+</tr>
+<tr>
+<td>排行榜/惩罚式连胜</td>
+<td>不做</td>
+<td>备考人群易反噬；与「安静」定位冲突</td>
+</tr>
+<tr>
+<td>云端 AI 额度</td>
+<td>不做</td>
+<td>成本归属不清；BYOK 更干净</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="6.5-依赖关系">6.5 依赖关系</h3>
+<pre><code>A2 令牌 ─┬─ A3 组件 ─┬─ A4 书封
+         │            ├─ A5 插图
+         │            └─ A10 图表
+         └─ A6/A7/A8/A9/A14
+B1 任务规则 ── C2/C3/C11
+B7 主动回忆 ── C1 FSRS ── C2/C3
+C4 知识点 ── B8 错题组卷 ── C10 同类题
+D2 稳定 id ── D3 导入预览 ── D4 增量同步
+D1 IndexedDB ── D7 离线 ── D8 性能
+E1/E2/E3 ── E4 引用校验
+</code></pre>
+<hr />
+<h2 id="7.-分阶段路线图" class="section-h">7. 分阶段路线图</h2>
+<h3 id="Phase-0-·-视觉地基-2.0（P0，先做）">Phase 0 · 视觉地基 2.0（P0，先做）</h3>
+<p><strong>目标</strong>：让产品第一眼像「一张书桌」，而不是「后台」。</p>
+<div class="table-wrap cols-5" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>WP</th>
+<th>内容</th>
+<th>交付</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.1</td>
+<td>品牌资产统一</td>
+<td>icon/字标/manifest/OG/PWA/侧栏品牌块</td>
+<td>全站同一主色；无第二套青绿；截图对比</td>
+</tr>
+<tr>
+<td>0.2</td>
+<td>令牌扩展</td>
+<td><code>--highlight</code>、<code>--paper-grain</code>、<code>--lamp-pool</code>、<code>--subject-*</code>、图表色</td>
+<td>双主题对比度 ≥ AA；无孤立变量</td>
+</tr>
+<tr>
+<td>0.3</td>
+<td>组件语言</td>
+<td>Sheet/Seal/Highlight/Spine/Rule/Tag/Keycap</td>
+<td>每个类有消费者；截图基线</td>
+</tr>
+<tr>
+<td>0.4</td>
+<td>书封/书架</td>
+<td>CSS 书封 + 书脊 + 进度书边</td>
+<td>11 库可「认书」；长名截断</td>
+</tr>
+<tr>
+<td>0.5</td>
+<td>插图系统</td>
+<td>5 张 inline SVG 线稿</td>
+<td>空态/首启/完成各 1；无外部请求</td>
+</tr>
+<tr>
+<td>0.6</td>
+<td>暗色台灯 + 移动底栏 + 设置分层</td>
+<td>暖光池、底栏 5 项、子导航</td>
+<td>390/844/1280 无溢出；44px</td>
+</tr>
+<tr>
+<td>0.7</td>
+<td>字体/图表/动效</td>
+<td>元信息 ≥13.5px；账簿式图表；四档动效</td>
+<td>reduced-motion 归零；数字对齐</td>
+</tr>
+<tr>
+<td>0.8</td>
+<td>视觉回归基线</td>
+<td>32+ 张截图 + diff 脚本</td>
+<td>亮/暗 × 390/1280 全绿</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Phase 0 完成标志</strong>：不看文案，只看截图，也能认出这是 MedKit；书架像书架，批改像批改，暗色像台灯。</p>
+<h3 id="Phase-1-·-学习闭环（P1）">Phase 1 · 学习闭环（P1）</h3>
+<div class="table-wrap cols-5" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>WP</th>
+<th>内容</th>
+<th>交付</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.1</td>
+<td>今天任务规则引擎</td>
+<td>时间窗 + 到期 + 新题 + 科目轮换</td>
+<td>早 10 分钟给 5 题；深夜只给错题；考前 7 天降新题</td>
+</tr>
+<tr>
+<td>1.2</td>
+<td>刷题/错题/书架/设置 IA 收敛</td>
+<td>一屏一任务</td>
+<td>首屏主动作 ≤2；三击内开始</td>
+</tr>
+<tr>
+<td>1.3</td>
+<td>复习主动回忆 + 四档</td>
+<td>先回忆后翻面；间隔预览；撤销</td>
+<td>复习完成率、到期积压可测</td>
+</tr>
+<tr>
+<td>1.4</td>
+<td>FSRS + 上限 + leech</td>
+<td>调度替换/兼容</td>
+<td>黄金值测试；旧 SM-2 数据不丢</td>
+</tr>
+<tr>
+<td>1.5</td>
+<td>知识点掌握度</td>
+<td><code>item_kc</code> + BKT/简化模型 + 掌握度条</td>
+<td>有样本才显示；未映射明说</td>
+</tr>
+<tr>
+<td>1.6</td>
+<td>逐选项解析覆盖</td>
+<td>优先高频/错题多；全选项 + 误解</td>
+<td>核心教学版覆盖 ≥60%（阶段目标）</td>
+</tr>
+<tr>
+<td>1.7</td>
+<td>错题组卷 + 错因 + 同类题</td>
+<td>组卷、标签、推荐</td>
+<td>组卷 3 步内开始</td>
+</tr>
+<tr>
+<td>1.8</td>
+<td>内容搜索 + 单卷报告</td>
+<td>搜题/错题/考点；报告</td>
+<td>无结果给替代词；报告含考点分布</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Phase 1 完成标志</strong>：用户能说出「我今天为什么做这 5 题」「我这章弱在哪」「下次什么时候再复习」。</p>
+<h3 id="Phase-2-·-数据与架构（P2）">Phase 2 · 数据与架构（P2）</h3>
+<div class="table-wrap cols-5" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>WP</th>
+<th>内容</th>
+<th>交付</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2.1</td>
+<td>IndexedDB</td>
+<td>attempts/mistakes 迁移</td>
+<td>5MB/8000 上限解除；迁移可回滚</td>
+</tr>
+<tr>
+<td>2.2</td>
+<td>稳定 id + 导入预览</td>
+<td>qid/hash；导出保留 id；重复预览</td>
+<td>同库导出→导入逐题相等；重复不静默</td>
+</tr>
+<tr>
+<td>2.3</td>
+<td>增量同步</td>
+<td>版本号 + 墓碑 + 冲突 UI</td>
+<td>两设备并发不覆盖；可恢复</td>
+</tr>
+<tr>
+<td>2.4</td>
+<td>BYOK 加密 + CSP</td>
+<td>WebCrypto；收紧 inline</td>
+<td>Key 不明文；XSS 面缩小</td>
+</tr>
+<tr>
+<td>2.5</td>
+<td>Service Worker</td>
+<td>外壳 + 分科包缓存；离线提示</td>
+<td>断网可刷已缓存；同步排队</td>
+</tr>
+<tr>
+<td>2.6</td>
+<td>AI 稳定性 + 引用</td>
+<td>流式/取消/超时/成本/引用</td>
+<td>取消即停；引用可核对</td>
+</tr>
+<tr>
+<td>2.7</td>
+<td>性能 + 可访问性 + CI</td>
+<td>拆包/截图 diff/axe</td>
+<td>DCL 达标；AA 无阻断</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="8.-验收与度量" class="section-h">8. 验收与度量</h2>
+<h3 id="8.1-品牌/美术">8.1 品牌/美术</h3>
+<ul>
+<li>5 维评分（1–5）：识别度、层级、一致性、工艺、可访问性；Phase 0 前后各评一次。</li>
+<li>截图基线：亮/暗 × 390/1280 × 8 屏；每次改版 diff。</li>
+<li>组件覆盖率：规格中的 Sheet/Seal/Highlight/Spine/Rule/Tag/Keycap 是否都有消费者。</li>
+<li>约束：无 Web Font、无 CDN、无新增图片请求；JS 单文件 ≤800 行；CSS 无孤儿。</li>
+</ul>
+<h3 id="8.2-学习效果">8.2 学习效果</h3>
+<ul>
+<li>首次作答正确率 vs 7 天后同考点正确率（延迟后测）。</li>
+<li>复习完成率、到期积压、平均复习用时。</li>
+<li>错题重练正确率、错题组卷完成率。</li>
+<li>自评校准 Brier 分数（样本 ≥10 才显示）。</li>
+<li>逐选项解析覆盖率（全库/核心教学版）。</li>
+</ul>
+<h3 id="8.3-数据/信任">8.3 数据/信任</h3>
+<ul>
+<li>导出→导入往返逐题相等率 100%。</li>
+<li>同步冲突数、覆盖事故数 0。</li>
+<li>配额失败率、迁移回滚成功率。</li>
+<li>离线可用页面数；断网错误提示准确率。</li>
+</ul>
+<h3 id="8.4-体验">8.4 体验</h3>
+<ul>
+<li>从打开到第一题点击的步数/时间。</li>
+<li>390px 横向溢出 0；&lt;44px 可点元素 0。</li>
+<li>键盘全链路；焦点陷阱；200% 缩放。</li>
+<li>错误态：是否说清「发生了什么/影响什么/怎么恢复」。</li>
+</ul>
+<hr />
+<h2 id="9.-关键决策记录" class="section-h">9. 关键决策记录</h2>
+<div class="table-wrap cols-5" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>日期</th>
+<th>决策</th>
+<th>依据</th>
+<th>影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2026-10-29</td>
+<td>竞品 8 款</td>
+<td>用户选择推荐组合</td>
+<td>医学考试/记忆/激励三类覆盖</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>对象为网页版</td>
+<td>用户选择</td>
+<td>本地版只作能力参照</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>交付 HTML + MD</td>
+<td>用户选择</td>
+<td>评审 + 任务拆分</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>混合定位</td>
+<td>用户选择</td>
+<td>不复制单一竞品</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>书桌深化</td>
+<td>用户选择</td>
+<td>纸/墨/红笔/宋体继续</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>体验 + 数据层</td>
+<td>用户选择</td>
+<td>含 IndexedDB/同步/导出</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>品牌美术优先</td>
+<td>用户选择</td>
+<td>Phase 0 先做</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>不做社区</td>
+<td>用户选择</td>
+<td>不引审核/运营</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>不做模考</td>
+<td>用户选择</td>
+<td>不组卷排名/计时卷</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>AI 稳定性 + 引用</td>
+<td>用户选择</td>
+<td>不做云端额度/教学大改</td>
+</tr>
+<tr>
+<td>2026-10-29</td>
+<td>账号修同步/数据安全</td>
+<td>用户选择</td>
+<td>不做邮件找回/删除账号</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="10.-参考来源" class="section-h">10. 参考来源</h2>
+<blockquote>
+<p>访问日期均为 2026-10-29。官方页优先；第三方仅用于补充维度。</p>
+</blockquote>
+<p><strong>UWorld</strong></p>
+<ul>
+<li><a href="https://medical.uworld.com/usmle/features/" target="_blank" rel="noopener noreferrer">UWorld USMLE Features</a></li>
+<li><a href="https://medical.uworld.com/usmle/usmle-step-1" target="_blank" rel="noopener noreferrer">UWorld USMLE Step 1</a></li>
+<li><a href="https://medical.uworld.com/usmle/features/flashcards/" target="_blank" rel="noopener noreferrer">UWorld Flashcards</a></li>
+<li><a href="https://brandfetch.com/uworld.com" target="_blank" rel="noopener noreferrer">UWorld Brandfetch</a></li>
+</ul>
+<p><strong>AMBOSS</strong></p>
+<ul>
+<li><a href="https://www.amboss.com/us/features" target="_blank" rel="noopener noreferrer">AMBOSS Product Features</a></li>
+<li><a href="https://www.amboss.com/us/usmle" target="_blank" rel="noopener noreferrer">AMBOSS USMLE Prep</a></li>
+<li><a href="https://www.amboss.com/us/anki" target="_blank" rel="noopener noreferrer">AMBOSS Anki Add-on</a></li>
+<li><a href="https://logo-index.com/technology/amboss/" target="_blank" rel="noopener noreferrer">AMBOSS Logo/Design Notes</a></li>
+</ul>
+<p><strong>Osmosis</strong></p>
+<ul>
+<li><a href="https://www.osmosis.org/features/flashcards" target="_blank" rel="noopener noreferrer">Osmosis Flashcards</a></li>
+<li><a href="https://www.osmosis.org/blog/how-osmosis-videos-are-made" target="_blank" rel="noopener noreferrer">How Osmosis Videos Are Made</a></li>
+<li><a href="https://www.osmosis.org/blog/the-osmosis-app-map" target="_blank" rel="noopener noreferrer">The Osmosis App Map</a></li>
+<li><a href="https://www.osmosis.org/blog/osmosis-product-updates-2025" target="_blank" rel="noopener noreferrer">Osmosis Product Updates 2025</a></li>
+</ul>
+<p><strong>医考帮</strong></p>
+<ul>
+<li><a href="https://m.yikaobang.com.cn/app/introduce.html" target="_blank" rel="noopener noreferrer">医考帮功能介绍</a></li>
+<li><a href="https://www.yikaobang.com.cn/app.html" target="_blank" rel="noopener noreferrer">医考帮官网 App 页</a></li>
+</ul>
+<p><strong>蓝基因</strong></p>
+<ul>
+<li><a href="https://www.lanjiyin.com.cn/about.html" target="_blank" rel="noopener noreferrer">蓝基因品牌释义</a></li>
+<li><a href="https://www.mergeek.com/latest/gQrk1AlYGlWx9DVJ" target="_blank" rel="noopener noreferrer">蓝基因产品介绍（第三方）</a></li>
+<li><a href="https://sj.qq.com/topic/200445796" target="_blank" rel="noopener noreferrer">医考必备五大 APP（第三方）</a></li>
+</ul>
+<p><strong>Anki</strong></p>
+<ul>
+<li><a href="https://docs.ankiweb.net/deck-options.html" target="_blank" rel="noopener noreferrer">Anki Deck Options</a></li>
+<li><a href="https://docs.ankiweb.net/stats.html" target="_blank" rel="noopener noreferrer">Anki Statistics</a></li>
+<li><a href="https://faqs.ankiweb.net/what-spaced-repetition-algorithm" target="_blank" rel="noopener noreferrer">Anki FSRS FAQ</a></li>
+<li><a href="https://ankiweb.net/shared/info/759844606" target="_blank" rel="noopener noreferrer">FSRS4Anki Helper</a></li>
+</ul>
+<p><strong>Quizlet</strong></p>
+<ul>
+<li><a href="https://help.quizlet.com/hc/en-us/articles/360030986971-Studying-with-Learn-mode" target="_blank" rel="noopener noreferrer">Studying with Learn</a></li>
+<li><a href="https://help.quizlet.com/hc/en-us/articles/40011154960653-Studying-with-Answer-Streaks" target="_blank" rel="noopener noreferrer">Studying with Answer Streaks</a></li>
+<li><a href="https://help.quizlet.com/hc/fr-ca/articles/360048803491-Visualisation-de-votre-progression-pour-cibler-votre-apprentissage" target="_blank" rel="noopener noreferrer">Quizlet Progress Visualization</a></li>
+<li><a href="https://mobbin.com/colors/brand/quizlet" target="_blank" rel="noopener noreferrer">Quizlet Brand Colors</a></li>
+</ul>
+<p><strong>Duolingo</strong></p>
+<ul>
+<li><a href="https://blog.duolingo.com/how-streaks-keep-duolingo-learners-committed-to-their-language-goals/" target="_blank" rel="noopener noreferrer">How Streaks Keep Duolingo Learners Committed</a></li>
+<li><a href="https://www.duolingo.com/help/what-is-a-streak" target="_blank" rel="noopener noreferrer">What is a Streak / Streak Freeze</a></li>
+<li><a href="https://blog.duolingo.com/core-tabs-redesign/" target="_blank" rel="noopener noreferrer">Duolingo Core Tabs Redesign</a></li>
+<li><a href="https://open-design.ai/plugins/design-system-duolingo/" target="_blank" rel="noopener noreferrer">Duolingo Design System Notes</a></li>
+</ul>
+<p><strong>美术与可用性参照</strong></p>
+<ul>
+<li><a href="https://chrislemke.github.io/website_designs/designs/International_Typographic_Style.html" target="_blank" rel="noopener noreferrer">International Typographic Style</a></li>
+<li><a href="https://www.edwardtufte.com/book/the-visual-display-of-quantitative-information/" target="_blank" rel="noopener noreferrer">Tufte: Data-Ink Ratio</a></li>
+<li><a href="https://calmtech.com/" target="_blank" rel="noopener noreferrer">Calm Technology Principles</a></li>
+<li><a href="https://m3.material.io/styles/typography/applying-type" target="_blank" rel="noopener noreferrer">Material 3 Typography</a></li>
+<li><a href="https://m3.material.io/styles/color/roles" target="_blank" rel="noopener noreferrer">Material 3 Color Roles</a></li>
+<li><a href="https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html" target="_blank" rel="noopener noreferrer">WCAG Contrast Minimum</a></li>
+<li><a href="https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/" target="_blank" rel="noopener noreferrer">WCAG 2.2 New Criteria</a></li>
+<li><a href="https://glmimage.app/blog/medical-anatomical-illustration-guide" target="_blank" rel="noopener noreferrer">Medical Illustration Guide</a></li>
+</ul>
+<hr />
+<h2 id="11.-本轮实施记录（2026-10-29）" class="section-h">11. 本轮实施记录（2026-10-29）</h2>
+<blockquote>
+<p>这一节记录「报告里哪些已经变成代码」，不是新方案。</p>
+</blockquote>
+<h3 id="11.1-已落地">11.1 已落地</h3>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>层</th>
+<th>已落地</th>
+<th>落点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>品牌与美术</td>
+<td>品牌块 + MW 图标；manifest 主色统一；科目书脊；书架书封；首启/完成/空态线稿；暗色台灯与纸纹；设置子导航；移动底栏减负；文件选择器样式；打印样式</td>
+<td><code>index.html</code>、<code>tokens.css</code>、<code>base.css</code>、<code>app.css</code>、<code>manifest.webmanifest</code></td>
+</tr>
+<tr>
+<td>今天</td>
+<td>科目轮换；早间 5 题；考前 7 天降新题；「今天到这儿」真实落盘；完成卡</td>
+<td><code>app.js</code>、<code>Store.todayDone</code></td>
+</tr>
+<tr>
+<td>刷题</td>
+<td>书架卡 + 快捷开始合并；今日进度折叠；科目书脊</td>
+<td><code>index.html</code>、<code>app.js</code></td>
+</tr>
+<tr>
+<td>错题</td>
+<td>今日复习升到主栏；先回想再展开；四档评分 + 间隔预览 + 撤销；每日上限；leech 标签；错因标签；按考点组卷</td>
+<td><code>index.html</code>、<code>app.js</code>、<code>store.js</code>、<code>bank-drill.js</code></td>
+</tr>
+<tr>
+<td>掌握度</td>
+<td>Beta 收缩的知识点掌握度；准备度；薄弱项组卷</td>
+<td><code>store.js</code>、<code>app.js</code></td>
+</tr>
+<tr>
+<td>单卷报告</td>
+<td>用时、平均把握、考点分布</td>
+<td><code>bank-drill.js</code></td>
+</tr>
+<tr>
+<td>数据</td>
+<td>题目 <code>stable_id</code>；导出保留 <code>id/stable_id</code>；导入预览重复题；错题按更新时间合并</td>
+<td><code>build_questions.py</code>、<code>store.js</code>、<code>app.js</code></td>
+</tr>
+<tr>
+<td>离线</td>
+<td><code>sw.js</code>：外壳 network-first、题库 network-first、<code>/api</code> 永不缓存；<code>server.py</code> 根路径提供 SW</td>
+<td><code>sw.js</code>、<code>server.py</code>、<code>index.html</code></td>
+</tr>
+<tr>
+<td>AI</td>
+<td>流式输出、停止、45s 超时、token 粗估、依据标注缺失提示</td>
+<td><code>ai.js</code>、<code>app.js</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="11.2-本轮验证">11.2 本轮验证</h3>
+<ul>
+<li><code>node --test tests/*.test.mjs</code>：<strong>67 passed</strong>（新增 <code>learning-loop.test.mjs</code> 6 项）。</li>
+<li><code>python -m pytest tests/test_server.py -q</code>：<strong>20 passed</strong>。</li>
+<li><code>python tools/build_questions.py --check</code>：11 科 2350 题一致。</li>
+<li><code>python tools/build_bundle.py --check</code>：<code>medkit.98f3a1aeab.css</code> + <code>medkit.3b5d3a720a.js</code> 一致。</li>
+<li>浏览器：1280 / 390 均无横向溢出；移动端底栏只剩 5 个导航 + 版本点；错因标签、复习四档、批改报告均实际渲染。</li>
+<li>已知 404：静态预览下 <code>/api/me</code> 不存在，前端按设计回退本机模式，不是新缺陷。</li>
+</ul>
+<h3 id="11.3-未在本轮完成（需要下一轮或内容生产）">11.3 未在本轮完成（需要下一轮或内容生产）</h3>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>项</th>
+<th>原因</th>
+<th>下一步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IndexedDB 全量迁移</td>
+<td>读写路径是同步 <code>localStorage</code>，整体迁移会牵动所有数据函数；本轮先修容量相关的高风险点</td>
+<td>单独做迁移与回滚演练</td>
+</tr>
+<tr>
+<td>BYOK 真加密</td>
+<td>没有用户口令时，同浏览器内的密钥加密只是搬运密钥，不是真安全</td>
+<td>设计口令/设备密钥方案后再做</td>
+</tr>
+<tr>
+<td>FSRS 完整算法</td>
+<td>本轮先落地四档、上限、leech、间隔预览；完整 FSRS 需要参数标定与黄金值测试</td>
+<td>单独接调度模块</td>
+</tr>
+<tr>
+<td>知识点 BKT 图谱</td>
+<td>本轮用 <code>topic</code> 做 Beta 收缩估计，未建 <code>item_kc</code> 映射表</td>
+<td>依赖内容映射与人工确认台</td>
+</tr>
+<tr>
+<td>逐选项解析覆盖</td>
+<td>内容债 20.8%，需要逐题生产</td>
+<td>优先核心教学版与高频错题</td>
+</tr>
+<tr>
+<td>全真模考 / 社区</td>
+<td>你已明确不做</td>
+<td>保持不做</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="附录-A-·-逐选项解析覆盖明细" class="section-h">附录 A · 逐选项解析覆盖明细</h2>
+<div class="table-wrap cols-5" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>题库文件</th>
+<th style="text-align: right;">题目数</th>
+<th style="text-align: right;">含逐项理由</th>
+<th style="text-align: right;">覆盖率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>01 外科学（教学版）</td>
+<td style="text-align: right;">300</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">6%</td>
+</tr>
+<tr>
+<td>02 内科学（教学版）</td>
+<td style="text-align: right;">460</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">1%</td>
+</tr>
+<tr>
+<td>03 妇产科学（教学版）</td>
+<td style="text-align: right;">280</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">1%</td>
+</tr>
+<tr>
+<td>04 急诊医学（教学版）</td>
+<td style="text-align: right;">220</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">5%</td>
+</tr>
+<tr>
+<td>05 耳鼻喉科学（教学版）</td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0%</td>
+</tr>
+<tr>
+<td>06 口腔科学（教学版）</td>
+<td style="text-align: right;">168</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0%</td>
+</tr>
+<tr>
+<td>07 传染病学（教学版）</td>
+<td style="text-align: right;">219</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">6%</td>
+</tr>
+<tr>
+<td>08 耳鼻咽喉头颈外科学（期末题库）</td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">146</td>
+<td style="text-align: right;">73%</td>
+</tr>
+<tr>
+<td>09 耳鼻咽喉头颈外科学（期末押题卷）</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100%</td>
+</tr>
+<tr>
+<td>10 耳鼻咽喉头颈外科学（真题专项）</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">18%</td>
+</tr>
+<tr>
+<td>11 急诊与灾难医学（教师重点版）</td>
+<td style="text-align: right;">192</td>
+<td style="text-align: right;">192</td>
+<td style="text-align: right;">100%</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td style="text-align: right;"><strong>2350</strong></td>
+<td style="text-align: right;"><strong>488</strong></td>
+<td style="text-align: right;"><strong>20.8%</strong></td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p>其中 386 题五项齐全（16.4%），102 题仅部分选项；<code>source_quote</code> 与 <code>difficulty</code> 全库为 0。</p>
+</blockquote>
+<h2 id="附录-B-·-设计规格落地检查" class="section-h">附录 B · 设计规格落地检查</h2>
+<div class="table-wrap cols-4" tabindex="0" role="region" aria-label="表格，可横向滚动"><table>
+<thead>
+<tr>
+<th>规格</th>
+<th>落点</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>纸面噪点</td>
+<td><code>feTurbulence</code></td>
+<td>未实现</td>
+</tr>
+<tr>
+<td>荧光笔</td>
+<td><code>--highlight</code> / <code>source_quote</code></td>
+<td>未实现</td>
+</tr>
+<tr>
+<td>书脊</td>
+<td>科目色竖条</td>
+<td>未实现</td>
+</tr>
+<tr>
+<td>印章</td>
+<td><code>.finish-seal</code></td>
+<td>部分</td>
+</tr>
+<tr>
+<td>键帽</td>
+<td>快捷键提示</td>
+<td>未实现</td>
+</tr>
+<tr>
+<td>红笔描边</td>
+<td>判分动效</td>
+<td>未实现</td>
+</tr>
+<tr>
+<td>页面切换</td>
+<td>200ms</td>
+<td>未实现/部分</td>
+</tr>
+<tr>
+<td>卡片圆角 10px</td>
+<td><code>--radius-3</code></td>
+<td>未实现</td>
+</tr>
+<tr>
+<td>宋体阅读面</td>
+<td><code>--font-read</code></td>
+<td>已实现</td>
+</tr>
+<tr>
+<td>双主题对比度</td>
+<td>tokens</td>
+<td>已实现</td>
+</tr>
+</tbody>
+</table></div>
+    </article>
+  </div>
+
+  <footer class="footer">
+    <p>本报告为设计分析与改进建议，不包含竞品受版权保护的内容或界面资产。所有竞品能力描述以公开资料为准，具体版本可能变化。</p>
+    <p>MedKit · 竞品设计分析与改进方案 · 2026-10-29</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var root = document.documentElement;
+  var saved = null;
+  try { saved = localStorage.getItem("medkit-report-theme"); } catch(e) {}
+  if (saved === "dark") root.dataset.theme = "dark";
+  var btn = document.getElementById("themeBtn");
+  function syncBtn() { btn.textContent = root.dataset.theme === "dark" ? "亮色" : "暗色"; }
+  syncBtn();
+  btn.addEventListener("click", function(){
+    root.dataset.theme = root.dataset.theme === "dark" ? "" : "dark";
+    try { localStorage.setItem("medkit-report-theme", root.dataset.theme); } catch(e) {}
+    syncBtn();
+  });
+  document.getElementById("printBtn").addEventListener("click", function(){ window.print(); });
+
+  var bar = document.getElementById("progress");
+  function onScroll(){
+    var h = document.documentElement.scrollHeight - window.innerHeight;
+    bar.style.width = (h > 0 ? (window.scrollY / h) * 100 : 0) + "%";
+  }
+  window.addEventListener("scroll", onScroll, {passive:true});
+  onScroll();
+
+  var links = Array.prototype.slice.call(document.querySelectorAll(".toc a"));
+  var targets = links.map(function(a){ return document.getElementById(a.getAttribute("href").slice(1)); }).filter(Boolean);
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if (!en.isIntersecting) return;
+        links.forEach(function(a){ a.classList.toggle("active", a.getAttribute("href") === "#" + en.target.id); });
+      });
+    }, {rootMargin: "-15% 0px -70% 0px", threshold: 0});
+    targets.forEach(function(t){ io.observe(t); });
+  }
+})();
+</script>
+</body>
+</html>

@@ -51,6 +51,7 @@ function _bankSyncListHTML() {
              ${st === "synced" ? "" : "checked"}>
         <span>${esc(s.batch || "押题卷")}</span></label></td>
       <td>${esc(s.subject || "（未标注科目）")}</td>
+      <td>${esc(s.term || "—")}</td>
       <td>${count || "—"}</td>
       <td><span class="tag">${esc(_BANK_SYNC_LABEL[st] || st)}</span></td>
     </tr>`;
@@ -68,7 +69,7 @@ function _bankSyncListHTML() {
     </div>
     <div style="max-height:min(300px, 38vh);overflow-y:auto">
       <table class="bank-preview-table">
-        <thead><tr><th>批次</th><th>科目</th><th>题数</th><th>状态</th></tr></thead>
+        <thead><tr><th>批次</th><th>科目</th><th>学期</th><th>题数</th><th>状态</th></tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>
@@ -132,6 +133,7 @@ function _bankSyncResultHTML(r) {
     return `<tr>
       <td>${esc(x.batch || "押题卷")}</td>
       <td>${esc(x.subject || "—")}</td>
+      <td>${esc(x.term || "—")}</td>
       <td><span class="tag">${esc(tag)}</span></td>
       <td>${esc(detail)}</td>
     </tr>`;
@@ -148,7 +150,7 @@ function _bankSyncResultHTML(r) {
     </div>
     <div style="max-height:min(300px, 38vh);overflow-y:auto">
       <table class="bank-preview-table">
-        <thead><tr><th>批次</th><th>科目</th><th>结果</th><th>明细</th></tr></thead>
+        <thead><tr><th>批次</th><th>科目</th><th>学期</th><th>结果</th><th>明细</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;

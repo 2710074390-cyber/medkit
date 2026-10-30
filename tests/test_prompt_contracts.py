@@ -47,6 +47,19 @@ def test_medgen_fixtures_validate_question_item():
             assert model.question, f"{name} 题目缺题干"
 
 
+def test_variant_gen_fixture_contract():
+    """变式训练样本必须过 QuestionItem 契约，且答案是单选、逐选项理由齐全。"""
+    data = _load("variant_gen.json")
+    items = data.get("items", [])
+    assert len(items) >= 2, "变式样本至少要有 2 道，才能覆盖不同问法"
+    for q in items:
+        model = QuestionItem.model_validate(q)
+        assert model.question and model.answer
+        assert len(model.options) == 5
+        assert len(model.answer) == 1
+        assert all(model.option_rationales.get(k) for k in "ABCDE")
+
+
 def test_medqc_verdict_contract():
     data = _load("medqc_verdict.json")
     verdict = QcVerdict.model_validate(data)

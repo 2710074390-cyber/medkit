@@ -202,7 +202,8 @@ async function bankDrillStart(bid, mode, opts) {
   if (body) body.innerHTML = `<div class="hint"><span class="spin"></span>加载题目…</div>`;
   try {
     const r = await api(`/api/bank/banks/${encodeURIComponent(d.bid)}/drill`
-      + `?mode=${encodeURIComponent(d.mode)}`);
+      + `?mode=${encodeURIComponent(d.mode)}`
+      + (opts.limit ? `&limit=${encodeURIComponent(opts.limit)}` : ""));
     d.items = r.items || [];
   } catch (e) {
     if (body) body.innerHTML = `<div class="hint">加载失败：${esc(e.message)}</div>`;
@@ -225,7 +226,7 @@ async function bankDrillStart(bid, mode, opts) {
 function bankDrillMode(mode) {
   if (_bankDrill.busy) return;
   if (_bankDrill.source === "mistakes") { bankDrillStartMistakes(mode); return; }
-  bankDrillStart(_bankDrill.bid, mode, { runmode: _bankDrill.runmode });
+  bankDrillStart(_bankDrill.bid, mode, { runmode: _bankDrill.runmode, restart: true });
 }
 
 /* ---- 错题重练（F7 增强）：把**自己的错题**当作练习卷来刷 ----
@@ -243,6 +244,7 @@ function bankDrillMode(mode) {
 async function bankDrillStartMistakes(mode, focusId, opts) {
   opts = opts || {};
   const d = _bankDrill;
+  if (d.busy) return;
   // 切范围（全部错题 / 只看未掌握）时**保持当前题目**（若它仍在筛选结果里）：
   // 用户只是想换个范围，把人丢回第一题等于打断他正在做的那题，也丢掉了已作答记录。
   const keepId = (d.source === "mistakes" && d.items[d.idx]) ? d.items[d.idx].id : "";
@@ -265,7 +267,8 @@ async function bankDrillStartMistakes(mode, focusId, opts) {
     const r = await api("/api/library/mistakes");
     const all = r.mistakes || [];
     const drillable = all.filter(m => (m.options || []).length);
-    d.items = d.mode === "unlearned" ? drillable.filter(m => !m.learned) : drillable;
+    const picked = d.mode === "unlearned" ? drillable.filter(m => !m.learned) : drillable;
+    d.items = opts.limit ? picked.slice(0, Math.max(1, Number(opts.limit) || 0)) : picked;
   } catch (e) {
     if (body) body.innerHTML = `<div class="hint">加载失败：${esc(e.message)}</div>`;
     return;
@@ -362,7 +365,7 @@ function bankDrillRender() {
   const body = $("bank_drill_body");
   if (!body) return;
   const d = _bankDrill;
-  if (d.idx >= d.items.length) { bankDrillFinish(); return; }
+  if (d.idx >= d.items.length) return;
   const it = d.items[d.idx];
   const opts = it.options || [];
   const multi = _bankIsMulti(it);
@@ -463,7 +466,7 @@ async function bankDrillSubmit() {
   const it = d.items[d.idx];
   if (!it) return;
   const m0 = d.marks[it.id];
-  if (m0 && m0.graded) return;
+  if (m0 && (m0.judged || m0.graded)) return;
   const ans = _bankSelAnswer();
   if (!ans) { toast("请先选择选项", false); return; }
   d.busy = true;
@@ -480,7 +483,7 @@ async function bankDrillSubmit() {
     d.graded = true;
     d.last = r;
     d.marks[it.id] = {
-      picked: ans, graded: true, correct: !!r.correct,
+      picked: ans, graded: true, judged: true, correct: !!r.correct,
       answer: r.answer, analysis: r.analysis, note: r.note,
       source_type: r.source_type, source_year: r.source_year,
       synced: r.synced_mistakes,
@@ -590,7 +593,7 @@ function _bankShowResult(r, userAns) {
 /* ---- 上一题 / 下一题 / 跳题 ---- */
 function _bankDrillGoto(idx) {
   const d = _bankDrill;
-  if (idx < 0 || idx >= d.items.length) return;
+  if (d.busy || idx < 0 || idx >= d.items.length) return;
   _bankAutoCancel();          // 主动翻页 → 撤掉在途的自动跳题
   d.idx = idx; d.sel = new Set(); d.graded = false; d.last = null;
   d.confidence = 0;            // v0.22：把握分是**每题**的，翻页必须重置
@@ -599,7 +602,8 @@ function _bankDrillGoto(idx) {
 function bankDrillNext() {
   const d = _bankDrill;
   if (d.busy) return;
-  _bankDrillGoto(Math.min(d.idx + 1, d.items.length));
+  if (d.idx === d.items.length - 1) { bankDrillFinish(); return; }
+  _bankDrillGoto(d.idx + 1);
 }
 function bankDrillPrev() {
   const d = _bankDrill;
@@ -648,6 +652,7 @@ function _bankDrillRenderCard() {
 /* ---- 练习 / 背题 模式互切 ---- */
 function bankDrillToggleRunmode() {
   const d = _bankDrill;
+  if (d.busy) return;
   d.runmode = d.runmode === _BANK_RECITE ? "practice" : _BANK_RECITE;
   _bankDrillSetRunmodeBtn();
   const title = $("bank_drill_title");
@@ -696,6 +701,7 @@ function bankDrillNote() {
 
 function bankDrillRetryWrong() {
   const d = _bankDrill;
+  if (d.busy) return;
   const wrong = d.items.filter(it => { const m = d.marks[it.id]; return m && m.graded && !m.correct; });
   if (!wrong.length) return;
   d.items = wrong.slice();
@@ -733,6 +739,7 @@ function bankDrillExit() {
 
 function bankDrillFinish() {
   const d = _bankDrill;
+  if (d.busy || !d.items.length) return;
   _bankAutoCancel();
   const total = d.items.length;
   const c = _bankCounts();
