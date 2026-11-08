@@ -15,6 +15,15 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore(deps)"
+    # 2026-11-08：setuptools 的上限是**故意的**，不是忘了升。
+    # `requirements-dev.txt` 里写的是 `setuptools<81`，理由是 jieba 0.42.1 仍
+    # `import pkg_resources`，而 setuptools>=81 已移除它（见那行的行内注释）。
+    # dependabot 每周提一次「<81 → <85」（PR #3 从 2026-09-15 挂到 11-08），
+    # rebase 也不会消失——它是在把上限往上抬，正好会踩到 jieba。
+    # 显式忽略，别再让它占用 PR 配额。
+    ignore:
+      - dependency-name: "setuptools"
+        versions: [">=81"]
     # 分组：运行依赖与开发依赖分开，避免一个 PR 混入两类变更难以回滚
     groups:
       runtime:
