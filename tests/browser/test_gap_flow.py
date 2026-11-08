@@ -39,11 +39,16 @@ def _cleanup(page, subject: str, tag: str) -> None:
     )
 
 
-def test_gap_paper_no_subject_autopicks_first(page, server_url):
+def test_gap_paper_no_subject_autopicks_first(page, server_url, seeded_bank, open_fold):
     """科目范围未选（全部科目）时点「按薄弱点组一套卷」：
     A. 无任何可选科目 → 提示「暂无可选科目…」（新文案，不再报「科目范围」错）；
-    B. 有科目 → 自动选中第一个科目并进入组卷流程（不再要求用户先手选）。"""
+    B. 有科目 → 自动选中第一个科目并进入组卷流程（不再要求用户先手选）。
+
+    按钮在 v0.23.0「书桌」重设计后位于右栏「薄弱点」折叠卡内（`<details id="weak_card">`），
+    默认收起 ⇒ 必须先展开摘要行才可点（CI 2026-10-30 起红在此）。
+    """
     _open_overview(page, server_url)
+    open_fold("weak_card")
     page.locator("#btn_gap_paper").wait_for(state="visible", timeout=15000)
     page.click("#btn_gap_paper")
     page.wait_for_selector('#toasts >> text=暂无可选科目', timeout=15000)
@@ -69,6 +74,8 @@ def test_gap_paper_no_subject_autopicks_first(page, server_url):
             "() => { const s = document.getElementById('dash_subject');"
             " return !!s && Array.from(s.options).some(o => o.value); }",
             timeout=20000)
+        # `open` 是 DOM 属性、刷新后回到收起态 ⇒ 必须重新展开
+        open_fold("weak_card")
         page.locator("#btn_gap_paper").wait_for(state="visible", timeout=15000)
         page.click("#btn_gap_paper")
         # 自动选科落地（#dash_subject 由空变成本科目）后再断言，不赌时间

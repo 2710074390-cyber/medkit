@@ -170,3 +170,115 @@ def page(browser):
     pg.add_init_script("localStorage.setItem('medkit-gen-enabled','1');")
     yield pg
     ctx.close()
+
+
+@pytest.fixture
+def seeded_bank(page, server_url):
+    """播种一份「只有 1 题」的题库，让「今天」页离开**首启态**；用例结束即删除。
+
+    ## 为什么需要（2026-11-08 查清：CI 红 5 项的另一半根因）
+
+    `today.js::loadStart()` 判定首启的条件是**没有题库，或第一个题库 0 题**，命中就
+    `_todayFirstRun(true)`；而 CSS 里 `.today-grid.is-firstrun .today-side{display:none}`
+    ——整条右栏（含四张折叠卡）直接不渲染。于是「考试」「薄弱点」里的元素不是折叠
+    收起，而是**根本没有盒子**：`is_visible()` 为 False，点摘要行也点不到。
+
+    设计口径是明确的（`docs/0.23.0-前端重设计_活人感_2026-10-29.md` 落地记录：
+    「首启无数据时右栏整体隐藏，只给『先放一份题库进来』」），所以**不是产品缺陷**，
+    而是那些用例的前提过期了：它们测的是「有数据之后的今天页」，却跑在空库上。
+    播种题库把前提补回来，比在产品里为首启开个后门更诚实。
+
+    ## 为什么必须在 fixture 里 goto 再 fetch
+
+    `page` 初始停在 `about:blank`，相对 URL `'/api/...'` 无法解析（同
+    `test_kc_ui.py::_boot` 的注释）。故先落到应用页再调接口。
+
+    ## 为什么要清理
+
+    浏览器层全部用例共用**同一个**后端子进程与数据目录（见本文件头部第 1 条）。
+    遗留题库会让后续用例的「只有 1 个题库 / 首启无数据」类断言凭空翻红
+    （`test_gap_flow` 头部 R7 的教训就是这么来的）。
+    """
+    name = "浏览器用右栏前提题库"
+    subject = "内科学_右栏用例"
+    md = (
+        "# 题库\n\n### q1 · A1 型 · 单选 · 理解\n"
+        "**慢阻肺的诊断**\n慢阻肺最主要的病因是\n"
+        "- A. 吸烟\n- B. 感染\n"
+        "**✅ 答案：A**\n💡 吸烟是主要危险因素\n"
+    )
+    page.goto(f"{server_url}/#start")
+    page.wait_for_selector("#tab-start.show", timeout=15000)
+    bank_id = page.evaluate(
+        """async ([md, name, subject]) => {
+          const p = await (await fetch('/api/bank/import/preview', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: md, fmt: 'md'})})).json();
+          const c = await (await fetch('/api/bank/import/commit', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name, subject: subject, items: p.items})})).json();
+          return c.bank_id;
+        }""",
+        [md, name, subject],
+    )
+    assert bank_id, "题库播种失败（导入预览/提交接口返回空 bank_id）"
+    # 播种是**接口层**写入，页面 DOM 还停在首启态；且 `goto` 到同一个 `#start`
+    # 属于同文档导航、不会重跑 `loadStart()` ⇒ 必须显式 reload。
+    page.reload()
+    page.wait_for_selector("#tab-start.show", timeout=15000)
+    page.wait_for_function(
+        "() => { const g = document.querySelector('.today-grid');"
+        " return !!g && !g.classList.contains('is-firstrun'); }",
+        timeout=15000,
+    )
+    yield bank_id
+    page.evaluate(
+        """async (bid) => {
+          await fetch('/api/bank/banks/' + encodeURIComponent(bid), {method: 'DELETE'});
+        }""",
+        bank_id,
+    )
+
+
+@pytest.fixture
+def open_fold(page):
+    """展开「今天」页右栏的折叠卡，返回 `open_fold("exam_card")` 这样的调用入口。
+
+    ## 为什么需要（2026-10-30 起 CI 稳定红 5 项，2026-11-08 查清）
+
+    v0.23.0「书桌」重设计把右栏四块（练习记录 / 薄弱点 / 知识点掌握 / 考试）收进
+    `<details class="card fold">`——设计口径见
+    `docs/0.23.0-前端重设计_活人感_2026-10-29.md` §7.1「统计与知识点退到右栏折叠卡——
+    periphery，不是第二个仪表盘」。**默认收起**，于是卡内元素虽然照常渲染，却是
+    `display:none`。浏览器层直接等这些元素 `visible` 会一直超时：
+
+        #kc_state_box .kc-row / .exam-add / .exam-card / #btn_gap_paper
+        33~34 × locator resolved to hidden ...
+
+    这不是产品缺陷，是用例没跟上设计：用户要看得先点摘要行展开。
+
+    ## 为什么点 `<summary>` 而不是 `evaluate("el.open = true")`
+
+    点摘要行是**用户真的会做的动作**。若哪天折叠卡变成点不开（或摘要行被样式吃掉、
+    被别的元素盖住），这里会当场红；直接改 DOM 属性则永远绿——那等于把「打不开」
+    这条真实缺陷从守卫里抹掉。`today.js::_todayOpenFold()` 也只做 `el.open = true`，
+    但那是**程序化展开**（从任务单点「看薄弱点」时用），不能替代真人点击的可达性。
+
+    ## 幂等
+
+    `<details>` 的 `open` 是 DOM 属性、不落盘；同一页面里重复调用只展开一次，
+    不会像重复点击那样把自己关掉（`toggle` 语义会）。页面 `reload()` 后需重新调用。
+    """
+    def _open(fold_id: str):
+        fold = page.locator(f"#{fold_id}")
+        assert fold.count() == 1, f"「今天」页找不到折叠卡 #{fold_id}（选择器或页面结构变了？）"
+        if fold.get_attribute("open") is None:
+            summary = fold.locator("summary").first
+            assert summary.is_visible(), (
+                f"折叠卡 #{fold_id} 的摘要行不可见——折叠卡本身没露出来，"
+                "先确认页面停在「今天」页（#tab-start.show）"
+            )
+            summary.click()
+        page.wait_for_selector(f"#{fold_id}[open]", timeout=5000)
+        return fold
+    return _open

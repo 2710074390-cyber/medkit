@@ -10,7 +10,13 @@
 from __future__ import annotations
 
 
-def _goto_start_clear(page, server_url: str) -> None:
+def _goto_start_clear(page, server_url: str, open_fold) -> None:
+    """落到「今天」页并清空考试相关键，且把「考试」折叠卡展开。
+
+    为什么要展开（2026-10-30 起 CI 红 3 项）：v0.23.0「书桌」重设计把考试计划收进右栏
+    `<details class="card fold" id="exam_card">`，默认收起 ⇒ `.exam-add` / `.exam-card`
+    虽已渲染却 `display:none`，浏览器层的可见性等待必然超时。展开摘要行是真人操作。
+    """
     page.goto(f"{server_url}/#start")
     page.wait_for_selector("#tab-start.show", timeout=15000)
     page.evaluate(
@@ -18,6 +24,7 @@ def _goto_start_clear(page, server_url: str) -> None:
     )
     page.reload()
     page.wait_for_selector("#tab-start.show", timeout=15000)
+    open_fold("exam_card")
 
 
 def _add_exam(page, title: str, date: str, tag: str = "") -> None:
@@ -29,8 +36,8 @@ def _add_exam(page, title: str, date: str, tag: str = "") -> None:
     page.wait_for_selector(".exam-card", timeout=15000)
 
 
-def test_start_multi_exam_add_sort_delete(page, server_url):
-    _goto_start_clear(page, server_url)
+def test_start_multi_exam_add_sort_delete(page, server_url, seeded_bank, open_fold):
+    _goto_start_clear(page, server_url, open_fold)
     page.wait_for_selector(".exam-add", timeout=15000)
 
     _add_exam(page, "考研初试", "2099-12-25", "考研")
@@ -43,8 +50,9 @@ def test_start_multi_exam_add_sort_delete(page, server_url):
     assert "期末" in page.locator(".exam-card").first.inner_text()
     assert "考研初试" in page.locator(".exam-card").nth(1).inner_text()
 
-    # 刷新保留
+    # 刷新保留（`open` 不落盘 ⇒ 刷新后重新展开）
     page.reload()
+    open_fold("exam_card")
     page.wait_for_selector(".exam-card", timeout=15000)
     assert page.locator(".exam-card").count() == 2
 
@@ -57,9 +65,9 @@ def test_start_multi_exam_add_sort_delete(page, server_url):
     assert "考研初试" in page.locator(".exam-card").first.inner_text()
 
 
-def test_start_exam_reminder_window_active(page, server_url):
+def test_start_exam_reminder_window_active(page, server_url, seeded_bank, open_fold):
     """R4-20：进入「考前 N 天」提醒窗口 → 卡片醒目提示（死数据变真触达）。"""
-    _goto_start_clear(page, server_url)
+    _goto_start_clear(page, server_url, open_fold)
     page.wait_for_selector(".exam-add", timeout=15000)
     date = page.evaluate(
         """() => { const d = new Date(Date.now() + 86400000);
@@ -72,16 +80,17 @@ def test_start_exam_reminder_window_active(page, server_url):
     assert "备考冲刺提醒" in txt, f"进入提醒窗口应显示冲刺提示：{txt}"
 
 
-def test_start_exam_legacy_migration(page, server_url):
+def test_start_exam_legacy_migration(page, server_url, seeded_bank, open_fold):
     """旧单场键 `medkit-exam-date` → 迁移成一场考试，且**迁移结果落盘**。
 
     最后一步是这条用例的可证伪点：若迁移只派生在内存里（旧实现），刷新一次
     考试计划就会凭空消失——那正是「迁移看起来成功了、其实白做」的形态
     （2026-10-20 实测：迁移把旧键删掉却没同步写回新键，刷新后卡片不见了）。
     """
-    _goto_start_clear(page, server_url)
+    _goto_start_clear(page, server_url, open_fold)
     page.evaluate("() => localStorage.setItem('medkit-exam-date', '2099-06-01')")
     page.reload()
+    open_fold("exam_card")
     page.wait_for_selector(".exam-card", timeout=15000)
     assert page.locator(".exam-card").count() == 1
     assert "考试" in page.locator(".exam-card").first.inner_text()
@@ -90,6 +99,7 @@ def test_start_exam_legacy_migration(page, server_url):
     assert left is None, "旧单场键应被迁移并清除"
     # 迁移结果必须已写回新键 → 再刷一次仍在（否则「迁移成功」只是一次性的假象）
     page.reload()
+    open_fold("exam_card")
     page.wait_for_selector(".exam-card", timeout=15000)
     assert page.locator(".exam-card").count() == 1, "迁移结果应落盘：刷新后考试计划不得消失"
 

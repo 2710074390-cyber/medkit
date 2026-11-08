@@ -285,6 +285,19 @@ _PATH_EXEMPT = {
     "tests/design-tokens.test.mjs": "在参赛版仓 medkit-web-contest/tests/（本仓无等价文件）",
     "tests/test_server.py": "在参赛版仓 medkit-web-contest/tests/（网页版账号服务测试）",
     "tests/ai-channel.test.mjs": "在参赛版仓 medkit-web-contest/tests/（BYOK 通道守卫）",
+    # 2026-11-08：同一批草案（docs/superpowers/plans/2026-10-30-agent-todo.md、
+    # 2026-10-30-medkit-web-ux-optimization.md）还有 7 处跨仓引用当时漏登记。
+    # 实测 CI 从 2026-10-30 起 6 次运行都红在这两条参数化用例上——不是文档写错，
+    # 是**豁免表没跟上文档**（上一篇草案引用了 7 个 mjs 测试，只登记了 4 个）。
+    # 逐条理由同上：这些文件在兄弟仓 `../medkit-web-contest/` 里真实存在，
+    # 本仓没有、也不该有（本仓的前端是 Jinja + 原生 JS，零构建；参赛版才是 js/ + node --test）。
+    "docs/1024造物挑战_参赛手册与文案.md": "在参赛版仓 medkit-web-contest/docs/（参赛材料，本仓不收录）",
+    "tests/variant-generation.test.mjs": "在参赛版仓 medkit-web-contest/tests/（变式训练前端用例；本仓等价守卫是 tests/test_variants.py）",
+    "tests/bank-manage.test.mjs": "在参赛版仓 medkit-web-contest/tests/（题库管理前端用例）",
+    "tests/drill-reentry.test.mjs": "在参赛版仓 medkit-web-contest/tests/（刷题断点续做前端用例）",
+    "tests/finish-summary.test.mjs": "在参赛版仓 medkit-web-contest/tests/（判分总结前端用例）",
+    "tests/import-export.test.mjs": "在参赛版仓 medkit-web-contest/tests/（导入导出前端用例；本仓等价守卫是 tests/test_web_migration_export.py）",
+    "tests/learning-loop.test.mjs": "在参赛版仓 medkit-web-contest/tests/（复习闭环前端用例）",
 }
 
 

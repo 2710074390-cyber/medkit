@@ -7,7 +7,7 @@
 **不适合**：想直接下载现成题库的人——本软件不内置任何题目。
 
 **当前版本**：v0.23.0（更新日志见 [`CHANGELOG.md`](CHANGELOG.md)）。
-**安装包状态**：v0.23.0 的安装包尚在构建中，暂未发布——想现在就用可以直接跑源码（`python run_medkit.py`），或装上一版安装包 v0.22.1。
+**安装包状态**：已发布 `MedKit-Setup-0.23.0.exe`（校验值与绿色版见 `dist-installer/`）；不想装也可以直接跑源码（`python run_medkit.py`）。
 
 > **License**：本项目以 **[GNU AGPL-3.0](LICENSE)** 开源发布（修改/再分发须以 AGPL 公开源码）。
 > 第三方组件的各自许可证见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)；决策记录见
@@ -15,7 +15,7 @@
 
 ## 医学生快速上手（拿到安装包开始）
 
-1. **安装**：双击 `MedKit-Setup-0.22.1.exe` → 一路下一步（可选桌面图标；v0.23.0 安装包构建中）。
+1. **安装**：双击 `MedKit-Setup-0.23.0.exe` → 一路下一步（可选桌面图标）。
    或绿色版：解压 `MedKit` 文件夹到任意位置，双击 `MedKit.exe`，浏览器自动打开（无需安装 Python）。
 2. **首次启动**：直接进入「开始」页（无引导弹层）——点「去刷题」导入你自己的题库即可开练；想用 AI 从教材出题，再去「题库」页。
 3. **连接 AI**（只需一次）：推荐注册 [DeepSeek 开放平台](https://platform.deepseek.com) → 充值 ¥10 →
@@ -106,7 +106,7 @@ medkit/
 │   └── web/                    # 零 CDN 单页 UI（learn-vault.js = 本地错题视图；bank*.js = 题库刷题）
 ├── pack/                       # build.bat / medkit.spec / check-release-consistency.py(五件套门禁) / smoke-run-isolated.py(隔离冒烟) / qa-experience-walkthrough.py(医学生视角体验走查·截图取证)
 ├── docs/                       # features.md(功能与守卫清单·README 的展开版) / 前端AI味调研与改法_2026-10-28.md(文案与搜索) / 体验质检_医学生视角_2026-10-10.md(体验质检·含截图) / AGENT_HANDOFF.md(交接入口) / / 生成链剥离为插件_评估_D2_2026-10-01.md / 双轨退役_迁移演练_D6_2026-10-01.md / research/(4 篇调研 + 1 份 HTML 看板)
-└── tests/                      # 1435 项（单元 1366 / 浏览器层 69，分进程跑）
+└── tests/                      # 1436 项（单元 1367 / 浏览器层 69，分进程跑）
 ```
 
 ## 已实现功能
@@ -134,7 +134,7 @@ medkit/
   OCR 与网络检索会把对应内容发到你所选的服务（界面上已逐处说明）。
 - **成本透明**：创建前给预估，跑完写实际用量；只花你自己的 Key。
 
-**质量**：**1435 项 pytest**（主分支全绿、无 skip；签名相关 3 项需要签名工具链，缺工具时**直接失败不跳过**）
+**质量**：**1436 项 pytest**（主分支全绿、无 skip；签名相关 3 项需要签名工具链，缺工具时**直接失败不跳过**）
 ——每个测试文件守什么、逐文件项数多少，见 [`docs/features.md`](docs/features.md)。
 
 ## 服务商与模型（2026-08 官方信息核查版）

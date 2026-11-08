@@ -156,8 +156,13 @@ def test_result_shows_kc_summary_after_mapping(page, server_url):
 
 
 # ---------------------------------------------------------------- 知识点面板
-def test_today_panel_lists_knowledge_state(page, server_url):
-    """「今天」页的知识点掌握面板必须长出真实行（不是「还没有作答记录」占位）。"""
+def test_today_panel_lists_knowledge_state(page, server_url, open_fold):
+    """「今天」页的知识点掌握面板必须长出真实行（不是「还没有作答记录」占位）。
+
+    面板在 v0.23.0「书桌」重设计后收进右栏折叠卡（`<details id="kc_panel">`，默认收起），
+    断言前须像用户那样先展开摘要行——否则元素虽已渲染，但 `display:none` ⇒ 永远等不到
+    `visible`（2026-10-30 起 CI 红的就是这条）。
+    """
     _boot(page, server_url)
     _seed_bank(page, "慢阻肺的诊断")
     try:
@@ -168,6 +173,7 @@ def test_today_panel_lists_knowledge_state(page, server_url):
 
         page.goto(f"{server_url}/#start")
         page.wait_for_selector("#tab-start.show", timeout=15000)
+        open_fold("kc_panel")
         page.wait_for_selector("#kc_state_box .kc-row", timeout=15000)
         rows = page.locator("#kc_state_box .kc-row")
         assert rows.count() >= 1
