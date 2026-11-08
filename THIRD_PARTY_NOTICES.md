@@ -60,7 +60,7 @@
 | sniffio | 1.3.1 | MIT OR Apache-2.0 |
 | starlette | 1.6.0 | 见包内 LICENSE（BSD） |
 | tqdm | 4.68.1 | MPL-2.0 AND MIT |
-| typing_extensions | 4.15.0 | 见包内 LICENSE |
+| typing_extensions | 4.16.0 | 见包内 LICENSE |
 | typing-inspection | 0.4.2 | 见包内 LICENSE |
 | uvicorn | 0.49.0 | 见包内 LICENSE（BSD） |
 | watchfiles | 1.2.0 | MIT |
