@@ -9,7 +9,7 @@
     "lint:fix": "eslint medkit/web/js/ --fix"
   },
   "devDependencies": {
-    "eslint": "^10.10.0",
+    "eslint": "^10.14.0",
     "globals": "^17.13.0"
   }
 }
