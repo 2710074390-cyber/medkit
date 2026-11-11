@@ -172,6 +172,41 @@ def delete_bank(bid: str) -> dict[str, Any]:
     return {"ok": True, **res}
 
 
+@router.get("/api/bank/banks/{bid}/reset-preview")
+def reset_preview(bid: str) -> dict[str, Any]:
+    """按题库清除记录前**先看清范围**：要删多少条作答/错题、影响几个知识点、留什么。
+
+    只读，不写库。确认框里的数字直接来自这里——不在前端估算（估算与实际不符时，
+    「可预期」就成了空话）。
+    """
+    try:
+        return {"ok": True, **banklib.progress_preview(bid)}
+    except KeyError as e:
+        raise HTTPException(404, str(e.args[0] if e.args else "题库不存在"))
+
+
+class ResetBody(BaseModel):
+    """`confirm` 必须是 `true`：清记录不可逆，要求调用方显式表态（前端有确认框）。"""
+
+    confirm: bool = False
+
+
+@router.post("/api/bank/banks/{bid}/reset")
+def reset_progress(bid: str, body: ResetBody) -> dict[str, Any]:
+    """清除**这一个题库**的做题记录与由它产生的错题（其他题库与题目内容不动）。
+
+    删除前自动把「将被删除的作答与错题」导出到 `~/.medkit/exports/`。
+    返回 `ok` / `cleared` / `kept` / `backup` / `after`——`after` 是删完**重新数**的结果，
+    有残留就 `ok=false`（不谎报）。
+    """
+    if not body.confirm:
+        raise HTTPException(400, "请先确认要清除这个题库的做题记录")
+    try:
+        return banklib.reset_progress(bid)
+    except KeyError as e:
+        raise HTTPException(404, str(e.args[0] if e.args else "题库不存在"))
+
+
 @router.delete("/api/bank/items/{iid}")
 def delete_item(iid: str) -> dict[str, Any]:
     if not banklib.delete_item(iid):

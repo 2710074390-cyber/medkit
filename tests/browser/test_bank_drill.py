@@ -421,3 +421,63 @@ def test_import_from_project_and_export_paper(page, server_url, server_home):
               } catch (e) { /* ignore */ }
             }""", [_PROJ_SUBJECT, _PROJ_SUBJECT])
         _drop_project(server_home)
+
+
+# ---------------------------------------------------------------- 按题库清除做题记录
+def test_reset_progress_needs_ack_and_keeps_content(page, server_url):
+    """「清除做题记录」：勾选前确认键禁用；勾选后只清这个题库的流水与错题，题目/收藏留着。
+
+    为什么这条必须在浏览器层：三道闸门（预览数字 → 勾选 → 执行）只有在真实 DOM 上才成立。
+    单元测试可以证明后端删得准，但证明不了「用户误点一下就把数据清了」不会发生。
+    """
+    _open_drill(page, server_url)
+    bid = _seed_bank(page)
+    try:
+        page.reload()
+        page.wait_for_selector(".bank-item", timeout=15000)
+        _start_first_bank(page)
+        page.click("#bopt_1")                     # B = 错 → 一条流水 + 一条回流错题
+        page.wait_for_selector(".bank-ans", timeout=15000)
+        page.keyboard.press("Escape")             # 退出作答层，回到列表
+        page.wait_for_selector("#bank_list .bank-item", timeout=15000)
+
+        # 收藏第一题：清除记录不该动它
+        page.evaluate(
+            """async (bid) => {
+              const d = await (await fetch('/api/bank/banks/' + encodeURIComponent(bid))).json();
+              const iid = d.items[0].id;
+              await fetch('/api/bank/items/' + encodeURIComponent(iid) + '/star', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({starred: true})});
+            }""", bid)
+
+        page.click("#bank_list .bank-item .bank-more summary")
+        page.click('#bank_list .bank-more-menu button:has-text("清除做题记录")')
+        page.wait_for_selector("#br_ack", timeout=15000)
+        body = page.locator("#md_body").inner_text()
+        assert "作答记录" in body and "知识点" in body, f"确认框没摆清范围：{body}"
+        assert page.locator("#md_ok").is_disabled(), "未勾选后果声明前不该能点确认"
+
+        page.locator("#br_ack").check()
+        assert not page.locator("#md_ok").is_disabled(), "勾选后确认键应可用"
+        page.click("#md_ok")
+        page.wait_for_timeout(800)
+
+        left = page.evaluate(
+            """async (bid) => {
+              const p = await (await fetch('/api/bank/banks/' + encodeURIComponent(bid) + '/reset-preview')).json();
+              const d = await (await fetch('/api/bank/banks/' + encodeURIComponent(bid))).json();
+              return {attempts: p.attempts, mistakes: p.mistakes, items: d.items.length,
+                      starred: !!d.items[0].starred};
+            }""", bid)
+        assert left["attempts"] == 0 and left["mistakes"] == 0, f"记录没清干净：{left}"
+        assert left["items"] == 2, f"题目被连带删了：{left}"
+        assert left["starred"] is True, f"收藏被删了：{left}"
+
+        # 列表统计跟着归零（不是只改了弹窗）
+        page.reload()
+        page.wait_for_selector("#bank_list .bank-item", timeout=15000)
+        row = page.locator("#bank_list .bank-item").first.inner_text()
+        assert "已练 0" in row, f"列表里的已练数没刷新：{row}"
+    finally:
+        _cleanup(page)

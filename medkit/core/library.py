@@ -494,6 +494,40 @@ def count_mistakes_by_subject() -> dict[str, int]:
     return out
 
 
+def list_mistakes_of_bank(bid: str) -> list[dict[str, Any]]:
+    """某题库**来源**的错题（`source_ref.bank_id` 命中）。只读，供「按题库清除」定位范围。
+
+    为什么需要它：错题没有 `bank_id` 查询列（`source_ref` 是 JSON 里的开放结构），
+    而「清除某个题库的记录」必须**精确**到「这条错题是从那个题库哪道题回流来的」，
+    不能按科目/题干模糊匹配——否则会连带删掉别处的同科目错题。
+
+    SQL 轨用 `json_extract` 走 `data` 列过滤（SQLite JSON1，Python 3.13 自带 3.53 可用）；
+    `json_valid` 前置判断挡住损坏行——坏 JSON 会让 `json_extract` 直接抛错，
+    一条坏行不该让整个范围查询失败（坏行本来也读不出 `source_ref`，跳过即正确）。
+    """
+    bid = str(bid or "").strip()
+    if not bid:
+        return []
+    if _sql_ready(MISTAKES_FILE):
+        table, _ = _table_of(MISTAKES_FILE)
+        conn = dbs.get_conn()
+        cur = conn.cursor()
+        try:
+            rows = cur.execute(
+                f"SELECT * FROM {table} WHERE CASE WHEN json_valid(data) "
+                "THEN json_extract(data, '$.source_ref.bank_id') END = ?", (bid,)).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                rec = dbs.row_to_dict(r)
+                if rec is not None:
+                    out.append(rec)
+            return out
+        finally:
+            cur.close()
+    return [m for m in read_json_list(MISTAKES_FILE)
+            if str((m.get("source_ref") or {}).get("bank_id") or "") == bid]
+
+
 def _find(records: list[dict[str, Any]], mid: str) -> Optional[dict[str, Any]]:
     return next((r for r in records if r.get("id") == mid), None)
 

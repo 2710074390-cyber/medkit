@@ -26,9 +26,11 @@
 from __future__ import annotations
 
 import itertools
+import json
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from . import config as cfg
@@ -183,6 +185,206 @@ def delete_bank(bid: str) -> dict[str, Any]:
         cur.execute("DELETE FROM bank_sources WHERE bank_id=?", (bid,))
         cur.execute("DELETE FROM banks WHERE id=?", (bid,))
     return {"deleted": True, "items": len(items), "attempts": len(attempts), "backup": backup}
+
+
+# ---------------------------------------------------------------- 按题库清除做题记录
+# 定位（2026-11-11）：「做题记录只能靠清空全部用户数据」是本轮补的缺口。
+# 同类产品的共识（Anki 的 Reset / Forget、Quizlet 的 Reset progress、医考帮的「重做」、
+# UWorld 的 reset）有三条：① 清除单位是**用户心智里的那个集合**（题库 / 学习集 / 试卷），
+# 不是整个账号；② **内容与学习痕迹分开**——题目、收藏、笔记保留，只清「做过什么」；
+# ③ 不可逆操作必须先摆清范围（各删多少条），再要一次明确确认。
+#
+# 本域按题库清除的**四类东西都有明确归属键**，不靠科目/题干模糊匹配：
+#   ① `bank_attempts WHERE bank_id = ?`：作答流水，含由该题库错题触发的「重练」流水
+#      （`mode='retry'`，其 `bank_id` 仍是本题库）；
+#   ② `mistakes WHERE source_ref.bank_id = ?`：由本题库判错回流的错题；
+#   ③ 这些作答影响到的 `kc_state`：读模型，按**剩余**流水重放（其余知识点一行不动）；
+#   ④ legacy `knowledge`：删错题时由 `library.batch_delete` 按入账快照回退。
+#
+# 刻意保留：题目、收藏 ★、笔记、`item_kc` 映射（这是用户的整理成果，不是做题痕迹）、
+# 其他题库的一切、手动录入的错题（没有 `source_ref.bank_id`，不属于任何题库）。
+def _exports_dir() -> Path:
+    d = Path(cfg.CONFIG_DIR) / "exports"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _bank_kc_ids(cur: Any, bid: str) -> list[str]:
+    """本题库的题目**已确认映射**到的知识点（去重、稳定序）。
+
+    只认 `confirmed=1`：模糊匹配未确认的映射本来就没参与过掌握度计算。
+    """
+    rows = cur.execute(
+        "SELECT DISTINCT kc_id FROM item_kc WHERE confirmed = 1 AND item_id IN "
+        "(SELECT id FROM bank_items WHERE bank_id = ?) ORDER BY kc_id",
+        (str(bid),)).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+def _bank_attempts_in(cur: Any, bid: str) -> list[dict[str, Any]]:
+    """本题库的作答流水（**预览、备份、删除三处同一口径**）。
+
+    `OR item_id IN (…)` 兜住历史上 `bank_id` 为空、但题目属于本题库的流水
+    （外部写入/迁移留下的孤儿行）。三处若各写一套谓词，「预览说 10 条、删掉 12 条」
+    就会变成用户能看见的不一致。
+    """
+    return dbs.list_rows(
+        cur, "bank_attempts",
+        "WHERE bank_id = ? OR item_id IN (SELECT id FROM bank_items WHERE bank_id = ?)",
+        (str(bid), str(bid)))
+
+
+def _attempt_events(cur: Any, kc_ids: list[str]) -> list[tuple[str, bool, str]]:
+    """把**剩余**作答流水解析成 `(kc_id, correct, occurred_at)` 时间线。
+
+    两条解析规则（都在这里，不让 kc 模块知道作答从哪来）：
+    - 题库练习：流水的 `item_id` 就是题目 id；
+    - 错题重练：流水的 `item_id` 是**错题 id**，要经 `source_ref.item_id` 回指原题
+      （判对那次的口径就是这么写的，见 `routers/library.py::retry_mistake`）。
+      漏了这条，重练带来的掌握度会在重算时被当成「不存在」。
+    """
+    want = set(kc_ids)
+    item_kcs: dict[str, list[str]] = {}
+    for i in range(0, len(kc_ids), 400):
+        chunk = kc_ids[i:i + 400]
+        marks = ",".join("?" for _ in chunk)
+        for item_id, kc_id in cur.execute(
+                "SELECT item_id, kc_id FROM item_kc WHERE confirmed = 1 "
+                f"AND kc_id IN ({marks}) ORDER BY kc_id", tuple(chunk)).fetchall():
+            item_kcs.setdefault(str(item_id), []).append(str(kc_id))
+
+    ref_of: dict[str, str] = {}
+    for mid, data in cur.execute("SELECT id, data FROM mistakes").fetchall():
+        try:
+            rec = json.loads(data)
+        except (TypeError, ValueError):
+            continue           # 坏行读不出 source_ref，跳过（与 row_to_dict 同口径）
+        ref = rec.get("source_ref") if isinstance(rec, dict) else None
+        if not isinstance(ref, dict):
+            continue
+        target = str(ref.get("item_id") or ref.get("question_id") or "")
+        if target:
+            ref_of[str(mid)] = target
+
+    events: list[tuple[str, bool, str]] = []
+    for item_id, correct, occurred, mode in cur.execute(
+            "SELECT item_id, correct, occurred_at, mode FROM bank_attempts "
+            "ORDER BY occurred_at, id").fetchall():
+        iid = str(item_id or "")
+        kcs = item_kcs.get(iid)
+        if not kcs and str(mode or "") == "retry":
+            kcs = item_kcs.get(ref_of.get(iid, ""))
+        if not kcs:
+            continue
+        for kc in kcs:
+            if kc in want:
+                events.append((kc, bool(correct), str(occurred or "")))
+    return events
+
+
+def progress_preview(bid: str) -> dict[str, Any]:
+    """「按题库清除」的范围预览：**要删多少、留多少**，全部来自现算，不用估算。
+
+    这是「操作可确认、结果可预期」的数据源：确认框里的每个数字都必须与真正删除的
+    数字同口径（守卫：`tests/test_bank_reset.py` 断言预览 == 实际清除数）。
+    """
+    ensure_ready()
+    bank = get_bank(bid)
+    if bank is None:
+        raise KeyError("题库不存在")
+    from . import library as lib  # 局部导入：core 之间避免模块级循环依赖
+
+    mistakes = lib.list_mistakes_of_bank(bid)
+    with dbs.tx(write=False) as cur:
+        attempts = _bank_attempts_in(cur, bid)
+        kcs = _bank_kc_ids(cur, bid)
+        items = int(cur.execute("SELECT COUNT(*) FROM bank_items WHERE bank_id = ?",
+                                (str(bid),)).fetchone()[0])
+        mappings = int(cur.execute(
+            "SELECT COUNT(*) FROM item_kc WHERE confirmed = 1 AND item_id IN "
+            "(SELECT id FROM bank_items WHERE bank_id = ?)", (str(bid),)).fetchone()[0])
+    return {
+        "bank": {"id": str(bank.get("id") or ""), "name": str(bank.get("name") or ""),
+                 "subject": str(bank.get("subject") or ""),
+                 "term": str(bank.get("term") or "")},
+        "items": items,
+        "mappings": mappings,
+        "attempts": len(attempts),
+        "correct": sum(1 for a in attempts if a.get("correct")),
+        "wrong": sum(1 for a in attempts if not a.get("correct")),
+        "mistakes": len(mistakes),
+        "mistakes_learned": sum(1 for m in mistakes if m.get("learned")),
+        "kcs": len(kcs),
+        "last_attempt": max((str(a.get("occurred_at") or "") for a in attempts), default=""),
+    }
+
+
+def _write_reset_backup(bank: dict[str, Any], attempts: list[dict[str, Any]],
+                        mistakes: list[dict[str, Any]]) -> str:
+    """删除前把「将要删除的东西」整份导出成 JSON（与 `delete_bank` 同一处 exports 目录）。"""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = _exports_dir() / f"bank_reset_{bank.get('id')}_{ts}.json"
+    write_json_atomic(path, {
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "kind": "bank_progress_reset",
+        "bank": bank,
+        "attempts": attempts,
+        "mistakes": mistakes,
+    })
+    return str(path)
+
+
+def reset_progress(bid: str) -> dict[str, Any]:
+    """清除**一个题库**的做题记录与由它产生的错题；其他题库与内容资产一律不动。
+
+    题库不存在 → `KeyError`。返回 `{"bank", "cleared", "kept", "backup", "after"}`。
+
+    ## 顺序与失败语义
+
+    备份 → 删流水 + 重算状态（一个事务）→ 删错题（`library.batch_delete`，
+    连带回退 legacy 掌握度并把 vault md 归档）。跨域两步不在同一事务里
+    （`dbs.tx()` 不可重入，事务边界归各域自己）——所以最后**重新数一遍**：
+    仍有残留就如实 `ok=false`，不谎报成功。
+    """
+    ensure_ready()
+    preview = progress_preview(bid)
+    bank = preview["bank"]
+    from . import kc as kclib
+    from . import library as lib
+
+    mistakes = lib.list_mistakes_of_bank(bid)
+    with dbs.tx(write=False) as cur:
+        attempts = _bank_attempts_in(cur, bid)
+    backup = _write_reset_backup(bank, attempts, mistakes)   # 失败即抛，不删任何东西
+
+    with dbs.tx(write=True) as cur:
+        kcs = _bank_kc_ids(cur, bid)
+        cur.execute(
+            "DELETE FROM bank_attempts WHERE bank_id = ? OR item_id IN "
+            "(SELECT id FROM bank_items WHERE bank_id = ?)", (str(bid), str(bid)))
+        deleted_attempts = max(int(cur.rowcount), 0)
+        kclib.replay_states_in(cur, kcs, _attempt_events(cur, kcs))
+
+    deleted_mistakes = lib.batch_delete([str(m.get("id")) for m in mistakes]) if mistakes else 0
+    after = progress_preview(bid)
+    residue = after["attempts"] + after["mistakes"]
+    return {
+        "ok": residue == 0,
+        "bank": bank,
+        "cleared": {
+            "attempts": deleted_attempts,
+            "correct": preview["correct"],
+            "wrong": preview["wrong"],
+            "mistakes": deleted_mistakes,
+            "mistakes_learned": preview["mistakes_learned"],
+            "kcs": len(kcs),
+        },
+        "kept": {"items": after["items"], "mappings": after["mappings"]},
+        "backup": backup,
+        "after": {"attempts": after["attempts"], "mistakes": after["mistakes"]},
+        "hint": (f"已清除 {deleted_attempts} 条作答、{deleted_mistakes} 条错题；"
+                 f"备份在 {backup}。题目、收藏、笔记与知识点映射都还在。"),
+    }
 
 
 # ---------------------------------------------------------------- 原文与重解析

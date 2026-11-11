@@ -63,6 +63,11 @@ function closeModal() {
      只会让用户遇到"确认框只剩一个确认键"的怪事。 */
   const cancel = $("md_cancel");
   if (cancel) cancel.style.display = "";
+  /* 「禁用态」也是会泄漏到下一个模态的状态：有的确认框先禁用「确认」键，要求用户勾选
+     后果声明。关闭时若不还原，下一次打开的模态会带着一颗点不动的确认键——不报错，只是坏掉
+     （与上面 `md_cancel` 的显示态同一类问题）。 */
+  const ok = $("md_ok");
+  if (ok) ok.disabled = false;
   if (!anyOverlayOpen()) setBackgroundInert(false);
   const back = _modalReturnFocus; _modalReturnFocus = null;
   if (back && document.contains(back) && typeof back.focus === "function") {

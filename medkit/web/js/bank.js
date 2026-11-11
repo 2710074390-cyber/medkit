@@ -2,7 +2,7 @@
    bankFilterApply, bankGoalLoad, bankGoalRefresh, bankGoalSave, bankImportPick, bankInsights,
    bankItemCancel, bankItemDel, bankItemEdit, bankItemFilterApply, bankItemNew, bankItemSave,
    bankItemStar, bankManageClose, bankManageOpen, bankManageRender, bankPasteClose, bankPasteOpen,
-   bankPreviewPaste, bankEdit, bankReparse, bankRetryStart, bankRowHTML, bankStartDrill,
+   bankPreviewPaste, bankEdit, bankReparse, bankReset, bankRetryStart, bankRowHTML, bankStartDrill,
    bankStats, loadBankHome */
 /* ---- 题库域（bank）：我的题库列表 / 新建 / 重命名 / 删除 / 进入练习 ----
  *
@@ -111,6 +111,7 @@ function bankRowHTML(b) {
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankInsights(this)">解析覆盖</button>
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankExportPaper(this)">导出押题卷</button>
           ${b.has_source ? `<button class="mini-btn" data-id="${esc(b.id)}" onclick="bankReparse(this)" title="用保存的导入原文重新解析（解析器升级后可修旧数据）">重新解析${b.parser_stale ? " ⟳" : ""}</button>` : ""}
+          <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankReset(this)" title="只清这本题库做过的题与它产生的错题">清除做题记录</button>
           <button class="mini-btn" data-id="${esc(b.id)}" onclick="bankEdit(this)">编辑信息</button>
           <button class="mini-btn danger" data-id="${esc(b.id)}" onclick="bankDelete(this)">删除</button>
         </div>
@@ -195,6 +196,80 @@ function bankReparse(btn) {
         await refreshBankSurfaces();
       } catch (e) { toast(e.message, false); }
     });
+}
+
+/* ---- 清除单个题库的做题记录（不清题目） ----
+ *
+ * 为什么需要它：做题数据此前只能靠「设置 → 清空全部数据」一次性抹掉——想重刷一本
+ * 内科学题库，代价是连别的题库、错题本、项目全部赔进去。同类产品的做法都是**按集合清**
+ * （Anki 的 Reset / Quizlet 的 Reset progress / 医考帮的「重做」），并且**内容与痕迹分开**：
+ * 题目、收藏、笔记留着，只清「做过什么」。
+ *
+ * 三道闸门（顺序即用户的心理顺序）：先看**真实范围**（预览接口现算，不在前端估），
+ * 再勾选后果声明（确认键在此之前是禁用的），最后才发请求。删完回执把「删了多少 / 留了什么 /
+ * 备份在哪」一起说清，不让人靠猜。
+ */
+async function bankReset(btn) {
+  const bid = btn && btn.dataset ? btn.dataset.id : btn;
+  if (!bid) return;
+  let p;
+  try {
+    p = await api(`/api/bank/banks/${encodeURIComponent(bid)}/reset-preview`);
+  } catch (e) { toast(e.message, false); return; }
+  const bank = p.bank || {};
+  const name = bank.name || bid;
+  if (!p.attempts && !p.mistakes) {
+    infoModal("不用清理",
+      `<p style="margin:0;color:var(--text-2)">题库 <b>${esc(name)}</b> 还没有做过题，
+       也没有由它产生的错题——这里没有可清的东西。</p>`);
+    return;
+  }
+  const kcLine = p.kcs
+    ? `这 ${p.kcs} 个知识点的掌握度会按剩下的作答重算。`
+    : "这本题库的题还没挂到知识点上，清完不影响任何掌握度。";
+  // 「0 条知识点映射」是噪音：数字为 0 时整段不提（保留的是「映射」这件事，不是那个 0）
+  const keepLine = `保留：${p.items} 道题、收藏 ★、个人笔记`
+    + (p.mappings ? `、${p.mappings} 条知识点映射` : "")
+    + "，以及其他题库的全部数据。";
+  const body = `
+    <p style="margin:0;color:var(--text-2)">只清题库 <b>${esc(name)}</b>，其他题库不动：</p>
+    <div class="dash-metrics" style="margin-top:8px">
+      <div class="dash-metric"><b>${p.attempts}</b><span>作答记录</span></div>
+      <div class="dash-metric"><b>${p.mistakes}</b><span>错题</span></div>
+      <div class="dash-metric"><b>${p.kcs}</b><span>知识点</span></div>
+    </div>
+    <p style="margin:8px 0 0;color:var(--text-2)">
+      其中答对 ${p.correct} 次、答错 ${p.wrong} 次；错题里已标「已掌握」${p.mistakes_learned} 条。</p>
+    <p style="margin:8px 0 0;color:var(--text-2)">${kcLine}</p>
+    <p style="margin:8px 0 0;color:var(--text-2)">${keepLine}</p>
+    <p style="margin:8px 0 0;color:var(--text-2)">
+      删除前会把这些记录导出到 exports 目录；错题文件移到错题本的 .trash，可以手工找回。</p>
+    <label class="chk" style="margin-top:10px"><input type="checkbox" id="br_ack">
+      我确认只清除这本题库的学习记录</label>`;
+  const release = () => { const ok = $("md_ok"); if (ok) ok.disabled = false; };
+  confirmModal("清除做题记录？", body, `清除「${name}」的记录`, async () => {
+    release();
+    try {
+      const r = await api(`/api/bank/banks/${encodeURIComponent(bid)}/reset`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const c = r.cleared || {};
+      toast(`已清除 ${c.attempts || 0} 条作答、${c.mistakes || 0} 条错题`
+        + (r.backup ? "；已导出备份" : ""), r.ok !== false);
+      if (r.ok === false) toast("仍有记录残留，请再执行一次或在数据管理里查看", false);
+      if (String(_bankState.current) === String(bid)) {
+        const dc = $("bank_drill_card"); if (dc) dc.style.display = "none";
+      }
+      refreshBankSurfaces();
+    } catch (e) { toast(e.message, false); }
+  }, true, release);
+  const ok = $("md_ok"), ack = $("br_ack");
+  if (ok && ack) {
+    ok.disabled = true;                       // 勾选前不给按下
+    ack.onchange = () => { ok.disabled = !ack.checked; };
+    ack.focus();
+  }
 }
 
 function bankDelete(btn) {
@@ -557,6 +632,7 @@ window.loadBankHome = loadBankHome;
 window.bankCreateOpen = bankCreateOpen;
 window.bankEdit = bankEdit;
 window.bankDelete = bankDelete;
+window.bankReset = bankReset;
 window.bankReparse = bankReparse;
 window.bankStats = bankStats;
 window.bankStartDrill = bankStartDrill;

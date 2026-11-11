@@ -12,6 +12,7 @@
 
 - **错点变式训练（P1）**：`core/variants.py` + `agents/variant_agent.py` + `/api/vault/variants/*`。按本地 `priority≥0.3` / 单点 ≤3 题选点，生成同考点不同问法的 1~5 道题；过 `options_check` 门禁；判分前不下发答案；判错当天回流原错题，判对只记 `variant_pass` 迁移证据。
 - **错题助手 UI 2.0**：引用 chip 可点开原错题；答复底部增加「练 3 道变式 / 打开原题」；变式卡支持作答、判分、逐选项理由与 390px 窄屏；空态显示错题/薄弱点/到期计数。
+- **按题库清除做题记录**：`GET /api/bank/banks/{bid}/reset-preview` + `POST …/reset`（必须 `confirm=true`）。只清**一个题库**的作答流水（含由该库错题触发的 `mode=retry` 重练流水）与由它产生的错题；题目、收藏 ★、笔记、`item_kc` 映射、导入原文与其他题库全部保留。受影响知识点按**剩余**流水局部重放（`kc.replay_states_in`，其余知识点状态行不动），删除前把将删内容导出到 `exports/bank_reset_*.json`。入口「我的题库 → ⋯ → 清除做题记录」：预览真实范围 → 勾选后果声明（未勾选时确认键禁用）→ 执行，回执给出删除数与备份路径。
 - 原错题 front matter 新增 `variant_pass` / `variant_fail` / `variant_last`；`vault_items` 可弃索引同步补列。
 
 ### Prompts

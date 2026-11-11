@@ -463,6 +463,62 @@ def rebuild_state() -> dict:
             "kcs": int(total)}
 
 
+def _chunks(seq: list[str], n: int = 400) -> list[list[str]]:
+    """把 id 列表切成 IN (...) 的批次——SQLite 变量上限（默认 999）不是无限的。"""
+    return [seq[i:i + n] for i in range(0, len(seq), n)]
+
+
+def replay_states_in(cur: Any, kc_ids: list[str],
+                     events: list[tuple[str, bool, str]]) -> dict[str, Any]:
+    """在**调用方的事务里**只重建 `kc_ids` 这些知识点的状态：其余 `kc_state` 行原样不动。
+
+    ## 与 `rebuild_state()` 的分工
+
+    `rebuild_state()` 是全库重放（读模型的真相校验），会把**每一行**的 `last_seen`
+    推到当下、并清掉未映射知识点的行。用在「清掉某个题库的作答记录」这种**局部**操作上，
+    等于顺手改写了用户没动过的数据——那不是精确删除。
+
+    本函数只碰指定知识点：删掉这些行，再按**剩余**作答按时间顺序重放。
+
+    ## 为什么事件由调用方解析
+
+    「一条作答属于哪个知识点」的解析规则归作答域所有（题库练习按题 id；
+    错题重练的流水记的是**错题 id**，要经 `source_ref.item_id` 回指原题）。
+    本模块只负责 BKT 与状态行 ⇒ 重算口径仍然只有 `apply_attempt` 一份。
+
+    `events` 元素 = `(kc_id, correct, occurred_at)`，**必须按发生时间升序**。
+    """
+    ids = [str(k) for k in kc_ids if str(k)]
+    if not ids:
+        return {"kcs": 0, "events": 0}
+    id_set = set(ids)
+    now = _now()
+    for chunk in _chunks(ids):
+        marks = ",".join("?" for _ in chunk)
+        cur.execute(f"DELETE FROM kc_state WHERE id IN ({marks})", tuple(chunk))
+
+    states: dict[str, dict] = {}
+    applied = 0
+    for kc_id, correct, occurred_at in events:
+        kc_id = str(kc_id)
+        if kc_id not in id_set:
+            continue
+        st = apply_attempt(states.get(kc_id), bool(correct))
+        st["last_seen"] = str(occurred_at or st.get("last_seen") or now)
+        states[kc_id] = st
+        applied += 1
+
+    for kc_id, st in states.items():
+        row: dict[str, Any] = {"kc_id": kc_id, "updated_at": now}
+        row.update(_kc_meta_in(cur, kc_id))
+        row["p_mastery"] = st.get("p_mastery", PRIOR_P_MASTERY)
+        row["attempts"] = _as_int(st.get("attempts"))
+        row["correct"] = _as_int(st.get("correct"))
+        row["last_seen"] = st.get("last_seen") or now
+        put_state_in(cur, row)
+    return {"kcs": len(states), "events": applied}
+
+
 def knowledge_rows(subject: str = "") -> list[dict]:
     """把 `kc_state` 摊成「薄弱项表」的行（与 legacy `knowledge` 行同形）。
 
