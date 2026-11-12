@@ -17,6 +17,9 @@ build-old*/
 # 根目录因此从 27 个条目收敛到 12 个。
 archive/*
 !archive/README.md
+# 2026-11-07 整理：本地备份目录（seed 快照等，单份 2 MB 级）。
+# 未忽略时 `git add -A` 会把整份 seed 备份提交进仓——与 archive/ 同理。
+backups/
 pack/icon_preview.png
 projects/
 *.spec.bak

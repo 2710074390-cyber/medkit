@@ -2,29 +2,31 @@
 
 > 2026-09-17 整理：把根目录下 16 个历史构建快照集中到这里，根目录条目从 27 收敛到 12。
 > 2026-09-28 整理：`dist-installer/` 从 1.6 GB / 28 文件收敛到 **218 MB / 6 文件**。
+> 2026-11-07 清理：**删掉 0.10.3 之前 3 个 builds + 3 个 dist + 4 组分发件**（约 1.06 GB，
+> 不可恢复）。下面是清理后的实际内容。
 
 ## 目录结构
 
 ```
 archive/
-├── builds/          ← 原 build-old-*（PyInstaller 中间产物，9 个版本）
-│   ├── 0.10.1/
-│   ├── 0.10.2-pre-u10/
-│   ├── 0.10.2-pre-u17/
-│   ├── 0.10.3-pre-v09/ … -pre-v15/
-├── dist/            ← 原 dist-old-*（**解压后的绿色版目录**，9 个版本）
-│   ├── 0.10.1-pre-r5/
-│   ├── 0.10.2-pre-u10/ …
-│   └── 0.10.3-pre-v15/
-└── dist-installer/  ← 2026-09-28 新增（**分发件**：安装包 exe + portable zip，11 个版本）
-    ├── MedKit-Setup-0.9.0.exe + MedKit-0.9.0-portable.zip
-    ├── … 0.10.0 / 0.10.1-pre-r5 / 0.10.2-pre-u17
-    ├── 0.10.3-pre-v09 … -pre-v15（5 组）
-    └── 0.10.3 / 0.10.4
+├── builds/          ← 原 build-old-*（PyInstaller 中间产物，5 个版本）
+│   └── 0.10.3-pre-v09/ -v10/ -v11/ -v13/ -v15/
+├── dist/            ← 原 dist-old-*（**解压后的绿色版目录**，6 个版本）
+│   ├── 0.10.3-polluted-build/
+│   └── 0.10.3-pre-v09/ -v10/ -v11/ -v13/ -v15/
+├── dist-installer/  ← 2026-09-28 新增（**分发件**：安装包 exe + portable zip）
+│   ├── 0.10.3-pre-v09 … -pre-v15（5 组）
+│   └── 0.10.3 / 0.10.4 / 0.10.5-pre-ep01 / 0.10.6 / 0.11.0 … 0.20.0 / 0.22.0
+└── incidents/       ← 2026-11-07 新增：四次 git 事故现场（见本文末节）
 ```
 
 > 目录名去掉了 `build-old-` / `dist-old-` 前缀（父目录已表达该语义）。
-> 体积合计约 **2.75 GB**（builds ≈ 470 MB，dist ≈ 980 MB，dist-installer ≈ 1.3 GB）。
+> 体积合计约 **3.4 GB**（builds ≈ 295 MB，dist ≈ 738 MB，dist-installer ≈ 2.4 GB）。
+
+> **2026-11-07 删掉的是**：`builds/{0.10.1,0.10.2-pre-u10,0.10.2-pre-u17}` ·
+> `dist/{0.10.1-pre-r5,0.10.2-pre-u10,0.10.2-pre-u17}` ·
+> `dist-installer/{0.9.0,0.10.0,0.10.1-pre-r5,0.10.2-pre-u17}` 四组 exe+zip。
+> 要回溯这三个版本以上的打包行为，只能从 `git log` 里的 `medkit.spec` / `medkit.iss` 复原配置。
 
 ### `dist/` 与 `dist-installer/` 的区别（别当成冗余）
 
@@ -54,3 +56,18 @@ archive/
   **仅本文件入库**，`builds/` / `dist/` / `dist-installer/` 的实际产物均被忽略
   （保留本文件是为了让「为什么有 archive/」这件事不失传）。
   需要长期保留的历史产物请另行备份（本目录不随仓库分发）。
+
+## 2026-11-07 整理
+
+- **根 `dist-installer/` 从 36 项收敛到 6 项**：0.10.5-pre-ep01 ~ 0.20.0 共 14 代
+  （28 个 exe/zip）+ `SHA256SUMS.pre-ep01.txt` + `release-notes-0.20.0.md` 移入本目录，
+  与既有档期接续。**保留 0.22.1 + 0.22.0 两代**（0.23.0 尚未出包，
+  按上文「只留两代」的口径，上一代 0.22.0 继续留在根目录作回归对照）。
+- **同日再清理**：0.10.3 之前 3 个 `builds/` + 3 个 `dist/` + 4 组 `dist-installer/` 分发件
+  **永久删除**（约 1.06 GB）——归档体积 4.5 GB → 3.4 GB。清单见本文上方目录结构之后的引用块。
+- **新增 `incidents/`**：四次 git 事故现场（`.git.broken-20260928` / `-20260930` /
+  `-20261002-ci` / `-20261003`）从仓库根移入，共 1.4 MB。
+  迁移前它们是根目录的隐藏目录，`.gitignore` 有 `.git.broken-*/` 规则；
+  移进来后仍不入库——`archive/*` 先命中，且 `.git.broken-*/` 无前导斜杠、任意深度都命中
+  （实测 `git check-ignore -v archive/incidents/.git.broken-20260928` → `.gitignore:18:archive/*`）。
+  事故经过见 `docs/事故_2026-09-28_git对象的清空.md` 等三篇。
